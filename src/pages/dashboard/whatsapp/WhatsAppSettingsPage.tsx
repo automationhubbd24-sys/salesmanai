@@ -168,12 +168,24 @@ export default function WhatsAppSettingsPage() {
     if (!dbId) return;
     setBehaviorSaving(true);
     try {
-        const { error } = await (supabase
-            .from('whatsapp_message_database') as any)
-            .update({ wait_time: wait })
-            .eq('id', parseInt(dbId));
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token;
 
-        if (error) throw error;
+        const res = await fetch(`${BACKEND_URL}/whatsapp/config/${dbId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                ...(token ? { Authorization: `Bearer ${token}` } : {})
+            },
+            body: JSON.stringify({ wait_time: wait })
+        });
+
+        if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            const message = body.error || `Failed with status ${res.status}`;
+            throw new Error(message);
+        }
+
         toast.success("Behavior settings saved");
     } catch (error: any) {
         console.error("Behavior save error", error);
@@ -187,16 +199,28 @@ export default function WhatsAppSettingsPage() {
     if (!dbId) return;
     setEmojiSaving(true);
     try {
-        const { error } = await (supabase
-            .from('whatsapp_message_database') as any)
-            .update({ 
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token;
+
+        const res = await fetch(`${BACKEND_URL}/whatsapp/config/${dbId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                ...(token ? { Authorization: `Bearer ${token}` } : {})
+            },
+            body: JSON.stringify({
                 block_emoji: blockEmoji,
                 unblock_emoji: unblockEmoji,
                 emoji_check_count: emojiCheckCount
             })
-            .eq('id', parseInt(dbId));
+        });
 
-        if (error) throw error;
+        if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            const message = body.error || `Failed with status ${res.status}`;
+            throw new Error(message);
+        }
+
         toast.success("Emoji Lock settings saved");
     } catch (error: any) {
         console.error("Emoji save error", error);
@@ -245,13 +269,20 @@ export default function WhatsAppSettingsPage() {
 
   const fetchConfig = async (id: string, sId: string | null) => {
     try {
-      const { data: dbData, error: dbError } = await supabase
-        .from('whatsapp_message_database')
-        .select('*')
-        .eq('id', parseInt(id))
-        .single();
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
 
-      if (dbError) throw dbError;
+      const res = await fetch(`${BACKEND_URL}/whatsapp/config/${id}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const message = body.error || `Failed to load configuration (${res.status})`;
+        throw new Error(message);
+      }
+
+      const dbRow = await res.json();
 
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("No user found");
@@ -264,8 +295,7 @@ export default function WhatsAppSettingsPage() {
         
       if (configError) throw configError;
 
-      if (dbData) {
-        const dbRow = dbData as any;
+      if (dbRow) {
         const configRow = userConfig as any || {};
         
         setVerified(dbRow.verified !== false);
