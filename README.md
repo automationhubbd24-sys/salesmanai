@@ -49,3 +49,7 @@ You can deploy the built `dist` folder to any static hosting provider (for examp
 ```sh
 npm run build
 ```
+
+## Deployment status
+
+Manual update applied to trigger a new deployment via Coolify.
