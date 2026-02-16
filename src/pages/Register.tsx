@@ -1,0 +1,367 @@
+import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import Logo from "@/components/Logo";
+import { Eye, EyeOff, ArrowLeft, Mail, Lock, User, Phone, CheckCircle2, Sparkles } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
+import logoImage from "@/assets/logo.png";
+import { useLanguage } from "@/contexts/LanguageContext";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  InputOTP,
+  InputOTPGroup,
+  InputOTPSlot,
+} from "@/components/ui/input-otp";
+
+const Register = () => {
+  const navigate = useNavigate();
+  const { t } = useLanguage();
+  const [formData, setFormData] = useState({
+    fullName: "",
+    phone: "",
+    email: "",
+    password: "",
+    confirmPassword: "",
+  });
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [showOtpModal, setShowOtpModal] = useState(false);
+  const [otp, setOtp] = useState("");
+  const [verifying, setVerifying] = useState(false);
+
+  const handleVerifyOtp = async () => {
+    if (!otp || otp.length !== 6) return;
+    setVerifying(true);
+    try {
+      const { error } = await supabase.auth.verifyOtp({
+        email: formData.email,
+        token: otp,
+        type: 'signup',
+      });
+
+      if (error) throw error;
+
+      toast.success(t("Email verified successfully!", "ইমেইল সফলভাবে যাচাই করা হয়েছে!"));
+      setShowOtpModal(false);
+      navigate("/dashboard");
+    } catch (error: any) {
+      toast.error(error.message);
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (formData.password !== formData.confirmPassword) {
+      toast.error(t("Passwords do not match", "পাসওয়ার্ড মিলছে না"));
+      return;
+    }
+
+    if (formData.password.length < 6) {
+      toast.error(t("Password must be at least 6 characters", "পাসওয়ার্ড অন্তত ৬ অক্ষরের হতে হবে"));
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const { error } = await supabase.auth.signUp({
+        email: formData.email,
+        password: formData.password,
+        options: {
+          emailRedirectTo: window.location.origin,
+          data: {
+            full_name: formData.fullName,
+            phone: formData.phone,
+          },
+        },
+      });
+
+      if (error) {
+        toast.error(error.message);
+      } else {
+        // Check if session is null, meaning email confirmation is required
+        // Or if we explicitly want to show OTP entry for verification
+        toast.success(t("Registration successful! Please check your email for the OTP.", "রেজিস্ট্রেশন সফল হয়েছে! ওটিপি-র জন্য আপনার ইমেইল চেক করুন।"));
+        setShowOtpModal(true);
+      }
+    } catch (error) {
+      toast.error(t("An error occurred during registration", "রেজিস্ট্রেশন করার সময় একটি সমস্যা হয়েছে"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const benefits = [
+    t("Unlimited chatbot conversations", "আনলিমিটেড চ্যাটবট কনভারসেশন"),
+    t("Multi-platform integration", "মাল্টি-প্ল্যাটফর্ম ইন্টিগ্রেশন"),
+    t("Real-time analytics dashboard", "রিয়েল-টাইম অ্যানালিটিক্স ড্যাশবোর্ড"),
+    t("24/7 automated responses", "২৪/৭ অটোমেটেড রেসপন্স"),
+    t("Custom AI training", "কাস্টম এআই ট্রেনিং"),
+    t("Priority support", "প্রায়োরিটি সাপোর্ট"),
+  ];
+
+  return (
+    <div className="flex min-h-screen bg-[#0b0b0b] text-white">
+      {/* Left Panel - Decorative */}
+      <div className="relative hidden w-0 flex-1 lg:block">
+        <div className="absolute inset-0 bg-[#0b0b0b]">
+          {/* Animated background elements */}
+          <div className="absolute inset-0 overflow-hidden">
+            <div className="absolute -right-20 -top-20 h-96 w-96 rounded-full bg-[#00ff88]/10 blur-3xl animate-pulse" />
+            <div className="absolute -bottom-32 -left-32 h-[500px] w-[500px] rounded-full bg-[#00ff88]/8 blur-3xl animate-pulse" style={{ animationDelay: "1s" }} />
+            <div className="absolute right-1/3 top-1/4 h-64 w-64 rounded-full bg-[#00ff88]/6 blur-2xl animate-pulse" style={{ animationDelay: "2s" }} />
+          </div>
+          
+          {/* Grid pattern */}
+          <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: 'radial-gradient(#00ff88 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
+          
+          <div className="relative flex h-full flex-col items-center justify-center p-12">
+            {/* Logo */}
+            <div className="mb-10">
+              <img src={logoImage} alt="SalesmanAI" className="h-24 w-24 animate-pulse" />
+            </div>
+            
+            <div className="max-w-lg text-center">
+              <div className="mb-6 inline-flex items-center gap-2 rounded-full bg-white/5 px-4 py-2 backdrop-blur-sm">
+                <Sparkles className="h-4 w-4 text-[#00ff88]" />
+                <span className="text-sm font-medium text-gray-300">{t("Start Your Free Trial", "আপনার ফ্রি ট্রায়াল শুরু করুন")}</span>
+              </div>
+              
+              <h3 className="mb-6 text-4xl font-bold text-white">
+                {t("Join SalesmanAI Today", "আজই SalesmanAI-তে যোগ দিন")}
+              </h3>
+              <p className="mb-10 text-xl text-gray-400">
+                {t("Create your account and start automating customer conversations with AI-powered chatbots.", "আপনার অ্যাকাউন্ট তৈরি করুন এবং এআই-চালিত চ্যাটবটের মাধ্যমে কাস্টমার কনভারসেশন অটোমেট করা শুরু করুন।")}
+              </p>
+              
+              {/* Benefits list */}
+              <div className="space-y-4 text-left">
+                {benefits.map((benefit, index) => (
+                  <div 
+                    key={index}
+                    className="flex items-center gap-3 rounded-lg bg-primary-foreground/10 px-4 py-3 backdrop-blur-sm transition-all hover:bg-primary-foreground/15"
+                  >
+                    <CheckCircle2 className="h-5 w-5 flex-shrink-0 text-green-400" />
+                    <span className="text-base font-medium text-gray-300">{benefit}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Right Panel - Form */}
+      <div className="flex flex-1 flex-col justify-center px-4 py-8 sm:px-6 lg:flex-none lg:px-16 xl:px-20">
+        <div className="mx-auto w-full max-w-md">
+          <div className="mb-6">
+            <Link to="/" className="inline-flex items-center gap-2 text-muted-foreground transition-colors hover:text-foreground">
+              <ArrowLeft className="h-4 w-4" />
+              <span>{t("Return to Home", "হোমে ফিরে যান")}</span>
+            </Link>
+          </div>
+
+          <div className="mb-8">
+            <Logo size="lg" accentColor="#00ff88" />
+            <h2 className="mt-6 text-3xl font-bold text-white">{t("Create Account", "অ্যাকাউন্ট তৈরি করুন")}</h2>
+            <p className="mt-2 text-base text-gray-400">
+              {t("Start your 14-day free trial • No credit card required", "আপনার ১৪ দিনের ফ্রি ট্রায়াল শুরু করুন • কোনো ক্রেডিট কার্ডের প্রয়োজন নেই")}
+            </p>
+          </div>
+
+          <form onSubmit={handleRegister} className="space-y-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="fullName" className="text-sm font-medium">{t("Full Name", "পুরো নাম")}</Label>
+                <div className="relative">
+                  <User className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
+                  <Input
+                    id="fullName"
+                    name="fullName"
+                    type="text"
+                    placeholder={t("Your name", "আপনার নাম")}
+                    value={formData.fullName}
+                    onChange={handleChange}
+                    className="h-11 pl-11 text-sm bg-[#0f0f0f] border border-gray-800 focus-visible:ring-[#00ff88]"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="phone" className="text-sm font-medium">{t("Phone Number", "ফোন নম্বর")}</Label>
+                <div className="relative">
+                  <Phone className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
+                  <Input
+                    id="phone"
+                    name="phone"
+                    type="tel"
+                    placeholder="+880 1XXX"
+                    value={formData.phone}
+                    onChange={handleChange}
+                    className="h-11 pl-11 text-sm bg-[#0f0f0f] border border-gray-800 focus-visible:ring-[#00ff88]"
+                    required
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="email" className="text-sm font-medium">{t("Email Address", "ইমেইল ঠিকানা")}</Label>
+              <div className="relative">
+                <Mail className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
+                <Input
+                  id="email"
+                  name="email"
+                  type="email"
+                  placeholder="you@example.com"
+                  value={formData.email}
+                  onChange={handleChange}
+                  className="h-11 pl-11 text-sm bg-[#0f0f0f] border border-gray-800 focus-visible:ring-[#00ff88]"
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="password" className="text-sm font-medium">{t("Password", "পাসওয়ার্ড")}</Label>
+                <div className="relative">
+                  <Lock className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
+                  <Input
+                    id="password"
+                    name="password"
+                    type={showPassword ? "text" : "password"}
+                    placeholder={t("Create password", "পাসওয়ার্ড তৈরি করুন")}
+                    value={formData.password}
+                    onChange={handleChange}
+                    className="h-11 pl-11 pr-11 text-sm bg-[#0f0f0f] border border-gray-800 focus-visible:ring-[#00ff88]"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 transition-colors hover:text-white"
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="confirmPassword" className="text-sm font-medium">{t("Confirm Password", "পাসওয়ার্ড নিশ্চিত করুন")}</Label>
+                <div className="relative">
+                  <Lock className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
+                  <Input
+                    id="confirmPassword"
+                    name="confirmPassword"
+                    type={showPassword ? "text" : "password"}
+                    placeholder={t("Confirm password", "পাসওয়ার্ড নিশ্চিত করুন")}
+                    value={formData.confirmPassword}
+                    onChange={handleChange}
+                    className="h-11 pl-11 text-sm bg-[#0f0f0f] border border-gray-800 focus-visible:ring-[#00ff88]"
+                    required
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-2">
+              <Button type="submit" className="h-12 w-full rounded-full bg-[#00ff88] text-black font-bold shadow-[0_10px_30px_rgba(0,255,136,0.25)] hover:bg-[#00f07f] transition-all hover:scale-[1.01] active:scale-95" disabled={loading}>
+                {loading ? (
+                  <span className="flex items-center gap-2">
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />
+                    {t("Creating account...", "অ্যাকাউন্ট তৈরি হচ্ছে...")}
+                  </span>
+                ) : (
+                  t("Create Free Account", "ফ্রি অ্যাকাউন্ট তৈরি করুন")
+                )}
+              </Button>
+            </div>
+          </form>
+
+          <p className="mt-6 text-center text-xs text-gray-400">
+            {t("By creating an account, you agree to our", "একটি অ্যাকাউন্ট তৈরি করার মাধ্যমে, আপনি আমাদের সাথে সম্মত হচ্ছেন")}{" "}
+            <Link to="/terms" className="text-[#00ff88] hover:underline">{t("Terms of Service", "পরিষেবার শর্তাবলী")}</Link>
+            {" "}{t("and", "এবং")}{" "}
+            <Link to="/privacy" className="text-[#00ff88] hover:underline">{t("Privacy Policy", "গোপনীয়তা নীতি")}</Link>
+          </p>
+
+          <div className="mt-6">
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-border" />
+              </div>
+              <div className="relative flex justify-center text-sm">
+                <span className="bg-[#0b0b0b] px-4 text-gray-400">{t("Already have an account?", "ইতিমধ্যে একটি অ্যাকাউন্ট আছে?")}</span>
+              </div>
+            </div>
+            
+            <div className="mt-4 text-center">
+              <Link to="/login" className="text-base font-semibold text-[#00ff88] transition-opacity hover:opacity-80">
+                {t("Sign in to your account →", "আপনার অ্যাকাউন্টে সাইন ইন করুন →")}
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <Dialog open={showOtpModal} onOpenChange={setShowOtpModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("Verify your email", "আপনার ইমেইল যাচাই করুন")}</DialogTitle>
+            <DialogDescription>
+              {t("We've sent a verification code to", "আমরা একটি যাচাইকরণ কোড পাঠিয়েছি")} {formData.email}. {t("Please enter it below to confirm your account.", "আপনার অ্যাকাউন্ট নিশ্চিত করতে নিচে এটি লিখুন।")}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center justify-center py-4">
+            <InputOTP
+              maxLength={6}
+              value={otp}
+              onChange={(value) => setOtp(value)}
+            >
+              <InputOTPGroup>
+                <InputOTPSlot index={0} />
+                <InputOTPSlot index={1} />
+                <InputOTPSlot index={2} />
+                <InputOTPSlot index={3} />
+                <InputOTPSlot index={4} />
+                <InputOTPSlot index={5} />
+              </InputOTPGroup>
+            </InputOTP>
+          </div>
+          <div className="flex justify-end gap-3">
+            <Button
+              variant="outline"
+              onClick={() => setShowOtpModal(false)}
+              disabled={verifying}
+            >
+              {t("Cancel", "বাতিল করুন")}
+            </Button>
+            <Button onClick={handleVerifyOtp} disabled={verifying || otp.length !== 6}>
+              {verifying ? t("Verifying...", "যাচাই করা হচ্ছে...") : t("Verify Code", "কোড যাচাই করুন")}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
+
+export default Register;
