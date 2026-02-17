@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BACKEND_URL } from "@/config";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -86,13 +86,10 @@ export default function MessengerSettingsPage() {
   const [messageCredit, setMessageCredit] = useState(0);
   const [isOwner, setIsOwner] = useState(true);
   
-  // New State for System// Prompt State
   const [isPromptOpen, setIsPromptOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState("text"); // Add activeTab state
-  const [tempPrompt, setTempPrompt] = useState("");
-  const [tempImagePrompt, setTempImagePrompt] = useState("");
-  const [baseTextPrompt, setBaseTextPrompt] = useState("");
-  const [baseImagePrompt, setBaseImagePrompt] = useState("");
+  const [activeTab, setActiveTab] = useState("text");
+  const [initialTextPrompt, setInitialTextPrompt] = useState("");
+  const [initialImagePrompt, setInitialImagePrompt] = useState("");
   const [promptSaving, setPromptSaving] = useState(false);
   
   // New State for Behavior Settings
@@ -107,6 +104,9 @@ export default function MessengerSettingsPage() {
 
   const [productList, setProductList] = useState<PromptProduct[]>([]);
   const [productLoading, setProductLoading] = useState(false);
+
+  const textPromptRef = useRef<HTMLTextAreaElement | null>(null);
+  const imagePromptRef = useRef<HTMLTextAreaElement | null>(null);
 
   const handleApplyCoupon = () => {
     // Simple validation for demo - in production this would verify with backend
@@ -154,8 +154,8 @@ export default function MessengerSettingsPage() {
         const pageRow = pageData as any;
         
         setVerified(dbRow.verified !== false);
-        setBaseTextPrompt(dbRow.text_prompt || "");
-        setBaseImagePrompt(dbRow.image_prompt || "");
+        setInitialTextPrompt(dbRow.text_prompt || "");
+        setInitialImagePrompt(dbRow.image_prompt || "");
 
         // Check ownership
         const { data: { user } } = await supabase.auth.getUser();
@@ -302,11 +302,6 @@ export default function MessengerSettingsPage() {
 
   const handleOpenPrompt = (tab: "text" | "image") => {
     setActiveTab(tab);
-    if (tab === "text") {
-      setTempPrompt(baseTextPrompt || form.getValues("text_prompt") || "");
-    } else {
-      setTempImagePrompt(baseImagePrompt || "");
-    }
     setIsPromptOpen(true);
     if (!productList.length && pageId) {
       fetchProductsForPrompt();
@@ -319,7 +314,9 @@ export default function MessengerSettingsPage() {
     const line = priceText
       ? `\nযদি কাস্টমার "${name}" নামের প্রোডাক্ট চায় (বা একই অর্থের কিছু লিখে), তাহলে সবসময় গ্লোবাল প্রোডাক্ট "${name}" ব্যবহার করবে এবং শুধু এই প্রোডাক্টের ছবি (image_url) ও দাম ${priceText} পাঠাবে। অন্য কোনো প্রোডাক্ট বা লিংক বানাবে না।`
       : `\nযদি কাস্টমার "${name}" নামের প্রোডাক্ট চায় (বা একই অর্থের কিছু লিখে), তাহলে সবসময় গ্লোবাল প্রোডাক্ট "${name}" ব্যবহার করবে এবং শুধু এই প্রোডাক্টের ছবি (image_url) পাঠাবে। অন্য কোনো প্রোডাক্ট বা লিংক বানাবে না।`;
-    setTempPrompt((prev) => (prev || "") + line);
+    if (textPromptRef.current) {
+      textPromptRef.current.value = (textPromptRef.current.value || "") + line;
+    }
   };
 
   const boldProductsInPrompt = (text: string): string => {
@@ -340,8 +337,13 @@ export default function MessengerSettingsPage() {
         const { data: { session } } = await supabase.auth.getSession();
         const token = session?.access_token;
 
-        const processedPrompt = boldProductsInPrompt(tempPrompt);
-        setTempPrompt(processedPrompt);
+        const currentText = textPromptRef.current?.value || "";
+        const currentImage = imagePromptRef.current?.value || "";
+
+        const processedPrompt = boldProductsInPrompt(currentText);
+        if (textPromptRef.current) {
+          textPromptRef.current.value = processedPrompt;
+        }
 
         const res = await fetch(`${BACKEND_URL}/messenger/config/${dbId}`, {
             method: 'PUT',
@@ -351,7 +353,7 @@ export default function MessengerSettingsPage() {
             },
             body: JSON.stringify({ 
                 text_prompt: processedPrompt,
-                image_prompt: tempImagePrompt
+                image_prompt: currentImage
             })
         });
 
@@ -361,9 +363,9 @@ export default function MessengerSettingsPage() {
             throw new Error(message);
         }
         
-        // Also update form state to keep in sync
         form.setValue('text_prompt', processedPrompt);
-        setBaseTextPrompt(processedPrompt);
+        setInitialTextPrompt(processedPrompt);
+        setInitialImagePrompt(currentImage);
         
         toast.success("System & Image prompts updated successfully!");
         
@@ -372,7 +374,7 @@ export default function MessengerSettingsPage() {
             fetch(`${BACKEND_URL}/api/ai/ingest`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ pageId: pageId, promptText: tempPrompt })
+                body: JSON.stringify({ pageId: pageId, promptText: processedPrompt })
             }).then(() => console.log("RAG Ingestion Triggered"))
               .catch(err => console.error("RAG Ingestion Failed", err));
         }
@@ -411,7 +413,8 @@ export default function MessengerSettingsPage() {
   };
 
   const handleOptimizePrompt = async () => {
-    if (!tempPrompt || tempPrompt.length < 10) {
+    const currentText = textPromptRef.current?.value || "";
+    if (!currentText || currentText.length < 10) {
         toast.error("Please enter some prompt text to optimize.");
         return;
     }
@@ -421,12 +424,13 @@ export default function MessengerSettingsPage() {
         const response = await fetch(`${BACKEND_URL}/api/ai/optimize-prompt`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ promptText: tempPrompt })
+          body: JSON.stringify({ promptText: currentText })
         });
 
         const data = await response.json();
-        if (data.success && data.optimizedPrompt) {
-            setTempPrompt(data.optimizedPrompt);
+        if (data.success && data.optimizedPrompt && textPromptRef.current) {
+            textPromptRef.current.value = data.optimizedPrompt;
+            setInitialTextPrompt(data.optimizedPrompt);
             toast.success("Prompt optimized successfully! Please review before saving.");
         } else {
             throw new Error(data.error || "Unknown error");
@@ -697,8 +701,8 @@ export default function MessengerSettingsPage() {
                             </div>
                           </div>
                           <Textarea 
-                              value={tempPrompt}
-                              onChange={(e) => setTempPrompt(e.target.value)}
+                              ref={textPromptRef}
+                              defaultValue={initialTextPrompt}
                               className="w-full flex-1 min-h-[300px] font-mono text-sm leading-relaxed p-4 resize-none"
                               placeholder="You are a helpful assistant..."
                           />
@@ -713,8 +717,8 @@ export default function MessengerSettingsPage() {
                                 <p className="mt-2 italic">Example: "Analyze this image. If it's a product, identify the name, price, and color. If it's a payment screenshot, extract the transaction ID."</p>
                             </div>
                             <Textarea 
-                                value={tempImagePrompt}
-                                onChange={(e) => setTempImagePrompt(e.target.value)}
+                                ref={imagePromptRef}
+                                defaultValue={initialImagePrompt}
                                 className="w-full flex-1 font-mono text-sm leading-relaxed p-4 resize-none"
                                 placeholder="Describe how the AI should analyze images..."
                             />
