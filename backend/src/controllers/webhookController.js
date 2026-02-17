@@ -929,6 +929,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         const normalizedProductNames = Object.keys(promptProductMap || {});
 
         if (normalizedProductNames.length > 0 && replyText) {
+            const lowerReply = replyText.toLowerCase();
             normalizedProductNames.forEach(name => {
                 const product = promptProductMap[name];
                 if (!product || !product.image_url) return;
@@ -936,10 +937,19 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 if (!/^https?:\/\//i.test(url)) {
                     url = `https://supabasexyz.salesmanchatbot.online/${url.replace(/^\/+/, '')}`;
                 }
-                const pattern = new RegExp(`Link\\s*:\\s*${escapeRegExp(name)}\\b`, 'gi');
-                if (pattern.test(replyText)) {
-                    replyText = replyText.replace(pattern, '').trim();
-                    const line = `IMAGE: ${product.name || name} | ${url}`;
+
+                const imageUrl = url;
+                const hasImageAlready = extractedImages.some(img => img.url === imageUrl);
+
+                const linkPattern = new RegExp(`Link\\s*:\\s*${escapeRegExp(name)}\\b`, 'gi');
+                const hasLinkPattern = linkPattern.test(replyText);
+                const hasNameMention = lowerReply.includes(name.toLowerCase());
+
+                if (hasLinkPattern || (hasNameMention && !hasImageAlready)) {
+                    if (hasLinkPattern) {
+                        replyText = replyText.replace(linkPattern, '').trim();
+                    }
+                    const line = `IMAGE: ${product.name || name} | ${imageUrl}`;
                     if (replyText.length > 0 && !replyText.endsWith('\n')) {
                         replyText += '\n';
                     }
