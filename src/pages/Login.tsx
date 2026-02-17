@@ -134,7 +134,7 @@ const Login = () => {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label htmlFor="password" className="text-sm font-medium">{t("Password", "পাসওয়ার্ড")}</Label>
-                <Link to="/forgot-password" className="text-sm font-medium text-[#00ff88] transition-colors hover:opacity-80">
+                <Link to="/reset-password" className="text-sm font-medium text-[#00ff88] transition-colors hover:opacity-80">
                   {t("Forgot password?", "পাসওয়ার্ড ভুলে গেছেন?")}
                 </Link>
               </div>

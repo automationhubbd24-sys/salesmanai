@@ -29,6 +29,27 @@ const ResetPassword = () => {
     }
   }, [searchParams]);
 
+  const handleSendCode = async () => {
+    if (!email) {
+      toast.error(t("Please enter your email", "অনুগ্রহ করে আপনার ইমেইল দিন"));
+      return;
+    }
+    setLoading(true);
+    try {
+      const redirectTo = `${window.location.origin}/reset-password`;
+      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+      if (error) {
+        toast.error(error.message);
+      } else {
+        toast.success(t("Password reset code sent to your email", "পাসওয়ার্ড রিসেট কোড আপনার ইমেইলে পাঠানো হয়েছে"));
+      }
+    } catch (err: any) {
+      toast.error(err.message || t("Failed to send reset code", "রিসেট কোড পাঠাতে ব্যর্থ"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || otp.length < 6) {
@@ -115,6 +136,16 @@ const ResetPassword = () => {
                   className="h-12 text-base bg-[#0f0f0f] border border-gray-800 focus-visible:ring-[#00ff88]"
                   required
                 />
+              </div>
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleSendCode}
+                  disabled={loading}
+                  className="text-sm font-semibold text-[#00ff88] transition-opacity hover:opacity-80 disabled:opacity-50"
+                >
+                  {t("Send / Resend code", "কোড পাঠান / পুনরায় পাঠান")}
+                </button>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="otp" className="text-sm font-medium">{t("6-digit Code", "৬ ডিজিট কোড")}</Label>

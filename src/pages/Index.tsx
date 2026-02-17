@@ -12,6 +12,7 @@ import {
   Disc as Discord,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 
 const Index = () => {
   const { t } = useLanguage();
@@ -101,10 +102,18 @@ const Index = () => {
               )}
             </p>
             <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-4">
-              <a href="#pricing" className="inline-flex h-11 px-6 items-center justify-center rounded-xl bg-[#00ff88] text-black font-bold shadow-[0_10px_30px_rgba(0,255,136,0.25)] hover:shadow-[0_12px_36px_rgba(0,255,136,0.35)] transition-transform hover:scale-[1.02] active:scale-95">
+              <Link
+                to="/login"
+                className="inline-flex h-11 px-6 items-center justify-center rounded-xl bg-[#00ff88] text-black font-bold shadow-[0_10px_30px_rgba(0,255,136,0.25)] hover:shadow-[0_12px_36px_rgba(0,255,136,0.35)] transition-transform hover:scale-[1.02] active:scale-95"
+              >
                 Get Started
-              </a>
-              <a href="#demo" className="inline-flex h-11 px-6 items-center justify-center rounded-xl border border-gray-700 text-white hover:border-[#00ff88] hover:text-[#00ff88] transition-colors">
+              </Link>
+              <a
+                href="https://webhook.salesmanchatbot.online/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex h-11 px-6 items-center justify-center rounded-xl border border-gray-700 text-white hover:border-[#00ff88] hover:text-[#00ff88] transition-colors"
+              >
                 See Demo
               </a>
             </div>
