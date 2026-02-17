@@ -686,9 +686,9 @@ export default function MessengerSettingsPage() {
                         <TabsTrigger value="image">Image Detection Prompt</TabsTrigger>
                     </TabsList>
                     
-                    <TabsContent value="text" className="flex-1 mt-4 h-full">
+                    <TabsContent value="text" className="mt-4 h-full">
                         <div className="flex flex-col h-full gap-3">
-                          <div className="space-y-2 flex-1 flex flex-col">
+                          <div className="space-y-2">
                             <div className="flex items-center justify-between gap-2">
                               <div className="text-xs font-medium text-muted-foreground">
                                 Products shortcut
