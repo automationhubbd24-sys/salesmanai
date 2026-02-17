@@ -765,31 +765,41 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             }
         }
         
-        const productNamesFromPrompt = extractProductNamesFromPrompt(pagePrompts?.text_prompt || "");
+        let productNamesFromPrompt = extractProductNamesFromPrompt(pagePrompts?.text_prompt || "");
         const promptProductMap = {};
         let promptProductContext = "";
         if (productNamesFromPrompt && productNamesFromPrompt.length > 0 && pageConfig && pageConfig.user_id) {
-            const uniqueNames = Array.from(new Set(productNamesFromPrompt));
-            for (const rawName of uniqueNames) {
-                const key = rawName.toLowerCase();
-                if (promptProductMap[key]) continue;
-                try {
-                    const productsForPrompt = await dbService.searchProducts(pageConfig.user_id, rawName, pageConfig.page_id);
-                    if (productsForPrompt && productsForPrompt.length > 0) {
-                        promptProductMap[key] = productsForPrompt[0];
-                    }
-                } catch (e) {}
-            }
-            const promptProducts = Object.values(promptProductMap);
-            if (promptProducts.length > 0) {
-                promptProductContext = "\n[Instruction Products]\n";
-                promptProducts.forEach((p, i) => {
-                    const priceDisplay = p.price ? `${p.price} ${p.currency || 'BDT'}` : 'N/A';
-                    const descDisplay = p.description ? p.description.replace(/\n/g, ' ').substring(0, 200) : 'N/A';
-                    const imgDisplay = p.image_url || 'N/A';
-                    promptProductContext += `Item ${i + 1}: ${p.name} | Price: ${priceDisplay} | Image URL: ${imgDisplay} | Desc: ${descDisplay}\n`;
-                });
-                promptProductContext += "[End of Instruction Products]\n";
+            const lowerCombined = combinedText.toLowerCase();
+            const isGreeting = /\b(hi+|hello|hey)\b/.test(lowerCombined);
+            productNamesFromPrompt = productNamesFromPrompt.filter(name => {
+                if (name.toLowerCase() === 'logo' && !isGreeting) {
+                    return false;
+                }
+                return true;
+            });
+            if (productNamesFromPrompt.length > 0) {
+                const uniqueNames = Array.from(new Set(productNamesFromPrompt));
+                for (const rawName of uniqueNames) {
+                    const key = rawName.toLowerCase();
+                    if (promptProductMap[key]) continue;
+                    try {
+                        const productsForPrompt = await dbService.searchProducts(pageConfig.user_id, rawName, pageConfig.page_id);
+                        if (productsForPrompt && productsForPrompt.length > 0) {
+                            promptProductMap[key] = productsForPrompt[0];
+                        }
+                    } catch (e) {}
+                }
+                const promptProducts = Object.values(promptProductMap);
+                if (promptProducts.length > 0) {
+                    promptProductContext = "\n[Instruction Products]\n";
+                    promptProducts.forEach((p, i) => {
+                        const priceDisplay = p.price ? `${p.price} ${p.currency || 'BDT'}` : 'N/A';
+                        const descDisplay = p.description ? p.description.replace(/\n/g, ' ').substring(0, 200) : 'N/A';
+                        const imgDisplay = p.image_url || 'N/A';
+                        promptProductContext += `Item ${i + 1}: ${p.name} | Price: ${priceDisplay} | Image URL: ${imgDisplay} | Desc: ${descDisplay}\n`;
+                    });
+                    promptProductContext += "[End of Instruction Products]\n";
+                }
             }
         }
         
