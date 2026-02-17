@@ -962,42 +962,17 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             // Remove trailing punctuation (comma, dot) if accidentally matched
             url = url.replace(/[,.]$/, '');
 
-            // Fix Google Drive Links (Convert View to Direct)
-            const driveIdMatch = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
-            if (driveIdMatch && driveIdMatch[1]) {
-                url = `https://drive.google.com/uc?export=view&id=${driveIdMatch[1]}`;
-            }
+            const isSupabaseImage = /supabasexyz\.salesmanchatbot\.online\/storage\/v1\/object\/public\/product-images\/.+\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(url);
 
-            // --- VALIDATION: Skip invalid URLs (like product pages without image extensions) ---
-            const isImageExtension = /\.(jpg|jpeg|png|gif|webp|bmp|tiff)(\?.*)?$/i.test(url);
-            const isKnownImageHost = /drive\.google\.com|i\.imgur\.com|scontent|fbcdn|cdn|aws|storage|cloudfront/i.test(url);
-
-            if (isImageExtension || isKnownImageHost) {
+            if (isSupabaseImage) {
                 if (!extractedImages.some(img => img.url === url)) {
                     extractedImages.push({ url: url, title: title });
                 }
+                replyText = replyText.replace(fullMatch, '').trim();
             } else {
-                console.log(`[Image Extraction] Skipped non-image URL: ${url}`);
-                // If it's a product link, maybe we want to keep it in the text? 
-                // But the AI was instructed to put it in IMAGE: format. 
-                // Let's assume the Prompt Fix will reduce this, and here we just prevent the Crash.
+                // Non-Supabase URLs stay as normal text
+                console.log(`[Image Extraction] Keeping non-Supabase IMAGE URL as text: ${url}`);
             }
-
-            replyText = replyText.replace(fullMatch, '').trim();
-        }
-
-        // 2. Google Drive Viewer Links (Standalone)
-        const driveRegex = /(?:(?:Image|Link|Sobi|Photo|Picture|চিত্র)\s*[:|-]?\s*)?(https:\/\/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)\/view[^\s,]*)/gi;
-        let driveMatch;
-        while ((driveMatch = driveRegex.exec(replyText)) !== null) {
-            const fullMatch = driveMatch[0];
-            const fileId = driveMatch[2];
-            const directLink = `https://drive.google.com/uc?export=view&id=${fileId}`;
-            
-            if (!extractedImages.some(img => img.url === directLink)) {
-                extractedImages.push({ url: directLink, title: 'View Image' });
-            }
-            replyText = replyText.replace(fullMatch, '').trim();
         }
 
         // 3. Direct Image URLs (Fallback)
@@ -1011,10 +986,16 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             // Remove trailing punctuation
             url = url.replace(/[,.]$/, '');
 
-            if (!extractedImages.some(img => img.url === url)) {
-                extractedImages.push({ url: url, title: 'View Image' });
+            const isSupabaseImage = /supabasexyz\.salesmanchatbot\.online\/storage\/v1\/object\/public\/product-images\/.+\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(url);
+
+            if (isSupabaseImage) {
+                if (!extractedImages.some(img => img.url === url)) {
+                    extractedImages.push({ url: url, title: 'View Image' });
+                }
+                replyText = replyText.replace(fullMatch, '').trim();
+            } else {
+                console.log(`[Image Extraction] Keeping non-Supabase direct image URL as text: ${url}`);
             }
-            replyText = replyText.replace(fullMatch, '').trim();
         }
 
         const labeledLinkRegex = /(?:(?:Image|Link|Sobi|Photo|Picture|চিত্র)\s*[:|-]?\s*)(https?:\/\/[^\s,]+)/gi;
@@ -1026,27 +1007,20 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
              // Remove trailing punctuation
              url = url.replace(/[,.]$/, '');
 
-             // --- VALIDATION: Skip invalid URLs ---
-             const isImageExtension = /\.(jpg|jpeg|png|gif|webp|bmp|tiff)(\?.*)?$/i.test(url);
-             const isKnownImageHost = /drive\.google\.com|i\.imgur\.com|scontent|fbcdn|cdn|aws|storage|cloudfront/i.test(url);
+             const isSupabaseImage = /supabasexyz\.salesmanchatbot\.online\/storage\/v1\/object\/public\/product-images\/.+\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(url);
 
-             if (isImageExtension || isKnownImageHost) {
+             if (isSupabaseImage) {
                  if (!extractedImages.some(img => img.url === url)) {
                     extractedImages.push({ url: url, title: 'View Link' });
                 }
                 replyText = replyText.replace(fullMatch, '').trim();
              } else {
-                 console.log(`[Image Extraction] Ignored non-image labeled link: ${url}`);
+                 console.log(`[Image Extraction] Keeping non-Supabase labeled link as text: ${url}`);
              }
         }
         
         replyText = replyText.replace(/\[Image.*?\]/gi, '').trim();
         replyText = replyText.replace(/^Image:$/gm, '').trim();
-
-        const genericUrlRegex = /https?:\/\/[^\s]+/gi;
-        if (genericUrlRegex.test(replyText)) {
-            replyText = replyText.replace(genericUrlRegex, '').replace(/\s{2,}/g, ' ').trim();
-        }
 
         // Update aiResponse.images with our new object array
         aiResponse.images = extractedImages;
