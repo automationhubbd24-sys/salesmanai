@@ -765,11 +765,36 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             }
         }
         
-        // Construct Final Message for AI
-        const finalUserMessage = `${replyContext}${combinedText}`;
+        const finalUserMessage = `${replyContext}${combinedText}${promptProductContext}`;
         // ------------------------------------
 
         const productNamesFromPrompt = extractProductNamesFromPrompt(pagePrompts?.text_prompt || "");
+        const promptProductMap = {};
+        let promptProductContext = "";
+        if (productNamesFromPrompt && productNamesFromPrompt.length > 0 && pageConfig && pageConfig.user_id) {
+            const uniqueNames = Array.from(new Set(productNamesFromPrompt));
+            for (const rawName of uniqueNames) {
+                const key = rawName.toLowerCase();
+                if (promptProductMap[key]) continue;
+                try {
+                    const productsForPrompt = await dbService.searchProducts(pageConfig.user_id, rawName, pageConfig.page_id);
+                    if (productsForPrompt && productsForPrompt.length > 0) {
+                        promptProductMap[key] = productsForPrompt[0];
+                    }
+                } catch (e) {}
+            }
+            const promptProducts = Object.values(promptProductMap);
+            if (promptProducts.length > 0) {
+                promptProductContext = "\n[Instruction Products]\n";
+                promptProducts.forEach((p, i) => {
+                    const priceDisplay = p.price ? `${p.price} ${p.currency || 'BDT'}` : 'N/A';
+                    const descDisplay = p.description ? p.description.replace(/\n/g, ' ').substring(0, 200) : 'N/A';
+                    const imgDisplay = p.image_url || 'N/A';
+                    promptProductContext += `Item ${i + 1}: ${p.name} | Price: ${priceDisplay} | Image URL: ${imgDisplay} | Desc: ${descDisplay}\n`;
+                });
+                promptProductContext += "[End of Instruction Products]\n";
+            }
+        }
 
         // 5. Generate AI Reply
         // Use finalUserMessage which includes reply context
@@ -891,7 +916,29 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         // Start with existing images from AI Service (e.g. JSON response)
         const extractedImages = [...aiResponse.images]; 
 
-        const normalizedProductNames = (productNamesFromPrompt || []).map(n => n.toLowerCase());
+        const normalizedProductNames = Object.keys(promptProductMap || {});
+
+        if (normalizedProductNames.length > 0 && replyText) {
+            normalizedProductNames.forEach(name => {
+                const product = promptProductMap[name];
+                if (!product || !product.image_url) return;
+                let url = product.image_url;
+                if (!/^https?:\/\//i.test(url)) {
+                    url = `https://supabasexyz.salesmanchatbot.online/${url.replace(/^\/+/, '')}`;
+                }
+                const pattern = new RegExp(`Link\\s*:\\s*${escapeRegExp(name)}\\b`, 'gi');
+                if (pattern.test(replyText)) {
+                    replyText = replyText.replace(pattern, '').trim();
+                    const line = `IMAGE: ${product.name || name} | ${url}`;
+                    if (replyText.length > 0 && !replyText.endsWith('\n')) {
+                        replyText += '\n';
+                    }
+                    if (!replyText.includes(line)) {
+                        replyText += line;
+                    }
+                }
+            });
+        }
 
         // 1. STRICT FORMAT: IMAGE: Title | URL
         // Matches: IMAGE: Basic Plan | https://...
