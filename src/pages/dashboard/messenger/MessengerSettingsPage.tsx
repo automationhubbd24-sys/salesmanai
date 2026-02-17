@@ -108,51 +108,7 @@ export default function MessengerSettingsPage() {
   const textPromptRef = useRef<HTMLTextAreaElement | null>(null);
   const imagePromptRef = useRef<HTMLTextAreaElement | null>(null);
 
-  const [promptPreview, setPromptPreview] = useState("");
   const [productSearch, setProductSearch] = useState("");
-
-  const extractProductMarkers = (text: string, products: PromptProduct[]) => {
-    if (!text) return [];
-    const lowerText = text.toLowerCase();
-    const lines = text.split("\n");
-    const byName = new Map<string, { id: number; name: string; price: string }>();
-
-    // 1) ##PRODUCT lines theke marker
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith("##PRODUCT")) continue;
-      const match = trimmed.match(/##PRODUCT\s+"([^"]+)"\s*(.*)?$/);
-      if (!match) continue;
-      const name = match[1];
-      const price = (match[2] || "").trim();
-      const key = name.toLowerCase();
-      if (!byName.has(key)) {
-        byName.set(key, { id: byName.size, name, price });
-      }
-    }
-
-    // 2) Prompt er moddhe product name / hashtag thakle, oitao marker dhore niye ashi
-    for (const p of products) {
-      if (!p.name) continue;
-      const name = p.name;
-      const key = name.toLowerCase();
-
-      const hashPattern = `#${key}`;
-      const wordPattern = new RegExp(`\\b${escapeRegex(key)}\\b`, "i");
-
-      if (!lowerText.includes(hashPattern) && !wordPattern.test(lowerText)) continue;
-
-      if (!byName.has(key)) {
-        const price =
-          p.price !== null && p.price !== undefined
-            ? `${p.price} ${p.currency || "USD"}`
-            : "";
-        byName.set(key, { id: byName.size, name, price });
-      }
-    }
-
-    return Array.from(byName.values());
-  };
 
   const handleApplyCoupon = () => {
     // Simple validation for demo - in production this would verify with backend
@@ -349,9 +305,6 @@ export default function MessengerSettingsPage() {
   const handleOpenPrompt = (tab: "text" | "image") => {
     setActiveTab(tab);
     setIsPromptOpen(true);
-    if (tab === "text") {
-      setPromptPreview(initialTextPrompt);
-    }
     if (!productList.length && pageId) {
       fetchProductsForPrompt();
     }
@@ -373,7 +326,6 @@ export default function MessengerSettingsPage() {
       const nextValue = before + line + after;
 
       textarea.value = nextValue;
-      setPromptPreview(nextValue);
 
       const cursor = start + line.length;
       requestAnimationFrame(() => {
@@ -785,22 +737,10 @@ export default function MessengerSettingsPage() {
                                   ))}
                             </div>
                           </div>
-                          <div className="space-y-2">
-                            <div className="min-h-[24px] flex items-center">
-                              {extractProductMarkers(promptPreview || initialTextPrompt, productList).length === 0 ? (
-                                <span className="text-[11px] text-emerald-300/70">
-                                  No ##PRODUCT tags yet. Click a product above to insert it into the prompt.
-                                </span>
-                              ) : (
-                                <span className="text-[11px] text-emerald-300/70">
-                                  Product tags detected inside the system prompt.
-                                </span>
-                              )}
-                            </div>
+                          <div className="flex-1 flex flex-col">
                             <Textarea 
                               ref={textPromptRef}
                               defaultValue={initialTextPrompt}
-                              onChange={(e) => setPromptPreview(e.target.value)}
                               className="w-full flex-1 h-full font-mono text-sm leading-relaxed p-4 resize-none"
                               placeholder="You are a helpful assistant..."
                             />
