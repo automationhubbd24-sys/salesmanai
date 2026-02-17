@@ -69,12 +69,6 @@ type PromptProduct = {
   currency?: string | null;
 };
 
-type ProductMarker = {
-  id: number;
-  name: string;
-  price: string;
-};
-
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export default function MessengerSettingsPage() {
@@ -117,10 +111,12 @@ export default function MessengerSettingsPage() {
   const [promptPreview, setPromptPreview] = useState("");
   const [productSearch, setProductSearch] = useState("");
 
-  const extractProductMarkers = (text: string): ProductMarker[] => {
+  const extractProductMarkers = (text: string, products: PromptProduct[]) => {
     if (!text) return [];
+    const lowerText = text.toLowerCase();
     const lines = text.split("\n");
-    const markers: ProductMarker[] = [];
+    const byName = new Map<string, { id: number; name: string; price: string }>();
+
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed.startsWith("##PRODUCT")) continue;
@@ -128,9 +124,27 @@ export default function MessengerSettingsPage() {
       if (!match) continue;
       const name = match[1];
       const price = (match[2] || "").trim();
-      markers.push({ id: markers.length, name, price });
+      const key = name.toLowerCase();
+      if (!byName.has(key)) {
+        byName.set(key, { id: byName.size, name, price });
+      }
     }
-    return markers;
+
+    for (const p of products) {
+      if (!p.name) continue;
+      const name = p.name;
+      const key = name.toLowerCase();
+      if (!lowerText.includes(`#${key}`)) continue;
+      if (!byName.has(key)) {
+        const price =
+          p.price !== null && p.price !== undefined
+            ? `${p.price} ${p.currency || "USD"}`
+            : "";
+        byName.set(key, { id: byName.size, name, price });
+      }
+    }
+
+    return Array.from(byName.values());
   };
 
   const handleApplyCoupon = () => {
@@ -685,7 +699,7 @@ export default function MessengerSettingsPage() {
 
       {/* System Prompt Full Screen Dialog */}
       <Dialog open={isPromptOpen} onOpenChange={setIsPromptOpen}>
-        <DialogContent className="max-w-4xl h-[85vh] flex flex-col">
+        <DialogContent className="max-w-5xl h-[90vh] flex flex-col">
             <DialogHeader>
                 <DialogTitle>Edit AI Instructions</DialogTitle>
                 <DialogDescription>
@@ -752,26 +766,36 @@ export default function MessengerSettingsPage() {
                           </div>
                           <div className="space-y-2">
                             <div className="min-h-[32px] flex flex-wrap gap-2 rounded-md bg-emerald-500/5 border border-emerald-500/20 px-3 py-1.5 backdrop-blur">
-                              {extractProductMarkers(promptPreview || initialTextPrompt).length === 0 && (
+                              {extractProductMarkers(promptPreview || initialTextPrompt, productList).length === 0 && (
                                 <span className="text-[11px] text-emerald-300/60">
                                   No ##PRODUCT tags yet. Click a product above to insert it into the prompt.
                                 </span>
                               )}
-                              {extractProductMarkers(promptPreview || initialTextPrompt).map((m) => (
-                                <span
-                                  key={m.id}
-                                  className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-100 border border-emerald-400/40 shadow-sm"
-                                >
-                                  #{m.name}
-                                  {m.price && <span className="ml-1 opacity-75">• {m.price}</span>}
-                                </span>
-                              ))}
+                              {extractProductMarkers(promptPreview || initialTextPrompt, productList).map((m) => {
+                                const isValid = productList.some(
+                                  (p) => p.name && p.name.toLowerCase() === m.name.toLowerCase()
+                                );
+                                return (
+                                  <span
+                                    key={m.id}
+                                    className={
+                                      "text-[11px] px-2 py-0.5 rounded-full border shadow-sm " +
+                                      (isValid
+                                        ? "bg-emerald-500/20 text-emerald-100 border-emerald-400/40"
+                                        : "bg-zinc-700/40 text-zinc-200/70 border-zinc-500/30")
+                                    }
+                                  >
+                                    #{m.name}
+                                    {m.price && <span className="ml-1 opacity-75">• {m.price}</span>}
+                                  </span>
+                                );
+                              })}
                             </div>
                             <Textarea 
                               ref={textPromptRef}
                               defaultValue={initialTextPrompt}
                               onChange={(e) => setPromptPreview(e.target.value)}
-                              className="w-full flex-1 min-h-[260px] font-mono text-sm leading-relaxed p-4 resize-none"
+                              className="w-full flex-1 min-h-[320px] font-mono text-sm leading-relaxed p-4 resize-none"
                               placeholder="You are a helpful assistant..."
                             />
                           </div>
