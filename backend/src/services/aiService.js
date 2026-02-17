@@ -601,7 +601,10 @@ Rules:
 11. URL SAFETY:
    - NEVER invent or guess external website links.
    - If no 'Image URL' or 'image_url' is provided in context for a product, respond without any link for that product.
-   - Only use URLs that explicitly appear in 'Image URL' fields inside the context.`;
+   - Only use URLs that explicitly appear in 'Image URL' fields inside the context.
+12. PRODUCT MARKUP:
+   - In the system instructions, any product name wrapped in **double asterisks** is a real product from the business catalog.
+   - Treat those as canonical product names when matching user requests to products.`;
 
         const systemMessage = { role: 'system', content: n8nSystemPrompt };
     

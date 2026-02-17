@@ -69,6 +69,8 @@ type PromptProduct = {
   currency?: string | null;
 };
 
+const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 export default function MessengerSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [dbId, setDbId] = useState<string | null>(null);
@@ -103,6 +105,7 @@ export default function MessengerSettingsPage() {
 
   const [productList, setProductList] = useState<PromptProduct[]>([]);
   const [productLoading, setProductLoading] = useState(false);
+  const [promptLocked, setPromptLocked] = useState(false);
 
   const handleApplyCoupon = () => {
     // Simple validation for demo - in production this would verify with backend
@@ -177,8 +180,10 @@ export default function MessengerSettingsPage() {
         const pageRow = pageData as any;
         
         setVerified(dbRow.verified !== false);
-        setTempPrompt(dbRow.text_prompt || "");
-        setTempImagePrompt(dbRow.image_prompt || ""); // Load Image Prompt
+        if (!promptLocked) {
+          setTempPrompt(dbRow.text_prompt || "");
+          setTempImagePrompt(dbRow.image_prompt || "");
+        }
 
         // Check ownership
         const { data: { user } } = await supabase.auth.getUser();
@@ -245,7 +250,9 @@ export default function MessengerSettingsPage() {
         });
         
         // Set temp prompt for modal
-        setTempPrompt(dbRow.text_prompt || "");
+        if (!promptLocked) {
+          setTempPrompt(dbRow.text_prompt || "");
+        }
         
         // Set behavior settings
         setWait(dbRow.wait || 8);
@@ -301,6 +308,7 @@ export default function MessengerSettingsPage() {
 
   const handleOpenPrompt = (tab: "text" | "image") => {
     setActiveTab(tab);
+    setPromptLocked(true);
     setIsPromptOpen(true);
     if (!productList.length && pageId) {
       fetchProductsForPrompt();
@@ -310,11 +318,21 @@ export default function MessengerSettingsPage() {
   const handleInsertProductIntoPrompt = (product: PromptProduct) => {
     const name = product?.name || "Unnamed Product";
     const priceText = product?.price ? `${product.price} ${product.currency || "USD"}` : "";
-    const line =
-      priceText
-        ? `\nIf user asks for ${name}, send image and details of product "${name}" (price ${priceText}).`
-        : `\nIf user asks for ${name}, send image and details of product "${name}".`;
+    const line = priceText
+      ? `\nযদি কাস্টমার "${name}" নামের প্রোডাক্ট চায় (বা একই অর্থের কিছু লিখে), তাহলে সবসময় গ্লোবাল প্রোডাক্ট "${name}" ব্যবহার করবে এবং শুধু এই প্রোডাক্টের ছবি (image_url) ও দাম ${priceText} পাঠাবে। অন্য কোনো প্রোডাক্ট বা লিংক বানাবে না।`
+      : `\nযদি কাস্টমার "${name}" নামের প্রোডাক্ট চায় (বা একই অর্থের কিছু লিখে), তাহলে সবসময় গ্লোবাল প্রোডাক্ট "${name}" ব্যবহার করবে এবং শুধু এই প্রোডাক্টের ছবি (image_url) পাঠাবে। অন্য কোনো প্রোডাক্ট বা লিংক বানাবে না।`;
     setTempPrompt((prev) => (prev || "") + line);
+  };
+
+  const boldProductsInPrompt = (text: string): string => {
+    if (!text || !productList.length) return text;
+    let result = text;
+    for (const p of productList) {
+      if (!p.name) continue;
+      const pattern = new RegExp(`(?<!\\*)\\b(${escapeRegex(p.name)})\\b(?!\\*)`, "gi");
+      result = result.replace(pattern, (match) => `**${match}**`);
+    }
+    return result;
   };
 
   const handleSavePrompt = async () => {
@@ -324,6 +342,9 @@ export default function MessengerSettingsPage() {
         const { data: { session } } = await supabase.auth.getSession();
         const token = session?.access_token;
 
+        const processedPrompt = boldProductsInPrompt(tempPrompt);
+        setTempPrompt(processedPrompt);
+
         const res = await fetch(`${BACKEND_URL}/messenger/config/${dbId}`, {
             method: 'PUT',
             headers: {
@@ -331,7 +352,7 @@ export default function MessengerSettingsPage() {
                 ...(token ? { Authorization: `Bearer ${token}` } : {})
             },
             body: JSON.stringify({ 
-                text_prompt: tempPrompt,
+                text_prompt: processedPrompt,
                 image_prompt: tempImagePrompt
             })
         });
@@ -343,7 +364,7 @@ export default function MessengerSettingsPage() {
         }
         
         // Also update form state to keep in sync
-        form.setValue('text_prompt', tempPrompt);
+        form.setValue('text_prompt', processedPrompt);
         
         toast.success("System & Image prompts updated successfully!");
         
@@ -358,6 +379,7 @@ export default function MessengerSettingsPage() {
         }
 
         setIsPromptOpen(false);
+        setPromptLocked(false);
     } catch (error: any) {
         console.error("Error saving prompt:", error);
         toast.error("Failed to save prompt: " + error.message);
@@ -630,7 +652,15 @@ export default function MessengerSettingsPage() {
       </div>
 
       {/* System Prompt Full Screen Dialog */}
-      <Dialog open={isPromptOpen} onOpenChange={setIsPromptOpen}>
+      <Dialog
+        open={isPromptOpen}
+        onOpenChange={(open) => {
+          setIsPromptOpen(open);
+          if (!open) {
+            setPromptLocked(false);
+          }
+        }}
+      >
         <DialogContent className="max-w-4xl h-[85vh] flex flex-col">
             <DialogHeader>
                 <DialogTitle>Edit AI Instructions</DialogTitle>
@@ -719,7 +749,15 @@ export default function MessengerSettingsPage() {
                     </Button>
                 </div>
                 <div className="flex gap-2">
-                    <Button variant="outline" onClick={() => setIsPromptOpen(false)}>Cancel</Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setIsPromptOpen(false);
+                        setPromptLocked(false);
+                      }}
+                    >
+                      Cancel
+                    </Button>
                     <Button onClick={handleSavePrompt} disabled={promptSaving || optimizing}>
                         {promptSaving ? <div className="animate-spin rounded-full h-4 w-4 border-2 border-current border-t-transparent mr-2" /> : <Save className="mr-2 h-4 w-4" />}
                         Save Prompts
