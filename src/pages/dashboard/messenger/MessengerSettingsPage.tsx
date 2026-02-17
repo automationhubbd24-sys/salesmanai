@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { BACKEND_URL } from "@/config";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -128,34 +128,7 @@ export default function MessengerSettingsPage() {
       },
   });
 
-  useEffect(() => {
-    const checkConnection = () => {
-      const storedDbId = localStorage.getItem("active_fb_db_id");
-      const storedPageId = localStorage.getItem("active_fb_page_id");
-      
-      if (storedDbId && storedPageId) {
-        setDbId(storedDbId);
-        setPageId(storedPageId);
-        fetchConfig(storedDbId, storedPageId);
-      } else {
-        setDbId(null);
-        setPageId(null);
-        setLoading(false);
-      }
-    };
-
-    checkConnection();
-
-    window.addEventListener("storage", checkConnection);
-    window.addEventListener("db-connection-changed", checkConnection);
-    
-    return () => {
-      window.removeEventListener("storage", checkConnection);
-      window.removeEventListener("db-connection-changed", checkConnection);
-    };
-  }, [form]);
-
-  const fetchConfig = async (id: string, pId: string) => {
+  const fetchConfig = useCallback(async (id: string, pId: string) => {
     try {
       // Fetch text_prompt from fb_message_database
       const { data: dbData, error: dbError } = await supabase
@@ -266,7 +239,34 @@ export default function MessengerSettingsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [promptLocked]);
+
+  useEffect(() => {
+    const checkConnection = () => {
+      const storedDbId = localStorage.getItem("active_fb_db_id");
+      const storedPageId = localStorage.getItem("active_fb_page_id");
+      
+      if (storedDbId && storedPageId) {
+        setDbId(storedDbId);
+        setPageId(storedPageId);
+        fetchConfig(storedDbId, storedPageId);
+      } else {
+        setDbId(null);
+        setPageId(null);
+        setLoading(false);
+      }
+    };
+
+    checkConnection();
+
+    window.addEventListener("storage", checkConnection);
+    window.addEventListener("db-connection-changed", checkConnection);
+    
+    return () => {
+      window.removeEventListener("storage", checkConnection);
+      window.removeEventListener("db-connection-changed", checkConnection);
+    };
+  }, [form, fetchConfig]);
 
   const fetchProductsForPrompt = async () => {
     if (!pageId) return;
