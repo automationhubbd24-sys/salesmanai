@@ -49,6 +49,7 @@ export default function ProductsPage() {
     // Form State
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [isWCDialogOpen, setIsWCDialogOpen] = useState(false);
+    const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [editProductId, setEditProductId] = useState<number | null>(null);
     
@@ -106,6 +107,7 @@ export default function ProductsPage() {
         { name: "Default", price: "0", currency: "BDT", available: true }
     ]);
     const [showVariants, setShowVariants] = useState(false);
+    const [pendingDeleteProduct, setPendingDeleteProduct] = useState<Product | null>(null);
 
     useEffect(() => {
         checkAccess();
@@ -297,6 +299,18 @@ export default function ProductsPage() {
             formData.append("stock", productStock);
             formData.append("is_active", "true");
             formData.append("allowed_page_ids", JSON.stringify(allowedPages));
+
+            let pageId: string | null = null;
+            if (typeof window !== "undefined") {
+                if (platform === "messenger") {
+                    pageId = localStorage.getItem("active_fb_page_id");
+                } else if (platform === "whatsapp") {
+                    pageId = localStorage.getItem("active_wa_session_id");
+                }
+            }
+            if (pageId) {
+                formData.append("page_id", pageId);
+            }
             
             // If variants are enabled, send them. Otherwise send default/empty.
             // Or construct variants from main fields if needed for backward compatibility
@@ -386,22 +400,39 @@ export default function ProductsPage() {
 
     const handleDelete = async (id: number) => {
         if (!userId) return;
-        if (!confirm("Are you sure you want to delete this product?")) return;
 
         try {
             const { data: { session } } = await supabase.auth.getSession();
             const token = session?.access_token;
 
-            const res = await fetch(`${BACKEND_URL}/api/products/${id}?user_id=${userId}`, {
+            const params = new URLSearchParams();
+            params.set("user_id", userId);
+
+            let pageId: string | null = null;
+            if (typeof window !== "undefined") {
+                if (platform === "messenger") {
+                    pageId = localStorage.getItem("active_fb_page_id");
+                } else if (platform === "whatsapp") {
+                    pageId = localStorage.getItem("active_wa_session_id");
+                }
+            }
+
+            if (pageId) {
+                params.set("page_id", pageId);
+            }
+
+            const res = await fetch(`${BACKEND_URL}/api/products/${id}?${params.toString()}`, {
                 method: "DELETE",
                 headers: token ? { Authorization: `Bearer ${token}` } : {}
             });
+
+            const data = await res.json().catch(() => null);
 
             if (res.ok) {
                 toast.success("Product deleted");
                 fetchProducts(userId);
             } else {
-                toast.error("Failed to delete product");
+                toast.error(data?.error || "Failed to delete product");
             }
         } catch (error) {
             console.error(error);
@@ -954,7 +985,15 @@ export default function ProductsPage() {
                                             <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleEdit(product)}>
                                                 <Edit className="w-4 h-4" />
                                             </Button>
-                                            <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => handleDelete(product.id)}>
+                                            <Button
+                                                size="icon"
+                                                variant="ghost"
+                                                className="h-8 w-8 text-destructive hover:text-destructive"
+                                                onClick={() => {
+                                                    setPendingDeleteProduct(product);
+                                                    setIsDeleteDialogOpen(true);
+                                                }}
+                                            >
                                                 <Trash2 className="w-4 h-4" />
                                             </Button>
                                         </div>
@@ -965,6 +1004,54 @@ export default function ProductsPage() {
                     </TableBody>
                 </Table>
             </div>
+
+            <Dialog
+                open={isDeleteDialogOpen}
+                onOpenChange={(open) => {
+                    setIsDeleteDialogOpen(open);
+                    if (!open) {
+                        setPendingDeleteProduct(null);
+                    }
+                }}
+            >
+                <DialogContent className="max-w-sm bg-[#0f0f0f]/90 border border-white/10 backdrop-blur-md rounded-2xl">
+                    <DialogHeader>
+                        <DialogTitle>Delete product</DialogTitle>
+                        <DialogDescription>
+                            {pendingDeleteProduct
+                                ? `Are you sure you want to delete "${pendingDeleteProduct.name}"? This action cannot be undone.`
+                                : "Are you sure you want to delete this product?"}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            className="border-white/20 rounded-md"
+                            onClick={() => {
+                                setIsDeleteDialogOpen(false);
+                                setPendingDeleteProduct(null);
+                            }}
+                        >
+                            Cancel
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="destructive"
+                            className="rounded-md"
+                            onClick={async () => {
+                                if (!pendingDeleteProduct) return;
+                                await handleDelete(pendingDeleteProduct.id);
+                                setIsDeleteDialogOpen(false);
+                                setPendingDeleteProduct(null);
+                            }}
+                            disabled={isSubmitting}
+                        >
+                            Delete
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

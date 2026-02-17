@@ -85,6 +85,38 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
     return { effectiveUserId };
 }
 
+async function resolveProductOwnerUserId(req, baseUserId, pageId) {
+    if (pageId) {
+        const pid = String(pageId);
+        const { data: pageRow } = await dbService.supabase
+            .from('page_access_token_message')
+            .select('user_id')
+            .eq('page_id', pid)
+            .not('user_id', 'is', null)
+            .limit(1)
+            .maybeSingle();
+
+        if (pageRow && pageRow.user_id) {
+            return pageRow.user_id;
+        }
+
+        const { data: waRow } = await dbService.supabase
+            .from('whatsapp_message_database')
+            .select('user_id')
+            .eq('session_name', pid)
+            .not('user_id', 'is', null)
+            .limit(1)
+            .maybeSingle();
+
+        if (waRow && waRow.user_id) {
+            return waRow.user_id;
+        }
+    }
+
+    const { effectiveUserId } = await getEffectiveUserIdFromRequest(req, baseUserId);
+    return effectiveUserId;
+}
+
 exports.checkStatus = async (req, res) => {
     try {
         const baseUserId = req.query.user_id || null;
@@ -104,10 +136,9 @@ exports.checkStatus = async (req, res) => {
 exports.createProduct = async (req, res) => {
     try {
         const baseUserId = req.body.user_id || null;
-        const { effectiveUserId } = await getEffectiveUserIdFromRequest(req, baseUserId);
-        if (!effectiveUserId) return res.status(400).json({ error: "user_id is required" });
-
-        const userId = effectiveUserId;
+        const pageId = req.body.page_id || null;
+        const userId = await resolveProductOwnerUserId(req, baseUserId, pageId);
+        if (!userId) return res.status(400).json({ error: "user_id is required" });
 
         const hasAccess = await dbService.checkProductFeatureAccess(userId);
         if (!hasAccess) {
@@ -218,11 +249,9 @@ exports.updateProduct = async (req, res) => {
     try {
         const { id } = req.params;
         const baseUserId = req.body.user_id || null;
-        const { effectiveUserId } = await getEffectiveUserIdFromRequest(req, baseUserId);
-        
-        if (!effectiveUserId) return res.status(400).json({ error: "user_id is required for verification" });
-
-        const userId = effectiveUserId;
+        const pageId = req.body.page_id || null;
+        const userId = await resolveProductOwnerUserId(req, baseUserId, pageId);
+        if (!userId) return res.status(400).json({ error: "user_id is required for verification" });
 
         // 1. Handle Image Upload if present
         let imageUrl = undefined; // undefined means no change
@@ -275,11 +304,13 @@ exports.deleteProduct = async (req, res) => {
         const baseUserId = (req.body && req.body.user_id)
             ? req.body.user_id
             : (req.query && req.query.user_id ? req.query.user_id : null);
-        const { effectiveUserId } = await getEffectiveUserIdFromRequest(req, baseUserId);
-        
-        if (!effectiveUserId) return res.status(400).json({ error: "user_id is required for verification" });
+        const pageId = (req.body && req.body.page_id)
+            ? req.body.page_id
+            : (req.query && req.query.page_id ? req.query.page_id : null);
+        const userId = await resolveProductOwnerUserId(req, baseUserId, pageId);
+        if (!userId) return res.status(400).json({ error: "user_id is required for verification" });
 
-        await dbService.deleteProduct(id, effectiveUserId);
+        await dbService.deleteProduct(id, userId);
         res.json({ success: true, message: "Product deleted" });
     } catch (error) {
         res.status(500).json({ error: error.message });

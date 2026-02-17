@@ -1686,9 +1686,10 @@ async function updateProduct(id, userId, updates) {
         .eq('id', id)
         .eq('user_id', userId) // Security: Ensure ownership
         .select()
-        .single();
+        .maybeSingle();
 
     if (error) throw error;
+    if (!data) throw new Error('Product not found or not owned by user');
     return data;
 }
 
