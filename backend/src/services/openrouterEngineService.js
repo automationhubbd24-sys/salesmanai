@@ -294,24 +294,19 @@ Return ONLY valid JSON:
             }, { onConflict: 'config_type' });
     }
 
-    /**
-     * PUBLIC API: Process Request
-     */
     async processRequest({ message, history, images = [], systemPrompt = '' }) {
-        // Use Cached Config
         if (!this.configCache) {
             await this.performUpdateCycle();
         }
 
-        const { text, image, keys } = this.configCache;
-        
+        const { text, voice, image, keys } = this.configCache;
+
         if (!keys || keys.length === 0) {
             throw new Error("No Active OpenRouter Keys Available.");
         }
 
-        // Rotate Keys
         const apiKey = keys[Math.floor(Math.random() * keys.length)];
-        
+
         const client = new OpenAI({
             apiKey: apiKey,
             baseURL: OPENROUTER_API_BASE,
@@ -321,69 +316,155 @@ Return ONLY valid JSON:
             }
         });
 
-        // Determine Model
-        let model = text;
-        if (images.length > 0) model = image;
-
-        // Construct Messages
         const msgs = [
             { role: 'system', content: systemPrompt },
             ...history
         ];
 
-        // Add User Message
         const userContent = [{ type: 'text', text: message }];
         images.forEach(img => {
             userContent.push({ type: 'image_url', image_url: { url: img } });
         });
         msgs.push({ role: 'user', content: userContent });
 
-        // API Call
-        try {
-            const completion = await client.chat.completions.create({
-                model: model,
-                messages: msgs,
-                // response_format: { type: "json_object" } // REMOVED: User wants plain text
-            });
-            
-            let content = completion.choices[0].message.content;
-            
-            // CLEANUP: If model returns JSON string despite request, parse it
-            if (content.trim().startsWith('{') && content.trim().endsWith('}')) {
-                try {
-                    const parsed = JSON.parse(content);
-                    // Extract message or content field if exists
-                    if (parsed.message) content = parsed.message;
-                    else if (parsed.content) content = parsed.content;
-                    else if (parsed.response) content = parsed.response;
-                    // Else keep original JSON string if no clear text field
-                } catch (e) {
-                    // Not valid JSON, ignore
+        if (images.length > 0 && image) {
+            try {
+                const completion = await client.chat.completions.create({
+                    model: image,
+                    messages: msgs
+                });
+
+                let content = completion.choices[0].message.content || "";
+
+                if (content.trim().startsWith('{') && content.trim().endsWith('}')) {
+                    try {
+                        const parsed = JSON.parse(content);
+                        if (parsed.message) content = parsed.message;
+                        else if (parsed.content) content = parsed.content;
+                        else if (parsed.response) content = parsed.response;
+                    } catch (e) {
+                    }
+                }
+
+                return content;
+            } catch (error) {
+                if (error.status === 401 || error.message.includes('API key')) {
+                    console.warn(`[OpenRouterEngine] Invalid API Key detected. Marking as inactive.`);
+                    await dbService.supabase
+                        .from('openrouter_engine_keys')
+                        .update({ is_active: false })
+                        .eq('api_key', apiKey);
+                }
+
+                if (error.status === 429 && image) {
+                    console.warn(`[OpenRouterEngine] Rate Limit Hit for ${image}. Reporting...`);
+                    keyService.report429(image);
+                }
+
+                console.error("[OpenRouterEngine] Request Failed:", error.message);
+                throw error;
+            }
+        }
+
+        const candidateModels = [];
+        if (text) candidateModels.push(text);
+        if (voice && !candidateModels.includes(voice)) candidateModels.push(voice);
+
+        if (candidateModels.length === 0) {
+            throw new Error("No candidate models configured for OpenRouter engine.");
+        }
+
+        const responses = [];
+        let lastError = null;
+
+        for (const modelId of candidateModels) {
+            try {
+                const completion = await client.chat.completions.create({
+                    model: modelId,
+                    messages: msgs
+                });
+
+                let content = completion.choices[0].message.content || "";
+
+                if (content.trim().startsWith('{') && content.trim().endsWith('}')) {
+                    try {
+                        const parsed = JSON.parse(content);
+                        if (parsed.message) content = parsed.message;
+                        else if (parsed.content) content = parsed.content;
+                        else if (parsed.response) content = parsed.response;
+                    } catch (e) {
+                    }
+                }
+
+                responses.push({ model: modelId, content });
+            } catch (error) {
+                lastError = error;
+
+                if (error.status === 401 || error.message.includes('API key')) {
+                    console.warn(`[OpenRouterEngine] Invalid API Key detected. Marking as inactive.`);
+                    await dbService.supabase
+                        .from('openrouter_engine_keys')
+                        .update({ is_active: false })
+                        .eq('api_key', apiKey);
+                }
+
+                if (error.status === 429) {
+                    console.warn(`[OpenRouterEngine] Rate Limit Hit for ${modelId}. Reporting...`);
+                    keyService.report429(modelId);
                 }
             }
-
-            return content;
-        } catch (error) {
-            // Report Invalid Key
-            if (error.status === 401 || error.message.includes('API key')) {
-                console.warn(`[OpenRouterEngine] Invalid API Key detected. Marking as inactive.`);
-                await dbService.supabase
-                    .from('openrouter_engine_keys')
-                    .update({ is_active: false })
-                    .eq('api_key', apiKey);
-            }
-
-            // Report Rate Limit to KeyService
-            if (error.status === 429) {
-                console.warn(`[OpenRouterEngine] Rate Limit Hit for ${model}. Reporting...`);
-                // Using new strict 2m -> 24h lock mechanism
-                keyService.report429(model); 
-            }
-
-            // Fallback Logic?
-            console.error("[OpenRouterEngine] Request Failed:", error.message);
-            throw error;
         }
+
+        if (responses.length === 0) {
+            if (lastError) {
+                console.error("[OpenRouterEngine] All candidate models failed:", lastError.message);
+                throw lastError;
+            }
+            throw new Error("No response from any OpenRouter model.");
+        }
+
+        if (responses.length === 1) {
+            return responses[0].content;
+        }
+
+        try {
+            const judgeKey = await keyService.getSmartKey('google', 'gemini-2.5-flash-lite');
+
+            if (judgeKey && judgeKey.key) {
+                const judgeClient = new OpenAI({
+                    apiKey: judgeKey.key,
+                    baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/'
+                });
+
+                const summaryParts = responses.map((r, index) => {
+                    return `Candidate ${index + 1} (model=${r.model}):\n${r.content}`;
+                });
+
+                const judgePrompt = [
+                    `User Message:\n${message}`,
+                    systemPrompt ? `\nSystem Prompt:\n${systemPrompt}` : "",
+                    `\nCandidate Answers:\n${summaryParts.join("\n\n")}`,
+                    `\nTask: Choose the best overall answer for a Bengali customer chat. Fix minor issues if needed.`,
+                    `Respond with the final answer only. Do not mention models or that you are judging.`
+                ].join("\n");
+
+                const completion = await judgeClient.chat.completions.create({
+                    model: 'gemini-2.5-flash-lite',
+                    messages: [{ role: 'user', content: judgePrompt }]
+                });
+
+                const finalContent = completion.choices[0].message.content || "";
+
+                if (finalContent && finalContent.trim().length > 0) {
+                    return finalContent;
+                }
+            }
+        } catch (e) {
+            console.warn("[OpenRouterEngine] Judge model failed, falling back to first candidate:", e.message);
+        }
+
+        const sortedByLength = [...responses].sort((a, b) => b.content.length - a.content.length);
+        return sortedByLength[0].content;
     }
 }
 
