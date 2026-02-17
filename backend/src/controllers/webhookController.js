@@ -765,9 +765,6 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             }
         }
         
-        const finalUserMessage = `${replyContext}${combinedText}${promptProductContext}`;
-        // ------------------------------------
-
         const productNamesFromPrompt = extractProductNamesFromPrompt(pagePrompts?.text_prompt || "");
         const promptProductMap = {};
         let promptProductContext = "";
@@ -795,6 +792,9 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 promptProductContext += "[End of Instruction Products]\n";
             }
         }
+        
+        const finalUserMessage = `${replyContext}${combinedText}${promptProductContext}`;
+        // ------------------------------------
 
         // 5. Generate AI Reply
         // Use finalUserMessage which includes reply context
