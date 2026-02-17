@@ -55,6 +55,7 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
                 .select('user_id')
                 .eq('email', ownerEmail)
                 .not('user_id', 'is', null)
+                .limit(1)
                 .maybeSingle();
 
             if (pageOwner && pageOwner.user_id) {
@@ -67,6 +68,7 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
                     .select('user_id')
                     .eq('email', ownerEmail)
                     .not('user_id', 'is', null)
+                    .limit(1)
                     .maybeSingle();
 
                 if (waOwner && waOwner.user_id) {
@@ -270,7 +272,9 @@ exports.updateProduct = async (req, res) => {
 exports.deleteProduct = async (req, res) => {
     try {
         const { id } = req.params;
-        const baseUserId = (req.body && req.body.user_id) ? req.body.user_id : null;
+        const baseUserId = (req.body && req.body.user_id)
+            ? req.body.user_id
+            : (req.query && req.query.user_id ? req.query.user_id : null);
         const { effectiveUserId } = await getEffectiveUserIdFromRequest(req, baseUserId);
         
         if (!effectiveUserId) return res.status(400).json({ error: "user_id is required for verification" });

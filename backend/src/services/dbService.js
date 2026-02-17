@@ -1694,13 +1694,16 @@ async function updateProduct(id, userId, updates) {
 
 // 30. Delete Product
 async function deleteProduct(id, userId) {
-    const { error } = await supabase
+    const { data, error } = await supabase
         .from('products')
         .delete()
         .eq('id', id)
-        .eq('user_id', userId);
+        .eq('user_id', userId)
+        .select('id')
+        .maybeSingle();
 
     if (error) throw error;
+    if (!data) throw new Error('Product not found or not owned by user');
     return true;
 }
 
