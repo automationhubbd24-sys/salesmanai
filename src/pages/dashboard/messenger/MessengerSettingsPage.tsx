@@ -117,6 +117,7 @@ export default function MessengerSettingsPage() {
     const lines = text.split("\n");
     const byName = new Map<string, { id: number; name: string; price: string }>();
 
+    // 1) ##PRODUCT lines theke marker
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed.startsWith("##PRODUCT")) continue;
@@ -130,11 +131,17 @@ export default function MessengerSettingsPage() {
       }
     }
 
+    // 2) Prompt er moddhe product name / hashtag thakle, oitao marker dhore niye ashi
     for (const p of products) {
       if (!p.name) continue;
       const name = p.name;
       const key = name.toLowerCase();
-      if (!lowerText.includes(`#${key}`)) continue;
+
+      const hashPattern = `#${key}`;
+      const wordPattern = new RegExp(`\\b${escapeRegex(key)}\\b`, "i");
+
+      if (!lowerText.includes(hashPattern) && !wordPattern.test(lowerText)) continue;
+
       if (!byName.has(key)) {
         const price =
           p.price !== null && p.price !== undefined
@@ -715,7 +722,7 @@ export default function MessengerSettingsPage() {
                     
                     <TabsContent value="text" className="flex-1 mt-4 h-full">
                         <div className="flex flex-col h-full gap-3">
-                          <div className="space-y-2">
+                          <div className="space-y-2 flex-1 flex flex-col">
                             <div className="flex items-center justify-between gap-2">
                               <div className="text-xs font-medium text-muted-foreground">
                                 Products shortcut
@@ -795,7 +802,7 @@ export default function MessengerSettingsPage() {
                               ref={textPromptRef}
                               defaultValue={initialTextPrompt}
                               onChange={(e) => setPromptPreview(e.target.value)}
-                              className="w-full flex-1 min-h-[320px] font-mono text-sm leading-relaxed p-4 resize-none"
+                              className="w-full flex-1 h-full font-mono text-sm leading-relaxed p-4 resize-none"
                               placeholder="You are a helpful assistant..."
                             />
                           </div>
