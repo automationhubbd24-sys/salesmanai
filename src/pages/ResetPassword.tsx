@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,6 +12,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 const ResetPassword = () => {
   const { t } = useLanguage();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
   const [verified, setVerified] = useState(false);
@@ -22,7 +23,11 @@ const ResetPassword = () => {
 
   useEffect(() => {
     setVerified(false);
-  }, []);
+    const emailParam = searchParams.get("email");
+    if (emailParam) {
+      setEmail(emailParam);
+    }
+  }, [searchParams]);
 
   const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault();

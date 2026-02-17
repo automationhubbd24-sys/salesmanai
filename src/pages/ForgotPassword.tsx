@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,6 +11,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 
 const ForgotPassword = () => {
   const { t } = useLanguage();
+  const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -27,7 +28,8 @@ const ForgotPassword = () => {
       if (error) {
         toast.error(error.message);
       } else {
-        toast.success(t("Password reset link sent to your email", "পাসওয়ার্ড রিসেট লিংক আপনার ইমেইলে পাঠানো হয়েছে"));
+        toast.success(t("Password reset code sent to your email", "পাসওয়ার্ড রিসেট কোড আপনার ইমেইলে পাঠানো হয়েছে"));
+        navigate(`/reset-password?email=${encodeURIComponent(email)}`);
       }
     } catch (err: any) {
       toast.error(err.message || t("Failed to send reset link", "রিসেট লিংক পাঠাতে ব্যর্থ"));
