@@ -364,9 +364,23 @@ export default function MessengerSettingsPage() {
       ? `\n##PRODUCT "${name}" ${priceText}`
       : `\n##PRODUCT "${name}"`;
     if (textPromptRef.current) {
-      const nextValue = (textPromptRef.current.value || "") + line;
-      textPromptRef.current.value = nextValue;
+      const textarea = textPromptRef.current;
+      const currentValue = textarea.value || "";
+      const start = textarea.selectionStart ?? currentValue.length;
+      const end = textarea.selectionEnd ?? currentValue.length;
+      const before = currentValue.slice(0, start);
+      const after = currentValue.slice(end);
+      const nextValue = before + line + after;
+
+      textarea.value = nextValue;
       setPromptPreview(nextValue);
+
+      const cursor = start + line.length;
+      requestAnimationFrame(() => {
+        textarea.selectionStart = cursor;
+        textarea.selectionEnd = cursor;
+        textarea.focus();
+      });
     }
   };
 
@@ -772,31 +786,16 @@ export default function MessengerSettingsPage() {
                             </div>
                           </div>
                           <div className="space-y-2">
-                            <div className="min-h-[32px] flex flex-wrap gap-2 rounded-md bg-emerald-500/5 border border-emerald-500/20 px-3 py-1.5 backdrop-blur">
-                              {extractProductMarkers(promptPreview || initialTextPrompt, productList).length === 0 && (
-                                <span className="text-[11px] text-emerald-300/60">
+                            <div className="min-h-[24px] flex items-center">
+                              {extractProductMarkers(promptPreview || initialTextPrompt, productList).length === 0 ? (
+                                <span className="text-[11px] text-emerald-300/70">
                                   No ##PRODUCT tags yet. Click a product above to insert it into the prompt.
                                 </span>
+                              ) : (
+                                <span className="text-[11px] text-emerald-300/70">
+                                  Product tags detected inside the system prompt.
+                                </span>
                               )}
-                              {extractProductMarkers(promptPreview || initialTextPrompt, productList).map((m) => {
-                                const isValid = productList.some(
-                                  (p) => p.name && p.name.toLowerCase() === m.name.toLowerCase()
-                                );
-                                return (
-                                  <span
-                                    key={m.id}
-                                    className={
-                                      "text-[11px] px-2 py-0.5 rounded-full border shadow-sm " +
-                                      (isValid
-                                        ? "bg-emerald-500/20 text-emerald-100 border-emerald-400/40"
-                                        : "bg-zinc-700/40 text-zinc-200/70 border-zinc-500/30")
-                                    }
-                                  >
-                                    #{m.name}
-                                    {m.price && <span className="ml-1 opacity-75">• {m.price}</span>}
-                                  </span>
-                                );
-                              })}
                             </div>
                             <Textarea 
                               ref={textPromptRef}
