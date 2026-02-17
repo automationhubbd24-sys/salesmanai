@@ -143,68 +143,11 @@ class OpenRouterEngineService {
         }
     }
 
-    /**
-     * INTELLIGENT MODEL SELECTION LOGIC (AI Judge)
-     * "Priority Zero" - No hardcoded bias. The AI Judge decides based on specs.
-     */
     async selectBestModels(freeModels) {
         if (!freeModels || freeModels.length === 0) return null;
-
-        try {
-            // 1. Prepare Candidate List (Lightweight JSON)
-            const candidates = freeModels.map(m => ({
-                id: m.id,
-                name: m.name,
-                context: m.context_length,
-                modality: m.architecture?.modality || 'text',
-                description: m.description
-            }));
-
-            // 2. Get Gemini Key for Judgment
-            const keyData = await keyService.getSmartKey('google', 'gemini-2.5-flash');
-            
-            if (keyData && keyData.key) {
-                const prompt = `
-You are an unbiased AI Judge. Review this list of FREE AI Models and select the absolute winners based on objective capability.
-NO BRAND BIAS. "Priority Level Zero" comparison - purely specs and known capabilities.
-
-Candidates: ${JSON.stringify(candidates)}
-
-CRITERIA:
-1. text: Best overall for Bengali conversation, Logical Reasoning, and Human-like output. (High Context + Reasoning capability is a plus).
-2. voice: Fastest inference model suitable for real-time voice chat (Low latency is key).
-3. image: Best Vision/Multimodal model.
-
-Return ONLY valid JSON:
-{
-  "text": "model_id",
-  "voice": "model_id",
-  "image": "model_id"
-}`;
-
-                const openai = new OpenAI({ 
-                    apiKey: keyData.key, 
-                    baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/' 
-                });
-
-                const completion = await openai.chat.completions.create({
-                    model: 'gemini-2.5-flash',
-                    messages: [{ role: 'user', content: prompt }],
-                    response_format: { type: "json_object" }
-                });
-
-                const result = JSON.parse(completion.choices[0].message.content);
-                
-                if (result.text && result.voice && result.image) {
-                    return result;
-                }
-            }
-        } catch (e) {
-            console.warn('[OpenRouterEngine] AI Judge Failed, falling back to algorithmic sort:', e.message);
-        }
-
-        // FALLBACK: Algorithmic Sort (if AI Judge fails)
-        // Sort by Context Length as a proxy for "Power", but prioritize General Purpose over Coder
+        
+        // Algorithmic Sort: Sort by Context Length as a proxy for "Power",
+        // but prioritize General Purpose over Coder
         const sorted = [...freeModels].sort((a, b) => {
             const contextA = a.context_length || 0;
             const contextB = b.context_length || 0;
@@ -423,48 +366,50 @@ Return ONLY valid JSON:
             throw new Error("No response from any OpenRouter model.");
         }
 
+        let bestContent = null;
+
         if (responses.length === 1) {
-            return responses[0].content;
+            bestContent = responses[0].content;
+        } else {
+            const sortedByLength = [...responses].sort((a, b) => b.content.length - a.content.length);
+            bestContent = sortedByLength[0].content;
+        }
+
+        if (!bestContent || bestContent.trim().length === 0) {
+            const fallback = responses[0].content || "";
+            return fallback;
         }
 
         try {
-            const judgeKey = await keyService.getSmartKey('google', 'gemini-2.5-flash-lite');
+            const refineModel = text || responses[0].model;
 
-            if (judgeKey && judgeKey.key) {
-                const judgeClient = new OpenAI({
-                    apiKey: judgeKey.key,
-                    baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/'
-                });
+            const refinePrompt = [
+                `System Rules:\n${systemPrompt || "Follow all given instructions strictly."}`,
+                `\nUser Message:\n${message}`,
+                `\nDraft Answer:\n${bestContent}`,
+                `\nTask: Improve this draft answer so that it is more accurate, helpful and natural in Bengali for a sales/support chat. Fix any mistakes, make structure clear, and keep the tone polite and concise. Reply with the improved answer only.`
+            ].join("\n");
 
-                const summaryParts = responses.map((r, index) => {
-                    return `Candidate ${index + 1} (model=${r.model}):\n${r.content}`;
-                });
+            const refineMessages = [
+                { role: "system", content: "You improve and correct draft answers for Bengali customer conversations." },
+                { role: "user", content: refinePrompt }
+            ];
 
-                const judgePrompt = [
-                    `User Message:\n${message}`,
-                    systemPrompt ? `\nSystem Prompt:\n${systemPrompt}` : "",
-                    `\nCandidate Answers:\n${summaryParts.join("\n\n")}`,
-                    `\nTask: Choose the best overall answer for a Bengali customer chat. Fix minor issues if needed.`,
-                    `Respond with the final answer only. Do not mention models or that you are judging.`
-                ].join("\n");
+            const refineCompletion = await client.chat.completions.create({
+                model: refineModel,
+                messages: refineMessages
+            });
 
-                const completion = await judgeClient.chat.completions.create({
-                    model: 'gemini-2.5-flash-lite',
-                    messages: [{ role: 'user', content: judgePrompt }]
-                });
+            const refinedContent = refineCompletion.choices[0].message.content || "";
 
-                const finalContent = completion.choices[0].message.content || "";
-
-                if (finalContent && finalContent.trim().length > 0) {
-                    return finalContent;
-                }
+            if (refinedContent && refinedContent.trim().length > 0) {
+                return refinedContent;
             }
         } catch (e) {
-            console.warn("[OpenRouterEngine] Judge model failed, falling back to first candidate:", e.message);
+            console.warn("[OpenRouterEngine] Refinement step failed, using base answer:", e.message);
         }
 
-        const sortedByLength = [...responses].sort((a, b) => b.content.length - a.content.length);
-        return sortedByLength[0].content;
+        return bestContent;
     }
 }
 
