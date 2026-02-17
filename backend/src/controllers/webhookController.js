@@ -39,6 +39,23 @@ function logToFile(message) {
     }
 }
 
+function escapeRegExp(str) {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function extractProductNamesFromPrompt(promptText) {
+    if (!promptText || typeof promptText !== 'string') return [];
+    const regex = /##PRODUCT\s+"([^"]+)"/gi;
+    const set = new Set();
+    let match;
+    while ((match = regex.exec(promptText)) !== null) {
+        let name = match[1].trim();
+        name = name.replace(/^\*+/, '').replace(/\*+$/, '').trim();
+        if (name) set.add(name.toLowerCase());
+    }
+    return Array.from(set);
+}
+
 // Global Debounce Map (In-Memory)
 // Key: sessionId (pageId_senderId)
 // Value: { timer: NodeJS.Timeout, messages: string[] }
@@ -752,6 +769,8 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         const finalUserMessage = `${replyContext}${combinedText}`;
         // ------------------------------------
 
+        const productNamesFromPrompt = extractProductNamesFromPrompt(pagePrompts?.text_prompt || "");
+
         // 5. Generate AI Reply
         // Use finalUserMessage which includes reply context
         
@@ -871,6 +890,8 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         
         // Start with existing images from AI Service (e.g. JSON response)
         const extractedImages = [...aiResponse.images]; 
+
+        const normalizedProductNames = (productNamesFromPrompt || []).map(n => n.toLowerCase());
 
         // 1. STRICT FORMAT: IMAGE: Title | URL
         // Matches: IMAGE: Basic Plan | https://...
