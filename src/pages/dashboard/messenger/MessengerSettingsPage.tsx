@@ -69,6 +69,12 @@ type PromptProduct = {
   currency?: string | null;
 };
 
+type ProductMarker = {
+  id: number;
+  name: string;
+  price: string;
+};
+
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export default function MessengerSettingsPage() {
@@ -107,6 +113,25 @@ export default function MessengerSettingsPage() {
 
   const textPromptRef = useRef<HTMLTextAreaElement | null>(null);
   const imagePromptRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const [promptPreview, setPromptPreview] = useState("");
+  const [productSearch, setProductSearch] = useState("");
+
+  const extractProductMarkers = (text: string): ProductMarker[] => {
+    if (!text) return [];
+    const lines = text.split("\n");
+    const markers: ProductMarker[] = [];
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("##PRODUCT")) continue;
+      const match = trimmed.match(/##PRODUCT\s+"([^"]+)"\s*(.*)?$/);
+      if (!match) continue;
+      const name = match[1];
+      const price = (match[2] || "").trim();
+      markers.push({ id: markers.length, name, price });
+    }
+    return markers;
+  };
 
   const handleApplyCoupon = () => {
     // Simple validation for demo - in production this would verify with backend
@@ -303,6 +328,9 @@ export default function MessengerSettingsPage() {
   const handleOpenPrompt = (tab: "text" | "image") => {
     setActiveTab(tab);
     setIsPromptOpen(true);
+    if (tab === "text") {
+      setPromptPreview(initialTextPrompt);
+    }
     if (!productList.length && pageId) {
       fetchProductsForPrompt();
     }
@@ -312,10 +340,12 @@ export default function MessengerSettingsPage() {
     const name = product?.name || "Unnamed Product";
     const priceText = product?.price ? `${product.price} ${product.currency || "USD"}` : "";
     const line = priceText
-      ? `\nযদি কাস্টমার "${name}" নামের প্রোডাক্ট চায় (বা একই অর্থের কিছু লিখে), তাহলে সবসময় গ্লোবাল প্রোডাক্ট "${name}" ব্যবহার করবে এবং শুধু এই প্রোডাক্টের ছবি (image_url) ও দাম ${priceText} পাঠাবে। অন্য কোনো প্রোডাক্ট বা লিংক বানাবে না।`
-      : `\nযদি কাস্টমার "${name}" নামের প্রোডাক্ট চায় (বা একই অর্থের কিছু লিখে), তাহলে সবসময় গ্লোবাল প্রোডাক্ট "${name}" ব্যবহার করবে এবং শুধু এই প্রোডাক্টের ছবি (image_url) পাঠাবে। অন্য কোনো প্রোডাক্ট বা লিংক বানাবে না।`;
+      ? `\n##PRODUCT "${name}" ${priceText}`
+      : `\n##PRODUCT "${name}"`;
     if (textPromptRef.current) {
-      textPromptRef.current.value = (textPromptRef.current.value || "") + line;
+      const nextValue = (textPromptRef.current.value || "") + line;
+      textPromptRef.current.value = nextValue;
+      setPromptPreview(nextValue);
     }
   };
 
@@ -671,9 +701,17 @@ export default function MessengerSettingsPage() {
                     
                     <TabsContent value="text" className="flex-1 mt-4 h-full">
                         <div className="flex flex-col h-full gap-3">
-                          <div className="space-y-1">
-                            <div className="text-xs font-medium text-muted-foreground">
-                              Products shortcut
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="text-xs font-medium text-muted-foreground">
+                                Products shortcut
+                              </div>
+                              <Input
+                                placeholder="Search product..."
+                                value={productSearch}
+                                onChange={(e) => setProductSearch(e.target.value)}
+                                className="h-7 max-w-[180px] text-xs bg-black/40 border-white/10"
+                              />
                             </div>
                             <div className="flex flex-wrap gap-2 max-h-24 overflow-y-auto border border-white/10 rounded-md bg-black/20 p-2">
                               {productLoading && (
@@ -687,25 +725,56 @@ export default function MessengerSettingsPage() {
                                 </span>
                               )}
                               {!productLoading &&
-                                productList.map((p) => (
-                                  <button
-                                    key={p.id}
-                                    type="button"
-                                    onClick={() => handleInsertProductIntoPrompt(p)}
-                                    className="text-xs px-2 py-1 rounded-full border border-white/15 bg-black/30 hover:border-[#00ff88] hover:bg-[#00ff88]/10 transition-colors"
-                                  >
-                                    {p.name || "Untitled"}
-                                    {p.price ? ` • ${p.price} ${p.currency || "USD"}` : ""}
-                                  </button>
-                                ))}
+                                productList
+                                  .filter((p) => {
+                                    if (!productSearch.trim()) return true;
+                                    const q = productSearch.toLowerCase();
+                                    return (
+                                      (p.name && p.name.toLowerCase().includes(q)) ||
+                                      (p.price !== null &&
+                                        p.price !== undefined &&
+                                        String(p.price).toLowerCase().includes(q)) ||
+                                      (p.currency && p.currency.toLowerCase().includes(q))
+                                    );
+                                  })
+                                  .map((p) => (
+                                    <button
+                                      key={p.id}
+                                      type="button"
+                                      onClick={() => handleInsertProductIntoPrompt(p)}
+                                      className="text-xs px-2 py-1 rounded-full border border-[#00ff88]/30 bg-[#00ff88]/5 hover:bg-[#00ff88]/15 hover:border-[#00ff88] transition-colors"
+                                    >
+                                      {p.name || "Untitled"}
+                                      {p.price ? ` • ${p.price} ${p.currency || "USD"}` : ""}
+                                    </button>
+                                  ))}
                             </div>
                           </div>
-                          <Textarea 
+                          <div className="space-y-2">
+                            <div className="min-h-[32px] flex flex-wrap gap-2 rounded-md bg-emerald-500/5 border border-emerald-500/20 px-3 py-1.5 backdrop-blur">
+                              {extractProductMarkers(promptPreview || initialTextPrompt).length === 0 && (
+                                <span className="text-[11px] text-emerald-300/60">
+                                  No ##PRODUCT tags yet. Click a product above to insert it into the prompt.
+                                </span>
+                              )}
+                              {extractProductMarkers(promptPreview || initialTextPrompt).map((m) => (
+                                <span
+                                  key={m.id}
+                                  className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-100 border border-emerald-400/40 shadow-sm"
+                                >
+                                  #{m.name}
+                                  {m.price && <span className="ml-1 opacity-75">• {m.price}</span>}
+                                </span>
+                              ))}
+                            </div>
+                            <Textarea 
                               ref={textPromptRef}
                               defaultValue={initialTextPrompt}
-                              className="w-full flex-1 min-h-[300px] font-mono text-sm leading-relaxed p-4 resize-none"
+                              onChange={(e) => setPromptPreview(e.target.value)}
+                              className="w-full flex-1 min-h-[260px] font-mono text-sm leading-relaxed p-4 resize-none"
                               placeholder="You are a helpful assistant..."
-                          />
+                            />
+                          </div>
                         </div>
                     </TabsContent>
                     
