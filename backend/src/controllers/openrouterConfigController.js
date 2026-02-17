@@ -255,10 +255,11 @@ exports.testGeminiPool = async (req, res) => {
                 baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/'
             });
 
-            let item = {
+            const item = {
                 id: k.id,
                 provider: k.provider,
-                model: k.model,
+                model: testModel,
+                original_model: k.model || null,
                 success: false,
                 error: null
             };

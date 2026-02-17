@@ -26,14 +26,23 @@ type Transaction = {
   created_at: string;
 };
 
-type Coupon = Database['public']['Tables']['referral_codes']['Row'];
+type Coupon = Database["public"]["Tables"]["referral_codes"]["Row"];
 
 type GeminiKeyTestResult = {
   id: number;
   provider: string;
-  model: string | null;
+  model: string;
+  originalModel: string | null;
   success: boolean;
   error: string | null;
+};
+
+type EngineTestResult = {
+  model: string;
+  success: boolean;
+  latency: number | null;
+  error: string | null;
+  preview: string | null;
 };
 
 export default function AdminPage() {
@@ -63,6 +72,18 @@ export default function AdminPage() {
   const [geminiLoading, setGeminiLoading] = useState(false);
   const [geminiResults, setGeminiResults] = useState<GeminiKeyTestResult[]>([]);
   const [geminiError, setGeminiError] = useState<string | null>(null);
+  const [geminiLog, setGeminiLog] = useState<string[]>([]);
+
+  const [engineApiKey, setEngineApiKey] = useState("");
+  const [engineMessage, setEngineMessage] = useState("Hello from SalesmanChatbot admin test");
+  const [engineModels, setEngineModels] = useState<{ pro: boolean; flash: boolean; lite: boolean }>({
+    pro: true,
+    flash: true,
+    lite: true,
+  });
+  const [engineLoading, setEngineLoading] = useState(false);
+  const [engineResults, setEngineResults] = useState<EngineTestResult[]>([]);
+  const [engineError, setEngineError] = useState<string | null>(null);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -249,6 +270,7 @@ export default function AdminPage() {
     setGeminiLoading(true);
     setGeminiError(null);
     setGeminiResults([]);
+    setGeminiLog([`Starting Gemini pool test with model "${geminiModel}"...`]);
 
     try {
       const response = await fetch(`${BACKEND_URL}/api/openrouter/gemini/test-keys`, {
@@ -267,6 +289,7 @@ export default function AdminPage() {
       if (!response.ok || !data.success) {
         const errorMessage = data?.error || "Failed to run Gemini test";
         setGeminiError(errorMessage);
+        setGeminiLog((prev) => [...prev, `Error: ${errorMessage}`]);
         toast.error(errorMessage);
         return;
       }
@@ -274,12 +297,25 @@ export default function AdminPage() {
       const list: GeminiKeyTestResult[] = (data.results || []).map((r: any) => ({
         id: r.id,
         provider: r.provider || "",
-        model: r.model || null,
+        model: r.model || geminiModel,
+        originalModel: r.original_model ?? null,
         success: !!r.success,
-        error: r.error || null
+        error: r.error || null,
       }));
 
       setGeminiResults(list);
+      const items = data.results || [];
+      const total = items.length;
+      const logLines = items.map((r: any, index: number) => {
+        const status = r.success ? "OK" : "FAILED";
+        const prefix = `[${index + 1}/${total}]`;
+        const base = `${prefix} Testing Key id=${r.id} provider=${r.provider || ""} model=${r.model || ""} -> ${status}`;
+        if (!r.success && r.error) {
+          return `${base} (error=${r.error})`;
+        }
+        return base;
+      });
+      setGeminiLog((prev) => [...prev, ...logLines]);
       toast.success("Gemini pool test completed");
     } catch (error: any) {
       const message = error?.message || "Unexpected error while testing Gemini keys";
@@ -287,6 +323,98 @@ export default function AdminPage() {
       toast.error(message);
     } finally {
       setGeminiLoading(false);
+    }
+  };
+
+  const handleRunEngineTest = async () => {
+    if (!engineApiKey) {
+      toast.error("Service API key is required");
+      return;
+    }
+
+    const selectedModels: string[] = [];
+    if (engineModels.pro) selectedModels.push("salesmanchatbot-pro");
+    if (engineModels.flash) selectedModels.push("salesmanchatbot-flash");
+    if (engineModels.lite) selectedModels.push("salesmanchatbot-lite");
+
+    if (selectedModels.length === 0) {
+      toast.error("Select at least one model to test");
+      return;
+    }
+
+    setEngineLoading(true);
+    setEngineError(null);
+    setEngineResults([]);
+
+    const results: EngineTestResult[] = [];
+
+    try {
+      for (const model of selectedModels) {
+        const started = performance.now();
+
+        try {
+          const response = await fetch(`${BACKEND_URL}/api/external/v1/chat/completions`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${engineApiKey}`,
+            },
+            body: JSON.stringify({
+              model,
+              messages: [{ role: "user", content: engineMessage }],
+            }),
+          });
+
+          const data = await response.json();
+          const duration = performance.now() - started;
+
+          if (!response.ok || !data || !data.choices || !data.choices[0]?.message?.content) {
+            const message =
+              data?.error?.message || data?.error || `Request failed with status ${response.status}`;
+
+            results.push({
+              model,
+              success: false,
+              latency: duration,
+              error: message,
+              preview: null,
+            });
+          } else {
+            const content: string = data.choices[0].message.content || "";
+            const preview = content.length > 120 ? `${content.slice(0, 117)}...` : content;
+
+            results.push({
+              model,
+              success: true,
+              latency: duration,
+              error: null,
+              preview,
+            });
+          }
+        } catch (error: unknown) {
+          const message =
+            error instanceof Error ? error.message : "Network error while calling engine";
+          const duration = performance.now() - started;
+
+          results.push({
+            model,
+            success: false,
+            latency: duration,
+            error: message,
+            preview: null,
+          });
+        }
+      }
+
+      setEngineResults(results);
+      const failedCount = results.filter((r) => !r.success).length;
+      if (failedCount === 0) {
+        toast.success("All models responded successfully");
+      } else {
+        toast.error(`Some models failed: ${failedCount} of ${results.length}`);
+      }
+    } finally {
+      setEngineLoading(false);
     }
   };
 
@@ -346,6 +474,7 @@ export default function AdminPage() {
         <TabsList className="bg-secondary">
           <TabsTrigger value="payments">Payments</TabsTrigger>
           <TabsTrigger value="finance">Finance</TabsTrigger>
+          <TabsTrigger value="engine">Engine Test</TabsTrigger>
           <TabsTrigger value="gemini">Gemini Monitor</TabsTrigger>
           <TabsTrigger value="users">User Management</TabsTrigger>
           <TabsTrigger value="system">System Settings</TabsTrigger>
@@ -522,6 +651,129 @@ export default function AdminPage() {
           </div>
         </TabsContent>
 
+        <TabsContent value="engine" className="space-y-4">
+          <Card className="bg-card border-border">
+            <CardHeader>
+              <CardTitle>SalesmanChatbot Engine Test</CardTitle>
+              <CardDescription>
+                Send a test message to salesmanchatbot-pro, -flash, and -lite using a Service API key.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Service API Key</Label>
+                  <Input
+                    type="password"
+                    value={engineApiKey}
+                    onChange={(e) => setEngineApiKey(e.target.value)}
+                    placeholder="sk-salesman-..."
+                    className="font-mono"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Test Message</Label>
+                  <Input
+                    value={engineMessage}
+                    onChange={(e) => setEngineMessage(e.target.value)}
+                    placeholder="Hello from admin test"
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-3">
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={engineModels.pro}
+                    onCheckedChange={(checked) =>
+                      setEngineModels((prev) => ({ ...prev, pro: Boolean(checked) }))
+                    }
+                  />
+                  <span className="text-sm">salesmanchatbot-pro</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={engineModels.flash}
+                    onCheckedChange={(checked) =>
+                      setEngineModels((prev) => ({ ...prev, flash: Boolean(checked) }))
+                    }
+                  />
+                  <span className="text-sm">salesmanchatbot-flash</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={engineModels.lite}
+                    onCheckedChange={(checked) =>
+                      setEngineModels((prev) => ({ ...prev, lite: Boolean(checked) }))
+                    }
+                  />
+                  <span className="text-sm">salesmanchatbot-lite</span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4">
+                <Button onClick={handleRunEngineTest} disabled={engineLoading}>
+                  {engineLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Run Engine Test
+                </Button>
+                {engineResults.length > 0 && (
+                  <div className="text-sm text-muted-foreground">
+                    Total: {engineResults.length} | Failed:{" "}
+                    {engineResults.filter((r) => !r.success).length}
+                  </div>
+                )}
+              </div>
+
+              {engineError && (
+                <div className="text-sm text-red-500">
+                  {engineError}
+                </div>
+              )}
+
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Model</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Latency (ms)</TableHead>
+                      <TableHead>Preview / Error</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {engineResults.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="text-center">
+                          No test run yet. Enter a key and click Run Engine Test.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      engineResults.map((r) => (
+                        <TableRow key={r.model}>
+                          <TableCell className="font-mono text-xs">{r.model}</TableCell>
+                          <TableCell>
+                            {r.success ? (
+                              <Badge className="bg-green-600 text-white">OK</Badge>
+                            ) : (
+                              <Badge variant="destructive">Failed</Badge>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {r.latency !== null ? Math.round(r.latency) : "-"}
+                          </TableCell>
+                          <TableCell className="text-xs max-w-[320px] truncate">
+                            {r.success ? r.preview || "-" : r.error || "-"}
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         {/* Users Tab (Placeholder) */}
         <TabsContent value="gemini" className="space-y-4">
           <Card className="bg-card border-border">
@@ -605,6 +857,15 @@ export default function AdminPage() {
                     )}
                   </TableBody>
                 </Table>
+              </div>
+              <div className="mt-4 border rounded-md p-2 bg-muted/40 max-h-64 overflow-y-auto text-xs font-mono">
+                {geminiLog.length === 0 ? (
+                  <div className="text-muted-foreground">No logs yet.</div>
+                ) : (
+                  geminiLog.map((line, index) => (
+                    <div key={index}>{line}</div>
+                  ))
+                )}
               </div>
             </CardContent>
           </Card>
