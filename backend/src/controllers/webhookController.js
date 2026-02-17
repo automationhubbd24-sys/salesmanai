@@ -755,11 +755,26 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         // 5. Generate AI Reply
         // Use finalUserMessage which includes reply context
         
-        // --- INJECT FORMATTING INSTRUCTION (User Request: "n8n style split" & "Carousel Titles") ---
+        // --- INJECT FORMATTING INSTRUCTION (Product Tags + Image Rules) ---
         if (pagePrompts && pagePrompts.text_prompt) {
-             pagePrompts.text_prompt += `\n\n[IMPORTANT OUTPUT RULES]\n1. If explaining multiple items/plans, keep each section SHORT (max 500 chars).\n2. Use clear spacing between sections.\n3. Include the IMAGE LINK for EVERY item/plan described.\n4. **STRICT IMAGE FORMAT**: You MUST output images using this EXACT format:\n   IMAGE: Plan Name | https://your-image-url.com\n   (Example: "IMAGE: 🌟 Basic Plan | https://i.imgur.com/xyz.jpg")\n   **CRITICAL**: The URL MUST be a direct image link (ending in .jpg, .png, .webp). Do NOT use product page URLs (e.g., myshop.com/products/123).\n5. DO NOT use [Image] placeholders. ONLY use the 'IMAGE: Title | URL' format.`;
+             pagePrompts.text_prompt += `\n\n[IMPORTANT OUTPUT RULES]\n` +
+                `1) There are two default modes:\n` +
+                `   - Case A (no product tags): If the system prompt does NOT contain any line starting with '##PRODUCT', reply like a normal human.\n` +
+                `     Keep any links exactly in the text and DO NOT invent product details or extra images unless the user clearly asks.\n` +
+                `   - Case B (product tags): If the system prompt contains lines like '##PRODUCT \"gradepicture\"' (quotes may contain **bold** etc.),\n` +
+                `     treat those as product definitions that you can use in replies.\n` +
+                `2) In Case B, whenever you decide to use one of those products in your answer:\n` +
+                `   - Merge the main reply and that product's information into ONE natural, human-sounding message.\n` +
+                `   - Inside the same text, include: product name, key benefit, price, and a clear call-to-action.\n` +
+                `   - Use the product's Image URL from the [Available Products in Store] context to output exactly ONE image line per used product\n` +
+                `     using this STRICT format:\n` +
+                `       IMAGE: <Product Name> | <Image URL>\n` +
+                `3) Always keep the final text coherent and conversational, as if a real human agent wrote it.\n` +
+                `   Do NOT send a separate \"product info\" block; the product details must be blended into the main message.\n` +
+                `4) Never expose raw '##PRODUCT' tags back to the customer.\n` +
+                `5) DO NOT use [Image] placeholders. ONLY use the 'IMAGE: Title | URL' format.\n`;
         }
-        // -----------------------------------------------------------------------
+        // --------------------------------------------------------------------
 
         const aiResponse = await aiService.generateReply(
             finalUserMessage, 
