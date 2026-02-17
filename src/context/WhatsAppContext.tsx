@@ -104,13 +104,15 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
 
       let formattedSessions: WahaSession[] = [];
 
-      // 3. Filter based on View Mode using backend 'is_shared' flag
       if (viewMode === 'team' && isTeamMember) {
-          // Show shared sessions (where I am not the owner)
-          formattedSessions = allSessions.filter(s => s.is_shared);
+          let shared = allSessions.filter((s: any) => s.is_shared);
+          if (activeTeam && Array.isArray(activeTeam.permissions?.wa_sessions) && activeTeam.permissions.wa_sessions.length > 0) {
+              const allowedNames = activeTeam.permissions.wa_sessions.map((name: any) => String(name));
+              shared = shared.filter((s: any) => allowedNames.includes(String(s.session_name)));
+          }
+          formattedSessions = shared;
       } else {
-          // Show personal sessions (where I am the owner, or it's a new/unlinked session)
-          formattedSessions = allSessions.filter(s => !s.is_shared);
+          formattedSessions = allSessions.filter((s: any) => !s.is_shared);
       }
       
       setSessions(formattedSessions);
@@ -131,7 +133,7 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, [viewMode]);
+  }, [viewMode, activeTeam, isTeamMember]);
 
   useEffect(() => {
     refreshSessions();
