@@ -409,23 +409,35 @@ export default function MessengerSettingsPage() {
     if (!dbId) return;
     setBehaviorSaving(true);
     try {
-        const { error } = await (supabase
-            .from('fb_message_database') as any)
-            .update({ 
-                wait: wait,
-                memory_context_name: memoryContextName || null,
-                check_conversion: memoryLimit,
-                order_lock_minutes: orderLockMinutes 
-            })
-            .eq('id', parseInt(dbId));
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
 
-        if (error) throw error;
-        toast.success("Behavior settings saved!");
+      const res = await fetch(`${BACKEND_URL}/messenger/config/${dbId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({
+          wait: wait,
+          memory_context_name: memoryContextName || null,
+          check_conversion: memoryLimit,
+          order_lock_minutes: orderLockMinutes
+        })
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const message = body.error || `Failed with status ${res.status}`;
+        throw new Error(message);
+      }
+
+      toast.success("Behavior settings saved!");
     } catch (error: any) {
-        console.error("Error saving behavior:", error);
-        toast.error("Failed to save behavior: " + error.message);
+      console.error("Error saving behavior:", error);
+      toast.error("Failed to save behavior: " + error.message);
     } finally {
-        setBehaviorSaving(false);
+      setBehaviorSaving(false);
     }
   };
 

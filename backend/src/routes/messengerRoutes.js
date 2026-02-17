@@ -270,7 +270,10 @@ router.put('/config/:id', async (req, res) => {
             'unblock_emoji',
             'check_conversion',
             'text_prompt',
-            'image_prompt'
+            'image_prompt',
+            'wait',
+            'memory_context_name',
+            'order_lock_minutes'
         ];
 
         const updates = {};
