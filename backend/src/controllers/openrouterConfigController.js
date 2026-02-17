@@ -2,6 +2,7 @@ const dbService = require('../services/dbService');
 const openrouterEngineService = require('../services/openrouterEngineService');
 const keyService = require('../services/keyService');
 const axios = require('axios');
+const OpenAI = require('openai');
 
 const OPENROUTER_API_BASE = 'https://openrouter.ai/api/v1';
 
@@ -222,5 +223,75 @@ exports.testModel = async (req, res) => {
             error: error.response ? error.response.data : error.message,
             headers: error.response ? error.response.headers : {}
         });
+    }
+};
+
+exports.testGeminiPool = async (req, res) => {
+    const { model, message } = req.body || {};
+    const testModel = model || 'gemini-2.5-flash-lite';
+    const testMessage = message || 'hi from SalesmanChatbot key test';
+
+    try {
+        const { data, error } = await dbService.supabase
+            .from('api_list')
+            .select('*')
+            .in('provider', ['google', 'gemini']);
+
+        if (error) {
+            return res.status(500).json({ success: false, error: error.message });
+        }
+
+        const keys = Array.isArray(data) ? data : [];
+
+        if (keys.length === 0) {
+            return res.json({ success: false, error: 'No Gemini keys found in api_list', results: [] });
+        }
+
+        const results = [];
+
+        for (const k of keys) {
+            const client = new OpenAI({
+                apiKey: k.api,
+                baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/'
+            });
+
+            let item = {
+                id: k.id,
+                provider: k.provider,
+                model: k.model,
+                success: false,
+                error: null
+            };
+
+            try {
+                const completion = await client.chat.completions.create({
+                    model: testModel,
+                    messages: [{ role: 'user', content: testMessage }],
+                    max_tokens: 8
+                });
+                if (completion && completion.choices && completion.choices.length > 0) {
+                    item.success = true;
+                } else {
+                    item.success = false;
+                    item.error = 'Empty response';
+                }
+            } catch (e) {
+                item.success = false;
+                item.error = e.message || 'Request failed';
+            }
+
+            results.push(item);
+        }
+
+        const failed = results.filter(r => !r.success).length;
+
+        res.json({
+            success: true,
+            total: results.length,
+            failed,
+            results
+        });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
     }
 };

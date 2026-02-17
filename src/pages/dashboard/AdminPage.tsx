@@ -13,9 +13,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Database } from "@/integrations/supabase/types";
 import { BACKEND_URL } from "@/config";
-import OpenRouterConfigPage from "./OpenRouterConfigPage"; // Import Config Page
+import OpenRouterConfigPage from "./OpenRouterConfigPage";
 
-// Override Transaction type to match the new schema provided by user
 type Transaction = {
   id: string;
   user_email: string;
@@ -28,6 +27,14 @@ type Transaction = {
 };
 
 type Coupon = Database['public']['Tables']['referral_codes']['Row'];
+
+type GeminiKeyTestResult = {
+  id: number;
+  provider: string;
+  model: string | null;
+  success: boolean;
+  error: string | null;
+};
 
 export default function AdminPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -50,6 +57,12 @@ export default function AdminPage() {
   const [topupEmail, setTopupEmail] = useState("");
   const [topupAmount, setTopupAmount] = useState("");
   const [topupLoading, setTopupLoading] = useState(false);
+
+  const [geminiModel, setGeminiModel] = useState("gemini-2.5-flash-lite");
+  const [geminiMessage, setGeminiMessage] = useState("hi from SalesmanChatbot key test");
+  const [geminiLoading, setGeminiLoading] = useState(false);
+  const [geminiResults, setGeminiResults] = useState<GeminiKeyTestResult[]>([]);
+  const [geminiError, setGeminiError] = useState<string | null>(null);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -227,6 +240,56 @@ export default function AdminPage() {
     }
   };
 
+  const handleRunGeminiTest = async () => {
+    if (!geminiModel) {
+      toast.error("Model name is required");
+      return;
+    }
+
+    setGeminiLoading(true);
+    setGeminiError(null);
+    setGeminiResults([]);
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/openrouter/gemini/test-keys`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: geminiModel,
+          message: geminiMessage
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        const errorMessage = data?.error || "Failed to run Gemini test";
+        setGeminiError(errorMessage);
+        toast.error(errorMessage);
+        return;
+      }
+
+      const list: GeminiKeyTestResult[] = (data.results || []).map((r: any) => ({
+        id: r.id,
+        provider: r.provider || "",
+        model: r.model || null,
+        success: !!r.success,
+        error: r.error || null
+      }));
+
+      setGeminiResults(list);
+      toast.success("Gemini pool test completed");
+    } catch (error: any) {
+      const message = error?.message || "Unexpected error while testing Gemini keys";
+      setGeminiError(message);
+      toast.error(message);
+    } finally {
+      setGeminiLoading(false);
+    }
+  };
+
   if (!isAuthenticated) {
     return (
       <div className="flex items-center justify-center min-h-[60vh] animate-in fade-in duration-500">
@@ -283,6 +346,7 @@ export default function AdminPage() {
         <TabsList className="bg-secondary">
           <TabsTrigger value="payments">Payments</TabsTrigger>
           <TabsTrigger value="finance">Finance</TabsTrigger>
+          <TabsTrigger value="gemini">Gemini Monitor</TabsTrigger>
           <TabsTrigger value="users">User Management</TabsTrigger>
           <TabsTrigger value="system">System Settings</TabsTrigger>
           <TabsTrigger value="openrouter">OpenRouter Config</TabsTrigger>
@@ -456,6 +520,94 @@ export default function AdminPage() {
               </CardContent>
             </Card>
           </div>
+        </TabsContent>
+
+        {/* Users Tab (Placeholder) */}
+        <TabsContent value="gemini" className="space-y-4">
+          <Card className="bg-card border-border">
+            <CardHeader>
+              <CardTitle>Gemini API Pool Monitor</CardTitle>
+              <CardDescription>
+                Test all Gemini keys from api_list with a sample message and see which ones failed.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Model Name</Label>
+                  <Input
+                    value={geminiModel}
+                    onChange={(e) => setGeminiModel(e.target.value)}
+                    placeholder="gemini-2.5-flash-lite"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Test Message</Label>
+                  <Input
+                    value={geminiMessage}
+                    onChange={(e) => setGeminiMessage(e.target.value)}
+                    placeholder="hi from SalesmanChatbot key test"
+                  />
+                </div>
+              </div>
+              <div className="flex items-center gap-4">
+                <Button onClick={handleRunGeminiTest} disabled={geminiLoading}>
+                  {geminiLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Run Gemini Test
+                </Button>
+                {geminiResults.length > 0 && (
+                  <div className="text-sm text-muted-foreground">
+                    Total: {geminiResults.length} | Failed: {geminiResults.filter(r => !r.success).length}
+                  </div>
+                )}
+              </div>
+              {geminiError && (
+                <div className="text-sm text-red-500">
+                  {geminiError}
+                </div>
+              )}
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>ID</TableHead>
+                      <TableHead>Provider</TableHead>
+                      <TableHead>Model</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Error</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {geminiResults.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center">
+                          No results yet. Run a test to see key status.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      geminiResults.map((r) => (
+                        <TableRow key={r.id}>
+                          <TableCell className="font-mono text-xs">{r.id}</TableCell>
+                          <TableCell className="capitalize">{r.provider}</TableCell>
+                          <TableCell>{r.model || "-"}</TableCell>
+                          <TableCell>
+                            {r.success ? (
+                              <Badge className="bg-green-600 text-white">OK</Badge>
+                            ) : (
+                              <Badge variant="destructive">Failed</Badge>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-xs max-w-[240px] truncate">
+                            {r.error || "-"}
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* Users Tab (Placeholder) */}

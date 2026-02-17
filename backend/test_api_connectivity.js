@@ -51,9 +51,9 @@ async function testGeminiKey(apiKey) {
         });
 
         const completion = await openai.chat.completions.create({
-            model: 'gemini-2.0-flash', 
-            messages: [{ role: 'user', content: 'hi' }],
-            max_tokens: 5
+            model: 'gemini-2.5-flash-lite',
+            messages: [{ role: 'user', content: 'hi from SalesmanChatbot key test' }],
+            max_tokens: 8
         });
         console.log(` ✅ SUCCESS (Model: ${completion.model})`);
         return { success: true };

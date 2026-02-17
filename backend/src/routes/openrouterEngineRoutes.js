@@ -10,5 +10,6 @@ router.post('/update', openrouterEngineController.forceUpdate); // Manual trigge
 router.get('/config', openrouterConfigController.getConfig);
 router.post('/config', openrouterConfigController.saveConfig);
 router.post('/test-model', openrouterConfigController.testModel);
+router.post('/gemini/test-keys', openrouterConfigController.testGeminiPool);
 
 module.exports = router;
