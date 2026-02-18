@@ -73,6 +73,7 @@ export default function AdminPage() {
   const [geminiResults, setGeminiResults] = useState<GeminiKeyTestResult[]>([]);
   const [geminiError, setGeminiError] = useState<string | null>(null);
   const [geminiLog, setGeminiLog] = useState<string[]>([]);
+  const [geminiSelectedIds, setGeminiSelectedIds] = useState<number[]>([]);
 
   const [engineApiKey, setEngineApiKey] = useState("");
   const [engineMessage, setEngineMessage] = useState("Hello from SalesmanChatbot admin test");
@@ -271,6 +272,7 @@ export default function AdminPage() {
     setGeminiError(null);
     setGeminiResults([]);
     setGeminiLog([`Starting Gemini pool test with model "${geminiModel}"...`]);
+    setGeminiSelectedIds([]);
 
     try {
       const response = await fetch(`${BACKEND_URL}/api/openrouter/gemini/test-keys`, {
@@ -304,6 +306,8 @@ export default function AdminPage() {
       }));
 
       setGeminiResults(list);
+      const failedIds = list.filter((r) => !r.success).map((r) => r.id);
+      setGeminiSelectedIds(failedIds);
       const items = data.results || [];
       const total = items.length;
       const logLines = items.map((r: any, index: number) => {
@@ -415,6 +419,46 @@ export default function AdminPage() {
       }
     } finally {
       setEngineLoading(false);
+    }
+  };
+
+  const handleDeleteFailedGeminiKeys = async () => {
+    const failedIds = geminiSelectedIds.filter((id) =>
+      geminiResults.some((r) => r.id === id && !r.success)
+    );
+
+    if (failedIds.length === 0) {
+      toast.error("No failed keys selected for delete");
+      return;
+    }
+
+    const confirmDelete = window.confirm(
+      `Are you sure you want to delete ${failedIds.length} failed keys from api_list?`
+    );
+    if (!confirmDelete) return;
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/openrouter/gemini/delete-keys`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ids: failedIds }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data?.success) {
+        throw new Error(data?.error || "Failed to delete Gemini keys");
+      }
+
+      const deletedCount = data.deleted ?? failedIds.length;
+      toast.success(`Deleted ${deletedCount} failed Gemini keys`);
+
+      setGeminiResults((prev) => prev.filter((r) => !failedIds.includes(r.id)));
+      setGeminiSelectedIds((prev) => prev.filter((id) => !failedIds.includes(id)));
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to delete Gemini keys");
     }
   };
 
@@ -822,6 +866,27 @@ export default function AdminPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-[32px]">
+                        <input
+                          type="checkbox"
+                          className="h-3 w-3"
+                          checked={
+                            geminiResults.length > 0 &&
+                            geminiResults
+                              .filter((r) => !r.success)
+                              .every((r) => geminiSelectedIds.includes(r.id))
+                          }
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setGeminiSelectedIds(
+                                geminiResults.filter((r) => !r.success).map((r) => r.id)
+                              );
+                            } else {
+                              setGeminiSelectedIds([]);
+                            }
+                          }}
+                        />
+                      </TableHead>
                       <TableHead>ID</TableHead>
                       <TableHead>Provider</TableHead>
                       <TableHead>Model</TableHead>
@@ -832,13 +897,29 @@ export default function AdminPage() {
                   <TableBody>
                     {geminiResults.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center">
+                        <TableCell colSpan={6} className="text-center">
                           No results yet. Run a test to see key status.
                         </TableCell>
                       </TableRow>
                     ) : (
                       geminiResults.map((r) => (
-                        <TableRow key={r.id}>
+                        <TableRow key={r.id} className={!r.success ? "bg-destructive/5" : ""}>
+                          <TableCell>
+                            <input
+                              type="checkbox"
+                              className="h-3 w-3"
+                              disabled={r.success}
+                              checked={geminiSelectedIds.includes(r.id)}
+                              onChange={() => {
+                                if (r.success) return;
+                                setGeminiSelectedIds((prev) =>
+                                  prev.includes(r.id)
+                                    ? prev.filter((id) => id !== r.id)
+                                    : [...prev, r.id]
+                                );
+                              }}
+                            />
+                          </TableCell>
                           <TableCell className="font-mono text-xs">{r.id}</TableCell>
                           <TableCell className="capitalize">{r.provider}</TableCell>
                           <TableCell>{r.model || "-"}</TableCell>
@@ -858,6 +939,28 @@ export default function AdminPage() {
                   </TableBody>
                 </Table>
               </div>
+              {geminiResults.some((r) => !r.success) && (
+                <div className="flex items-center justify-between pt-2">
+                  <div className="text-xs text-muted-foreground">
+                    Selected failed: {geminiSelectedIds.filter((id) =>
+                      geminiResults.some((r) => r.id === id && !r.success)
+                    ).length}
+                  </div>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={handleDeleteFailedGeminiKeys}
+                    disabled={
+                      geminiSelectedIds.filter((id) =>
+                        geminiResults.some((r) => r.id === id && !r.success)
+                      ).length === 0
+                    }
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Delete Selected Failed
+                  </Button>
+                </div>
+              )}
               <div className="mt-4 border rounded-md p-2 bg-muted/40 max-h-64 overflow-y-auto text-xs font-mono">
                 {geminiLog.length === 0 ? (
                   <div className="text-muted-foreground">No logs yet.</div>

@@ -296,3 +296,34 @@ exports.testGeminiPool = async (req, res) => {
         res.status(500).json({ success: false, error: e.message });
     }
 };
+
+exports.deleteGeminiKeys = async (req, res) => {
+    try {
+        const { ids } = req.body || {};
+
+        if (!Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({ success: false, error: 'No ids provided' });
+        }
+
+        const numericIds = ids
+            .map((id) => Number(id))
+            .filter((id) => Number.isFinite(id) && id > 0);
+
+        if (numericIds.length === 0) {
+            return res.status(400).json({ success: false, error: 'Invalid id list' });
+        }
+
+        const { error, count } = await dbService.supabase
+            .from('api_list')
+            .delete({ count: 'exact' })
+            .in('id', numericIds);
+
+        if (error) {
+            return res.status(500).json({ success: false, error: error.message });
+        }
+
+        res.json({ success: true, deleted: count || 0 });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+};
