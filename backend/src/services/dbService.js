@@ -1715,6 +1715,36 @@ async function searchProducts(userId, query, pageId = null) {
     const cleanQuery = query.trim();
     if (!cleanQuery) return [];
 
+    const normalize = (s) => (s || '').toString().toLowerCase().trim().replace(/\s+/g, ' ');
+
+    const computeRelevance = (product) => {
+        const qNorm = normalize(cleanQuery);
+        const nameNorm = normalize(product.name);
+        const descNorm = normalize(product.description);
+        const kwNorm = normalize(product.keywords);
+
+        let score = 0;
+
+        if (nameNorm === qNorm) score += 120;
+        if (kwNorm === qNorm) score += 110;
+
+        if (nameNorm.includes(qNorm)) score += 80;
+        if (kwNorm.includes(qNorm)) score += 70;
+        if (qNorm.includes(nameNorm) && nameNorm.length > 0) score += 60;
+
+        const tokens = qNorm.split(/\s+/).filter(Boolean);
+        tokens.forEach((t) => {
+            if (nameNorm.includes(t)) score += 12;
+            else if (kwNorm.includes(t)) score += 10;
+            else if (descNorm.includes(t)) score += 4;
+        });
+
+        const lenDiff = Math.abs((product.name || '').length - cleanQuery.length);
+        score -= Math.min(lenDiff, 10);
+
+        return score;
+    };
+
     // Helper to build base query
     const buildBaseQuery = () => {
         let q = supabase
@@ -1737,7 +1767,7 @@ async function searchProducts(userId, query, pageId = null) {
         .limit(5);
 
     if (!exactError && exactData && exactData.length > 0) {
-        return exactData;
+        return [...exactData].sort((a, b) => computeRelevance(b) - computeRelevance(a));
     }
 
     // 2. Attempt: Smart Token Search (Fallback)
@@ -1758,7 +1788,34 @@ async function searchProducts(userId, query, pageId = null) {
             .limit(5);
             
         if (!fuzzyError && fuzzyData && fuzzyData.length > 0) {
-            return fuzzyData;
+            return [...fuzzyData].sort((a, b) => computeRelevance(b) - computeRelevance(a));
+        }
+
+        const stems = [];
+        tokens.forEach(token => {
+            const lower = token.toLowerCase();
+            if (lower.length > 4) {
+                const cut = Math.max(3, Math.min(6, Math.floor(lower.length * 0.6)));
+                const stem = lower.slice(0, cut);
+                if (!stems.includes(stem)) stems.push(stem);
+            }
+        });
+
+        if (stems.length > 0) {
+            const stemConditions = [];
+            stems.forEach(stem => {
+                stemConditions.push(`name.ilike.%${stem}%`);
+                stemConditions.push(`description.ilike.%${stem}%`);
+                stemConditions.push(`keywords.ilike.%${stem}%`);
+            });
+
+            const { data: stemData, error: stemError } = await buildBaseQuery()
+                .or(stemConditions.join(','))
+                .limit(5);
+
+            if (!stemError && stemData && stemData.length > 0) {
+                return [...stemData].sort((a, b) => computeRelevance(b) - computeRelevance(a));
+            }
         }
     }
 
@@ -1794,8 +1851,13 @@ async function searchProducts(userId, query, pageId = null) {
             };
 
             const scored = allProducts.map(p => {
-                // Split product name into tokens for better matching against multi-word products
-                const productTokens = p.name.toLowerCase().split(/\s+/);
+                // Split product name and keywords into tokens for better matching
+                const nameTokens = (p.name || "").toLowerCase().split(/\s+/);
+                const keywordTokens = (p.keywords || "")
+                    .toLowerCase()
+                    .split(/[,\s]+/)
+                    .filter(Boolean);
+                const productTokens = Array.from(new Set([...nameTokens, ...keywordTokens]));
                 
                 // Calculate minimum distance to ANY token in the product name
                 let minWordDist = 100;
