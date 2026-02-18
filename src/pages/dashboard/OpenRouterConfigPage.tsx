@@ -230,12 +230,14 @@ export default function OpenRouterConfigPage() {
                 {/* TEXT MODEL */}
                 <Card>
                     <CardHeader>
-                        <CardTitle>Text Model</CardTitle>
-                        <CardDescription>Primary Chat Model</CardDescription>
+                        <CardTitle>Generator Model (Text)</CardTitle>
+                        <CardDescription>
+                            Up to 3 models, comma separated: planner, generator, refiner
+                        </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <div className="space-y-2">
-                            <Label>Model ID</Label>
+                            <Label>Model ID(s) (comma separated, up to 3)</Label>
                             <Input 
                                 value={config.text_model} 
                                 onChange={(e) => setConfig({...config, text_model: e.target.value})}
@@ -284,8 +286,8 @@ export default function OpenRouterConfigPage() {
                 {/* VOICE MODEL */}
                 <Card>
                     <CardHeader>
-                        <CardTitle>Voice Model</CardTitle>
-                        <CardDescription>Audio/STT Model</CardDescription>
+                        <CardTitle>Planner / Helper Model</CardTitle>
+                        <CardDescription>Small model for intent + refinement (Model 1 &amp; 3)</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <div className="space-y-2">
@@ -325,8 +327,8 @@ export default function OpenRouterConfigPage() {
                 {/* IMAGE MODEL */}
                 <Card>
                     <CardHeader>
-                        <CardTitle>Image Model</CardTitle>
-                        <CardDescription>Vision/Generation Model</CardDescription>
+                        <CardTitle>Image / Vision Model</CardTitle>
+                        <CardDescription>For image messages (not used in text-only pipeline)</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <div className="space-y-2">

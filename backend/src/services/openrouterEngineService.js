@@ -259,18 +259,41 @@ class OpenRouterEngineService {
             }
         });
 
-        const msgs = [
-            { role: 'system', content: systemPrompt },
-            ...history
-        ];
+        let plannerModel = null;
+        let generatorModel = null;
+        let refinerModel = null;
 
-        const userContent = [{ type: 'text', text: message }];
-        images.forEach(img => {
-            userContent.push({ type: 'image_url', image_url: { url: img } });
-        });
-        msgs.push({ role: 'user', content: userContent });
+        if (text && typeof text === "string" && text.includes(",")) {
+            const parts = text.split(",").map(m => m.trim()).filter(Boolean);
+
+            if (parts.length > 0) plannerModel = parts[0];
+            if (parts.length > 1) generatorModel = parts[1];
+            if (parts.length > 2) refinerModel = parts[2];
+
+            if (!generatorModel) generatorModel = plannerModel;
+            if (!refinerModel) refinerModel = generatorModel || plannerModel;
+        } else {
+            plannerModel = voice || text;
+            generatorModel = text || voice;
+            refinerModel = voice || text;
+        }
+
+        if (!generatorModel) {
+            throw new Error("No generator model configured for OpenRouter engine.");
+        }
 
         if (images.length > 0 && image) {
+            const msgs = [
+                { role: 'system', content: systemPrompt },
+                ...history
+            ];
+
+            const userContent = [{ type: 'text', text: message }];
+            images.forEach(img => {
+                userContent.push({ type: 'image_url', image_url: { url: img } });
+            });
+            msgs.push({ role: 'user', content: userContent });
+
             try {
                 const completion = await client.chat.completions.create({
                     model: image,
@@ -292,7 +315,6 @@ class OpenRouterEngineService {
                 return content;
             } catch (error) {
                 if (error.status === 401 || error.message.includes('API key')) {
-                    console.warn(`[OpenRouterEngine] Invalid API Key detected. Marking as inactive.`);
                     await dbService.supabase
                         .from('openrouter_engine_keys')
                         .update({ is_active: false })
@@ -300,103 +322,132 @@ class OpenRouterEngineService {
                 }
 
                 if (error.status === 429 && image) {
-                    console.warn(`[OpenRouterEngine] Rate Limit Hit for ${image}. Reporting...`);
                     keyService.report429(image);
                 }
 
-                console.error("[OpenRouterEngine] Request Failed:", error.message);
                 throw error;
             }
         }
 
-        const candidateModels = [];
-        if (text) candidateModels.push(text);
-        if (voice && !candidateModels.includes(voice)) candidateModels.push(voice);
+        let plan = null;
 
-        if (candidateModels.length === 0) {
-            throw new Error("No candidate models configured for OpenRouter engine.");
-        }
-
-        const responses = [];
-        let lastError = null;
-
-        for (const modelId of candidateModels) {
+        if (plannerModel) {
             try {
-                const completion = await client.chat.completions.create({
-                    model: modelId,
-                    messages: msgs
+                const plannerMessages = [
+                    {
+                        role: "system",
+                        content: "You analyze Bengali customer messages and create a JSON plan for the reply."
+                    },
+                    {
+                        role: "user",
+                        content: [
+                            "User Message:",
+                            message,
+                            "",
+                            "Chat History (may be empty):",
+                            JSON.stringify(history || []),
+                            "",
+                            "Return ONLY valid JSON with fields:",
+                            "{",
+                            '  "intent": "...",',
+                            '  "category": "...",',
+                            '  "tone": "...",',
+                            '  "sections": ["..."]',
+                            "}"
+                        ].join("\n")
+                    }
+                ];
+
+                const plannerCompletion = await client.chat.completions.create({
+                    model: plannerModel,
+                    messages: plannerMessages
                 });
 
-                let content = completion.choices[0].message.content || "";
+                const plannerContent = plannerCompletion.choices[0].message.content || "";
 
-                if (content.trim().startsWith('{') && content.trim().endsWith('}')) {
+                if (plannerContent.trim().startsWith("{")) {
                     try {
-                        const parsed = JSON.parse(content);
-                        if (parsed.message) content = parsed.message;
-                        else if (parsed.content) content = parsed.content;
-                        else if (parsed.response) content = parsed.response;
+                        plan = JSON.parse(plannerContent);
                     } catch (e) {
+                        plan = null;
                     }
                 }
-
-                responses.push({ model: modelId, content });
-            } catch (error) {
-                lastError = error;
-
-                if (error.status === 401 || error.message.includes('API key')) {
-                    console.warn(`[OpenRouterEngine] Invalid API Key detected. Marking as inactive.`);
-                    await dbService.supabase
-                        .from('openrouter_engine_keys')
-                        .update({ is_active: false })
-                        .eq('api_key', apiKey);
-                }
-
-                if (error.status === 429) {
-                    console.warn(`[OpenRouterEngine] Rate Limit Hit for ${modelId}. Reporting...`);
-                    keyService.report429(modelId);
-                }
+            } catch (e) {
             }
         }
 
-        if (responses.length === 0) {
-            if (lastError) {
-                console.error("[OpenRouterEngine] All candidate models failed:", lastError.message);
-                throw lastError;
+        let generatorSystem = systemPrompt || "";
+
+        if (plan) {
+            const parts = [];
+            if (plan.intent) parts.push(`Intent: ${plan.intent}`);
+            if (plan.category) parts.push(`Category: ${plan.category}`);
+            if (plan.tone) parts.push(`Tone: ${plan.tone}`);
+            if (plan.sections && Array.isArray(plan.sections) && plan.sections.length > 0) {
+                parts.push(`Sections: ${plan.sections.join(" -> ")}`);
             }
-            throw new Error("No response from any OpenRouter model.");
+
+            const plannerInfo = parts.join("\n");
+
+            generatorSystem = [
+                generatorSystem || "",
+                plannerInfo ? "\nReply Plan:\n" + plannerInfo : ""
+            ].join("");
         }
 
-        let bestContent = null;
+        const generatorMessages = [
+            { role: 'system', content: generatorSystem || "You are a Bengali sales and support assistant." },
+            ...history,
+            { role: 'user', content: message }
+        ];
 
-        if (responses.length === 1) {
-            bestContent = responses[0].content;
-        } else {
-            const sortedByLength = [...responses].sort((a, b) => b.content.length - a.content.length);
-            bestContent = sortedByLength[0].content;
+        let draftContent = null;
+
+        try {
+            const generatorCompletion = await client.chat.completions.create({
+                model: generatorModel,
+                messages: generatorMessages
+            });
+
+            draftContent = generatorCompletion.choices[0].message.content || "";
+        } catch (error) {
+            if (error.status === 401 || error.message.includes('API key')) {
+                await dbService.supabase
+                    .from('openrouter_engine_keys')
+                    .update({ is_active: false })
+                    .eq('api_key', apiKey);
+            }
+
+            if (error.status === 429) {
+                keyService.report429(generatorModel);
+            }
+
+            throw error;
         }
 
-        if (!bestContent || bestContent.trim().length === 0) {
-            const fallback = responses[0].content || "";
-            return fallback;
+        if (!draftContent || draftContent.trim().length === 0) {
+            return "";
+        }
+
+        if (!refinerModel) {
+            return draftContent;
         }
 
         try {
-            const refineModel = text || responses[0].model;
-
             const refinePrompt = [
                 `System Rules:\n${systemPrompt || "Follow all given instructions strictly."}`,
                 `\nUser Message:\n${message}`,
-                `\nDraft Answer:\n${bestContent}`,
-                `\nTask: Improve this draft answer so that it is more accurate, helpful and natural in Bengali for a sales/support chat. Fix any mistakes, make structure clear, and keep the tone polite and concise. Reply with the improved answer only.`
+                `\nDraft Answer:\n${draftContent}`,
+                `\nTask: Improve this draft answer so that it is accurate, helpful and natural in Bengali for sales/support chat. Fix mistakes, keep it concise and polite. Reply with the improved answer only.`
             ].join("\n");
 
             const refineMessages = [
-                { role: "system", content: "You improve and correct draft answers for Bengali customer conversations." },
+                { role: "system", content: "You refine and correct Bengali customer chat replies." },
                 { role: "user", content: refinePrompt }
             ];
 
             const refineCompletion = await client.chat.completions.create({
-                model: refineModel,
+                model: refinerModel,
                 messages: refineMessages
             });
 
@@ -405,11 +456,13 @@ class OpenRouterEngineService {
             if (refinedContent && refinedContent.trim().length > 0) {
                 return refinedContent;
             }
-        } catch (e) {
-            console.warn("[OpenRouterEngine] Refinement step failed, using base answer:", e.message);
+        } catch (error) {
+            if (error.status === 429) {
+                keyService.report429(refinerModel);
+            }
         }
 
-        return bestContent;
+        return draftContent;
     }
 }
 
