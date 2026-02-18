@@ -1283,6 +1283,44 @@ async function deleteWhatsAppEntry(sessionName) {
     }
 }
 
+async function deleteMessengerPage(pageId) {
+    try {
+        await supabase.from('fb_chats').delete().eq('page_id', pageId);
+    } catch (e) {
+        console.warn("[DB] Failed to delete from fb_chats:", e.message);
+    }
+
+    try {
+        await supabase.from('fb_order_tracking').delete().eq('page_id', pageId);
+    } catch (e) {
+        console.warn("[DB] Failed to delete from fb_order_tracking:", e.message);
+    }
+
+    try {
+        await supabase.from('backend_chat_histories').delete().eq('page_id', pageId);
+    } catch (e) {
+        console.warn("[DB] Failed to delete from backend_chat_histories:", e.message);
+    }
+
+    try {
+        await supabase.from('fb_comments').delete().eq('page_id', pageId);
+    } catch (e) {
+        console.warn("[DB] Failed to delete from fb_comments:", e.message);
+    }
+
+    try {
+        await supabase.from('fb_message_database').delete().eq('page_id', pageId);
+    } catch (e) {
+        console.warn("[DB] Failed to delete from fb_message_database:", e.message);
+    }
+
+    try {
+        await supabase.from('page_access_token_message').delete().eq('page_id', pageId);
+    } catch (e) {
+        console.warn("[DB] Failed to delete from page_access_token_message:", e.message);
+    }
+}
+
 // 26. Check WhatsApp Lock Status
 async function checkWhatsAppLockStatus(sessionName, senderId) {
     return false; // DISABLED PER USER REQUEST
@@ -1405,6 +1443,7 @@ module.exports = {
     getExpiredWhatsAppSessions,
     deductUserBalance,
     deleteWhatsAppEntry,
+    deleteMessengerPage,
     checkWhatsAppLockStatus,
     checkWhatsAppEmojiLock,
     createWhatsAppSessionEntry,

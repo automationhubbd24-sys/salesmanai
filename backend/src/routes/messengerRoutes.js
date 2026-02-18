@@ -301,4 +301,49 @@ router.put('/config/:id', async (req, res) => {
     }
 });
 
+router.delete('/page/:pageId', async (req, res) => {
+    try {
+        const { pageId } = req.params;
+        const authHeader = req.headers.authorization;
+
+        if (!authHeader) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+
+        const token = authHeader.replace('Bearer ', '');
+        const { data: { user }, error } = await dbService.supabase.auth.getUser(token);
+
+        if (error || !user) {
+            return res.status(401).json({ error: 'Invalid token' });
+        }
+
+        const userEmail = user.email;
+
+        const { data: pageRow, error: pageError } = await dbService.supabase
+            .from('page_access_token_message')
+            .select('page_id, email')
+            .eq('page_id', pageId)
+            .maybeSingle();
+
+        if (pageError) {
+            return res.status(500).json({ error: pageError.message });
+        }
+
+        if (!pageRow) {
+            return res.status(404).json({ error: 'Page not found' });
+        }
+
+        if (pageRow.email !== userEmail) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
+
+        await dbService.deleteMessengerPage(pageId);
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error("Error deleting Messenger page:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 module.exports = router;

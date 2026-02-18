@@ -535,21 +535,15 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         console.log(`[AI] External API Mode: Skipping n8n System Prompt.`);
 
     } else {
-        // --- INTERNAL BOT MODE (n8n/WhatsApp/Messenger) ---
         let basePrompt = pagePrompts?.text_prompt || "";
-        
-        let personaInstruction = "";
-        let imageOnceRule = "";
-        if (defaultProvider === 'openrouter' || useCheapEngine) {
-            personaInstruction = "";
-        } else {
-            personaInstruction = `Persona: Gemini 2.5 Flash. Fast, accurate, expert. Strict JSON. No fluff.`;
+
+        if (!basePrompt || !basePrompt.trim()) {
+            basePrompt = "You are a helpful Bangla chatbot for this business. Answer politely and clearly about their products and services using the given context.";
         }
 
         const n8nSystemPrompt = `Role: Bot ${pageConfig.bot_name || 'Assistant'} representing ${ownerName}.
 Ctx: ${basePrompt}
-${productContext}
-${personaInstruction}`;
+${productContext}`;
 
         /*
          * LEGACY_SYSTEM_PROMPT_RULES (disabled by default)
