@@ -66,10 +66,44 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
       // Check Team Membership (Allow Multiple Teams)
       const { data: teamData } = await (supabase
           .from('team_members') as any)
-          .select('id, owner_email, permissions')
-          .eq('member_email', user.email);
+          .select('id, owner_email, permissions, status')
+          .eq('member_email', user.email)
+          .eq('status', 'active');
       
-      const foundTeams = teamData || [];
+      const rawTeams = teamData || [];
+      const teamMap = new Map<string, any>();
+      rawTeams.forEach((row: any) => {
+          const key = row.owner_email;
+          if (!key) return;
+          if (!teamMap.has(key)) {
+              teamMap.set(key, row);
+          } else {
+              const existing = teamMap.get(key);
+              const merged: any = { ...existing };
+              const fb1 = existing?.permissions?.fb_pages;
+              const fb2 = row?.permissions?.fb_pages;
+              const wa1 = existing?.permissions?.wa_sessions;
+              const wa2 = row?.permissions?.wa_sessions;
+              merged.permissions = {
+                  ...(existing.permissions || {}),
+                  ...(row.permissions || {}),
+                  fb_pages: Array.from(
+                      new Set([
+                          ...(Array.isArray(fb1) ? fb1 : []),
+                          ...(Array.isArray(fb2) ? fb2 : []),
+                      ])
+                  ),
+                  wa_sessions: Array.from(
+                      new Set([
+                          ...(Array.isArray(wa1) ? wa1 : []),
+                          ...(Array.isArray(wa2) ? wa2 : []),
+                      ])
+                  ),
+              };
+              teamMap.set(key, merged);
+          }
+      });
+      const foundTeams = Array.from(teamMap.values());
       setIsTeamMember(foundTeams.length > 0);
       setTeams(foundTeams);
 

@@ -38,16 +38,14 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
     let effectiveUserId = userId;
 
     if (viewerEmail) {
-        const { data: teamData } = await dbService.supabase
+        const { data: teamRows } = await dbService.supabase
             .from('team_members')
             .select('owner_email')
             .eq('member_email', viewerEmail)
-            .eq('status', 'active')
-            .limit(1)
-            .maybeSingle();
+            .eq('status', 'active');
 
-        if (teamData && teamData.owner_email) {
-            const ownerEmail = teamData.owner_email;
+        if (Array.isArray(teamRows) && teamRows.length === 1 && teamRows[0].owner_email) {
+            const ownerEmail = teamRows[0].owner_email;
             let ownerUserId = null;
 
             const { data: pageOwner } = await dbService.supabase

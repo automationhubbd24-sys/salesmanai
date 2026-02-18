@@ -386,10 +386,12 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
     }
     combinedText = combinedText.trim();
     if (adContext) combinedText += adContext;
-
+    
     const normalizedForEmojiCheck = combinedText.replace(/\s/g, '');
     const hasAlphaNumericOrBangla = /[A-Za-z0-9\u0980-\u09FF]/.test(normalizedForEmojiCheck);
-    if (!hasAlphaNumericOrBangla && normalizedForEmojiCheck.length > 0) {
+    const hasQuestionMark = normalizedForEmojiCheck.includes('?');
+    const hasMediaContext = allImages.length > 0 || allAudios.length > 0 || !!replyToId;
+    if (!hasAlphaNumericOrBangla && !hasQuestionMark && !hasMediaContext && normalizedForEmojiCheck.length > 0) {
         const logMsg = `[Emoji Gatekeeper] Blocked emoji-only message for ${sessionId}.`;
         console.log(logMsg);
         logToFile(logMsg);
