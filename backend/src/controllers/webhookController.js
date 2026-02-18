@@ -573,13 +573,20 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
              const reason = hasVideo ? "User sent a video." : `User sent ${allImages.length} images.`;
              combinedText += `\n[System Note: ${reason} This is too costly/complex to analyze directly. Instead of analyzing these media files, use the Ad Context (Ref/Title) if available, or ask the user to specify which product they are interested in from the post.]`;
         } else if (allImages.length > 0) {
-            // Per-message analysis + save by original message_id for swipe reply context
             console.log(`[Batch] Per-message analysis for ${allImages.length} images...`);
             let combinedImageAnalysis = "";
+
+            let productAnalysisPrompt = "";
+            if (pagePrompts && (pagePrompts.image_prompt || pagePrompts.vision_prompt)) {
+                productAnalysisPrompt = pagePrompts.image_prompt || pagePrompts.vision_prompt;
+            }
+
             for (const msg of messages) {
                 if (msg.images && msg.images.length > 0) {
                     try {
-                        const imagePromises = msg.images.map(url => aiService.processImageWithVision(url, pageConfig));
+                        const imagePromises = msg.images.map(url =>
+                            aiService.processImageWithVision(url, pageConfig, { prompt: productAnalysisPrompt || "" })
+                        );
                         const imageResults = await Promise.all(imagePromises);
                         
                         // Extract text and usage

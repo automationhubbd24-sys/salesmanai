@@ -382,11 +382,13 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     
     if (imageUrls && imageUrls.length > 0) {
         console.log(`[AI] Processing ${imageUrls.length} images...`);
-        // Use per-page vision prompt if available
-        const visionPrompt = (pagePrompts && (pagePrompts.image_prompt || pagePrompts.vision_prompt)) 
-            ? (pagePrompts.image_prompt || pagePrompts.vision_prompt) 
-            : "Describe this image in detail.";
-        const imageResults = await Promise.all(imageUrls.map(url => processImageWithVision(url, pageConfig, { prompt: visionPrompt })));
+        // Use per-page vision prompt if available (no backend default)
+        const visionPrompt = pagePrompts && (pagePrompts.image_prompt || pagePrompts.vision_prompt)
+            ? (pagePrompts.image_prompt || pagePrompts.vision_prompt)
+            : "";
+        const imageResults = await Promise.all(
+            imageUrls.map(url => processImageWithVision(url, pageConfig, { prompt: visionPrompt }))
+        );
         
         // Extract text and usage
         const imageDescriptions = imageResults.map(res => {
@@ -537,6 +539,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         let basePrompt = pagePrompts?.text_prompt || "You are a helpful assistant.";
         
         let personaInstruction = "";
+        let imageOnceRule = "";
         // User Request: Strong Prompt Engineering for OpenRouter Stability & Bengali
         if (defaultProvider === 'openrouter' || useCheapEngine) {
             personaInstruction = `
@@ -939,8 +942,8 @@ async function processImageWithVision(imageUrl, pageConfig = {}, customOptions =
     }
 
     // Determine System Prompt
-    // UPDATE: Generic default to avoid hidden business logic (User Request)
-    const systemPrompt = customOptions?.prompt || "Describe this image in detail.";
+    // Use only user-provided prompt; no backend default
+    const systemPrompt = typeof customOptions?.prompt === 'string' ? customOptions.prompt : "";
 
     // --- PRIORITY ATTEMPT (Custom Options) ---
     if (customOptions?.provider === 'openrouter' && customOptions?.model) {

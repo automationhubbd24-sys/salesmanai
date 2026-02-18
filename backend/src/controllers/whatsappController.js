@@ -1155,8 +1155,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
     let imageAnalyzeText = null;
     let totalVisionTokens = 0;
     if (messages.some(m => m.images && m.images.length > 0)) {
-        // Default to Generic Prompt if not found in DB (User Request: Remove hardcoded business logic)
-        let productAnalysisPrompt = "Describe this image in detail.";
+        let productAnalysisPrompt = "";
         try {
             // Use WhatsApp Config which includes page_prompts
             // const pageConfig = await dbService.getWhatsAppConfig(sessionName); // Optim: Already loaded
@@ -1164,10 +1163,8 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                 // Priority 1: page_prompts object (merged in getWhatsAppConfig)
                 if (pageConfig.page_prompts && (pageConfig.page_prompts.image_prompt || pageConfig.page_prompts.vision_prompt)) {
                     productAnalysisPrompt = pageConfig.page_prompts.image_prompt || pageConfig.page_prompts.vision_prompt;
-                }
-                // Priority 2: direct fields on config (legacy/flat structure)
-                else if (pageConfig.image_prompt || pageConfig.vision_prompt) {
-                     productAnalysisPrompt = pageConfig.image_prompt || pageConfig.vision_prompt;
+                } else if (pageConfig.image_prompt || pageConfig.vision_prompt) {
+                    productAnalysisPrompt = pageConfig.image_prompt || pageConfig.vision_prompt;
                 }
             }
         } catch (e) {
@@ -1177,9 +1174,11 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
         for (const msg of messages) {
             if (msg.images && msg.images.length > 0) {
                 try {
-                    const perMsgResults = await Promise.all(msg.images.map(img => aiService.processImageWithVision(img, {}, {
-                        prompt: productAnalysisPrompt
-                    })));
+                    const perMsgResults = await Promise.all(
+                        msg.images.map(img =>
+                            aiService.processImageWithVision(img, {}, { prompt: productAnalysisPrompt || "" })
+                        )
+                    );
                     const perMsgText = perMsgResults.map(res => {
                         if (typeof res === 'object') {
                             totalVisionTokens += (res.usage || 0);
