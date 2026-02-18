@@ -938,22 +938,28 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             replyText = String(replyText);
         }
 
-        // If AI fails (null or empty) and no images, stay fully silent (no fallback text to user).
+        // If AI returns null/empty text and no images, send a safe fallback reply
         if (!replyText && (!aiResponse.images || aiResponse.images.length === 0)) {
-             const reason = originalReply === null ? 'Strict Domain Control (Null Reply)' : 'Empty String Response';
-             console.log(`[AI] Silent Failure Triggered. Reason: ${reason}. No message sent to user.`);
+            const reason = originalReply === null ? 'Strict Domain Control (Null Reply)' : 'Empty String Response';
+            console.log(`[AI] Empty reply detected. Reason: ${reason}. Using fallback message instead of staying silent.`);
 
-             await dbService.saveFbChat({
+            const hasProviderError = aiResponse.error && typeof aiResponse.error === 'string';
+            const fallbackText = hasProviderError
+                ? 'দুঃখিত, এই মুহূর্তে AI সিস্টেমে সমস্যা হচ্ছে। কিছুক্ষণ পর আবার চেষ্টা করুন।'
+                : 'দুঃখিত, আমি আপনার বার্তাটা ঠিক বুঝিনি। আরেকবার একটু পরিষ্কার করে বলবেন?';
+
+            await dbService.saveFbChat({
                 page_id: pageId,
                 sender_id: pageId,
                 recipient_id: senderId,
                 message_id: `fail_${Date.now()}`,
-                text: '[Silent Failure: Off-topic or Error]',
+                text: `[AI Fallback] ${reason}${hasProviderError ? ` | ${aiResponse.error}` : ''}`,
                 timestamp: Date.now(),
                 status: 'ai_ignored',
                 reply_by: 'bot'
-             });
-             return;
+            });
+
+            replyText = fallbackText;
         }
 
         // --- SMART IMAGE EXTRACTION & CLEANING ---
