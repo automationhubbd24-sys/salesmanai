@@ -356,12 +356,10 @@ export default function WhatsAppSettingsPage() {
     if (!dbId) return;
     setPromptSaving(true);
     try {
-        const updates: any = {};
-        if (activeTab === "text") {
-            updates.text_prompt = tempPrompt;
-        } else {
-            updates.image_prompt = tempImagePrompt;
-        }
+        const updates: any = {
+            text_prompt: tempPrompt,
+            image_prompt: tempImagePrompt
+        };
 
         const { error } = await (supabase
             .from('whatsapp_message_database') as any)

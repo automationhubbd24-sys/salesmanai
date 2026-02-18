@@ -56,10 +56,38 @@ function extractProductNamesFromPrompt(promptText) {
     return Array.from(set);
 }
 
-// Global Debounce Map (In-Memory)
-// Key: sessionId (pageId_senderId)
-// Value: { timer: NodeJS.Timeout, messages: string[] }
 const debounceMap = new Map();
+const pageQueueMap = new Map();
+const MAX_CONCURRENT_PER_PAGE = 5;
+
+function schedulePageTask(pageId, task) {
+    const key = String(pageId);
+    let state = pageQueueMap.get(key);
+    if (!state) {
+        state = { active: 0, queue: [] };
+        pageQueueMap.set(key, state);
+    }
+    const run = async () => {
+        try {
+            await task();
+        } catch (e) {
+            console.error('[BurstQueue] Task error:', e.message || e);
+        } finally {
+            state.active -= 1;
+            if (state.queue.length > 0) {
+                const next = state.queue.shift();
+                state.active += 1;
+                next();
+            }
+        }
+    };
+    if (state.active < MAX_CONCURRENT_PER_PAGE) {
+        state.active += 1;
+        run();
+    } else {
+        state.queue.push(run);
+    }
+}
 
 // Step 1: Webhook Trigger
 const handleWebhook = async (req, res) => {
@@ -347,11 +375,10 @@ async function queueMessage(event) {
     console.log(`[Debounce] Using wait time: ${debounceTime}ms for ${sessionId}`);
 
     sessionData.timer = setTimeout(() => {
-        // Clone messages and clear buffer immediately
         const messagesToProcess = [...sessionData.messages];
         debounceMap.delete(sessionId);
         
-        processBufferedMessages(sessionId, pageId, senderId, messagesToProcess);
+        schedulePageTask(pageId, () => processBufferedMessages(sessionId, pageId, senderId, messagesToProcess));
     }, debounceTime); 
 }
 
