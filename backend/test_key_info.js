@@ -1,8 +1,8 @@
 
 const axios = require('axios');
 
-// User provided key for testing
-const API_KEY = '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';
+// User provided key for testing (load from env when running locally)
+const API_KEY = process.env.OPENROUTER_API_KEY || 'your-openrouter-api-key';
 
 async function checkKeyInfo() {
     console.log(`\n----------------------------------------`);

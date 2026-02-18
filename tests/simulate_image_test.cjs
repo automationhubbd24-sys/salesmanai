@@ -1,10 +1,10 @@
 const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
 
-// Config
+// Config (use env or placeholders – replace locally when running)
 const PORT = 3001;
-const SUPABASE_URL = 'https://supabasexyz.salesmanchatbot.online';
-const SUPABASE_KEY = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTc2ODkwNTEyMCwiZXhwIjo0OTI0NTc4NzIwLCJyb2xlIjoic2VydmljZV9yb2xlIn0.beU7mPb3wHjqfrI1jWsgk00_W6LPRMZ09kCiNBCZ6oY';
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://your-project.supabase.co';
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'your-service-role-key';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 

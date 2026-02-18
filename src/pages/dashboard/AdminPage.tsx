@@ -6,9 +6,10 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Shield, Users, Settings, Database as DatabaseIcon, Activity, AlertTriangle, Trash2, Edit, Ban, CheckCircle, CreditCard, DollarSign, Loader2, XCircle } from "lucide-react";
+import { Shield, Database as DatabaseIcon, Trash2, Edit, CheckCircle, CreditCard, DollarSign, Loader2, XCircle } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Database } from "@/integrations/supabase/types";
@@ -86,12 +87,288 @@ export default function AdminPage() {
   const [engineResults, setEngineResults] = useState<EngineTestResult[]>([]);
   const [engineError, setEngineError] = useState<string | null>(null);
 
+  const [dbTables, setDbTables] = useState<string[]>([]);
+  const [dbTablesLoading, setDbTablesLoading] = useState(false);
+  const [selectedTable, setSelectedTable] = useState<string | null>(null);
+  const [dbColumns, setDbColumns] = useState<{ column_name: string; data_type: string; is_nullable: string }[]>([]);
+  const [dbRows, setDbRows] = useState<any[]>([]);
+  const [dbLoading, setDbLoading] = useState(false);
+  const [dbLimit] = useState(50);
+  const [dbOffset, setDbOffset] = useState(0);
+  const [dbError, setDbError] = useState<string | null>(null);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editJson, setEditJson] = useState("");
+  const [editingRow, setEditingRow] = useState<any | null>(null);
+  const [insertDialogOpen, setInsertDialogOpen] = useState(false);
+  const [insertJson, setInsertJson] = useState("{}");
+  const [sqlText, setSqlText] = useState("");
+  const [sqlResult, setSqlResult] = useState<any | null>(null);
+  const [sqlError, setSqlError] = useState<string | null>(null);
+  const [sqlRunning, setSqlRunning] = useState(false);
+  const [createTableDialogOpen, setCreateTableDialogOpen] = useState(false);
+  const [newTableName, setNewTableName] = useState("");
+  const [newColumns, setNewColumns] = useState<{ name: string; type: string; nullable: boolean }[]>([
+    { name: "id", type: "bigserial primary key", nullable: false },
+  ]);
+  const [addColumnDialogOpen, setAddColumnDialogOpen] = useState(false);
+  const [newColumnName, setNewColumnName] = useState("");
+  const [newColumnType, setNewColumnType] = useState("");
+  const [newColumnNullable, setNewColumnNullable] = useState(true);
+
   useEffect(() => {
     if (isAuthenticated) {
       fetchTransactions();
       fetchCoupons();
+      fetchDbTables();
     }
   }, [isAuthenticated]);
+
+  const fetchDbTables = async () => {
+    try {
+      setDbTablesLoading(true);
+      const res = await fetch(`${BACKEND_URL}/api/db-admin/tables`);
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to load tables");
+      }
+      setDbTables(data.tables || []);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to load tables");
+    } finally {
+      setDbTablesLoading(false);
+    }
+  };
+
+  const loadTableData = async (tableName: string, offset = 0) => {
+    try {
+      setDbLoading(true);
+      setDbError(null);
+      const res = await fetch(`${BACKEND_URL}/api/db-admin/table/${encodeURIComponent(tableName)}?limit=${dbLimit}&offset=${offset}`);
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to load table data");
+      }
+      setSelectedTable(tableName);
+      setDbColumns(data.columns || []);
+      setDbRows(data.rows || []);
+      setDbOffset(offset);
+    } catch (error: any) {
+      const message = error.message || "Failed to load table data";
+      setDbError(message);
+      toast.error(message);
+    } finally {
+      setDbLoading(false);
+    }
+  };
+
+  const openEditRow = (row: any) => {
+    setEditingRow(row);
+    setEditJson(JSON.stringify(row, null, 2));
+    setEditDialogOpen(true);
+  };
+
+  const handleSaveRow = async () => {
+    if (!selectedTable || !editingRow) return;
+    const keyColumn = dbColumns[0]?.column_name;
+    if (!keyColumn) {
+      toast.error("No key column found");
+      return;
+    }
+    const keyValue = editingRow[keyColumn];
+    try {
+      const parsed = JSON.parse(editJson);
+      const res = await fetch(`${BACKEND_URL}/api/db-admin/table/${encodeURIComponent(selectedTable)}/update`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          keyColumn,
+          keyValue,
+          row: parsed,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to update row");
+      }
+      toast.success("Row updated");
+      setEditDialogOpen(false);
+      loadTableData(selectedTable, dbOffset);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to update row");
+    }
+  };
+
+  const handleDeleteRow = async (row: any) => {
+    if (!selectedTable) return;
+    const keyColumn = dbColumns[0]?.column_name;
+    if (!keyColumn) {
+      toast.error("No key column found");
+      return;
+    }
+    const keyValue = row[keyColumn];
+    if (keyValue === undefined || keyValue === null) {
+      toast.error("Row has no key value");
+      return;
+    }
+    const confirmed = window.confirm("Are you sure you want to delete this row?");
+    if (!confirmed) return;
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/db-admin/table/${encodeURIComponent(selectedTable)}/delete`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          keyColumn,
+          keyValue,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to delete row");
+      }
+      toast.success("Row deleted");
+      loadTableData(selectedTable, dbOffset);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to delete row");
+    }
+  };
+
+  const handleInsertRow = async () => {
+    if (!selectedTable) return;
+    try {
+      const parsed = JSON.parse(insertJson);
+      const res = await fetch(`${BACKEND_URL}/api/db-admin/table/${encodeURIComponent(selectedTable)}/insert`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          row: parsed,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to insert row");
+      }
+      toast.success("Row inserted");
+      setInsertDialogOpen(false);
+      loadTableData(selectedTable, dbOffset);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to insert row");
+    }
+  };
+
+  const handleCreateTable = async () => {
+    if (!newTableName.trim()) {
+      toast.error("Table name is required");
+      return;
+    }
+    const columns = newColumns
+      .map((c) => ({
+        name: c.name.trim(),
+        type: c.type.trim(),
+        nullable: c.nullable,
+      }))
+      .filter((c) => c.name && c.type);
+    if (columns.length === 0) {
+      toast.error("At least one valid column is required");
+      return;
+    }
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/db-admin/table`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          table: newTableName.trim(),
+          columns,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to create table");
+      }
+      toast.success("Table created");
+      setCreateTableDialogOpen(false);
+      setNewTableName("");
+      setNewColumns([{ name: "id", type: "bigserial primary key", nullable: false }]);
+      fetchDbTables();
+      loadTableData(newTableName.trim(), 0);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to create table");
+    }
+  };
+
+  const handleAddColumn = async () => {
+    if (!selectedTable) return;
+    if (!newColumnName.trim() || !newColumnType.trim()) {
+      toast.error("Column name and type are required");
+      return;
+    }
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/db-admin/table/${encodeURIComponent(selectedTable)}/column`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          column: {
+            name: newColumnName.trim(),
+            type: newColumnType.trim(),
+            nullable: newColumnNullable,
+          },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to add column");
+      }
+      toast.success("Column added");
+      setAddColumnDialogOpen(false);
+      setNewColumnName("");
+      setNewColumnType("");
+      setNewColumnNullable(true);
+      loadTableData(selectedTable, dbOffset);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to add column");
+    }
+  };
+
+  const handleRunSql = async () => {
+    if (!sqlText.trim()) {
+      toast.error("SQL is empty");
+      return;
+    }
+    setSqlRunning(true);
+    setSqlError(null);
+    setSqlResult(null);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/db-admin/sql`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ sql: sqlText }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to run SQL");
+      }
+      setSqlResult(data);
+      toast.success("SQL executed");
+      fetchDbTables();
+    } catch (error: any) {
+      const message = error.message || "Failed to run SQL";
+      setSqlError(message);
+      toast.error(message);
+    } finally {
+      setSqlRunning(false);
+    }
+  };
 
   const handleLogin = async () => {
     if (!usernameInput || !passwordInput) {
@@ -520,8 +797,7 @@ export default function AdminPage() {
           <TabsTrigger value="finance">Finance</TabsTrigger>
           <TabsTrigger value="engine">Engine Test</TabsTrigger>
           <TabsTrigger value="gemini">Gemini Monitor</TabsTrigger>
-          <TabsTrigger value="users">User Management</TabsTrigger>
-          <TabsTrigger value="system">System Settings</TabsTrigger>
+          <TabsTrigger value="db">Database Admin</TabsTrigger>
           <TabsTrigger value="openrouter">OpenRouter Config</TabsTrigger>
         </TabsList>
 
@@ -974,20 +1250,415 @@ export default function AdminPage() {
           </Card>
         </TabsContent>
 
-        {/* Users Tab (Placeholder) */}
-        <TabsContent value="users">
-          <Card>
-            <CardHeader><CardTitle>User Management</CardTitle></CardHeader>
-            <CardContent><p className="text-muted-foreground">User management features coming soon.</p></CardContent>
-          </Card>
-        </TabsContent>
+        <TabsContent value="db">
+          <div className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-[260px,1fr]">
+              <Card className="h-full">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <DatabaseIcon className="h-5 w-5" />
+                    Tables
+                  </CardTitle>
+                  <CardDescription>Select a table to view and edit rows</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full mb-2"
+                    onClick={fetchDbTables}
+                    disabled={dbTablesLoading}
+                  >
+                    {dbTablesLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Refresh Tables
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="w-full mb-2"
+                    onClick={() => setCreateTableDialogOpen(true)}
+                  >
+                    Create Table
+                  </Button>
+                  <div className="border rounded-md max-h-[480px] overflow-auto">
+                    {dbTables.length === 0 && !dbTablesLoading && (
+                      <div className="p-3 text-sm text-muted-foreground">No tables found in public schema.</div>
+                    )}
+                    {dbTables.map((t) => (
+                      <button
+                        key={t}
+                        onClick={() => loadTableData(t, 0)}
+                        className={`w-full text-left px-3 py-2 text-sm border-b last:border-b-0 hover:bg-muted ${
+                          selectedTable === t ? "bg-muted font-semibold" : ""
+                        }`}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
 
-        {/* System Tab (Placeholder) */}
-        <TabsContent value="system">
-           <Card>
-            <CardHeader><CardTitle>System Settings</CardTitle></CardHeader>
-            <CardContent><p className="text-muted-foreground">System settings coming soon.</p></CardContent>
-          </Card>
+              <Card className="h-full">
+                <CardHeader>
+                  <CardTitle>
+                    {selectedTable ? `Table: ${selectedTable}` : "Select a table"}
+                  </CardTitle>
+                  <CardDescription>
+                    View, insert, edit, and delete rows from the selected table
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {dbError && (
+                    <div className="text-sm text-red-500">
+                      {dbError}
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-xs text-muted-foreground">
+                      Limit {dbLimit} · Offset {dbOffset}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setAddColumnDialogOpen(true)}
+                        disabled={!selectedTable}
+                      >
+                        Add Column
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => selectedTable && loadTableData(selectedTable, Math.max(dbOffset - dbLimit, 0))}
+                        disabled={!selectedTable || dbLoading || dbOffset === 0}
+                      >
+                        Previous
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => selectedTable && loadTableData(selectedTable, dbOffset + dbLimit)}
+                        disabled={!selectedTable || dbLoading || dbRows.length < dbLimit}
+                      >
+                        Next
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          setInsertJson("{}");
+                          setInsertDialogOpen(true);
+                        }}
+                        disabled={!selectedTable}
+                      >
+                        Add Row
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="overflow-auto border rounded-md">
+                    {dbLoading ? (
+                      <div className="p-4 text-center text-sm text-muted-foreground">
+                        Loading table data...
+                      </div>
+                    ) : !selectedTable ? (
+                      <div className="p-4 text-center text-sm text-muted-foreground">
+                        Select a table from the left panel.
+                      </div>
+                    ) : (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            {dbColumns.map((col) => (
+                              <TableHead key={col.column_name} className="text-xs">
+                                {col.column_name}
+                              </TableHead>
+                            ))}
+                            <TableHead className="text-right text-xs">Actions</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {dbRows.length === 0 ? (
+                            <TableRow>
+                              <TableCell
+                                colSpan={dbColumns.length + 1}
+                                className="text-xs text-muted-foreground text-center"
+                              >
+                                No rows found in this page.
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            dbRows.map((row, idx) => (
+                              <TableRow key={idx}>
+                                {dbColumns.map((col) => (
+                                  <TableCell key={col.column_name} className="text-xs max-w-[260px] truncate">
+                                    {String(row[col.column_name] ?? "")}
+                                  </TableCell>
+                                ))}
+                                <TableCell className="text-right">
+                                  <div className="flex justify-end gap-2">
+                                    <Button
+                                      variant="outline"
+                                      size="icon"
+                                      onClick={() => openEditRow(row)}
+                                    >
+                                      <Edit className="h-4 w-4" />
+                                    </Button>
+                                    <Button
+                                      variant="outline"
+                                      size="icon"
+                                      className="text-red-600 border-red-200 hover:bg-red-50"
+                                      onClick={() => handleDeleteRow(row)}
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>SQL Console</CardTitle>
+                <CardDescription>Run SQL to create tables or query data in public schema</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {sqlError && (
+                  <div className="text-sm text-red-500">
+                    {sqlError}
+                  </div>
+                )}
+                <Textarea
+                  value={sqlText}
+                  onChange={(e) => setSqlText(e.target.value)}
+                  className="font-mono text-xs h-40"
+                  placeholder="Example: CREATE TABLE public.test (id serial primary key, name text);"
+                />
+                <div className="flex items-center justify-between">
+                  <Button onClick={handleRunSql} disabled={sqlRunning}>
+                    {sqlRunning && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Run SQL
+                  </Button>
+                  {sqlResult && (
+                    <div className="text-xs text-muted-foreground">
+                      {sqlResult.command || ""}{sqlResult.rowCount !== null && sqlResult.rowCount !== undefined ? ` · ${sqlResult.rowCount} row(s)` : ""}
+                    </div>
+                  )}
+                </div>
+                {sqlResult && Array.isArray(sqlResult.rows) && sqlResult.rows.length > 0 && Array.isArray(sqlResult.fields) && sqlResult.fields.length > 0 && (
+                  <div className="mt-3 border rounded-md overflow-auto max-h-80">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          {sqlResult.fields.map((name: string) => (
+                            <TableHead key={name} className="text-xs">
+                              {name}
+                            </TableHead>
+                          ))}
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {sqlResult.rows.map((row: any, idx: number) => (
+                          <TableRow key={idx}>
+                            {sqlResult.fields.map((name: string) => (
+                              <TableCell key={name} className="text-xs max-w-[260px] truncate">
+                                {String(row[name] ?? "")}
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+            <DialogContent className="max-w-3xl">
+              <DialogHeader>
+                <DialogTitle>Edit Row</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-2">
+                <Label>Row JSON</Label>
+                <Textarea
+                  value={editJson}
+                  onChange={(e) => setEditJson(e.target.value)}
+                  className="font-mono text-xs h-64"
+                />
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleSaveRow}>
+                  Save Changes
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={insertDialogOpen} onOpenChange={setInsertDialogOpen}>
+            <DialogContent className="max-w-3xl">
+              <DialogHeader>
+                <DialogTitle>Insert Row</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-2">
+                <Label>Row JSON</Label>
+                <Textarea
+                  value={insertJson}
+                  onChange={(e) => setInsertJson(e.target.value)}
+                  className="font-mono text-xs h-64"
+                  placeholder='{"column": "value"}'
+                />
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setInsertDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleInsertRow}>
+                  Insert
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={createTableDialogOpen} onOpenChange={setCreateTableDialogOpen}>
+            <DialogContent className="max-w-3xl">
+              <DialogHeader>
+                <DialogTitle>Create Table</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Table Name</Label>
+                  <Input
+                    value={newTableName}
+                    onChange={(e) => setNewTableName(e.target.value)}
+                    placeholder="my_table"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Columns</Label>
+                  <div className="space-y-2">
+                    {newColumns.map((col, idx) => (
+                      <div key={idx} className="grid grid-cols-[1.2fr,1fr,auto] gap-2 items-center">
+                        <Input
+                          placeholder="column_name"
+                          value={col.name}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setNewColumns((prev) =>
+                              prev.map((c, i) => (i === idx ? { ...c, name: value } : c))
+                            );
+                          }}
+                        />
+                        <Input
+                          placeholder="text, integer, bigint..."
+                          value={col.type}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setNewColumns((prev) =>
+                              prev.map((c, i) => (i === idx ? { ...c, type: value } : c))
+                            );
+                          }}
+                        />
+                        <div className="flex items-center gap-2">
+                          <Switch
+                            checked={col.nullable}
+                            onCheckedChange={(checked) => {
+                              setNewColumns((prev) =>
+                                prev.map((c, i) => (i === idx ? { ...c, nullable: Boolean(checked) } : c))
+                              );
+                            }}
+                          />
+                          <span className="text-xs text-muted-foreground">Nullable</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex justify-between pt-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        setNewColumns((prev) => [...prev, { name: "", type: "text", nullable: true }])
+                      }
+                    >
+                      Add Column
+                    </Button>
+                    {newColumns.length > 1 && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setNewColumns((prev) => prev.slice(0, prev.length - 1))
+                        }
+                      >
+                        Remove Last
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setCreateTableDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleCreateTable}>
+                  Create
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={addColumnDialogOpen} onOpenChange={setAddColumnDialogOpen}>
+            <DialogContent className="max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Add Column {selectedTable ? `to ${selectedTable}` : ""}</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Column Name</Label>
+                  <Input
+                    value={newColumnName}
+                    onChange={(e) => setNewColumnName(e.target.value)}
+                    placeholder="new_column"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Column Type</Label>
+                  <Input
+                    value={newColumnType}
+                    onChange={(e) => setNewColumnType(e.target.value)}
+                    placeholder="text, integer, timestamptz..."
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={newColumnNullable}
+                    onCheckedChange={(checked) => setNewColumnNullable(Boolean(checked))}
+                  />
+                  <span className="text-xs text-muted-foreground">Nullable</span>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setAddColumnDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleAddColumn} disabled={!selectedTable}>
+                  Add Column
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </TabsContent>
 
         {/* OpenRouter Config Tab (Embedded) */}

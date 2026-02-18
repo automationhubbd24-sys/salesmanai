@@ -559,7 +559,6 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                         );
                         const imageResults = await Promise.all(imagePromises);
                         
-                        // Extract text and usage
                         const perMsgText = imageResults.map((result, index) => {
                             const text = typeof result === 'object' ? (result.text || '') : String(result || '');
                             const usage = typeof result === 'object' ? (result.usage || 0) : 0;
@@ -569,14 +568,15 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                         
                         if (perMsgText) {
                             combinedImageAnalysis += `\n${perMsgText}\n`;
-                            // Save analysis under original message_id
                             try {
+                                const baseText = msg.text && msg.text.trim() ? `${msg.text.trim()}\n` : "";
+                                const finalText = `${baseText}[Image Analysis] ${perMsgText}`;
                                 await dbService.saveFbChat({
                                     page_id: pageId,
                                     sender_id: senderId,
                                     recipient_id: pageId,
                                     message_id: msg.id,
-                                    text: `[Image Analysis] ${perMsgText}`,
+                                    text: finalText,
                                     timestamp: Date.now(),
                                     status: 'received',
                                     reply_by: 'user'

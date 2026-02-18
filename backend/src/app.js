@@ -8,6 +8,7 @@ const productRoutes = require('./routes/productRoutes');
 const externalApiRoutes = require('./routes/externalApiRoutes');
 const liteEngineRoutes = require('./routes/liteEngineRoutes'); // New Lite Engine
 const openrouterEngineRoutes = require('./routes/openrouterEngineRoutes'); // New OpenRouter Engine
+const dbAdminRoutes = require('./routes/dbAdminRoutes');
 
 const app = express();
 
@@ -29,6 +30,7 @@ app.use('/api/products', productRoutes); // New Product Management Routes
 app.use('/api/external', externalApiRoutes); // External "Cheap Engine" API
 app.use('/api/lite', liteEngineRoutes); // New "SalesmanChatbot 2.0 Lite" API
 app.use('/api/openrouter', openrouterEngineRoutes); // New OpenRouter Engine API
+app.use('/api/db-admin', dbAdminRoutes);
 
 // Basic health check
 
