@@ -27,6 +27,7 @@ interface Product {
     id: number;
     name: string;
     description: string;
+    keywords?: string;
     image_url: string | null;
     variants: Variant[];
     is_active: boolean;
@@ -60,6 +61,7 @@ export default function ProductsPage() {
     const [productCurrency, setProductCurrency] = useState("USD");
     const [isCustomCurrency, setIsCustomCurrency] = useState(false);
     const [productStock, setProductStock] = useState("0");
+    const [productKeywords, setProductKeywords] = useState("");
     const [productImage, setProductImage] = useState<File | null>(null);
     const [imagePreview, setImagePreview] = useState<string | null>(null);
     const [productImages, setProductImages] = useState<File[]>([]);
@@ -253,6 +255,7 @@ export default function ProductsPage() {
         setEditProductId(product.id);
         setProductName(product.name);
         setProductDesc(product.description || "");
+        setProductKeywords(product.keywords || "");
         setProductPrice(product.price?.toString() || "0");
         
         const standardCurrencies = ["USD", "BDT", "EUR", "GBP", "INR", "PKR", "CAD", "AUD", "AED", "SAR", "MYR", "SGD"];
@@ -294,6 +297,7 @@ export default function ProductsPage() {
             formData.append("user_id", userId);
             formData.append("name", productName);
             formData.append("description", productDesc);
+            formData.append("keywords", productKeywords);
             formData.append("price", productPrice);
             formData.append("currency", productCurrency);
             formData.append("stock", productStock);
@@ -448,6 +452,7 @@ export default function ProductsPage() {
         setProductStock("0");
         setProductCurrency("USD");
         setIsCustomCurrency(false);
+        setProductKeywords("");
         setProductImage(null);
         setImagePreview(null);
         setProductImages([]);
@@ -624,6 +629,19 @@ export default function ProductsPage() {
                                         value={productDesc}
                                         onChange={(e) => setProductDesc(e.target.value)}
                                     />
+                                </div>
+                                <div className="grid gap-2">
+                                    <Label htmlFor="keywords">AI Keywords (Label Text)</Label>
+                                    <Input
+                                        id="keywords"
+                                        placeholder="e.g. fair & lovely, vitamin c, skin brightening"
+                                        className="bg-[#101010]/80 border-white/10 focus:border-[#00ff88]/40 text-xs"
+                                        value={productKeywords}
+                                        onChange={(e) => setProductKeywords(e.target.value)}
+                                    />
+                                    <span className="text-[10px] text-muted-foreground">
+                                        Product er gaye ja lekha thake oigula comma diye likho. AI search e use hobe.
+                                    </span>
                                 </div>
 
                                 <div className="flex gap-4">

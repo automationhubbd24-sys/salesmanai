@@ -163,6 +163,7 @@ exports.createProduct = async (req, res) => {
         const price = req.body.price ? parseFloat(req.body.price) : 0;
         const currency = req.body.currency || 'USD';
         const stock = req.body.stock ? parseInt(req.body.stock) : 0;
+        const keywords = req.body.keywords || '';
 
         let variants = [];
         try {
@@ -195,7 +196,8 @@ exports.createProduct = async (req, res) => {
             price,
             currency,
             stock,
-            allowed_page_ids: allowedPages
+            allowed_page_ids: allowedPages,
+            keywords
         });
 
         res.status(201).json(product);
@@ -270,6 +272,7 @@ exports.updateProduct = async (req, res) => {
         if (req.body.price) updates.price = parseFloat(req.body.price);
         if (req.body.currency) updates.currency = req.body.currency;
         if (req.body.stock) updates.stock = parseInt(req.body.stock);
+        if (req.body.keywords !== undefined) updates.keywords = req.body.keywords;
         if (req.body.is_active) updates.is_active = req.body.is_active === 'true' || req.body.is_active === true;
         if (imageUrl) updates.image_url = imageUrl;
 

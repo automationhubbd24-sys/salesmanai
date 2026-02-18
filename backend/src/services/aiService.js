@@ -365,8 +365,9 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                      const stockDisplay = p.stock !== undefined ? p.stock : 'N/A';
                      const descDisplay = p.description ? p.description.replace(/\n/g, ' ').substring(0, 200) : 'N/A';
                      const imgDisplay = (p.image_url && p.image_url.startsWith('http')) ? p.image_url : 'N/A';
+                     const keywordsDisplay = p.keywords ? p.keywords.replace(/\n/g, ' ').substring(0, 200) : 'N/A';
                      
-                     productContext += `Item ${i+1}: ${p.name} | Price: ${priceDisplay} | Stock: ${stockDisplay} | Image URL: ${imgDisplay} | Desc: ${descDisplay}${variantInfo}\n`;
+                     productContext += `Item ${i+1}: ${p.name} | Price: ${priceDisplay} | Stock: ${stockDisplay} | Image URL: ${imgDisplay} | Desc: ${descDisplay} | Keywords: ${keywordsDisplay}${variantInfo}\n`;
                  });
                  productContext += "[End of Products]\n";
                  console.log(`[AI] Injected ${products.length} products into context.`);

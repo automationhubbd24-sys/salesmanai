@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS products (
     user_id UUID NOT NULL, -- Links to auth.users or your user_configs logic
     name TEXT NOT NULL,
     description TEXT,
+    keywords TEXT,
     image_url TEXT,
     is_active BOOLEAN DEFAULT TRUE,
     price NUMERIC DEFAULT 0,

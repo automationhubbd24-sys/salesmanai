@@ -1719,7 +1719,7 @@ async function searchProducts(userId, query, pageId = null) {
     const buildBaseQuery = () => {
         let q = supabase
             .from('products')
-            .select('name, description, image_url, variants, is_active, price, currency')
+            .select('name, description, image_url, variants, is_active, price, currency, keywords')
             .eq('user_id', userId)
             .eq('is_active', true);
         
@@ -1733,7 +1733,7 @@ async function searchProducts(userId, query, pageId = null) {
 
     // 1. Attempt: Strict Phrase Match (High Precision)
     const { data: exactData, error: exactError } = await buildBaseQuery()
-        .or(`name.ilike.%${cleanQuery}%,description.ilike.%${cleanQuery}%`)
+        .or(`name.ilike.%${cleanQuery}%,description.ilike.%${cleanQuery}%,keywords.ilike.%${cleanQuery}%`)
         .limit(5);
 
     if (!exactError && exactData && exactData.length > 0) {
@@ -1750,6 +1750,7 @@ async function searchProducts(userId, query, pageId = null) {
         tokens.forEach(token => {
             conditions.push(`name.ilike.%${token}%`);
             conditions.push(`description.ilike.%${token}%`);
+            conditions.push(`keywords.ilike.%${token}%`);
         });
         
         const { data: fuzzyData, error: fuzzyError } = await buildBaseQuery()
