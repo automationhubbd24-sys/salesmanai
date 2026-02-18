@@ -9,7 +9,6 @@ import { RefreshCw, Plus, QrCode, Trash2, Play, Pause, Server, Zap, Download, Sm
 import { Badge } from "@/components/ui/badge";
 import { WorkspaceSwitcher } from "@/components/dashboard/WorkspaceSwitcher";
 import { BACKEND_URL } from "@/config";
-import { supabase } from "@/integrations/supabase/client";
 import { Label } from "@/components/ui/label";
 import {
   Dialog,
@@ -63,17 +62,22 @@ export default function SessionManager() {
   // const [createCountryCode, setCreateCountryCode] = useState("+880"); // Removed
 
   const fetchBalance = useCallback(async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      
-      const { data } = await supabase
-        .from('user_configs')
-        .select('balance')
-        .eq('user_id', user.id)
-        .maybeSingle();
-      
-      if (data) {
-          setBalance((data as any).balance);
+      try {
+          const token = localStorage.getItem("auth_token");
+          if (!token) return;
+
+          const res = await fetch(`${BACKEND_URL}/api/auth/payments/me`, {
+              headers: { Authorization: `Bearer ${token}` }
+          });
+
+          if (!res.ok) return;
+
+          const data = await res.json();
+          if (typeof data.balance === "number") {
+              setBalance(data.balance);
+          }
+      } catch (e) {
+          console.error("Failed to fetch balance", e);
       }
   }, []);
 
@@ -163,12 +167,12 @@ export default function SessionManager() {
       
       setIsPairingLoading(true);
       try {
-          const { data: { session } } = await supabase.auth.getSession();
+          const token = localStorage.getItem("auth_token");
           const res = await fetch(`${BACKEND_URL}/whatsapp/session/pairing-code`, {
             method: 'POST',
             headers: { 
                 'Content-Type': 'application/json',
-                'Authorization': session?.access_token ? `Bearer ${session.access_token}` : ''
+                ...(token ? { Authorization: `Bearer ${token}` } : {})
             },
             body: JSON.stringify({ 
                 sessionName: viewingSessionQr,
@@ -203,20 +207,10 @@ export default function SessionManager() {
     setIsCreating(true);
     setQrCodeUrl(null);
     try {
-      let { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session || !session.user || !session.access_token) {
-        const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
-        if (refreshError || !refreshData.session) {
-             throw new Error("User session expired. Please logout and login again.");
-        }
-        session = refreshData.session;
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        throw new Error("Please login again");
       }
-
-      const { data: { user: authUser } } = await supabase.auth.getUser();
-      const user = authUser || session.user;
-      
-      if (!user?.email) throw new Error("User email not found. Please contact support.");
 
       const suffix = Math.random().toString(36).substring(2, 8);
       // Sanitize session name: remove spaces, special chars
@@ -225,8 +219,6 @@ export default function SessionManager() {
 
       const payload = { 
         sessionName: finalSessionName,
-        userEmail: user.email,
-        userId: user.id,
         planDays: parseInt(selectedPlan), // Ensure number
         engine: selectedEngine
       };
@@ -237,7 +229,7 @@ export default function SessionManager() {
         method: 'POST',
         headers: { 
             'Content-Type': 'application/json',
-            'Authorization': session?.access_token ? `Bearer ${session.access_token}` : ''
+            'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify(payload)
       });
@@ -305,25 +297,8 @@ export default function SessionManager() {
   const fetchQr = async (sessionName: string, retries = 10) => {
     try {
       setViewingSessionQr(sessionName);
-      
-      const { data } = await supabase
-        .from('whatsapp_message_database')
-        .select('qr_code')
-        .eq('session_name', sessionName)
-        .single();
-      
-      const sessionData = data as { qr_code: string | null } | null;
-        
-      if (sessionData && sessionData.qr_code) {
-          setQrCodeUrl(sessionData.qr_code);
-          return;
-      }
-
-      const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch(`${BACKEND_URL}/whatsapp/session/qr/${sessionName}?t=${Date.now()}`, {
-          headers: {
-              'Authorization': session?.access_token ? `Bearer ${session.access_token}` : ''
-          }
+          method: 'GET'
       });
       
       if (res.ok) {
@@ -379,12 +354,15 @@ export default function SessionManager() {
   
       setIsRenewing(true);
       try {
-          const { data: { session } } = await supabase.auth.getSession();
+          const token = localStorage.getItem("auth_token");
+          if (!token) {
+            throw new Error("Please login again");
+          }
           const res = await fetch(`${BACKEND_URL}/whatsapp/session/renew`, {
               method: 'POST',
               headers: { 
                   'Content-Type': 'application/json',
-                  'Authorization': session?.access_token ? `Bearer ${session.access_token}` : ''
+                  'Authorization': `Bearer ${token}`
               },
               body: JSON.stringify({ 
                   sessionName: sessionToRenew,
@@ -414,12 +392,12 @@ export default function SessionManager() {
     }
     
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const token = localStorage.getItem("auth_token");
       const res = await fetch(`${BACKEND_URL}/whatsapp/session/${action}`, {
         method: action === 'delete' ? 'DELETE' : 'POST',
         headers: { 
             'Content-Type': 'application/json',
-            'Authorization': session?.access_token ? `Bearer ${session.access_token}` : ''
+            ...(token ? { Authorization: `Bearer ${token}` } : {})
         },
         body: JSON.stringify({ sessionName })
       });

@@ -5,9 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import Logo from "@/components/Logo";
 import { Lock, ArrowLeft, Eye, EyeOff } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { BACKEND_URL } from "@/config";
 
 const ResetPassword = () => {
   const { t } = useLanguage();
@@ -36,10 +36,17 @@ const ResetPassword = () => {
     }
     setLoading(true);
     try {
-      const redirectTo = `${window.location.origin}/reset-password`;
-      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
-      if (error) {
-        toast.error(error.message);
+      const res = await fetch(`${BACKEND_URL}/auth/password/reset/request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+
+      const body = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        const msg = body.error || body.message || t("Failed to send reset code", "রিসেট কোড পাঠাতে ব্যর্থ");
+        toast.error(msg);
       } else {
         toast.success(t("Password reset code sent to your email", "পাসওয়ার্ড রিসেট কোড আপনার ইমেইলে পাঠানো হয়েছে"));
       }
@@ -58,18 +65,20 @@ const ResetPassword = () => {
     }
     setLoading(true);
     try {
-      const { data, error } = await supabase.auth.verifyOtp({
-        email,
-        token: otp,
-        type: "recovery",
-      } as any);
-      if (error) {
-        toast.error(error.message);
-      } else if (data?.session) {
+      const res = await fetch(`${BACKEND_URL}/auth/password/reset/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, code: otp }),
+      });
+
+      const body = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        const msg = body.error || body.message || t("Verification failed", "যাচাই ব্যর্থ");
+        toast.error(msg);
+      } else {
         setVerified(true);
         toast.success(t("Code verified", "কোড যাচাই হয়েছে"));
-      } else {
-        toast.error(t("Verification failed", "যাচাই ব্যর্থ"));
       }
     } catch (err: any) {
       toast.error(err.message || t("Failed to verify code", "কোড যাচাই করতে ব্যর্থ"));
@@ -90,9 +99,17 @@ const ResetPassword = () => {
     }
     setLoading(true);
     try {
-      const { error } = await supabase.auth.updateUser({ password });
-      if (error) {
-        toast.error(error.message);
+      const res = await fetch(`${BACKEND_URL}/auth/password/reset/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, code: otp, password }),
+      });
+
+      const body = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        const msg = body.error || body.message || t("Failed to update password", "পাসওয়ার্ড আপডেট করতে ব্যর্থ");
+        toast.error(msg);
       } else {
         toast.success(t("Password updated. Please sign in.", "পাসওয়ার্ড আপডেট হয়েছে। অনুগ্রহ করে সাইন ইন করুন।"));
         navigate("/login");

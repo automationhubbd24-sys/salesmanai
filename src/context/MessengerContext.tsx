@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
 import { BACKEND_URL } from "@/config";
 
 export interface MessengerPage {
@@ -51,82 +50,17 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
   const refreshPages = React.useCallback(async () => {
     setLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user?.email) {
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
         setPages([]);
+        setIsTeamMember(false);
+        setTeams([]);
+        setActiveTeam(null);
         return;
       }
 
-      const { data: teamData } = await (supabase
-          .from('team_members') as any)
-          .select('id, owner_email, permissions, status')
-          .eq('member_email', user.email)
-          .eq('status', 'active');
-      
-      const rawTeams = teamData || [];
-      const teamMap = new Map<string, any>();
-      rawTeams.forEach((row: any) => {
-          const key = row.owner_email;
-          if (!key) return;
-          if (!teamMap.has(key)) {
-              teamMap.set(key, row);
-          } else {
-              const existing = teamMap.get(key);
-              const merged: any = { ...existing };
-              const fb1 = existing?.permissions?.fb_pages;
-              const fb2 = row?.permissions?.fb_pages;
-              const wa1 = existing?.permissions?.wa_sessions;
-              const wa2 = row?.permissions?.wa_sessions;
-              merged.permissions = {
-                  ...(existing.permissions || {}),
-                  ...(row.permissions || {}),
-                  fb_pages: Array.from(
-                      new Set([
-                          ...(Array.isArray(fb1) ? fb1 : []),
-                          ...(Array.isArray(fb2) ? fb2 : []),
-                      ])
-                  ),
-                  wa_sessions: Array.from(
-                      new Set([
-                          ...(Array.isArray(wa1) ? wa1 : []),
-                          ...(Array.isArray(wa2) ? wa2 : []),
-                      ])
-                  ),
-              };
-              teamMap.set(key, merged);
-          }
-      });
-      const foundTeams = Array.from(teamMap.values());
-      setIsTeamMember(foundTeams.length > 0);
-      setTeams(foundTeams);
-      
-      if (foundTeams.length > 0 && !isTeamMember) {
-      }
-
-      let currentActiveTeam = activeTeam;
-      if (viewMode === 'team' && foundTeams.length > 0) {
-          const storedOwner = localStorage.getItem('active_team_owner');
-          if (storedOwner) {
-              const matched = foundTeams.find((t: any) => t.owner_email === storedOwner);
-              if (matched) currentActiveTeam = matched;
-              else currentActiveTeam = foundTeams[0];
-          } else if (!currentActiveTeam) {
-              currentActiveTeam = foundTeams[0];
-          }
-          if (currentActiveTeam !== activeTeam) {
-             setActiveTeam(currentActiveTeam);
-          }
-      }
-
-      if (viewMode === 'team' && foundTeams.length === 0) {
-          setViewMode('personal');
-      }
-
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-
       const res = await fetch(`${BACKEND_URL}/messenger/pages`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
+        headers: { Authorization: `Bearer ${token}` }
       });
 
       if (!res.ok) {
@@ -138,10 +72,10 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
 
       let mergedPages: MessengerPage[] = [];
 
-      if (viewMode === 'team' && currentActiveTeam && apiPages.length > 0) {
+      if (viewMode === 'team' && activeTeam && apiPages.length > 0) {
           let teamPages = apiPages.filter((p) => p.is_shared);
 
-          const allowedIds = currentActiveTeam.permissions?.fb_pages;
+          const allowedIds = activeTeam.permissions?.fb_pages;
           if (Array.isArray(allowedIds) && allowedIds.length > 0) {
               const allowedStrings = allowedIds.map((id: any) => String(id));
               teamPages = teamPages.filter((p) => allowedStrings.includes(String(p.page_id)));

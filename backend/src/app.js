@@ -6,9 +6,11 @@ const messengerRoutes = require('./routes/messengerRoutes');
 const authRoutes = require('./routes/authRoutes');
 const productRoutes = require('./routes/productRoutes');
 const externalApiRoutes = require('./routes/externalApiRoutes');
-const liteEngineRoutes = require('./routes/liteEngineRoutes'); // New Lite Engine
-const openrouterEngineRoutes = require('./routes/openrouterEngineRoutes'); // New OpenRouter Engine
+const liteEngineRoutes = require('./routes/liteEngineRoutes');
+const openrouterEngineRoutes = require('./routes/openrouterEngineRoutes');
 const dbAdminRoutes = require('./routes/dbAdminRoutes');
+const apiListRoutes = require('./routes/apiListRoutes');
+const teamRoutes = require('./routes/teamRoutes');
 
 const app = express();
 
@@ -26,11 +28,13 @@ app.use('/webhook', webhookRoutes);
 app.use('/whatsapp', whatsappRoutes);
 app.use('/messenger', messengerRoutes);
 app.use('/api/auth', authRoutes); // Matches frontend call /api/auth/facebook/exchange-token
-app.use('/api/products', productRoutes); // New Product Management Routes
-app.use('/api/external', externalApiRoutes); // External "Cheap Engine" API
-app.use('/api/lite', liteEngineRoutes); // New "SalesmanChatbot 2.0 Lite" API
-app.use('/api/openrouter', openrouterEngineRoutes); // New OpenRouter Engine API
+app.use('/api/products', productRoutes);
+app.use('/api/external', externalApiRoutes);
+app.use('/api/lite', liteEngineRoutes);
+app.use('/api/openrouter', openrouterEngineRoutes);
 app.use('/api/db-admin', dbAdminRoutes);
+app.use('/api/api-list', apiListRoutes);
+app.use('/teams', teamRoutes);
 
 // Basic health check
 

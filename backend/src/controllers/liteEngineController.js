@@ -14,14 +14,15 @@ exports.handleChatCompletion = async (req, res) => {
 
         const apiKey = authHeader.replace('Bearer ', '').trim();
 
-        // 1. Validate API Key
-        const { data: userConfig, error } = await dbService.supabase
-            .from('user_configs')
-            .select('user_id, balance, service_api_key')
-            .eq('service_api_key', apiKey)
-            .single();
+        const pgClient = require('../services/pgClient');
+        const result = await pgClient.query(
+            'SELECT user_id, balance, service_api_key FROM user_configs WHERE service_api_key = $1 LIMIT 1',
+            [apiKey]
+        );
 
-        if (error || !userConfig) {
+        const userConfig = result.rows[0];
+
+        if (!userConfig) {
             return res.status(401).json({ error: { message: 'Invalid API Key', type: 'invalid_request_error', code: 'invalid_api_key' } });
         }
 

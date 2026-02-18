@@ -1,9 +1,7 @@
 
-const { createClient } = require('@supabase/supabase-js');
+const jwt = require('jsonwebtoken');
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-
-module.exports = async (req, res, next) => {
+module.exports = (req, res, next) => {
     try {
         const authHeader = req.headers.authorization;
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -11,15 +9,21 @@ module.exports = async (req, res, next) => {
         }
 
         const token = authHeader.replace('Bearer ', '');
-        const { data: { user }, error } = await supabase.auth.getUser(token);
-
-        if (error || !user) {
-            return res.status(401).json({ error: 'Invalid or expired token' });
+        const secret = process.env.JWT_SECRET;
+        if (!secret) {
+            throw new Error('JWT_SECRET is not configured');
         }
 
-        req.user = user;
+        const payload = jwt.verify(token, secret);
+        req.user = {
+            id: payload.sub,
+            email: payload.email
+        };
         next();
     } catch (error) {
+        if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+            return res.status(401).json({ error: 'Invalid or expired token' });
+        }
         console.error('Auth Middleware Error:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }

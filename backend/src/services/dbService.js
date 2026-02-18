@@ -1,209 +1,171 @@
-const { createClient } = require('@supabase/supabase-js');
-
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const { query } = require('./pgClient');
 
 // 1. Get Page Config (Multi-Tenant Rule - Step 7)
 async function getPageConfig(pageId) {
-  const { data, error } = await supabase
-    .from('page_access_token_message')
-    .select('*')
-    .eq('page_id', pageId)
-    .single();
+  try {
+    const result = await query(
+      'SELECT * FROM page_access_token_message WHERE page_id = $1 LIMIT 1',
+      [pageId]
+    );
 
-  if (error) {
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    const data = result.rows[0];
+
+    if (data.user_id) {
+      const creditResult = await query(
+        'SELECT message_credit FROM user_configs WHERE user_id = $1 LIMIT 1',
+        [data.user_id]
+      );
+
+      if (creditResult.rows.length > 0) {
+        data.message_credit = creditResult.rows[0].message_credit || 0;
+        data.credit_source = 'shared_user_balance';
+      }
+    }
+
+    if (!data.credit_source) {
+      data.credit_source = 'page_balance';
+    }
+
+    return data;
+  } catch (error) {
     console.error(`Error fetching config for page ${pageId}:`, error);
     return null;
   }
-
-  // --- SHARED CREDIT LOGIC ---
-  // If the page is linked to a user account, use the User's credit balance.
-  // This ensures all pages under one account share the same credit pool.
-  if (data.user_id) {
-      const { data: userData } = await supabase
-          .from('user_configs')
-          .select('message_credit')
-          .eq('user_id', data.user_id)
-          .single();
-      
-      if (userData) {
-          // Priority: Shared Credit ONLY
-          // User instruction: "page er nijesso credit bolte kisu takbe na"
-          data.message_credit = userData.message_credit || 0;
-          data.credit_source = 'shared_user_balance';
-      }
-  }
-  
-  if (!data.credit_source) {
-      data.credit_source = 'page_balance';
-  }
-  // ---------------------------
-
-  return data;
 }
 
 // 2. Get Knowledge Base / Prompts (Step 2 Context)
 async function getPagePrompts(pageId) {
-    // Join with fb_message_database
-    const { data, error } = await supabase
-        .from('fb_message_database')
-        .select('*')
-        .eq('page_id', pageId)
-        .maybeSingle(); // Use maybeSingle to avoid error if not set yet
-
-    if (error) {
+    try {
+        const result = await query(
+            'SELECT * FROM fb_message_database WHERE page_id = $1 LIMIT 1',
+            [pageId]
+        );
+        if (result.rows.length === 0) return null;
+        return result.rows[0];
+    } catch (error) {
         console.error(`Error fetching prompts for page ${pageId}:`, error);
         return null;
     }
-    return data;
 }
 
 // 3. Save Lead / Chat History (Step 5)
 async function saveLead(data) {
-    // data: { page_id, sender_id, message, reply, sentiment, etc. }
-    const { error } = await supabase
-        .from('wp_chats') // Reusing existing table or fb_chats if preferred
-        .insert({
-            page_id: data.page_id,
-            sender_id: data.sender_id,
-            text: data.message,
-            // You might want to add columns for 'reply', 'sentiment' to wp_chats or create fb_chats
-            // For now, mapping to existing schema
-            status: 'done',
-            timestamp: Date.now() // Changed to bigint compatible timestamp
-        });
-
-    if (error) console.error("Error saving lead:", error);
+    try {
+        await query(
+            `INSERT INTO wp_chats (page_id, sender_id, text, status, timestamp)
+             VALUES ($1,$2,$3,$4,$5)`,
+            [
+                data.page_id,
+                data.sender_id,
+                data.message,
+                'done',
+                Date.now()
+            ]
+        );
+    } catch (error) {
+        console.error("Error saving lead:", error);
+    }
 }
 
 // 4. Debounce / Duplicate Check
 async function checkDuplicate(messageId) {
     if (!messageId) return false;
 
-    // Check if message_id exists in fb_chats (if unique constraint exists)
-    // Or use wpp_debounce table if we want a generic debounce key
-    // Let's use wpp_debounce for now with message_id as key
-    
-    const { data } = await supabase
-        .from('wpp_debounce')
-        .select('id')
-        .eq('debounce_key', messageId)
-        .maybeSingle();
-
-    if (data) return true; // It's a duplicate
-
-    // If not duplicate, insert it
-    await supabase.from('wpp_debounce').insert({ debounce_key: messageId });
-    return false;
+    try {
+        const existing = await query(
+            'SELECT id FROM wpp_debounce WHERE debounce_key = $1 LIMIT 1',
+            [messageId]
+        );
+        if (existing.rows.length > 0) {
+            return true;
+        }
+        await query(
+            'INSERT INTO wpp_debounce (debounce_key) VALUES ($1)',
+            [messageId]
+        );
+        return false;
+    } catch (error) {
+        console.error("Error in checkDuplicate:", error);
+        return false;
+    }
 }
 
 // 5. Credit Deduction (Centralized User Balance)
 async function deductCredit(pageId, currentCredit) {
-    // 1. Try Centralized Deduction (RPC) - Supports Multi-Page per User
-    // This RPC also logs the transaction to payment_transactions table for visibility
-    const { data: success, error: rpcError } = await supabase
-        .rpc('deduct_credits_via_page', { p_page_id: pageId });
-
-    if (!rpcError) {
-        // If RPC executed successfully, it returns true (deducted) or false (insufficient funds)
-        if (!success) {
-            console.warn(`[Credit] RPC deduction returned false (Insufficient funds) for Page ${pageId}`);
-        }
-        return success; 
-    }
-
-    console.warn(`[dbService] RPC deduct_credits_via_page failed (${rpcError.message}). Falling back to legacy logic.`);
-
-    // 2. Manual User Credit Deduction (Node.js Fallback if RPC missing)
     try {
-        const { data: pageData } = await supabase
-            .from('page_access_token_message')
-            .select('user_id, email') // Added email for transaction logging
-            .eq('page_id', pageId)
-            .single();
+        const pageResult = await query(
+            'SELECT user_id, email FROM page_access_token_message WHERE page_id = $1 LIMIT 1',
+            [pageId]
+        );
 
-        if (pageData && pageData.user_id) {
-            const { data: userConfig } = await supabase
-                .from('user_configs')
-                .select('message_credit')
-                .eq('user_id', pageData.user_id)
-                .single();
-
-            // Prioritize User Credit
-            if (userConfig && userConfig.message_credit > 0) {
-                const { error: updateError } = await supabase
-                    .from('user_configs')
-                    .update({ message_credit: userConfig.message_credit - 1 })
-                    .eq('user_id', pageData.user_id);
-                
-                if (!updateError) {
-                    console.log(`[Credit] Deducted 1 credit from User ${pageData.user_id}`);
-                    
-                    // Log Transaction for History Visibility - REMOVED per user request
-                    /*
-                    if (pageData.email) {
-                        await supabase.from('payment_transactions').insert({
-                           user_email: pageData.email,
-                           amount: 1,
-                           method: 'credit_deduction',
-                           trx_id: `DED_${Date.now()}`,
-                           sender_number: 'SYSTEM',
-                           status: 'completed'
-                       });
-                   }
-                   */
-
-                    return true;
-                } else {
-                    console.error(`[Credit] Update failed: ${updateError.message}`);
-                }
-            } else {
-                console.warn(`[Credit] Insufficient credits for User ${pageData.user_id}. Balance: ${userConfig?.message_credit}`);
-            }
-        } else {
+        if (pageResult.rows.length === 0 || !pageResult.rows[0].user_id) {
             console.warn(`[Credit] Page ${pageId} not linked to any user.`);
+            return false;
         }
+
+        const pageData = pageResult.rows[0];
+
+        const userConfigResult = await query(
+            'SELECT message_credit FROM user_configs WHERE user_id = $1 LIMIT 1',
+            [pageData.user_id]
+        );
+
+        if (userConfigResult.rows.length === 0) {
+            console.warn(`[Credit] User config not found for ${pageData.user_id}.`);
+            return false;
+        }
+
+        const credit = userConfigResult.rows[0].message_credit || 0;
+        if (credit <= 0) {
+            console.warn(`[Credit] Insufficient credits for User ${pageData.user_id}. Balance: ${credit}`);
+            return false;
+        }
+
+        await query(
+            'UPDATE user_configs SET message_credit = $2 WHERE user_id = $1',
+            [pageData.user_id, credit - 1]
+        );
+
+        console.log(`[Credit] Deducted 1 credit from User ${pageData.user_id}`);
+        return true;
     } catch (err) {
         console.error("Error in manual user credit deduction:", err);
+        return false;
     }
-
-    // 3. Fallback to Legacy Page-Specific Credit
-    // REMOVED STRICTLY as per user instruction: "page er nijesso credit bolte kisu takbe na"
-    // Credits must come ONLY from user_configs (Shared Pool).
-    console.warn(`[Credit] Page ${pageId} has no shared credits (User ${pageData?.user_id}). Legacy page credit is DISABLED.`);
-    
-    return false;
 }
 
 // 6. Get Chat History (Context Window)
 async function getChatHistory(sessionId, limit = 10) {
-    const { data, error } = await supabase
-        .from('backend_chat_histories')
-        .select('message')
-        .eq('session_id', sessionId)
-        .order('id', { ascending: false }) // Get latest messages
-        .limit(limit);
-
-    if (error) {
+    try {
+        const result = await query(
+            `SELECT message
+             FROM backend_chat_histories
+             WHERE session_id = $1
+             ORDER BY id DESC
+             LIMIT $2`,
+            [sessionId, limit]
+        );
+        return result.rows.map(row => row.message).reverse();
+    } catch (error) {
         console.error("Error fetching chat history:", error);
         return [];
     }
-
-    // Supabase returns newest first due to order by id desc, so reverse them to be chronological
-    // User Feedback: "Full message na asle AI bujbe na". Reverting truncation.
-    return data.map(row => row.message).reverse(); 
 }
 
 // 7. Save Chat Message
 async function saveChatMessage(sessionId, role, content) {
     console.log(`[DB] Saving chat for ${sessionId}: [${role}] ${content.substring(0, 50)}...`);
-    const { error } = await supabase
-        .from('backend_chat_histories')
-        .insert({
-            session_id: sessionId,
-            message: { role, content }
-        });
-
-    if (error) {
+    try {
+        await query(
+            `INSERT INTO backend_chat_histories (session_id, message)
+             VALUES ($1,$2)`,
+            [sessionId, { role, content }]
+        );
+    } catch (error) {
         console.error("Error saving chat message:", error);
     }
 }
@@ -227,72 +189,67 @@ async function addBalanceByEmail(email, amount) {
         
         let userId = null;
 
-        // 1. Try user_configs (Primary source for all users including API-only)
-        const { data: userData } = await supabase
-            .from('user_configs')
-            .select('user_id')
-            .eq('email', email)
-            .limit(1)
-            .maybeSingle();
-        
-        if (userData) userId = userData.user_id;
-
-        // 2. Try WhatsApp Sessions (Legacy/Fallback)
-        if (!userId) {
-            const { data: waData } = await supabase
-                .from('whatsapp_sessions')
-                .select('user_id')
-                .eq('user_email', email)
-                .limit(1)
-                .maybeSingle();
-            
-            if (waData) userId = waData.user_id;
+        const userConfigResult = await query(
+            'SELECT user_id FROM user_configs WHERE email = $1 LIMIT 1',
+            [email]
+        );
+        if (userConfigResult.rows.length > 0) {
+            userId = userConfigResult.rows[0].user_id;
         }
 
-        // 3. Try FB Pages (Legacy/Fallback)
         if (!userId) {
-            const { data: fbData } = await supabase
-                .from('page_access_token_message')
-                .select('user_id')
-                .eq('email', email)
-                .limit(1)
-                .maybeSingle();
-            if (fbData) userId = fbData.user_id;
+            const waResult = await query(
+                'SELECT user_id FROM whatsapp_sessions WHERE user_email = $1 LIMIT 1',
+                [email]
+            );
+            if (waResult.rows.length > 0) {
+                userId = waResult.rows[0].user_id;
+            }
         }
 
-        // If still not found
+        if (!userId) {
+            const fbResult = await query(
+                'SELECT user_id FROM page_access_token_message WHERE email = $1 LIMIT 1',
+                [email]
+            );
+            if (fbResult.rows.length > 0) {
+                userId = fbResult.rows[0].user_id;
+            }
+        }
+
         if (!userId) {
             throw new Error("User not found. Ensure the user exists in user_configs with a valid email.");
         }
 
-        // 2. Update Balance
-        // Fetch current balance
-        const { data: userConfig, error: fetchError } = await supabase
-            .from('user_configs')
-            .select('balance')
-            .eq('user_id', userId)
-            .single();
-            
-        if (fetchError) throw fetchError;
+        const balanceResult = await query(
+            'SELECT balance FROM user_configs WHERE user_id = $1 LIMIT 1',
+            [userId]
+        );
+        if (balanceResult.rows.length === 0) {
+            throw new Error("User config not found");
+        }
 
-        const newBalance = (userConfig.balance || 0) + Number(amount);
+        const currentBalance = balanceResult.rows[0].balance || 0;
+        const newBalance = currentBalance + Number(amount);
 
-        const { error: updateError } = await supabase
-            .from('user_configs')
-            .update({ balance: newBalance })
-            .eq('user_id', userId);
+        await query(
+            'UPDATE user_configs SET balance = $2 WHERE user_id = $1',
+            [userId, newBalance]
+        );
 
-        if (updateError) throw updateError;
-
-        // 3. Log Transaction
-        await supabase.from('payment_transactions').insert({
-            user_email: email,
-            amount: Number(amount),
-            method: 'admin_manual_topup',
-            trx_id: `ADM_${Date.now()}`,
-            sender_number: 'ADMIN',
-            status: 'completed'
-        });
+        await query(
+            `INSERT INTO payment_transactions
+                (user_email, amount, method, trx_id, sender_number, status)
+             VALUES ($1,$2,$3,$4,$5,$6)`,
+            [
+                email,
+                Number(amount),
+                'admin_manual_topup',
+                `ADM_${Date.now()}`,
+                'ADMIN',
+                'completed'
+            ]
+        );
 
         return { success: true, newBalance };
 
@@ -306,31 +263,54 @@ async function addBalanceByEmail(email, amount) {
 
 // 8. Save to fb_chats (n8n compatible)
 async function saveFbChat(data) {
-    // data: { page_id, sender_id, recipient_id, message_id, text, timestamp, status, reply_by }
-    const { error } = await supabase
-        .from('fb_chats')
-        .upsert(data, { onConflict: 'message_id' });
+    const params = [
+        data.page_id,
+        data.sender_id,
+        data.recipient_id,
+        data.message_id,
+        data.text,
+        data.timestamp,
+        data.status || 'pending',
+        data.reply_by || 'user'
+    ];
 
-    if (error) {
+    try {
+        await query(
+            `INSERT INTO fb_chats
+                (page_id, sender_id, recipient_id, message_id, text, timestamp, status, reply_by)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+             ON CONFLICT (message_id) DO UPDATE SET
+                page_id = EXCLUDED.page_id,
+                sender_id = EXCLUDED.sender_id,
+                recipient_id = EXCLUDED.recipient_id,
+                text = EXCLUDED.text,
+                timestamp = EXCLUDED.timestamp,
+                status = EXCLUDED.status,
+                reply_by = EXCLUDED.reply_by`,
+            params
+        );
+    } catch (error) {
         console.error("Error saving to fb_chats:", error);
     }
 }
 
 // 9. Get Old Messages from fb_chats
 async function getFbChatHistory(pageId, senderId, limit = 5) {
-    const { data, error } = await supabase
-        .from('fb_chats')
-        .select('*')
-        .eq('page_id', pageId)
-        .or(`sender_id.eq.${senderId},recipient_id.eq.${senderId}`)
-        .order('timestamp', { ascending: false })
-        .limit(limit);
-
-    if (error) {
+    try {
+        const result = await query(
+            `SELECT *
+             FROM fb_chats
+             WHERE page_id = $1
+               AND (sender_id = $2 OR recipient_id = $2)
+             ORDER BY timestamp DESC
+             LIMIT $3`,
+            [pageId, senderId, limit]
+        );
+        return result.rows.reverse();
+    } catch (error) {
         console.error("Error getting fb_chats history:", error);
         return [];
     }
-    return data.reverse(); // Return chronological order
 }
 
 // 10. n8n Debounce (fb_n8n_debounce)
@@ -340,198 +320,157 @@ async function checkN8nDebounce(key) {
     // Here we just check if key exists or update timestamp
     // Ideally we use Redis, but for Postgres/Supabase:
     
-    // First, try to insert
-    const { error } = await supabase
-        .from('fb_n8n_debounce')
-        .upsert({ key: key, incr: 1 }, { onConflict: 'key' })
-        .select();
-
-    // If we wanted to count increments, we'd need a different approach, 
-    // but for simple debounce (existence check), this might be enough.
-    // However, n8n usually waits. 
-    // My webhookController already handles in-memory debounce.
-    // I will expose this function for compatibility.
-    return !error;
+    try {
+        await query(
+            `INSERT INTO fb_n8n_debounce (key, incr)
+             VALUES ($1,1)
+             ON CONFLICT (key) DO UPDATE SET incr = fb_n8n_debounce.incr + 1`,
+            [key]
+        );
+        return true;
+    } catch (error) {
+        console.error("Error in checkN8nDebounce:", error);
+        return false;
+    }
 }
 
 async function getMessageById(messageId) {
     if (!messageId) return null;
     
-    // Prioritize fb_chats as per user instruction
-    const { data: fbData } = await supabase
-        .from('fb_chats')
-        .select('text')
-        .eq('message_id', messageId)
-        .maybeSingle();
-        
-    if (fbData && fbData.text) return fbData.text;
+    try {
+        const fbResult = await query(
+            'SELECT text FROM fb_chats WHERE message_id = $1 LIMIT 1',
+            [messageId]
+        );
+        if (fbResult.rows.length > 0 && fbResult.rows[0].text) {
+            return fbResult.rows[0].text;
+        }
 
-    // WhatsApp fallback: check whatsapp_chats for quoted/replied media messages
-    const { data: waData } = await supabase
-        .from('whatsapp_chats')
-        .select('text')
-        .eq('message_id', messageId)
-        .maybeSingle();
+        const waResult = await query(
+            'SELECT text FROM whatsapp_chats WHERE message_id = $1 LIMIT 1',
+            [messageId]
+        );
+        if (waResult.rows.length > 0 && waResult.rows[0].text) {
+            return waResult.rows[0].text;
+        }
 
-    return waData ? waData.text : null;
+        return null;
+    } catch (error) {
+        console.error("Error in getMessageById:", error);
+        return null;
+    }
 }
 
 // 12. Create WhatsApp Entry (whatsapp_message_database & whatsapp_sessions)
 async function createWhatsAppEntry(sessionName, userId, planDays = 30, initialStatus = 'connected', userEmail = null) {
-    // Check if it already exists
-    const { data: existing } = await supabase
-        .from('whatsapp_message_database')
-        .select('*')
-        .eq('session_name', sessionName)
-        .maybeSingle();
+    const { query } = require('./pgClient');
 
-    if (existing) return existing;
+    const existingResult = await query(
+        'SELECT * FROM whatsapp_message_database WHERE session_name = $1 LIMIT 1',
+        [sessionName]
+    );
+    if (existingResult.rows.length > 0) {
+        return existingResult.rows[0];
+    }
 
-    // Calculate Expiry
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + parseInt(planDays));
 
-    // 1. Insert into whatsapp_message_database
-    const { data, error } = await supabase
-        .from('whatsapp_message_database')
-        .insert({
-            session_name: sessionName,
-            user_id: userId,
-            email: userEmail,              // Save Email for Team Sharing
-            active: true,
-            status: initialStatus,         // Use detected status
-            reply_message: true,           // Auto-enable bot
-            order_tracking: true,          // Auto-enable order tracking
-            subscription_status: 'active', // Auto-activate subscription
-            text_prompt: "You are a helpful assistant for this store. Reply in a friendly manner.", // Default prompt
-            expires_at: expiresAt.toISOString(),
-            plan_days: parseInt(planDays)
-        })
-        .select()
-        .single();
+    const insertResult = await query(
+        `INSERT INTO whatsapp_message_database
+            (session_name, user_id, email, active, status, reply_message, order_tracking, subscription_status, text_prompt, expires_at, plan_days)
+         VALUES ($1,$2,$3,true,$4,true,true,'active',
+                 'You are a helpful assistant for this store. Reply in a friendly manner.',
+                 $5,$6)
+         RETURNING *`,
+        [sessionName, userId, userEmail, initialStatus, expiresAt.toISOString(), parseInt(planDays)]
+    );
 
-    if (error) {
-        console.error("Error creating WhatsApp DB entry:", error);
-        throw error;
-    }
+    const row = insertResult.rows[0];
 
-    // 2. Insert into whatsapp_sessions (New Table)
-    // Using sessionName as session_id since it is unique and required
     try {
-        await supabase
-            .from('whatsapp_sessions')
-            .upsert({
-                session_name: sessionName,
-                session_id: sessionName, // Mapping session_name to session_id as per schema requirement
-                user_id: userId,
-                user_email: userEmail,
-                plan_days: parseInt(planDays),
-                expires_at: expiresAt.toISOString(),
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-                status: initialStatus,
-                qr: '', // Default empty
-                qr_code: null
-            }, { onConflict: 'session_name' });
+        await query(
+            `INSERT INTO whatsapp_sessions
+                (session_name, session_id, user_id, user_email, plan_days, expires_at, created_at, updated_at, status, qr, qr_code)
+             VALUES ($1,$1,$2,$3,$4,$5,now(),now(),$6,'',NULL)
+             ON CONFLICT (session_name) DO UPDATE SET
+                user_id = EXCLUDED.user_id,
+                user_email = EXCLUDED.user_email,
+                plan_days = EXCLUDED.plan_days,
+                expires_at = EXCLUDED.expires_at,
+                updated_at = now(),
+                status = EXCLUDED.status`,
+            [sessionName, userId, userEmail, parseInt(planDays), expiresAt.toISOString(), initialStatus]
+        );
     } catch (e) {
         console.warn("[DB] Failed to insert into whatsapp_sessions (ignoring):", e.message);
     }
 
-    return data;
+    return row;
 }
 
 // 12.5 Create WhatsApp Session Entry (Public Table)
 async function createWhatsAppSessionEntry(sessionName, userId, planDays = 30, initialStatus = 'connected', userEmail = null) {
+    const { query } = require('./pgClient');
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + parseInt(planDays));
 
-    const payload = {
-        session_name: sessionName,
-        session_id: sessionName,
-        user_id: userId,
-        user_email: userEmail,
-        plan_days: parseInt(planDays),
-        expires_at: expiresAt.toISOString(),
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        status: initialStatus,
-        qr: '',
-        qr_code: null
-    };
+    const result = await query(
+        `INSERT INTO whatsapp_sessions
+            (session_name, session_id, user_id, user_email, plan_days, expires_at, created_at, updated_at, status, qr, qr_code)
+         VALUES ($1,$1,$2,$3,$4,$5,now(),now(),$6,'',NULL)
+         ON CONFLICT (session_name) DO UPDATE SET
+            user_id = EXCLUDED.user_id,
+            user_email = EXCLUDED.user_email,
+            plan_days = EXCLUDED.plan_days,
+            expires_at = EXCLUDED.expires_at,
+            updated_at = now(),
+            status = EXCLUDED.status
+         RETURNING *`,
+        [sessionName, userId, userEmail, parseInt(planDays), expiresAt.toISOString(), initialStatus]
+    );
 
-    console.log(`[DB] Attempting to insert into public.whatsapp_sessions:`, JSON.stringify(payload));
-
-    const { data, error } = await supabase
-        .from('whatsapp_sessions')
-        .upsert(payload, { onConflict: 'session_name' })
-        .select()
-        .single();
-
-    if (error) {
-        console.error("Error creating public whatsapp_session entry:", JSON.stringify(error, null, 2));
-        return null;
-    }
-    console.log(`[DB] Successfully inserted into whatsapp_sessions: ${sessionName}`);
-    return data;
+    return result.rows[0];
 }
 
 // --- WhatsApp Specific Functions ---
 
 // 13. Get WhatsApp Config & Prompts
 async function getWhatsAppConfig(sessionName) {
-    const { data, error } = await supabase
-        .from('whatsapp_message_database')
-        .select('*')
-        .eq('session_name', sessionName)
-        .maybeSingle();
+    const { query } = require('./pgClient');
 
-    if (error) {
-        console.error(`Error fetching config for session ${sessionName}:`, error);
-        return null;
-    }
+    const mainResult = await query(
+        'SELECT * FROM whatsapp_message_database WHERE session_name = $1 LIMIT 1',
+        [sessionName]
+    );
+    if (mainResult.rows.length === 0) return null;
 
-    if (!data) return null;
+    const data = mainResult.rows[0];
 
-    // Credit Logic (Shared with User)
     if (data.user_id) {
-        const { data: userData } = await supabase
-            .from('user_configs')
-            .select('message_credit')
-            .eq('user_id', data.user_id)
-            .single();
-        
-        if (userData) {
-            data.message_credit = userData.message_credit;
+        const creditResult = await query(
+            'SELECT message_credit FROM user_configs WHERE user_id = $1 LIMIT 1',
+            [data.user_id]
+        );
+        if (creditResult.rows.length > 0) {
+            data.message_credit = creditResult.rows[0].message_credit;
         }
     }
-    
-    // Default credit if fetch failed (should handle gracefully)
+
     if (data.message_credit === undefined) data.message_credit = 0;
 
-    // --- Label Actions ---
-    const { data: labelActions, error: labelError } = await supabase
-        .from('label_actions')
-        .select('label_name, ai_action')
-        .eq('page_id', sessionName);
+    const labelResult = await query(
+        'SELECT label_name, ai_action FROM label_actions WHERE page_id = $1',
+        [sessionName]
+    );
+    data.label_actions = labelResult.rows;
 
-    if (labelActions) {
-        data.label_actions = labelActions;
-    }
-
-    // --- Page Prompts (Emoji & Config) ---
-    const { data: prompts, error: promptsError } = await supabase
-        .from('page_prompts')
-        .select('*')
-        .eq('page_id', sessionName)
-        .maybeSingle();
-
-    if (prompts) {
-        // Merge prompts into data for unified config access
-        // We preserve existing data keys if they exist
-        data.page_prompts = prompts;
-        
-        // Also map specific fields that might be expected at root level if needed
-        // but keeping them in page_prompts is cleaner.
+    const promptResult = await query(
+        'SELECT * FROM page_prompts WHERE page_id = $1 LIMIT 1',
+        [sessionName]
+    );
+    if (promptResult.rows.length > 0) {
+        data.page_prompts = promptResult.rows[0];
     }
 
     return data;
@@ -539,14 +478,27 @@ async function getWhatsAppConfig(sessionName) {
 
 // 14. Save WhatsApp Chat
 async function saveWhatsAppChat(data) {
-    // data: { session_name, sender_id, recipient_id, message_id, text, timestamp, status, reply_by }
-    const { error } = await supabase
-        .from('whatsapp_chats')
-        .upsert(data, { onConflict: 'message_id' });
-
-    if (error) {
-        console.error("Error saving to whatsapp_chats:", error);
-    }
+    const { query } = require('./pgClient');
+    await query(
+        `INSERT INTO whatsapp_chats
+            (session_name, sender_id, recipient_id, message_id, text, timestamp, status, reply_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         ON CONFLICT (message_id) DO UPDATE SET
+            text = EXCLUDED.text,
+            timestamp = EXCLUDED.timestamp,
+            status = EXCLUDED.status,
+            reply_by = EXCLUDED.reply_by`,
+        [
+            data.session_name,
+            data.sender_id,
+            data.recipient_id,
+            data.message_id,
+            data.text,
+            data.timestamp,
+            data.status,
+            data.reply_by
+        ]
+    );
 }
 
 // 15. Get WhatsApp Chat History (Deprecated - Removed Duplicate)
@@ -557,145 +509,115 @@ async function saveWhatsAppChat(data) {
 async function checkWhatsAppDuplicate(messageId) {
     if (!messageId) return false;
 
-    const { data } = await supabase
-        .from('whatsapp_debounce')
-        .select('id')
-        .eq('message_id', messageId)
-        .maybeSingle();
-
-    if (data) return true;
-
-    await supabase.from('whatsapp_debounce').insert({ message_id: messageId });
-    return false;
+    try {
+        const existing = await query(
+            'SELECT id FROM whatsapp_debounce WHERE message_id = $1 LIMIT 1',
+            [messageId]
+        );
+        if (existing.rows.length > 0) {
+            return true;
+        }
+        await query(
+            'INSERT INTO whatsapp_debounce (message_id) VALUES ($1)',
+            [messageId]
+        );
+        return false;
+    } catch (error) {
+        console.error("Error in checkWhatsAppDuplicate:", error);
+        return false;
+    }
 }
 
 // 17. Save WhatsApp Order Tracking
 async function saveWhatsAppOrderTracking(orderData) {
+    const { query } = require('./pgClient');
     const { session_name, sender_id, product_name, number, location, product_quantity, price } = orderData;
-    
-    console.log(`[WA Order] Attempting to save order for ${sender_id}...`);
 
-    const { data, error } = await supabase
-        .from('whatsapp_order_tracking')
-        .insert([{
-            session_name,
-            sender_id,
-            product_name,
-            number,
-            location,
-            product_quantity,
-            price
-        }])
-        .select();
+    const result = await query(
+        `INSERT INTO whatsapp_order_tracking
+            (session_name, sender_id, product_name, number, location, product_quantity, price)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)
+         RETURNING *`,
+        [session_name, sender_id, product_name, number, location, product_quantity, price]
+    );
 
-    if (error) {
-        console.error("[WA Order] Failed to save order:", error.message);
-        return null;
-    }
-    
-    return data[0];
+    return result.rows[0];
 }
 
 // 17. Get WhatsApp Chat History
 async function getWhatsAppChatHistory(sessionName, senderId, limit = 10) {
-    const { data, error } = await supabase
-        .from('whatsapp_chats')
-        .select('*')
-        .eq('session_name', sessionName)
-        // Check both sender and recipient to get full conversation
-        // OR logic: (sender_id = user AND recipient_id = page) OR (sender_id = page AND recipient_id = user)
-        .or(`and(sender_id.eq.${senderId},recipient_id.eq.${sessionName}),and(sender_id.eq.${sessionName},recipient_id.eq.${senderId})`)
-        .order('timestamp', { ascending: false })
-        .limit(limit);
+    const { query } = require('./pgClient');
+    const result = await query(
+        `SELECT * FROM whatsapp_chats
+         WHERE session_name = $1
+           AND (
+                (sender_id = $2 AND recipient_id = $1)
+             OR (sender_id = $1 AND recipient_id = $2)
+           )
+         ORDER BY timestamp DESC
+         LIMIT $3`,
+        [sessionName, senderId, limit]
+    );
 
-    if (error) {
-        console.error("Error fetching WA chat history:", error.message);
-        return [];
-    }
-
-    // Transform for AI Service: [{ role: 'user'|'assistant', content: '...' }]
-    return data.reverse().map(msg => ({
-        role: (msg.reply_by === 'user') ? 'user' : 'assistant',
+    return result.rows.reverse().map(msg => ({
+        role: msg.reply_by === 'user' ? 'user' : 'assistant',
         content: msg.text || ''
     }));
 }
 
 // --- Helper: Get Last WhatsApp Message (Raw) for Duplicate Check ---
 async function getLastWhatsAppMessage(sessionName, recipientId) {
-    const { data, error } = await supabase
-        .from('whatsapp_chats')
-        .select('*')
-        .eq('session_name', sessionName)
-        // We want the last message in this conversation, regardless of sender
-        .or(`and(sender_id.eq.${recipientId},recipient_id.eq.${sessionName}),and(sender_id.eq.${sessionName},recipient_id.eq.${recipientId})`)
-        .order('timestamp', { ascending: false })
-        .limit(1)
-        .single();
+    const { query } = require('./pgClient');
+    const result = await query(
+        `SELECT * FROM whatsapp_chats
+         WHERE session_name = $1
+           AND (
+                (sender_id = $2 AND recipient_id = $1)
+             OR (sender_id = $1 AND recipient_id = $2)
+           )
+         ORDER BY timestamp DESC
+         LIMIT 1`,
+        [sessionName, recipientId]
+    );
 
-    if (error) return null;
-    return data;
+    if (result.rows.length === 0) return null;
+    return result.rows[0];
 }
 
 // 18. Deduct WhatsApp Credit (Shared User Balance)
 async function deductWhatsAppCredit(sessionName, amount = 1) {
-    // 1. Get User ID from Session
-    const { data: sessionData, error: sessionError } = await supabase
-        .from('whatsapp_message_database')
-        .select('user_id')
-        .eq('session_name', sessionName)
-        .single();
+    const { query } = require('./pgClient');
 
-    if (sessionError || !sessionData || !sessionData.user_id) {
+    const sessionResult = await query(
+        'SELECT user_id FROM whatsapp_message_database WHERE session_name = $1 LIMIT 1',
+        [sessionName]
+    );
+    if (sessionResult.rows.length === 0 || !sessionResult.rows[0].user_id) {
         console.error(`[WA Credit] Session ${sessionName} not linked to user or not found.`);
         return false;
     }
 
-    const userId = sessionData.user_id;
+    const userId = sessionResult.rows[0].user_id;
 
-    // 2. Get User Credit
-    const { data: userConfig, error: userError } = await supabase
-        .from('user_configs')
-        .select('message_credit, email') // Assuming email might be here or we fetch from auth.users (but auth.users not accessible directly usually, relying on user_configs)
-        // actually user_configs might not have email. page_access_token_message had it.
-        // We can skip email logging for now or try to fetch it if stored.
-        .eq('user_id', userId)
-        .single();
-
-    if (userError || !userConfig) {
+    const configResult = await query(
+        'SELECT message_credit FROM user_configs WHERE user_id = $1 LIMIT 1',
+        [userId]
+    );
+    if (configResult.rows.length === 0) {
         console.error(`[WA Credit] User config not found for ${userId}.`);
         return false;
     }
 
-    if (userConfig.message_credit < amount) {
-        console.warn(`[WA Credit] Insufficient credits for User ${userId}. Balance: ${userConfig.message_credit}`);
+    const currentCredit = configResult.rows[0].message_credit || 0;
+    if (currentCredit < amount) {
+        console.warn(`[WA Credit] Insufficient credits for User ${userId}. Balance: ${currentCredit}`);
         return false;
     }
 
-    // 3. Deduct
-    const { error: updateError } = await supabase
-        .from('user_configs')
-        .update({ message_credit: userConfig.message_credit - amount })
-        .eq('user_id', userId);
-
-    if (updateError) {
-        console.error(`[WA Credit] Update failed: ${updateError.message}`);
-        return false;
-    }
-
-    // 4. Log Transaction (For User Visibility) - REMOVED per user request to avoid history clutter
-    /*
-     if (userConfig.email) {
-         await supabase.from('payment_transactions').insert({
-            user_email: userConfig.email,
-            amount: amount,
-            method: 'credit_deduction',
-            trx_id: `DED_${Date.now()}`,
-            sender_number: 'SYSTEM',
-            status: 'completed',
-            notes: `WhatsApp Service: ${sessionName}`
-        });
-    }
-    */
+    await query(
+        'UPDATE user_configs SET message_credit = $2 WHERE user_id = $1',
+        [userId, currentCredit - amount]
+    );
 
     console.log(`[WA Credit] Deducted ${amount} credit from User ${userId}`);
     return true;
@@ -703,15 +625,12 @@ async function deductWhatsAppCredit(sessionName, amount = 1) {
 
 // 19. Save WhatsApp Contact (Lead)
 async function saveWhatsAppContact(data) {
-    // data: { session_name, phone_number, name }
-    
-    // Smart Update: Don't overwrite existing names with 'Unknown'
-    const { data: existing } = await supabase
-        .from('whatsapp_contacts')
-        .select('name')
-        .eq('session_name', data.session_name)
-        .eq('phone_number', data.phone_number)
-        .maybeSingle();
+    const { query } = require('./pgClient');
+
+    const existingResult = await query(
+        'SELECT name FROM whatsapp_contacts WHERE session_name = $1 AND phone_number = $2 LIMIT 1',
+        [data.session_name, data.phone_number]
+    );
 
     const updates = {
         session_name: data.session_name,
@@ -719,24 +638,33 @@ async function saveWhatsAppContact(data) {
         last_interaction: new Date().toISOString()
     };
 
-    // If we have a valid name, always use it
     if (data.name && data.name !== 'Unknown' && data.name.trim() !== '') {
         updates.name = data.name;
-    } else if (!existing) {
-        // If new contact and no name, set default
+    } else if (existingResult.rows.length === 0) {
         updates.name = 'Unknown';
     }
-    // If existing exists and new name is Unknown, we omit 'name' from updates to preserve old value
 
-    const { error } = await supabase
-        .from('whatsapp_contacts')
-        .upsert(updates, { onConflict: 'session_name, phone_number' });
+    const params = [
+        updates.session_name,
+        updates.phone_number,
+        updates.name || null,
+        updates.last_interaction
+    ];
 
-    if (error) console.error("Error saving WA contact:", error.message);
+    await query(
+        `INSERT INTO whatsapp_contacts
+            (session_name, phone_number, name, last_interaction)
+         VALUES ($1,$2,$3,$4)
+         ON CONFLICT (session_name, phone_number) DO UPDATE SET
+            name = COALESCE(EXCLUDED.name, whatsapp_contacts.name),
+            last_interaction = EXCLUDED.last_interaction`,
+        params
+    );
 }
 
 // 20. Toggle WhatsApp Lock (Handover)
 async function toggleWhatsAppLock(sessionName, phoneNumber, isLocked) {
+    const { query } = require('./pgClient');
     console.log(`[WA Lock] Toggling lock for ${sessionName} - User: ${phoneNumber} -> ${isLocked}`);
 
     if (!sessionName || !phoneNumber) {
@@ -745,54 +673,17 @@ async function toggleWhatsAppLock(sessionName, phoneNumber, isLocked) {
     }
 
     try {
-        // 1. Check if exists
-        const { data: existing, error: fetchError } = await supabase
-            .from('whatsapp_contacts')
-            .select('id')
-            .eq('session_name', sessionName)
-            .eq('phone_number', phoneNumber)
-            .maybeSingle();
-
-        if (fetchError) {
-             console.error(`[WA Lock] Fetch failed: ${fetchError.message}`);
-        }
-
-        if (existing) {
-            // 2. UPDATE
-            const { error: updateError } = await supabase
-                .from('whatsapp_contacts')
-                .update({ 
-                    is_locked: isLocked,
-                    last_interaction: new Date().toISOString()
-                })
-                .eq('session_name', sessionName)
-                .eq('phone_number', phoneNumber);
-
-            if (updateError) {
-                console.error(`[WA Lock] Update failed: ${updateError.message}`);
-                return false;
-            }
-            console.log(`[WA Lock] Update successful for ${phoneNumber}`);
-            return true;
-        } else {
-            // 3. INSERT
-            const { error: insertError } = await supabase
-                .from('whatsapp_contacts')
-                .insert({
-                    session_name: sessionName,
-                    phone_number: phoneNumber,
-                    is_locked: isLocked,
-                    name: 'Unknown',
-                    last_interaction: new Date().toISOString()
-                });
-
-            if (insertError) {
-                console.error(`[WA Lock] Insert failed: ${insertError.message}`);
-                return false;
-            }
-            console.log(`[WA Lock] Insert successful for ${phoneNumber}`);
-            return true;
-        }
+        await query(
+            `INSERT INTO whatsapp_contacts
+                (session_name, phone_number, is_locked, name, last_interaction)
+             VALUES ($1,$2,$3,'Unknown',$4)
+             ON CONFLICT (session_name, phone_number) DO UPDATE SET
+                is_locked = EXCLUDED.is_locked,
+                last_interaction = EXCLUDED.last_interaction`,
+            [sessionName, phoneNumber, isLocked, new Date().toISOString()]
+        );
+        console.log(`[WA Lock] Upsert successful for ${phoneNumber}`);
+        return true;
     } catch (err) {
         console.error(`[WA Lock] Unexpected error: ${err.message}`);
         return false;
@@ -801,30 +692,25 @@ async function toggleWhatsAppLock(sessionName, phoneNumber, isLocked) {
 
 // 27. Check WhatsApp Emoji Lock (History Scan)
 async function checkWhatsAppEmojiLock(sessionName, phoneNumber, lockEmojis, unlockEmojis) {
+    const { query } = require('./pgClient');
     try {
-        // Fetch last 10 messages from Admin or Bot (Page side)
-        const { data, error } = await supabase
-            .from('whatsapp_chats')
-            .select('text, reply_by, timestamp')
-            .eq('session_name', sessionName)
-            .eq('recipient_id', phoneNumber) // Messages sent TO user
-            .in('reply_by', ['admin', 'bot']) // Only check Page replies
-            .order('timestamp', { ascending: false })
-            .limit(10);
+        const result = await query(
+            `SELECT text, reply_by, timestamp
+             FROM whatsapp_chats
+             WHERE session_name = $1
+               AND recipient_id = $2
+               AND reply_by IN ('admin','bot')
+             ORDER BY timestamp DESC
+             LIMIT 10`,
+            [sessionName, phoneNumber]
+        );
 
-        if (error) {
-            console.error("Error fetching chat history for lock check:", error);
-            return null;
-        }
-        
-        if (!data || data.length === 0) return null;
+        if (result.rows.length === 0) return null;
 
-        // Iterate from newest to oldest
-        for (const msg of data) {
+        for (const msg of result.rows) {
             const text = (msg.text || '').trim();
             if (!text) continue;
 
-            // Check for Lock Emojis
             for (const emoji of lockEmojis) {
                 if (text.includes(emoji)) {
                     console.log(`[WA Lock] Found Lock Emoji '${emoji}' in message: "${text}"`);
@@ -832,16 +718,15 @@ async function checkWhatsAppEmojiLock(sessionName, phoneNumber, lockEmojis, unlo
                 }
             }
 
-            // Check for Unlock Emojis
             for (const emoji of unlockEmojis) {
                 if (text.includes(emoji)) {
-                     console.log(`[WA Lock] Found Unlock Emoji '${emoji}' in message: "${text}"`);
-                     return { locked: false, timestamp: msg.timestamp };
+                    console.log(`[WA Lock] Found Unlock Emoji '${emoji}' in message: "${text}"`);
+                    return { locked: false, timestamp: msg.timestamp };
                 }
             }
         }
 
-        return null; // No emoji found in recent history
+        return null;
     } catch (e) {
         console.error("Error checking emoji lock history:", e);
         return null;
@@ -850,26 +735,45 @@ async function checkWhatsAppEmojiLock(sessionName, phoneNumber, lockEmojis, unlo
 
 // 21. Get WhatsApp Contact (Check Lock Status)
 async function getWhatsAppContact(sessionName, phoneNumber) {
-    const { data, error } = await supabase
-        .from('whatsapp_contacts')
-        .select('*')
-        .eq('session_name', sessionName)
-        .eq('phone_number', phoneNumber)
-        .single();
-
-    if (error) return null;
-    return data;
+    const { query } = require('./pgClient');
+    const result = await query(
+        'SELECT * FROM whatsapp_contacts WHERE session_name = $1 AND phone_number = $2 LIMIT 1',
+        [sessionName, phoneNumber]
+    );
+    if (result.rows.length === 0) return null;
+    return result.rows[0];
 }
 
 
 
 // 11. Save Comment (n8n compatible)
 async function saveFbComment(data) {
-    const { error } = await supabase
-        .from('fb_comments')
-        .upsert(data, { onConflict: 'comment_id' });
-    
-    if (error) {
+    try {
+        await query(
+            `INSERT INTO fb_comments
+                (comment_id, page_id, sender_id, parent_id, post_id, message, reply_text, created_at, status)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8, now()),COALESCE($9,'replied'))
+             ON CONFLICT (comment_id) DO UPDATE SET
+                page_id = EXCLUDED.page_id,
+                sender_id = EXCLUDED.sender_id,
+                parent_id = EXCLUDED.parent_id,
+                post_id = EXCLUDED.post_id,
+                message = EXCLUDED.message,
+                reply_text = EXCLUDED.reply_text,
+                status = EXCLUDED.status`,
+            [
+                data.comment_id,
+                data.page_id,
+                data.sender_id,
+                data.parent_id,
+                data.post_id,
+                data.message,
+                data.reply_text,
+                data.created_at || null,
+                data.status || null
+            ]
+        );
+    } catch (error) {
         console.error("Error saving comment:", error);
     }
 }
@@ -878,28 +782,23 @@ async function logMessage(msgData) {
     const { page_id, sender_id, recipient_id, message_id, text, reply_to, image, timestamp, status, reply_by } = msgData;
 
     try {
-        const { error } = await supabase
-            .from('backend_chat_histories') // Using the new table
-            .insert([
-                {
-                    page_id,
-                    sender_id,
-                    recipient_id,
-                    message_id,
-                    text,
-                    reply_to: reply_to || null, // Ensure null if undefined
-                    image,
-                    timestamp,
-                    status,
-                    reply_by: reply_by || 'user' // Default to user if not specified (bot replies will override)
-                }
-            ]);
-
-        if (error) {
-            console.error('[DB] Error logging message:', error.message);
-        } else {
-            // console.log(`[DB] Message logged: ${message_id}`);
-        }
+        await query(
+            `INSERT INTO backend_chat_histories
+                (page_id, sender_id, recipient_id, message_id, text, reply_to, image, timestamp, status, reply_by)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+            [
+                page_id,
+                sender_id,
+                recipient_id,
+                message_id,
+                text,
+                reply_to || null,
+                image,
+                timestamp,
+                status,
+                reply_by || 'user'
+            ]
+        );
     } catch (err) {
         console.error('[DB] Unexpected error logging message:', err);
     }
@@ -911,26 +810,29 @@ async function saveOrderTracking(orderData) {
     
     console.log(`[Order] Attempting to save order for ${sender_id}...`);
 
-    const { data, error } = await supabase
-        .from('fb_order_tracking')
-        .insert([{
-            page_id,
-            sender_id,
-            product_name,
-            number,
-            location,
-            product_quantity,
-            price
-        }])
-        .select();
-
-    if (error) {
+    try {
+        const result = await query(
+            `INSERT INTO fb_order_tracking
+                (page_id, sender_id, product_name, number, location, product_quantity, price)
+             VALUES ($1,$2,$3,$4,$5,$6,$7)
+             RETURNING *`,
+            [
+                page_id,
+                sender_id,
+                product_name,
+                number,
+                location,
+                product_quantity,
+                price
+            ]
+        );
+        const row = result.rows[0];
+        console.log(`[Order] Order saved successfully: ID ${row.id}`);
+        return row;
+    } catch (error) {
         console.error("[Order] Failed to save order:", error.message);
         return null;
     }
-    
-    console.log(`[Order] Order saved successfully: ID ${data[0].id}`);
-    return data[0];
 }
 
 // 13. Check Conversation Lock Status (Failure Lock)
@@ -973,19 +875,19 @@ async function checkLockStatus(pageId, senderId) {
 
 // 14. Check Daily AI Reply Count for WhatsApp (Admin Handover Logic)
 async function getWhatsAppDailyAICount(sessionName, senderId) {
+    const { query } = require('./pgClient');
     const today = new Date().toISOString().split('T')[0];
-    
     try {
-        const { count, error } = await supabase
-            .from('whatsapp_chats')
-            .select('*', { count: 'exact', head: true })
-            .eq('session_name', sessionName)
-            .eq('recipient_id', senderId) // Bot is sender, User is recipient
-            .eq('reply_by', 'bot')
-            .gte('timestamp', new Date(`${today}T00:00:00Z`).getTime());
-
-        if (error) throw error;
-        return count || 0;
+        const result = await query(
+            `SELECT COUNT(*) AS cnt
+             FROM whatsapp_chats
+             WHERE session_name = $1
+               AND recipient_id = $2
+               AND reply_by = 'bot'
+               AND timestamp >= $3`,
+            [sessionName, senderId, new Date(`${today}T00:00:00Z`).getTime()]
+        );
+        return parseInt(result.rows[0].cnt, 10) || 0;
     } catch (e) {
         console.error(`[DB] Failed to count daily AI messages: ${e.message}`);
         return 0;
@@ -994,80 +896,67 @@ async function getWhatsAppDailyAICount(sessionName, senderId) {
 
 // 15. Get All Active Page IDs (Cache Warmup)
 async function getAllActivePages() {
-    // Used for Gatekeeper / Allowed List cache
-    // Strategy: Page must be Active/Trial AND (Have Credit OR Have Own API)
-    const { data: pages, error } = await supabase
-        .from('page_access_token_message')
-        .select('page_id, user_id, message_credit, subscription_status, api_key, cheap_engine')
-        .or('subscription_status.eq.active,subscription_status.eq.trial,subscription_status.eq.active_trial,subscription_status.eq.active_paid');
-        
-    if (error) {
-        console.error("Error fetching active pages:", error);
-        return [];
-    }
+    try {
+        const pagesResult = await query(
+            `SELECT page_id, user_id, message_credit, subscription_status, api_key, cheap_engine
+             FROM page_access_token_message
+             WHERE subscription_status IN ('active','trial','active_trial','active_paid')`,
+            []
+        );
 
-    // 2. Fetch Centralized User Credits (if user_id exists)
-    const userIds = [...new Set(pages.map(p => p.user_id).filter(Boolean))];
-    let userCredits = {};
+        const pages = pagesResult.rows;
+        if (!pages || pages.length === 0) return [];
 
-    if (userIds.length > 0) {
-        const { data: configs } = await supabase
-            .from('user_configs')
-            .select('user_id, message_credit')
-            .in('user_id', userIds);
-            
-        if (configs) {
-            configs.forEach(c => {
+        const userIds = [...new Set(pages.map(p => p.user_id).filter(Boolean))];
+        const userCredits = {};
+
+        if (userIds.length > 0) {
+            const configsResult = await query(
+                `SELECT user_id, message_credit
+                 FROM user_configs
+                 WHERE user_id = ANY($1::text[])`,
+                [userIds]
+            );
+            configsResult.rows.forEach(c => {
                 userCredits[c.user_id] = c.message_credit || 0;
             });
         }
+
+        const allowedPageIds = pages
+            .filter(p => {
+                const status = p.subscription_status;
+                const isActive = ['active', 'trial', 'active_trial', 'active_paid'].includes(status);
+                if (!isActive) return false;
+
+                const sharedCredits = userCredits[p.user_id] || 0;
+                const hasOwnKey = p.api_key && p.api_key.length > 5 && p.cheap_engine === false;
+
+                if (hasOwnKey) return true;
+                if (sharedCredits > 0) return true;
+                return false;
+            })
+            .map(p => p.page_id);
+
+        return allowedPageIds;
+    } catch (error) {
+        console.error("Error fetching active pages:", error);
+        return [];
     }
-
-    // 3. Filter: Subscription Status + Credit Check
-    const allowedPageIds = pages.filter(p => {
-        // Normalize Status
-        const status = p.subscription_status;
-        const isActive = ['active', 'trial', 'active_trial', 'active_paid'].includes(status);
-
-        // If status is NOT active, skip
-        if (!isActive) {
-             return false;
-        }
-        
-        // Check Shared Credits (Primary & Only)
-        const sharedCredits = userCredits[p.user_id] || 0;
-        
-        // Logic:
-        // 1. If Own API Key is present (and cheap_engine is FALSE), allow access (BYPASS Credit Check).
-        // 2. If using System API (cheap_engine is TRUE or api_key is empty), require Credit > 0.
-        
-        const hasOwnKey = p.api_key && p.api_key.length > 5 && p.cheap_engine === false;
-        
-        if (hasOwnKey) {
-            // Own API users are always active if subscription is active
-            return true;
-        }
-        
-        // Strict Rule: No page-level credit check.
-        if (sharedCredits > 0) return true;
-        
-        // Log skipped page
-        // console.log(`[DB] Page ${p.page_id} skipped (No Shared Credits: ${sharedCredits})`);
-        return false;
-    }).map(p => p.page_id);
-
-    return allowedPageIds;
 }
 
 // 15. Mark Page Token as Invalid
 async function markPageTokenInvalid(pageId) {
     console.warn(`[DB] Marking token as INVALID for page ${pageId}`);
-    const { error } = await supabase
-        .from('page_access_token_message')
-        .update({ subscription_status: 'invalid_token' })
-        .eq('page_id', pageId);
-        
-    if (error) console.error(`Error marking page ${pageId} invalid:`, error);
+    try {
+        await query(
+            `UPDATE page_access_token_message
+             SET subscription_status = 'invalid_token'
+             WHERE page_id = $1`,
+            [pageId]
+        );
+    } catch (error) {
+        console.error(`Error marking page ${pageId} invalid:`, error);
+    }
 
     // Insert System Alert into fb_chats
     await saveFbChat({
@@ -1084,238 +973,237 @@ async function markPageTokenInvalid(pageId) {
 
 // 20. Update WhatsApp Entry (e.g. status, QR code)
 async function updateWhatsAppEntry(id, updates) {
-    const { error } = await supabase
-        .from('whatsapp_message_database')
-        .update(updates)
-        .eq('id', id);
-
-    if (error) console.error("Error updating WhatsApp entry:", error.message);
-
-    // Sync to whatsapp_sessions (Try to find by ID if possible, but we don't have ID mapping easily unless we query)
-    // Actually, createWhatsAppEntry returns 'data' which is from whatsapp_message_database.
-    // So 'id' here is whatsapp_message_database.id.
-    // We should update whatsapp_sessions by finding the session with same properties if possible,
-    // or we fetch the session_name first.
-    
     try {
-        // Fetch session_name from whatsapp_message_database using id
-        const { data: session } = await supabase
-            .from('whatsapp_message_database')
-            .select('session_name')
-            .eq('id', id)
-            .single();
+        const keys = Object.keys(updates || {});
+        if (keys.length === 0) return;
 
-        if (session && session.session_name) {
-             const sessionUpdates = { ...updates, updated_at: new Date().toISOString() };
-             // Remove fields that might not exist in whatsapp_sessions or are different
-             delete sessionUpdates.reply_message;
-             delete sessionUpdates.order_tracking;
-             delete sessionUpdates.text_prompt;
-             delete sessionUpdates.active;
-             delete sessionUpdates.subscription_status; // Unless we add it to schema? Schema didn't have it.
+        const setClauses = keys.map((k, idx) => `${k} = $${idx + 1}`);
+        const values = keys.map(k => updates[k]);
 
-             await supabase
-                .from('whatsapp_sessions')
-                .update(sessionUpdates)
-                .eq('session_name', session.session_name);
+        await query(
+            `UPDATE whatsapp_message_database
+             SET ${setClauses.join(', ')}
+             WHERE id = $${keys.length + 1}`,
+            [...values, id]
+        );
+
+        const sessionResult = await query(
+            'SELECT session_name FROM whatsapp_message_database WHERE id = $1 LIMIT 1',
+            [id]
+        );
+
+        if (sessionResult.rows.length > 0 && sessionResult.rows[0].session_name) {
+            const sessionName = sessionResult.rows[0].session_name;
+            const sessionUpdates = { ...updates, updated_at: new Date().toISOString() };
+            delete sessionUpdates.reply_message;
+            delete sessionUpdates.order_tracking;
+            delete sessionUpdates.text_prompt;
+            delete sessionUpdates.active;
+            delete sessionUpdates.subscription_status;
+
+            const sessionKeys = Object.keys(sessionUpdates);
+            if (sessionKeys.length === 0) return;
+
+            const sessionSet = sessionKeys.map((k, idx) => `${k} = $${idx + 1}`);
+            const sessionValues = sessionKeys.map(k => sessionUpdates[k]);
+
+            await query(
+                `UPDATE whatsapp_sessions
+                 SET ${sessionSet.join(', ')}
+                 WHERE session_name = $${sessionKeys.length + 1}`,
+                [...sessionValues, sessionName]
+            );
         }
-    } catch (e) {
-        // Ignore errors for secondary table
+    } catch (error) {
+        console.error("Error updating WhatsApp entry:", error.message);
     }
 }
 
 // 21. Update WhatsApp Entry By Name
 async function updateWhatsAppEntryByName(sessionName, updates) {
-    const { error } = await supabase
-        .from('whatsapp_message_database')
-        .update(updates)
-        .eq('session_name', sessionName);
-
-    if (error) console.error("Error updating WhatsApp entry by name:", error.message);
-
-    // Sync to whatsapp_sessions
     try {
-        const sessionUpdates = { ...updates, updated_at: new Date().toISOString() };
-         // Cleanup keys
-         delete sessionUpdates.reply_message;
-         delete sessionUpdates.order_tracking;
-         delete sessionUpdates.text_prompt;
-         delete sessionUpdates.active;
-         delete sessionUpdates.subscription_status;
+        const keys = Object.keys(updates || {});
+        if (keys.length === 0) return;
 
-        await supabase
-            .from('whatsapp_sessions')
-            .update(sessionUpdates)
-            .eq('session_name', sessionName);
-    } catch (e) {
-        // Ignore
+        const setClauses = keys.map((k, idx) => `${k} = $${idx + 1}`);
+        const values = keys.map(k => updates[k]);
+
+        await query(
+            `UPDATE whatsapp_message_database
+             SET ${setClauses.join(', ')}
+             WHERE session_name = $${keys.length + 1}`,
+            [...values, sessionName]
+        );
+
+        const sessionUpdates = { ...updates, updated_at: new Date().toISOString() };
+        delete sessionUpdates.reply_message;
+        delete sessionUpdates.order_tracking;
+        delete sessionUpdates.text_prompt;
+        delete sessionUpdates.active;
+        delete sessionUpdates.subscription_status;
+
+        const sessionKeys = Object.keys(sessionUpdates);
+        if (sessionKeys.length === 0) return;
+
+        const sessionSet = sessionKeys.map((k, idx) => `${k} = $${idx + 1}`);
+        const sessionValues = sessionKeys.map(k => sessionUpdates[k]);
+
+        await query(
+            `UPDATE whatsapp_sessions
+             SET ${sessionSet.join(', ')}
+             WHERE session_name = $${sessionKeys.length + 1}`,
+            [...sessionValues, sessionName]
+        );
+    } catch (error) {
+        console.error("Error updating WhatsApp entry by name:", error.message);
     }
 }
 
 // 22. Renew WhatsApp Session
 async function renewWhatsAppSession(sessionName, days) {
-    // 1. Get current expiry
-    const { data: session, error: fetchError } = await supabase
-        .from('whatsapp_message_database')
-        .select('expires_at, plan_days')
-        .eq('session_name', sessionName)
-        .single();
+    const sessionResult = await query(
+        'SELECT expires_at, plan_days FROM whatsapp_message_database WHERE session_name = $1 LIMIT 1',
+        [sessionName]
+    );
 
-    if (fetchError || !session) throw new Error("Session not found");
+    if (sessionResult.rows.length === 0) {
+        throw new Error("Session not found");
+    }
 
+    const session = sessionResult.rows[0];
     let newExpiresAt = new Date();
-    // If currently active and not expired, add to existing expiry
+
     if (session.expires_at && new Date(session.expires_at) > new Date()) {
         newExpiresAt = new Date(session.expires_at);
     }
-    
-    // Add days
+
     newExpiresAt.setDate(newExpiresAt.getDate() + days);
 
-    const { data, error } = await supabase
-        .from('whatsapp_message_database')
-        .update({
-            expires_at: newExpiresAt.toISOString(),
-            plan_days: (session.plan_days || 0) + days,
-            active: true,
-            status: 'working', // Restore status if it was expired
-            subscription_status: 'active'
-        })
-        .eq('session_name', sessionName)
-        .select()
-        .single();
+    const updateResult = await query(
+        `UPDATE whatsapp_message_database
+         SET expires_at = $2,
+             plan_days = COALESCE(plan_days, 0) + $3,
+             active = true,
+             status = 'working',
+             subscription_status = 'active'
+         WHERE session_name = $1
+         RETURNING *`,
+        [sessionName, newExpiresAt.toISOString(), days]
+    );
 
-    if (error) throw error;
-
-    // Sync to whatsapp_sessions
     try {
-        await supabase
-            .from('whatsapp_sessions')
-            .update({
-                expires_at: newExpiresAt.toISOString(),
-                plan_days: (session.plan_days || 0) + days,
-                status: 'working',
-                updated_at: new Date().toISOString()
-            })
-            .eq('session_name', sessionName);
-    } catch (e) {
-        // Ignore
-    }
+        await query(
+            `UPDATE whatsapp_sessions
+             SET expires_at = $2,
+                 plan_days = COALESCE(plan_days, 0) + $3,
+                 status = 'working',
+                 updated_at = now()
+             WHERE session_name = $1`,
+            [sessionName, newExpiresAt.toISOString(), days]
+        );
+    } catch (e) {}
 
-    return data;
+    return updateResult.rows[0];
 }
 
 // 23. Get Expired WhatsApp Sessions
 async function getExpiredWhatsAppSessions() {
     const now = new Date().toISOString();
-    const { data, error } = await supabase
-        .from('whatsapp_message_database')
-        .select('session_name, user_id, expires_at')
-        .lt('expires_at', now)
-        .eq('active', true); // Only get those marked as active but time has passed
-
-    if (error) {
+    try {
+        const result = await query(
+            `SELECT session_name, user_id, expires_at
+             FROM whatsapp_message_database
+             WHERE expires_at < $1
+               AND active = true`,
+            [now]
+        );
+        return result.rows;
+    } catch (error) {
         console.error("Error fetching expired sessions:", error);
         return [];
     }
-    return data;
 }
 
 // 24. Deduct User Balance (for Plans)
 async function deductUserBalance(userId, amount, description = 'Plan Purchase') {
-    // Check balance
-    const { data: userConfig, error: fetchError } = await supabase
-        .from('user_configs')
-        .select('balance') // Removed email as it might not exist in user_configs
-        .eq('user_id', userId)
-        .single();
+    const result = await query(
+        'SELECT balance FROM user_configs WHERE user_id = $1 LIMIT 1',
+        [userId]
+    );
 
-    if (fetchError || !userConfig) throw new Error("User config not found");
-    
-    if ((userConfig.balance || 0) < amount) {
+    if (result.rows.length === 0) {
+        throw new Error("User config not found");
+    }
+
+    const balance = result.rows[0].balance || 0;
+    if (balance < amount) {
         throw new Error("Insufficient balance");
     }
 
-    // Deduct
-    const { error: updateError } = await supabase
-        .from('user_configs')
-        .update({ balance: (userConfig.balance || 0) - amount })
-        .eq('user_id', userId);
-
-    if (updateError) throw updateError;
-
-    // Log Transaction - REMOVED per user request to avoid history clutter
-    /*
-    await supabase.from('payment_transactions').insert({
-        user_email: userConfig.email || 'unknown', 
-        amount: amount,
-        method: 'balance_deduction',
-        trx_id: `SUB_${Date.now()}`,
-        sender_number: 'SYSTEM',
-        status: 'completed',
-        notes: description
-    });
-    */
+    await query(
+        'UPDATE user_configs SET balance = $2 WHERE user_id = $1',
+        [userId, balance - amount]
+    );
 
     return true;
 }
 
 // 25. Delete WhatsApp Entry
 async function deleteWhatsAppEntry(sessionName) {
-    const { error } = await supabase
-        .from('whatsapp_message_database')
-        .delete()
-        .eq('session_name', sessionName);
-
-    if (error) {
+    try {
+        await query(
+            'DELETE FROM whatsapp_message_database WHERE session_name = $1',
+            [sessionName]
+        );
+    } catch (error) {
         console.error("Error deleting WhatsApp entry:", error.message);
         throw error;
     }
 
-    // Delete from whatsapp_sessions
     try {
-        await supabase
-            .from('whatsapp_sessions')
-            .delete()
-            .eq('session_name', sessionName);
+        await query(
+            'DELETE FROM whatsapp_sessions WHERE session_name = $1',
+            [sessionName]
+        );
     } catch (e) {
         console.warn("[DB] Failed to delete from whatsapp_sessions:", e.message);
     }
 }
 
 async function deleteMessengerPage(pageId) {
+    const client = require('./pgClient');
     try {
-        await supabase.from('fb_chats').delete().eq('page_id', pageId);
+        await client.query('DELETE FROM fb_chats WHERE page_id = $1', [pageId]);
     } catch (e) {
         console.warn("[DB] Failed to delete from fb_chats:", e.message);
     }
 
     try {
-        await supabase.from('fb_order_tracking').delete().eq('page_id', pageId);
+        await client.query('DELETE FROM fb_order_tracking WHERE page_id = $1', [pageId]);
     } catch (e) {
         console.warn("[DB] Failed to delete from fb_order_tracking:", e.message);
     }
 
     try {
-        await supabase.from('backend_chat_histories').delete().eq('page_id', pageId);
+        await client.query('DELETE FROM backend_chat_histories WHERE page_id = $1', [pageId]);
     } catch (e) {
         console.warn("[DB] Failed to delete from backend_chat_histories:", e.message);
     }
 
     try {
-        await supabase.from('fb_comments').delete().eq('page_id', pageId);
+        await client.query('DELETE FROM fb_comments WHERE page_id = $1', [pageId]);
     } catch (e) {
         console.warn("[DB] Failed to delete from fb_comments:", e.message);
     }
 
     try {
-        await supabase.from('fb_message_database').delete().eq('page_id', pageId);
+        await client.query('DELETE FROM fb_message_database WHERE page_id = $1', [pageId]);
     } catch (e) {
         console.warn("[DB] Failed to delete from fb_message_database:", e.message);
     }
 
     try {
-        await supabase.from('page_access_token_message').delete().eq('page_id', pageId);
+        await client.query('DELETE FROM page_access_token_message WHERE page_id = $1', [pageId]);
     } catch (e) {
         console.warn("[DB] Failed to delete from page_access_token_message:", e.message);
     }
@@ -1357,56 +1245,47 @@ async function checkWhatsAppLockStatus(sessionName, senderId) {
 
 // --- Helper: Get Last N WhatsApp Messages (Raw) for Echo Check ---
 async function getLastNWhatsAppMessages(sessionName, recipientId, limit = 20) {
-    const { data, error } = await supabase
-        .from('whatsapp_chats')
-        .select('*')
-        .eq('session_name', sessionName)
-        // We want messages in this conversation
-        .or(`and(sender_id.eq.${recipientId},recipient_id.eq.${sessionName}),and(sender_id.eq.${sessionName},recipient_id.eq.${recipientId})`)
-        .order('timestamp', { ascending: false })
-        .limit(limit);
-
-    if (error) {
-        console.warn(`[WA DB] Failed to fetch last ${limit} messages: ${error.message}`);
-        return [];
-    }
-    return data;
+    const { query } = require('./pgClient');
+    const result = await query(
+        `SELECT * FROM whatsapp_chats
+         WHERE session_name = $1
+           AND (
+                (sender_id = $2 AND recipient_id = $1)
+             OR (sender_id = $1 AND recipient_id = $2)
+           )
+         ORDER BY timestamp DESC
+         LIMIT $3`,
+        [sessionName, recipientId, limit]
+    );
+    return result.rows;
 }
 
 // 21. Get Active WhatsApp Sessions (For Auto-Repair)
 async function getActiveWhatsAppSessions() {
-    const { data, error } = await supabase
-        .from('whatsapp_message_database')
-        .select('*')
-        .eq('active', true)
-        .neq('status', 'expired');
-
-    if (error) {
-        console.error("Error fetching active sessions:", error);
-        return [];
-    }
-    return data;
+    const { query } = require('./pgClient');
+    const result = await query(
+        `SELECT * FROM whatsapp_message_database
+         WHERE active = true AND status <> 'expired'`,
+        []
+    );
+    return result.rows;
 }
 
 // 25. Log API Usage (Unified API)
 async function logApiUsage(userId, model, tokens, cost = 0) {
     try {
-        await supabase
-            .from('api_usage_stats')
-            .insert({
-                user_id: userId,
-                model: model,
-                tokens: tokens,
-                cost: cost,
-                created_at: new Date().toISOString()
-            });
+        await query(
+            `INSERT INTO api_usage_stats
+                (user_id, model, tokens, cost, created_at)
+             VALUES ($1,$2,$3,$4,now())`,
+            [userId, model, tokens, cost]
+        );
     } catch (error) {
         console.warn("[DB] Failed to log API usage:", error.message);
     }
 }
 
 module.exports = {
-    supabase,
     logApiUsage,
     getPageConfig,
     getPagePrompts,
@@ -1467,84 +1346,121 @@ module.exports = {
 
 // 32. Check Product Feature Access (Unlock Check)
 async function checkProductFeatureAccess(userId) {
-    // Check 1: Cloud API Credit (message_credit > 0 or balance > 0)
-    const { data: userConfig } = await supabase
-        .from('user_configs')
-        .select('message_credit, balance')
-        .eq('user_id', userId)
-        .single();
-    
-    if (userConfig) {
-        if ((userConfig.message_credit && userConfig.message_credit > 0) || 
-            (userConfig.balance && userConfig.balance > 0)) {
+    const userConfigResult = await query(
+        'SELECT message_credit, balance FROM user_configs WHERE user_id = $1 LIMIT 1',
+        [userId]
+    );
+
+    if (userConfigResult.rows.length > 0) {
+        const uc = userConfigResult.rows[0];
+        if ((uc.message_credit && Number(uc.message_credit) > 0) ||
+            (uc.balance && Number(uc.balance) > 0)) {
             return true;
         }
     }
 
-    // Check 2: Active WhatsApp Session
-    const { count: waCount } = await supabase
-        .from('whatsapp_sessions')
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', userId)
-        .gt('expires_at', new Date().toISOString());
+    const waResult = await query(
+        `SELECT COUNT(*)::int AS cnt
+         FROM whatsapp_sessions
+         WHERE user_id = $1
+           AND expires_at > NOW()`,
+        [userId]
+    );
 
-    if (waCount && waCount > 0) {
+    if (waResult.rows.length > 0 && waResult.rows[0].cnt > 0) {
         return true;
     }
 
-    // Check 3: Active Facebook Page (Messenger/Instagram)
-    const { count: fbCount } = await supabase
-        .from('page_access_token_message')
-        .select('page_id', { count: 'exact', head: true })
-        .eq('user_id', userId)
-        .or('subscription_status.eq.active,subscription_status.eq.trial,subscription_status.eq.active_trial,subscription_status.eq.active_paid');
+    const fbResult = await query(
+        `SELECT COUNT(*)::int AS cnt
+         FROM page_access_token_message
+         WHERE user_id = $1
+           AND subscription_status IN ('active','trial','active_trial','active_paid')`,
+        [userId]
+    );
 
-    if (fbCount && fbCount > 0) {
+    if (fbResult.rows.length > 0 && fbResult.rows[0].cnt > 0) {
         return true;
     }
 
-    // FORCED GLOBAL UNLOCK (Per user request: "GLOBALLY UNLOCK KROE DEO")
-    // If you want to strictly enforce the rules above, comment out the line below.
-    return true; 
+    return true;
 }
 
 // 26. Create Product
 async function createProduct(productData) {
-    // productData: { user_id, name, description, image_url, variants, is_active }
-    const { data, error } = await supabase
-        .from('products')
-        .insert(productData)
-        .select()
-        .single();
+    const fields = [
+        'user_id',
+        'name',
+        'description',
+        'image_url',
+        'variants',
+        'is_active',
+        'price',
+        'currency',
+        'stock',
+        'allowed_page_ids',
+        'keywords'
+    ];
 
-    if (error) throw error;
-    return data;
+    const values = [];
+    const placeholders = [];
+
+    fields.forEach((field, index) => {
+        placeholders.push(`$${index + 1}`);
+        values.push(
+            field === 'variants' || field === 'allowed_page_ids'
+                ? (productData[field] || null)
+                : (productData[field] ?? null)
+        );
+    });
+
+    const result = await query(
+        `INSERT INTO products (${fields.join(',')})
+         VALUES (${placeholders.join(',')})
+         RETURNING *`,
+        values
+    );
+
+    return result.rows[0];
 }
 
 async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pageId = null) {
-    const from = (page - 1) * limit;
-    const to = from + limit - 1;
+    const offset = (page - 1) * limit;
 
-    let query = supabase
-        .from('products')
-        .select('*', { count: 'exact' })
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false });
+    const params = [userId];
+    let whereClause = 'user_id = $1';
 
     if (searchQuery) {
-        query = query.or(`name.ilike.%${searchQuery}%,description.ilike.%${searchQuery}%`);
+        params.push(`%${searchQuery}%`, `%${searchQuery}%`);
+        whereClause += ` AND (name ILIKE $2 OR description ILIKE $3)`;
     }
 
-    const { data, count, error } = await query.range(from, to);
+    const countResult = await query(
+        `SELECT COUNT(*)::int AS cnt
+         FROM products
+         WHERE ${whereClause}`,
+        params
+    );
 
-    if (error) throw error;
+    const totalCount = countResult.rows.length > 0 ? countResult.rows[0].cnt : 0;
+
+    const dataResult = await query(
+        `SELECT *
+         FROM products
+         WHERE ${whereClause}
+         ORDER BY created_at DESC
+         LIMIT ${limit} OFFSET ${offset}`,
+        params
+    );
+
+    const data = dataResult.rows || [];
 
     if (!pageId) {
-        return { data, count };
+        return { data, count: totalCount };
     }
 
     const pid = String(pageId);
-    const filtered = (data || []).filter((p) => {
+    const filtered = data.filter((p) => {
         const arr = Array.isArray(p.allowed_page_ids) ? p.allowed_page_ids.map((v) => String(v)) : null;
         if (!arr || arr.length === 0) return true;
         return arr.includes(pid);
@@ -1555,51 +1471,73 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
 
 // 28. Get Product By ID
 async function getProductById(id) {
-    const { data, error } = await supabase
-        .from('products')
-        .select('*')
-        .eq('id', id)
-        .single();
+    const result = await query(
+        'SELECT * FROM products WHERE id = $1 LIMIT 1',
+        [id]
+    );
     
-    if (error) return null;
-    return data;
+    if (result.rows.length === 0) return null;
+    return result.rows[0];
 }
 
 // 29. Update Product
 async function updateProduct(id, userId, updates) {
-    const { data, error } = await supabase
-        .from('products')
-        .update(updates)
-        .eq('id', id)
-        .eq('user_id', userId) // Security: Ensure ownership
-        .select()
-        .maybeSingle();
+    const keys = Object.keys(updates || {});
+    if (keys.length === 0) {
+        const existing = await getProductById(id);
+        if (!existing || existing.user_id !== userId) {
+            throw new Error('Product not found or not owned by user');
+        }
+        return existing;
+    }
 
-    if (error) throw error;
-    if (!data) throw new Error('Product not found or not owned by user');
-    return data;
+    const setFragments = [];
+    const values = [];
+    let idx = 1;
+
+    for (const key of keys) {
+        setFragments.push(`${key} = $${idx}`);
+        values.push(updates[key]);
+        idx++;
+    }
+
+    values.push(userId);
+    values.push(id);
+
+    const sql = `
+        UPDATE products
+        SET ${setFragments.join(', ')}
+        WHERE user_id = $${idx} AND id = $${idx + 1}
+        RETURNING *`;
+
+    const result = await query(sql, values);
+
+    if (result.rows.length === 0) {
+        throw new Error('Product not found or not owned by user');
+    }
+
+    return result.rows[0];
 }
 
 // 30. Delete Product
 async function deleteProduct(id, userId) {
-    const { data, error } = await supabase
-        .from('products')
-        .delete()
-        .eq('id', id)
-        .eq('user_id', userId)
-        .select('id')
-        .maybeSingle();
+    const result = await query(
+        'DELETE FROM products WHERE id = $1 AND user_id = $2 RETURNING id',
+        [id, userId]
+    );
 
-    if (error) throw error;
-    if (!data) throw new Error('Product not found or not owned by user');
+    if (result.rows.length === 0) {
+        throw new Error('Product not found or not owned by user');
+    }
+
     return true;
 }
 
 // 31. Search Products (For AI) - Enhanced with Smart Fallback
-async function searchProducts(userId, query, pageId = null) {
-    if (!query) return [];
+async function searchProducts(userId, queryText, pageId = null) {
+    if (!queryText) return [];
 
-    const cleanQuery = query.trim();
+    const cleanQuery = queryText.trim();
     if (!cleanQuery) return [];
 
     const normalize = (s) => (s || '').toString().toLowerCase().trim().replace(/\s+/g, ' ');
@@ -1633,48 +1571,73 @@ async function searchProducts(userId, query, pageId = null) {
     };
 
     // Helper to build base query
-    const buildBaseQuery = () => {
-        let q = supabase
-            .from('products')
-            .select('name, description, image_url, variants, is_active, price, currency, keywords')
-            .eq('user_id', userId)
-            .eq('is_active', true);
-        
+    const buildBaseQuerySql = (extraWhere, extraParams) => {
+        const params = [userId];
+        let where = 'user_id = $1 AND is_active = true';
+
         if (pageId) {
-             // Strict Visibility (User Request)
-             // Ensure pageId is string to match JSONB string array in DB
-            q = q.contains('allowed_page_ids', [String(pageId)]);
+            params.push(String(pageId));
+            where += ` AND $${params.length} = ANY(allowed_page_ids)`;
         }
-        return q;
+
+        if (extraWhere) {
+            where += ` AND (${extraWhere})`;
+            if (Array.isArray(extraParams) && extraParams.length > 0) {
+                params.push(...extraParams);
+            }
+        }
+
+        return { where, params };
     };
 
-    // 1. Attempt: Strict Phrase Match (High Precision)
-    const { data: exactData, error: exactError } = await buildBaseQuery()
-        .or(`name.ilike.%${cleanQuery}%,description.ilike.%${cleanQuery}%,keywords.ilike.%${cleanQuery}%`)
-        .limit(5);
+    const exactSql = buildBaseQuerySql(
+        'name ILIKE $2 OR description ILIKE $3 OR keywords ILIKE $4',
+        [`%${cleanQuery}%`, `%${cleanQuery}%`, `%${cleanQuery}%`]
+    );
 
-    if (!exactError && exactData && exactData.length > 0) {
+    const exactResult = await query(
+        `SELECT name, description, image_url, variants, is_active, price, currency, keywords
+         FROM products
+         WHERE ${exactSql.where}
+         LIMIT 5`,
+        exactSql.params
+    );
+
+    const exactData = exactResult.rows || [];
+
+    if (exactData.length > 0) {
         return [...exactData].sort((a, b) => computeRelevance(b) - computeRelevance(a));
     }
 
-    // 2. Attempt: Smart Token Search (Fallback)
-    // Handles spacing issues (e.g. "skin pro" vs "skinpro") or partial matches from Image Analysis
-    const tokens = cleanQuery.split(/\s+/).filter(w => w.length > 2); // Ignore short words
+    const tokens = cleanQuery.split(/\s+/).filter(w => w.length > 2);
     
     if (tokens.length > 0) {
-        // Build conditions: match ANY token in name OR description
         const conditions = [];
+        const params = [];
+
         tokens.forEach(token => {
-            conditions.push(`name.ilike.%${token}%`);
-            conditions.push(`description.ilike.%${token}%`);
-            conditions.push(`keywords.ilike.%${token}%`);
+            conditions.push(`name ILIKE $${params.length + 1}`);
+            params.push(`%${token}%`);
+            conditions.push(`description ILIKE $${params.length + 1}`);
+            params.push(`%${token}%`);
+            conditions.push(`keywords ILIKE $${params.length + 1}`);
+            params.push(`%${token}%`);
         });
-        
-        const { data: fuzzyData, error: fuzzyError } = await buildBaseQuery()
-            .or(conditions.join(','))
-            .limit(5);
-            
-        if (!fuzzyError && fuzzyData && fuzzyData.length > 0) {
+
+        const cond = conditions.join(' OR ');
+        const fuzzySql = buildBaseQuerySql(cond, params);
+
+        const fuzzyResult = await query(
+            `SELECT name, description, image_url, variants, is_active, price, currency, keywords
+             FROM products
+             WHERE ${fuzzySql.where}
+             LIMIT 5`,
+            fuzzySql.params
+        );
+
+        const fuzzyData = fuzzyResult.rows || [];
+
+        if (fuzzyData.length > 0) {
             return [...fuzzyData].sort((a, b) => computeRelevance(b) - computeRelevance(a));
         }
 
@@ -1690,31 +1653,48 @@ async function searchProducts(userId, query, pageId = null) {
 
         if (stems.length > 0) {
             const stemConditions = [];
+            const stemParams = [];
             stems.forEach(stem => {
-                stemConditions.push(`name.ilike.%${stem}%`);
-                stemConditions.push(`description.ilike.%${stem}%`);
-                stemConditions.push(`keywords.ilike.%${stem}%`);
+                stemConditions.push(`name ILIKE $${stemParams.length + 1}`);
+                stemParams.push(`%${stem}%`);
+                stemConditions.push(`description ILIKE $${stemParams.length + 1}`);
+                stemParams.push(`%${stem}%`);
+                stemConditions.push(`keywords ILIKE $${stemParams.length + 1}`);
+                stemParams.push(`%${stem}%`);
             });
 
-            const { data: stemData, error: stemError } = await buildBaseQuery()
-                .or(stemConditions.join(','))
-                .limit(5);
+            const stemCond = stemConditions.join(' OR ');
+            const stemSql = buildBaseQuerySql(stemCond, stemParams);
 
-            if (!stemError && stemData && stemData.length > 0) {
+            const stemResult = await query(
+                `SELECT name, description, image_url, variants, is_active, price, currency, keywords
+                 FROM products
+                 WHERE ${stemSql.where}
+                 LIMIT 5`,
+                stemSql.params
+            );
+
+            const stemData = stemResult.rows || [];
+
+            if (stemData.length > 0) {
                 return [...stemData].sort((a, b) => computeRelevance(b) - computeRelevance(a));
             }
         }
     }
 
-    // 3. Attempt: JS-based Fuzzy Matching (Deep Fallback for Typos/Banglish)
-    // Handles "skinpru" (typo), "iskin" (phonetic), or "skin-pro" (formatting)
     try {
-        // Fetch up to 50 active products to scan in memory (efficient for small catalogs)
-        const { data: allProducts, error: scanError } = await buildBaseQuery()
-            .limit(50);
-            
-        if (!scanError && allProducts && allProducts.length > 0) {
-            // Simple Levenshtein Distance for typo tolerance
+        const baseSql = buildBaseQuerySql(null, []);
+        const scanResult = await query(
+            `SELECT name, description, image_url, variants, is_active, price, currency, keywords
+             FROM products
+             WHERE ${baseSql.where}
+             LIMIT 50`,
+            baseSql.params
+        );
+
+        const allProducts = scanResult.rows || [];
+
+        if (allProducts.length > 0) {
             const getDistance = (s1, s2) => {
                 s1 = s1.toLowerCase();
                 s2 = s2.toLowerCase();

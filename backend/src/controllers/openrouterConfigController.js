@@ -8,17 +8,15 @@ const OPENROUTER_API_BASE = 'https://openrouter.ai/api/v1';
 
 exports.getConfig = async (req, res) => {
     try {
-        const { data, error } = await dbService.supabase
-            .from('openrouter_engine_config')
-            .select('*')
-            .eq('config_type', 'best_models')
-            .single();
+        const pgClient = require('../services/pgClient');
+        const result = await pgClient.query(
+            'SELECT * FROM openrouter_engine_config WHERE config_type = $1 LIMIT 1',
+            ['best_models']
+        );
 
-        if (error && error.code !== 'PGRST116') { // PGRST116 is "Row not found"
-            throw error;
-        }
+        const row = result.rows[0] || null;
 
-        res.json({ success: true, config: data || null });
+        res.json({ success: true, config: row });
     } catch (error) {
         console.error('Error fetching config:', error);
         res.status(500).json({ success: false, error: error.message });
@@ -29,22 +27,35 @@ exports.saveConfig = async (req, res) => {
     try {
         const { text_model, voice_model, image_model, text_model_details, voice_model_details, image_model_details } = req.body;
 
-        const { data, error } = await dbService.supabase
-            .from('openrouter_engine_config')
-            .upsert({
-                config_type: 'best_models',
+        const pgClient = require('../services/pgClient');
+
+        const result = await pgClient.query(
+            `INSERT INTO openrouter_engine_config 
+                (config_type, text_model, voice_model, image_model, text_model_details, voice_model_details, image_model_details, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+             ON CONFLICT (config_type)
+             DO UPDATE SET
+                text_model = EXCLUDED.text_model,
+                voice_model = EXCLUDED.voice_model,
+                image_model = EXCLUDED.image_model,
+                text_model_details = EXCLUDED.text_model_details,
+                voice_model_details = EXCLUDED.voice_model_details,
+                image_model_details = EXCLUDED.image_model_details,
+                updated_at = EXCLUDED.updated_at
+             RETURNING *`,
+            [
+                'best_models',
                 text_model,
                 voice_model,
                 image_model,
                 text_model_details,
                 voice_model_details,
                 image_model_details,
-                updated_at: new Date().toISOString()
-            }, { onConflict: 'config_type' })
-            .select()
-            .single();
+                new Date().toISOString()
+            ]
+        );
 
-        if (error) throw error;
+        const data = result.rows[0] || null;
 
         // Update KeyService Limits immediately
         if (text_model && text_model_details) {
@@ -232,16 +243,13 @@ exports.testGeminiPool = async (req, res) => {
     const testMessage = message || 'hi from SalesmanChatbot key test';
 
     try {
-        const { data, error } = await dbService.supabase
-            .from('api_list')
-            .select('*')
-            .in('provider', ['google', 'gemini']);
+        const pgClient = require('../services/pgClient');
+        const result = await pgClient.query(
+            'SELECT * FROM api_list WHERE provider = ANY($1::text[])',
+            [['google', 'gemini']]
+        );
 
-        if (error) {
-            return res.status(500).json({ success: false, error: error.message });
-        }
-
-        const keys = Array.isArray(data) ? data : [];
+        const keys = Array.isArray(result.rows) ? result.rows : [];
 
         if (keys.length === 0) {
             return res.json({ success: false, error: 'No Gemini keys found in api_list', results: [] });
@@ -313,16 +321,16 @@ exports.deleteGeminiKeys = async (req, res) => {
             return res.status(400).json({ success: false, error: 'Invalid id list' });
         }
 
-        const { error, count } = await dbService.supabase
-            .from('api_list')
-            .delete({ count: 'exact' })
-            .in('id', numericIds);
+        const pgClient = require('../services/pgClient');
 
-        if (error) {
-            return res.status(500).json({ success: false, error: error.message });
-        }
+        const result = await pgClient.query(
+            'DELETE FROM api_list WHERE id = ANY($1::bigint[])',
+            [numericIds]
+        );
 
-        res.json({ success: true, deleted: count || 0 });
+        const deleted = result.rowCount || 0;
+
+        res.json({ success: true, deleted });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }

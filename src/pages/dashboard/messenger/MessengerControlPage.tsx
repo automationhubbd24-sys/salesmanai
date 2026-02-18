@@ -8,7 +8,6 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Bot, MessageSquare, Loader2, Save, Image, Sparkles, MessageCircle, Lock, PackageSearch, ReplyAll, LayoutTemplate, Hand, StopCircle, RefreshCcw, Edit } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Link } from "react-router-dom";
 
@@ -72,8 +71,7 @@ export default function MessengerControlPage() {
 
   const fetchConfig = async (id: string) => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
+      const token = localStorage.getItem("auth_token");
 
       const res = await fetch(`${BACKEND_URL}/messenger/config/${id}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {}
@@ -113,9 +111,7 @@ export default function MessengerControlPage() {
     setSaving(true);
     try {
       const payload = { ...config };
-
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
+      const token = localStorage.getItem("auth_token");
 
       const res = await fetch(`${BACKEND_URL}/messenger/config/${dbId}`, {
         method: 'PUT',
@@ -146,8 +142,7 @@ export default function MessengerControlPage() {
     if (!dbId) return;
     setPromptSaving(true);
     try {
-        const { data: { session } } = await supabase.auth.getSession();
-        const token = session?.access_token;
+        const token = localStorage.getItem("auth_token");
 
         const res = await fetch(`${BACKEND_URL}/messenger/config/${dbId}`, {
             method: 'PUT',

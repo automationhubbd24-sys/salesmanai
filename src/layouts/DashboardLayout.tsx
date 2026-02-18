@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { Outlet, useNavigate, useLocation } from "react-router-dom";
 import { DashboardSidebar } from "@/components/dashboard/DashboardSidebar";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
-import { supabase } from "@/integrations/supabase/client";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Menu } from "lucide-react";
@@ -36,32 +35,11 @@ export function DashboardLayout() {
   const platform = ['whatsapp', 'messenger', 'instagram'].includes(pathParts[2]) ? pathParts[2] : null;
 
   useEffect(() => {
-    const checkAuth = async () => {
-      const { data } = await supabase.auth.getSession();
-      if (!data.session) {
-        navigate("/login");
-      }
-      setLoading(false);
-    };
-    checkAuth();
-
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        if (!session) {
-          // Clean up sensitive local storage on session end
-          localStorage.removeItem("active_fb_page_id");
-          localStorage.removeItem("active_fb_db_id");
-          localStorage.removeItem("active_wp_db_id");
-          localStorage.removeItem("active_wa_session_id");
-          localStorage.removeItem("supabase.auth.token");
-          navigate("/login");
-        }
-      }
-    );
-
-    return () => {
-      authListener.subscription.unsubscribe();
-    };
+    const token = localStorage.getItem("auth_token");
+    if (!token) {
+      navigate("/login");
+    }
+    setLoading(false);
   }, [navigate]);
 
   // Hidden Admin Control - Ctrl + F5

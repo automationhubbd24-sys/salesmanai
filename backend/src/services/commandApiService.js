@@ -61,25 +61,27 @@ async function getCommandConfig(forceRefresh = false) {
     // Fetch the FIRST row (assuming single global config for now)
     // User can add multiple, but we need one active strategy.
     // We order by ID desc to get the LATEST config added.
-    const { data, error } = await dbService.supabase
-        .from('command_api')
-        .select('*')
-        .order('id', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+    const pgClient = require('./pgClient');
 
-    if (error) {
+    try {
+        const result = await pgClient.query(
+            'SELECT * FROM command_api ORDER BY id DESC LIMIT 1',
+            []
+        );
+
+        const data = result.rows[0];
+
+        if (data) {
+            configCache = data;
+            lastCacheUpdate = now;
+            console.log(`[CommandAPI] Active Config: ${data.provider} / ${data.chatmodel} (Fallback: ${data.fallback_chatmodel})`);
+        } else {
+            console.warn("[CommandAPI] No configuration found in 'command_api' table.");
+        }
+    } catch (error) {
         console.error("[CommandAPI] Error fetching config:", error.message);
         return null;
-    }
-
-    if (data) {
-        configCache = data;
         lastCacheUpdate = now;
-        console.log(`[CommandAPI] Active Config: ${data.provider} / ${data.chatmodel} (Fallback: ${data.fallback_chatmodel})`);
-    } else {
-        console.warn("[CommandAPI] No configuration found in 'command_api' table.");
-    }
 
     return configCache;
 }
@@ -88,3 +90,5 @@ module.exports = {
     getCommandConfig,
     getFreeOpenRouterModels
 };
+
+}

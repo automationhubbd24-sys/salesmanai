@@ -5,7 +5,6 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { Save, Bot, Lock, Sparkles, Key, Check, RefreshCw, ArrowLeft, CreditCard, Image, Settings2 } from "lucide-react";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -99,20 +98,14 @@ export default function WhatsAppSettingsPage() {
   };
 
   const handlePurchaseCredits = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-        toast.error("User not authenticated");
-        return;
+    const token = localStorage.getItem("auth_token");
+    const ownerPageId = localStorage.getItem("active_fb_page_id");
+    if (!token) {
+      toast.error("Please login again");
+      return;
     }
 
-    const { data: pageData } = await supabase
-        .from('page_access_token_message')
-        .select('page_id')
-        .eq('user_id', user.id)
-        .limit(1)
-        .maybeSingle();
-        
-    let targetPageId = pageData ? (pageData as any).page_id : null;
+    let targetPageId = ownerPageId;
     
     setLoading(true);
     try {
@@ -132,25 +125,35 @@ export default function WhatsAppSettingsPage() {
             '10000': 2500 
         };
         const price = priceMap[selectedPlan] || 0;
+        const res = await fetch(`${BACKEND_URL}/api/external/purchase-credits`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            page_id: targetPageId,
+            credit_amount: creditToAdd,
+            cost: price,
+          }),
+        });
 
-        if (!targetPageId) {
-             const { error: updateError } = await (supabase
-                .from('user_configs') as any)
-                .update({ message_credit: messageCredit + creditToAdd })
-                .eq('user_id', user.id);
-             
-             if (updateError) throw updateError;
-             toast.success(`Purchased ${creditToAdd} credits (Direct Update)`);
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(body.error || "Purchase failed");
+        }
+
+        const newCredit =
+          typeof body.message_credit === "number"
+            ? body.message_credit
+            : messageCredit + creditToAdd;
+        setMessageCredit(newCredit);
+        setPlanActive(newCredit > 0);
+
+        if (price > 0) {
+          toast.success(`Purchased ${creditToAdd} credits for ৳${price}`);
         } else {
-             const { data: rpcData, error: rpcError } = await (supabase as any)
-              .rpc('purchase_credits', {
-                  p_page_id: targetPageId,
-                  p_credit_amount: creditToAdd,
-                  p_cost: price
-              });
-
-            if (rpcError) throw new Error(rpcError.message);
-            toast.success(`Purchased ${creditToAdd} credits for ৳${price}`);
+          toast.success(`Purchased ${creditToAdd} credits (Direct Update)`);
         }
 
         fetchConfig(dbId!, sessionId);
@@ -168,14 +171,16 @@ export default function WhatsAppSettingsPage() {
     if (!dbId) return;
     setBehaviorSaving(true);
     try {
-        const { data: { session } } = await supabase.auth.getSession();
-        const token = session?.access_token;
+        const token = localStorage.getItem("auth_token");
+        if (!token) {
+          throw new Error("Please login again");
+        }
 
         const res = await fetch(`${BACKEND_URL}/whatsapp/config/${dbId}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
-                ...(token ? { Authorization: `Bearer ${token}` } : {})
+                Authorization: `Bearer ${token}`
             },
             body: JSON.stringify({ wait_time: wait })
         });
@@ -199,14 +204,16 @@ export default function WhatsAppSettingsPage() {
     if (!dbId) return;
     setEmojiSaving(true);
     try {
-        const { data: { session } } = await supabase.auth.getSession();
-        const token = session?.access_token;
+        const token = localStorage.getItem("auth_token");
+        if (!token) {
+          throw new Error("Please login again");
+        }
 
         const res = await fetch(`${BACKEND_URL}/whatsapp/config/${dbId}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
-                ...(token ? { Authorization: `Bearer ${token}` } : {})
+                Authorization: `Bearer ${token}`
             },
             body: JSON.stringify({
                 block_emoji: blockEmoji,
@@ -269,11 +276,15 @@ export default function WhatsAppSettingsPage() {
 
   const fetchConfig = async (id: string, sId: string | null) => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        toast.error("Please login again");
+        setLoading(false);
+        return;
+      }
 
       const res = await fetch(`${BACKEND_URL}/whatsapp/config/${id}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
+        headers: { Authorization: `Bearer ${token}` }
       });
 
       if (!res.ok) {
@@ -284,27 +295,13 @@ export default function WhatsAppSettingsPage() {
 
       const dbRow = await res.json();
 
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("No user found");
-
-      const { data: userConfig, error: configError } = await supabase
-        .from('user_configs')
-        .select('*')
-        .eq('user_id', user.id)
-        .maybeSingle();
-        
-      if (configError) throw configError;
-
       if (dbRow) {
-        const configRow = userConfig as any || {};
-        
         setVerified(dbRow.verified !== false);
         setIsOwner(true);
-        setRemainingCredits(typeof configRow.message_credit === 'number' ? configRow.message_credit : null);
 
-        const apiKey = configRow.api_key || "";
+        const apiKey = dbRow.api_key || "";
         let isManaged = false;
-        
+
         if (apiKey === MANAGED_SECRET_KEY) {
              isManaged = true;
         }
@@ -312,10 +309,10 @@ export default function WhatsAppSettingsPage() {
         setMode(isManaged ? "managed" : "own");
         setActiveMode(isManaged ? "managed" : "own");
 
-        const rawModel = configRow.model_name || "openrouter/auto";
+        const rawModel = dbRow.model_name || "openrouter/auto";
         const displayModel = rawModel.replace(':free', '');
 
-        const credit = (configRow as any).message_credit || 0;
+        const credit = (dbRow as any).message_credit || 0;
         setMessageCredit(credit);
         setPlanActive(credit > 0);
         setRemainingCredits(credit);
@@ -335,7 +332,7 @@ export default function WhatsAppSettingsPage() {
         }
 
         form.reset({
-          provider: configRow.ai_provider || "openrouter",
+          provider: dbRow.ai_provider || "openrouter",
           api_key: isManaged ? "" : apiKey,
           chatmodel: displayModel,
           text_prompt: dbRow.text_prompt || "",
@@ -356,17 +353,29 @@ export default function WhatsAppSettingsPage() {
     if (!dbId) return;
     setPromptSaving(true);
     try {
+        const token = localStorage.getItem("auth_token");
+        if (!token) {
+          throw new Error("Please login again");
+        }
+
         const updates: any = {
             text_prompt: tempPrompt,
             image_prompt: tempImagePrompt
         };
 
-        const { error } = await (supabase
-            .from('whatsapp_message_database') as any)
-            .update(updates)
-            .eq('id', parseInt(dbId));
+        const res = await fetch(`${BACKEND_URL}/whatsapp/config/${dbId}`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(updates),
+        });
 
-        if (error) throw error;
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || "Failed to save prompt");
+        }
         
         if (activeTab === "text") {
             form.setValue('text_prompt', tempPrompt);
@@ -415,12 +424,12 @@ export default function WhatsAppSettingsPage() {
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
     if (!dbId) return;
     setLoading(true);
-    
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-        toast.error("User not found");
-        setLoading(false);
-        return;
+
+    const token = localStorage.getItem("auth_token");
+    if (!token) {
+      toast.error("Please login again");
+      setLoading(false);
+      return;
     }
 
     if (mode === "managed") {
@@ -442,27 +451,39 @@ export default function WhatsAppSettingsPage() {
     }
 
     try {
-      const { error: dbError } = await (supabase
-        .from('whatsapp_message_database') as any)
-        .update({
-            text_prompt: values.text_prompt
-        })
-        .eq('id', parseInt(dbId));
+      const resDb = await fetch(`${BACKEND_URL}/whatsapp/config/${dbId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          text_prompt: values.text_prompt,
+        }),
+      });
 
-      if (dbError) throw dbError;
+      if (!resDb.ok) {
+        const body = await resDb.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to save prompt");
+      }
 
-      const updates: any = {
-          user_id: user.id,
+      const resConfig = await fetch(`${BACKEND_URL}/api/external/user-config`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
           ai_provider: values.provider,
           api_key: values.api_key,
           model_name: values.chatmodel,
-      };
+        }),
+      });
 
-      const { error: configError } = await (supabase
-        .from('user_configs') as any)
-        .upsert(updates, { onConflict: 'user_id' });
-
-      if (configError) throw configError;
+      if (!resConfig.ok) {
+        const body = await resConfig.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to save settings");
+      }
 
       setActiveMode(mode);
       toast.success("AI settings saved successfully");

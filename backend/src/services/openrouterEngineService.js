@@ -44,11 +44,14 @@ class OpenRouterEngineService {
      */
     async loadConfigFromDB() {
         try {
-            const { data } = await dbService.supabase
-                .from('openrouter_engine_config')
-                .select('*')
-                .eq('config_type', 'best_models')
-                .single();
+            const pgClient = require('./pgClient');
+
+            const result = await pgClient.query(
+                'SELECT * FROM openrouter_engine_config WHERE config_type = $1 LIMIT 1',
+                ['best_models']
+            );
+
+            const data = result.rows[0];
             
             if (data) {
                 // Fetch Keys too
@@ -85,11 +88,12 @@ class OpenRouterEngineService {
             console.log('[OpenRouterEngine] 🔄 Running Daily Update Cycle...');
             
             // CHECK LOCK: If config is manually locked, skip auto-selection
-            const { data: currentConfig } = await dbService.supabase
-                .from('openrouter_engine_config')
-                .select('text_model_details')
-                .eq('config_type', 'best_models')
-                .single();
+            const pgClient = require('./pgClient');
+            const currentRes = await pgClient.query(
+                'SELECT text_model_details FROM openrouter_engine_config WHERE config_type = $1 LIMIT 1',
+                ['best_models']
+            );
+            const currentConfig = currentRes.rows[0] || null;
                 
             if (currentConfig && currentConfig.text_model_details && currentConfig.text_model_details.lock_auto_update) {
                  console.log('[OpenRouterEngine] 🔒 Auto-Update Skipped (Locked by Admin)');
@@ -178,11 +182,15 @@ class OpenRouterEngineService {
      */
     async updateKeyStatus() {
         // Fetch keys from DB
-        const { data: keys } = await dbService.supabase
-            .from('openrouter_engine_keys')
-            .select('*');
+        const pgClient = require('./pgClient');
+        const keyRes = await pgClient.query(
+            'SELECT * FROM openrouter_engine_keys',
+            []
+        );
 
-        if (!keys) return [];
+        const keys = keyRes.rows || [];
+
+        if (!keys || keys.length === 0) return [];
 
         const validKeys = [];
 
@@ -197,26 +205,26 @@ class OpenRouterEngineService {
                 const limit = data.limit || 0; // null means unlimited usually, but for free keys it might be strictly 0 credit
                 const usage = data.usage || 0;
 
-                // Update DB
-                await dbService.supabase
-                    .from('openrouter_engine_keys')
-                    .update({
-                        usage_limit: limit,
-                        usage_used: usage,
-                        is_active: true,
-                        last_checked_at: new Date()
-                    })
-                    .eq('id', key.id);
+                await pgClient.query(
+                    `UPDATE openrouter_engine_keys
+                     SET usage_limit = $1,
+                         usage_used = $2,
+                         is_active = true,
+                         last_checked_at = $3
+                     WHERE id = $4`,
+                    [limit, usage, new Date(), key.id]
+                );
 
                 validKeys.push(key.api_key);
 
             } catch (e) {
                 console.warn(`[OpenRouterEngine] Invalid Key (${key.label}):`, e.message);
-                // Mark inactive
-                await dbService.supabase
-                    .from('openrouter_engine_keys')
-                    .update({ is_active: false })
-                    .eq('id', key.id);
+                await pgClient.query(
+                    `UPDATE openrouter_engine_keys
+                     SET is_active = false
+                     WHERE id = $1`,
+                    [key.id]
+                );
             }
         }
         return validKeys;
@@ -225,16 +233,20 @@ class OpenRouterEngineService {
     async saveConfigToDB(config) {
         if (!config) return;
         
-        // Upsert Config
-        await dbService.supabase
-            .from('openrouter_engine_config')
-            .upsert({
-                config_type: 'best_models',
-                text_model: config.text,
-                voice_model: config.voice,
-                image_model: config.image,
-                updated_at: new Date()
-            }, { onConflict: 'config_type' });
+        const pgClient = require('./pgClient');
+
+        await pgClient.query(
+            `INSERT INTO openrouter_engine_config
+                (config_type, text_model, voice_model, image_model, updated_at)
+             VALUES ($1,$2,$3,$4,$5)
+             ON CONFLICT (config_type)
+             DO UPDATE SET
+                text_model = EXCLUDED.text_model,
+                voice_model = EXCLUDED.voice_model,
+                image_model = EXCLUDED.image_model,
+                updated_at = EXCLUDED.updated_at`,
+            ['best_models', config.text, config.voice, config.image, new Date()]
+        );
     }
 
     async processRequest({ message, history, images = [], systemPrompt = '' }) {
@@ -315,10 +327,11 @@ class OpenRouterEngineService {
                 return content;
             } catch (error) {
                 if (error.status === 401 || error.message.includes('API key')) {
-                    await dbService.supabase
-                        .from('openrouter_engine_keys')
-                        .update({ is_active: false })
-                        .eq('api_key', apiKey);
+                    const pgClient = require('./pgClient');
+                    await pgClient.query(
+                        'UPDATE openrouter_engine_keys SET is_active = false WHERE api_key = $1',
+                        [apiKey]
+                    );
                 }
 
                 if (error.status === 429 && image) {
@@ -412,10 +425,11 @@ class OpenRouterEngineService {
             draftContent = generatorCompletion.choices[0].message.content || "";
         } catch (error) {
             if (error.status === 401 || error.message.includes('API key')) {
-                await dbService.supabase
-                    .from('openrouter_engine_keys')
-                    .update({ is_active: false })
-                    .eq('api_key', apiKey);
+                const pgClient = require('./pgClient');
+                await pgClient.query(
+                    'UPDATE openrouter_engine_keys SET is_active = false WHERE api_key = $1',
+                    [apiKey]
+                );
             }
 
             if (error.status === 429) {

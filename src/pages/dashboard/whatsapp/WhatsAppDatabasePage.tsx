@@ -5,13 +5,20 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Database, Search, CheckCircle, XCircle, Loader2, LogOut } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { BACKEND_URL } from "@/config";
+
+interface WhatsAppDbConfig {
+  id: number;
+  session?: string;
+  session_name?: string;
+  verified?: boolean;
+}
 
 export default function DatabasePage() {
   const [searchId, setSearchId] = useState("");
   const [loading, setLoading] = useState(false);
-  const [connectedDb, setConnectedDb] = useState<any | null>(null);
+  const [connectedDb, setConnectedDb] = useState<WhatsAppDbConfig | null>(null);
 
   useEffect(() => {
     // Check if already connected
@@ -41,14 +48,28 @@ export default function DatabasePage() {
   const fetchDatabase = async (id: string) => {
     setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('whatsapp_message_database')
-        .select('*')
-        .eq('id', parseInt(id))
-        .single();
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        toast.error("Please login again");
+        setConnectedDb(null);
+        localStorage.removeItem("active_wp_db_id");
+        return;
+      }
 
-      if (error) throw error;
-      
+      const res = await fetch(`${BACKEND_URL}/whatsapp/config/${id}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const message = body.error || "Database not found";
+        throw new Error(message);
+      }
+
+      const data: WhatsAppDbConfig = await res.json();
+
       if (data) {
         setConnectedDb(data);
         localStorage.setItem("active_wp_db_id", id);
@@ -59,11 +80,14 @@ export default function DatabasePage() {
       }
     } catch (error) {
       console.error("Error fetching DB:", error);
-      // Only show error if explicitly searching (not on auto-load if ID is stale)
-      toast.error("Database ID not found or connection failed");
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Database ID not found or connection failed";
+      toast.error(message);
       if (localStorage.getItem("active_wp_db_id") === id) {
-          localStorage.removeItem("active_wp_db_id");
-          setConnectedDb(null);
+        localStorage.removeItem("active_wp_db_id");
+        setConnectedDb(null);
       }
     } finally {
       setLoading(false);
@@ -130,7 +154,7 @@ export default function DatabasePage() {
                   <div>
                     <p className="text-sm text-muted-foreground">Active Session</p>
                     <p className="text-xl font-bold text-foreground truncate max-w-[200px] md:max-w-md">
-                      {connectedDb.session}
+                      {connectedDb.session || connectedDb.session_name || "-"}
                     </p>
                     <div className="flex gap-2 mt-1">
                         <div className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold border ${

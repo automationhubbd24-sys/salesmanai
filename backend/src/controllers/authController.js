@@ -1,5 +1,7 @@
 const axios = require('axios');
 const dbService = require('../services/dbService');
+const authService = require('../services/authService');
+const pgClient = require('../services/pgClient');
 
 exports.exchangeToken = async (req, res) => {
     try {
@@ -69,5 +71,351 @@ exports.adminTopup = async (req, res) => {
 
     } catch (error) {
         res.status(500).json({ error: error.message });
+    }
+};
+
+exports.adminLogin = async (req, res) => {
+    try {
+        const { username, password } = req.body || {};
+
+        if (!username || !password) {
+            return res.status(400).json({ error: 'Username and password required' });
+        }
+
+        const envUser = process.env.ADMIN_USERNAME || 'admin';
+        const envPass = process.env.ADMIN_PASSWORD || 'admin123';
+
+        if (username === envUser && password === envPass) {
+            return res.json({ success: true });
+        }
+
+        return res.status(401).json({ error: 'Invalid credentials' });
+    } catch (error) {
+        console.error('Admin login error:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
+exports.listTransactions = async (req, res) => {
+    try {
+        const { rows } = await pgClient.query(
+            'SELECT id, user_email, amount, method, trx_id, sender_number, status, created_at FROM payment_transactions ORDER BY created_at DESC'
+        );
+        res.json({ transactions: rows });
+    } catch (error) {
+        console.error('List transactions error:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
+exports.approveTransaction = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const txnId = parseInt(id, 10);
+        if (!txnId) {
+            return res.status(400).json({ error: 'Invalid id' });
+        }
+
+        const { rows } = await pgClient.query(
+            'SELECT * FROM payment_transactions WHERE id = $1',
+            [txnId]
+        );
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Transaction not found' });
+        }
+
+        const txn = rows[0];
+        if (txn.status === 'approved') {
+            return res.json({ success: true });
+        }
+
+        await dbService.approveDepositTransaction(txn);
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Approve transaction error:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
+exports.rejectTransaction = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const txnId = parseInt(id, 10);
+        if (!txnId) {
+            return res.status(400).json({ error: 'Invalid id' });
+        }
+
+        await pgClient.query(
+            'UPDATE payment_transactions SET status = $1 WHERE id = $2',
+            ['failed', txnId]
+        );
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Reject transaction error:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
+exports.listCoupons = async (req, res) => {
+    try {
+        const { rows } = await pgClient.query(
+            'SELECT id, code, value, type, status, created_at FROM referral_codes ORDER BY created_at DESC'
+        );
+        res.json({ coupons: rows });
+    } catch (error) {
+        console.error('List coupons error:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
+exports.createCoupon = async (req, res) => {
+    try {
+        const { code, value } = req.body;
+        if (!code || !value) {
+            return res.status(400).json({ error: 'code and value are required' });
+        }
+
+        const { rows } = await pgClient.query(
+            `
+            INSERT INTO referral_codes (code, value, type, status)
+            VALUES ($1, $2, 'balance', 'active')
+            RETURNING id, code, value, type, status, created_at
+            `,
+            [code, value]
+        );
+
+        res.json(rows[0]);
+    } catch (error) {
+        console.error('Create coupon error:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
+exports.updateCouponStatus = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+        const couponId = parseInt(id, 10);
+
+        if (!couponId || !status) {
+            return res.status(400).json({ error: 'Invalid payload' });
+        }
+
+        await pgClient.query(
+            'UPDATE referral_codes SET status = $1 WHERE id = $2',
+            [status, couponId]
+        );
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Update coupon status error:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
+exports.requestOtp = async (req, res) => {
+    try {
+        const email = String(req.body.email || '').trim().toLowerCase();
+        if (!email) {
+            return res.status(400).json({ error: 'Email is required' });
+        }
+
+        const user = await authService.findOrCreateUserByEmail(email);
+        const otp = await authService.createOtp(user.email);
+        await authService.sendOtpEmail(user.email, otp.code);
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('requestOtp error:', error);
+        res.status(500).json({ error: 'Failed to send OTP' });
+    }
+};
+
+exports.verifyOtp = async (req, res) => {
+    try {
+        const email = String(req.body.email || '').trim().toLowerCase();
+        const code = String(req.body.code || '').trim();
+
+        if (!email || !code) {
+            return res.status(400).json({ error: 'Email and code are required' });
+        }
+
+        const result = await authService.verifyOtp(email, code);
+        if (!result.ok) {
+            if (result.reason === 'expired') {
+                return res.status(400).json({ error: 'Code expired' });
+            }
+            return res.status(400).json({ error: 'Invalid code' });
+        }
+
+        const user = await authService.findOrCreateUserByEmail(email);
+        const token = authService.signToken(user);
+
+        res.json({
+            token,
+            user
+        });
+    } catch (error) {
+        console.error('verifyOtp error:', error);
+        res.status(500).json({ error: 'Failed to verify code' });
+    }
+};
+
+// Get current user's balance and transactions
+exports.getMyPayments = async (req, res) => {
+    try {
+        const userId = req.user && req.user.id;
+        const email = req.user && req.user.email;
+
+        if (!userId || !email) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+
+        const configResult = await pgClient.query(
+            'SELECT balance FROM user_configs WHERE user_id = $1 LIMIT 1',
+            [userId]
+        );
+
+        const balance = configResult.rows[0]?.balance || 0;
+
+        const txResult = await pgClient.query(
+            `
+            SELECT id, user_email, amount, method, trx_id, sender_number, status, created_at
+            FROM payment_transactions
+            WHERE user_email = $1
+            ORDER BY created_at DESC
+            `,
+            [email]
+        );
+
+        res.json({
+            balance,
+            transactions: txResult.rows || []
+        });
+    } catch (error) {
+        console.error('getMyPayments error:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
+// Create a new deposit request
+exports.createDepositRequest = async (req, res) => {
+    try {
+        const email = req.user && req.user.email;
+        if (!email) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+
+        const rawAmount = req.body && req.body.amount;
+        const method = String(req.body.method || 'bkash');
+        const trxId = String(req.body.trxId || '').trim();
+        const senderNumber = String(req.body.senderNumber || '').trim();
+
+        const amount = Number(rawAmount);
+        if (!trxId || !senderNumber) {
+            return res.status(400).json({ error: 'Transaction ID and sender number are required' });
+        }
+        if (!amount || amount <= 0) {
+            return res.status(400).json({ error: 'Invalid amount' });
+        }
+        if (amount < 300) {
+            return res.status(400).json({ error: 'Minimum deposit is 300 BDT' });
+        }
+
+        const insertResult = await pgClient.query(
+            `
+            INSERT INTO payment_transactions (user_email, amount, method, status, trx_id, sender_number)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING id, user_email, amount, method, trx_id, sender_number, status, created_at
+            `,
+            [email, amount, method, 'pending', trxId, senderNumber]
+        );
+
+        res.json(insertResult.rows[0]);
+    } catch (error) {
+        console.error('createDepositRequest error:', error);
+        res.status(500).json({ error: 'Failed to create deposit request' });
+    }
+};
+
+// Redeem balance coupon code
+exports.redeemCoupon = async (req, res) => {
+    try {
+        const userId = req.user && req.user.id;
+        const email = req.user && req.user.email;
+
+        if (!userId || !email) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+
+        const code = String(req.body.code || '').trim();
+        if (!code) {
+            return res.status(400).json({ error: 'Code is required' });
+        }
+
+        const couponResult = await pgClient.query(
+            `
+            SELECT *
+            FROM referral_codes
+            WHERE code = $1
+              AND status = 'active'
+            LIMIT 1
+            `,
+            [code]
+        );
+
+        if (couponResult.rows.length === 0) {
+            return res.status(400).json({ error: 'Invalid or inactive code' });
+        }
+
+        const coupon = couponResult.rows[0];
+        if (coupon.type !== 'balance') {
+            return res.status(400).json({ error: 'This code is not for balance topup' });
+        }
+
+        const amount = Number(coupon.value);
+        if (!amount || amount <= 0) {
+            return res.status(400).json({ error: 'Invalid coupon value' });
+        }
+
+        const configResult = await pgClient.query(
+            'SELECT id, balance FROM user_configs WHERE user_id = $1 LIMIT 1',
+            [userId]
+        );
+
+        let newBalance = amount;
+        if (configResult.rows.length > 0) {
+            const currentBalance = Number(configResult.rows[0].balance) || 0;
+            newBalance = currentBalance + amount;
+            await pgClient.query(
+                'UPDATE user_configs SET balance = $1 WHERE user_id = $2',
+                [newBalance, userId]
+            );
+        } else {
+            await pgClient.query(
+                'INSERT INTO user_configs (user_id, email, balance) VALUES ($1, $2, $3)',
+                [userId, email, newBalance]
+            );
+        }
+
+        await pgClient.query(
+            'UPDATE referral_codes SET status = $1 WHERE id = $2',
+            ['inactive', coupon.id]
+        );
+
+        await pgClient.query(
+            `
+            INSERT INTO payment_transactions (user_email, amount, method, status, trx_id, sender_number)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            `,
+            [email, amount, 'coupon', 'completed', `COUPON-${code}`, 'System']
+        );
+
+        res.json({ success: true, balance: newBalance });
+    } catch (error) {
+        console.error('redeemCoupon error:', error);
+        res.status(500).json({ error: 'Redemption failed' });
     }
 };

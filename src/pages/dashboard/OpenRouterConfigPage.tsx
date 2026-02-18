@@ -7,7 +7,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
 import { BACKEND_URL } from "@/config";
 import { Loader2, Save, Play, Lock } from "lucide-react";
 
@@ -41,15 +40,14 @@ export default function OpenRouterConfigPage() {
     const fetchConfig = async () => {
         setLoading(true);
         try {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session) return;
+            const token = localStorage.getItem("auth_token");
+            if (!token) return;
 
             const res = await fetch(`${BACKEND_URL}/api/openrouter/config`, {
-                headers: { 'Authorization': `Bearer ${session.access_token}` }
+                headers: { Authorization: `Bearer ${token}` }
             });
             const data = await res.json();
             if (data.success && data.config) {
-                // Merge with defaults to ensure nested objects exist
                 setConfig({
                     ...config,
                     ...data.config,
@@ -68,14 +66,14 @@ export default function OpenRouterConfigPage() {
     const saveConfig = async () => {
         setLoading(true);
         try {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session) return;
+            const token = localStorage.getItem("auth_token");
+            if (!token) return;
 
             const res = await fetch(`${BACKEND_URL}/api/openrouter/config`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${session.access_token}`
+                    Authorization: `Bearer ${token}`,
                 },
                 body: JSON.stringify(config)
             });
@@ -100,14 +98,14 @@ export default function OpenRouterConfigPage() {
         setTestLoading(true);
         setTestResult(null);
         try {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session) return;
+            const token = localStorage.getItem("auth_token");
+            if (!token) return;
 
             const res = await fetch(`${BACKEND_URL}/api/openrouter/test-model`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${session.access_token}`
+                    Authorization: `Bearer ${token}`,
                 },
                 body: JSON.stringify(testParams)
             });
@@ -116,12 +114,6 @@ export default function OpenRouterConfigPage() {
             
             if (data.success) {
                 toast.success("Test Successful!");
-                // Auto-fill headers into config if model matches
-                if (testParams.model === config.text_model) {
-                    // Optional: Auto-update limits? 
-                    // Let's just notify the user.
-                    // toast.info("Check Rate Limit headers below to update RPM/RPD!");
-                }
             } else {
                 toast.error("Test Failed: " + (data.error?.message || "Unknown error"));
             }

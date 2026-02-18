@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
@@ -29,6 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { BACKEND_URL } from "@/config";
 
 export default function MessengerConversionPage() {
   const [messages, setMessages] = useState<any[]>([]);
@@ -64,85 +64,75 @@ export default function MessengerConversionPage() {
 
   // Separate function for All Time Stats (Optimized)
   const fetchStats = async (pageId: string) => {
-      try {
-          // Try using the optimized RPC function first
-          const { data: stats, error: rpcError } = await (supabase as any)
-            .rpc('get_page_stats', { p_page_id: pageId });
+    try {
+      const token = localStorage.getItem("auth_token");
+      if (!token) return;
 
-          if (!rpcError && stats) {
-              // RPC returns JSON, so we access properties directly
-              // Note: stats might be an object like { total_tokens: 123, bot_replies: 456 }
-              setAllTimeBotReplies((stats as any).bot_replies || 0);
-              setAllTimeTokenCount((stats as any).total_tokens || 0);
-              return;
-          }
-          
-          if (rpcError) {
-             console.warn("RPC get_page_stats failed, falling back to client-side calc:", rpcError.message);
-          }
+      const params = new URLSearchParams();
+      params.set("page_id", pageId);
 
-          // FALLBACK: Client-side calculation (Slower for large datasets)
-          // 1. Count Bot Replies (Head only - extremely fast)
-          const { count: replyCount } = await supabase
-              .from('fb_chats')
-              .select('*', { count: 'exact', head: true })
-              .eq('page_id', pageId)
-              .eq('reply_by', 'bot');
-          
-          setAllTimeBotReplies(replyCount || 0);
+      const res = await fetch(`${BACKEND_URL}/messenger/stats?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
 
-          // 2. Sum Tokens (Fetch only token column - lighter than full rows)
-          const { data: tokenData } = await supabase
-              .from('fb_chats')
-              .select('token')
-              .eq('page_id', pageId)
-              .gt('token', 0); // Only rows with tokens
-          
-          const totalTokens = tokenData?.reduce((acc: number, curr: any) => acc + (Number(curr.token) || 0), 0) || 0;
-          setAllTimeTokenCount(totalTokens);
+      if (!res.ok) return;
 
-      } catch (e) {
-          console.error("Stats fetch error", e);
-      }
+      const data = await res.json();
+      setAllTimeBotReplies(data.allTimeBotReplies || 0);
+      setAllTimeTokenCount(data.allTimeTokenCount || 0);
+    } catch (e) {
+      console.error("Stats fetch error", e);
+    }
   };
 
   const fetchMessages = async (pageId: string, from: Date, to: Date) => {
     setLoading(true);
     try {
-      // Fetch messages filtered by DATE RANGE from DB (Server-side filtering)
-      let query = supabase
-        .from('fb_chats')
-        .select('*')
-        .eq('page_id', pageId)
-        .gte('created_at', from.toISOString())
-        .lte('created_at', to.toISOString())
-        .order('created_at', { ascending: false });
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        setMessages([]);
+        setFilteredBotReplyCount(0);
+        setFilteredTokenCount(0);
+        setTokenBreakdown({});
+        return;
+      }
 
-      const { data, error } = await query;
+      const params = new URLSearchParams();
+      params.set("page_id", pageId);
+      params.set("from", from.toISOString());
+      params.set("to", to.toISOString());
 
-      if (error) throw error;
+      const res = await fetch(`${BACKEND_URL}/messenger/chats?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
 
-      const fetchedMessages = data || [];
+      if (!res.ok) {
+        throw new Error("Failed to fetch messages");
+      }
+
+      const data = await res.json();
+      const fetchedMessages = Array.isArray(data) ? data : [];
       setMessages(fetchedMessages);
       
-      // Calculate filtered stats from the fetched subset
       const botReplies = fetchedMessages.filter((msg: any) => msg.reply_by === 'bot').length;
       setFilteredBotReplyCount(botReplies);
 
       const filteredTokens = fetchedMessages.reduce((acc: number, msg: any) => acc + (Number(msg.token) || 0), 0);
       setFilteredTokenCount(filteredTokens);
 
-      // Token Breakdown
       const breakdown: Record<string, number> = {};
       fetchedMessages.forEach((msg: any) => {
-          const tokenVal = Number(msg.token) || 0;
-          if (msg.reply_by === 'bot' && tokenVal > 0) {
-              const model = msg.ai_model || 'Unknown';
-              breakdown[model] = (breakdown[model] || 0) + tokenVal;
-          }
+        const tokenVal = Number(msg.token) || 0;
+        if (msg.reply_by === 'bot' && tokenVal > 0) {
+          const model = msg.ai_model || 'Unknown';
+          breakdown[model] = (breakdown[model] || 0) + tokenVal;
+        }
       });
       setTokenBreakdown(breakdown);
-
     } catch (error) {
       console.error("Error fetching messages:", error);
       toast.error("Failed to fetch messages");

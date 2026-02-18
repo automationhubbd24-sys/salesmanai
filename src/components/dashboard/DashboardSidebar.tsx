@@ -23,7 +23,6 @@ import {
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import Logo from "@/components/Logo";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import {
   Tooltip,
@@ -99,15 +98,13 @@ export function DashboardSidebar({ isMobile, onLinkClick }: { isMobile?: boolean
 
   const menu = getMenuItems();
 
-  const handleLogout = async () => {
-    // Clear all local storage keys to prevent session leakage
+  const handleLogout = () => {
     localStorage.removeItem("active_fb_page_id");
     localStorage.removeItem("active_fb_db_id");
     localStorage.removeItem("active_wp_db_id");
     localStorage.removeItem("active_wa_session_id");
-    localStorage.removeItem("supabase.auth.token"); // Just in case, though signOut handles it
-
-    await supabase.auth.signOut();
+    localStorage.removeItem("auth_token");
+    localStorage.removeItem("auth_user");
     toast.success("Logged out successfully");
     navigate("/login");
   };

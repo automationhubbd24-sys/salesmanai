@@ -1,6 +1,5 @@
 const WooCommerce = require("@woocommerce/woocommerce-rest-api");
 const WooCommerceRestApi = WooCommerce.default || WooCommerce;
-const { supabase } = require('./dbService');
 
 /**
  * Import products from WooCommerce Store
@@ -83,32 +82,65 @@ async function importProducts(userId, url, consumerKey, consumerSecret) {
                 variants: variants // Keep for compatibility
             };
 
-            // Check if product already exists (Simple deduplication by name)
-            const { data: existing } = await supabase
-                .from('products')
-                .select('id')
-                .eq('user_id', userId)
-                .eq('name', p.name)
-                .maybeSingle();
+            const { query } = require('./pgClient');
 
-            if (existing) {
-                // Update existing product
-                const { error } = await supabase
-                    .from('products')
-                    .update(productData)
-                    .eq('id', existing.id);
-                
-                if (error) console.error(`[WC Import] Error updating ${p.name}:`, error.message);
-                else importedCount++;
-            } else {
-                // Insert new product
-                const { error } = await supabase
-                    .from('products')
-                    .insert(productData);
+            const existingRes = await query(
+                'SELECT id FROM products WHERE user_id = $1 AND name = $2 LIMIT 1',
+                [userId, p.name]
+            );
 
-                if (!error) {
+            if (existingRes.rows.length > 0) {
+                const existing = existingRes.rows[0];
+                try {
+                    await query(
+                        `UPDATE products
+                         SET name = $1,
+                             description = $2,
+                             keywords = $3,
+                             image_url = $4,
+                             price = $5,
+                             stock = $6,
+                             currency = $7,
+                             variants = $8,
+                             updated_at = NOW()
+                         WHERE id = $9`,
+                        [
+                            productData.name,
+                            productData.description,
+                            productData.keywords,
+                            productData.image_url,
+                            productData.price,
+                            productData.stock,
+                            productData.currency,
+                            productData.variants,
+                            existing.id
+                        ]
+                    );
                     importedCount++;
-                } else {
+                } catch (error) {
+                    console.error(`[WC Import] Error updating ${p.name}:`, error.message);
+                }
+            } else {
+                try {
+                    await query(
+                        `INSERT INTO products
+                            (user_id, name, description, keywords, image_url, price, stock, currency, variants, is_active)
+                         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+                        [
+                            productData.user_id,
+                            productData.name,
+                            productData.description,
+                            productData.keywords,
+                            productData.image_url,
+                            productData.price,
+                            productData.stock,
+                            productData.currency,
+                            productData.variants,
+                            productData.is_active
+                        ]
+                    );
+                    importedCount++;
+                } catch (error) {
                     console.error(`[WC Import] Error importing ${p.name}:`, error.message);
                 }
             }

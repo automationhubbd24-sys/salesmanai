@@ -1398,15 +1398,24 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
             ].filter(Boolean).join(',').split(',').map(e => e.trim()).filter(Boolean);
 
             if (lockList.length > 0 || unlockList.length > 0) {
-                 // Fetch recent raw history for emoji detection
                  const checkCount = parseInt(pageConfig.emoji_check_count) || 50;
-                 const { data: rawHistory } = await dbService.supabase
-                    .from('whatsapp_chats')
-                    .select('text, timestamp, reply_by')
-                    .eq('session_name', sessionName)
-                    .or(`and(sender_id.eq.${senderId},recipient_id.eq.${sessionName}),and(sender_id.eq.${sessionName},recipient_id.eq.${senderId})`)
-                    .order('timestamp', { ascending: false })
-                    .limit(checkCount); // Use dynamic check count from settings
+                 const pgClient = require('../services/pgClient');
+                 const result = await pgClient.query(
+                    `
+                    SELECT text, timestamp, reply_by
+                    FROM whatsapp_chats
+                    WHERE session_name = $1
+                      AND (
+                        (sender_id = $2 AND recipient_id = $3)
+                        OR
+                        (sender_id = $3 AND recipient_id = $2)
+                      )
+                    ORDER BY timestamp DESC
+                    LIMIT $4
+                    `,
+                    [sessionName, senderId, sessionName, checkCount]
+                 );
+                 const rawHistory = result.rows || [];
 
                  if (rawHistory && rawHistory.length > 0) {
                      let lastBlockTime = 0;

@@ -5,8 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Database, Search, CheckCircle, XCircle, Loader2, LogOut } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { BACKEND_URL } from "@/config";
 
 export default function MessengerDatabasePage() {
   const [searchId, setSearchId] = useState("");
@@ -41,40 +41,48 @@ export default function MessengerDatabasePage() {
   const fetchDatabase = async (id: string) => {
     setLoading(true);
     try {
-      // 1. Fetch from fb_message_database
-      const { data: dbData, error: dbError } = await supabase
-        .from('fb_message_database')
-        .select('*')
-        .eq('id', parseInt(id))
-        .maybeSingle();
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        toast.error("Please login again");
+        return;
+      }
 
-      if (dbError) throw dbError;
-      
-      if (dbData) {
-        setConnectedDb(dbData);
-        localStorage.setItem("active_fb_db_id", id);
-        
-        // Explicitly cast to any to handle potential type inference issues with maybeSingle()
-        const typedDbData = dbData as any;
-        if (typedDbData.page_id) {
-            localStorage.setItem("active_fb_page_id", typedDbData.page_id);
-            fetchPageDetails(typedDbData.page_id);
-        }
-      } else {
-        toast.error("Database not found");
+      const res = await fetch(`${BACKEND_URL}/messenger/config/${id}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (res.status === 403 || res.status === 404) {
+        toast.error("Database not found or access denied");
         localStorage.removeItem("active_fb_db_id");
         localStorage.removeItem("active_fb_page_id");
         setConnectedDb(null);
         setPageName(null);
+        return;
+      }
+
+      if (!res.ok) {
+        throw new Error("Failed to fetch database");
+      }
+
+      const dbData = await res.json();
+      setConnectedDb(dbData);
+      localStorage.setItem("active_fb_db_id", id);
+
+      const typedDbData: any = dbData;
+      if (typedDbData.page_id) {
+        localStorage.setItem("active_fb_page_id", typedDbData.page_id);
+        fetchPageDetails(typedDbData.page_id);
       }
     } catch (error) {
       console.error("Error fetching DB:", error);
       toast.error("Database ID not found or connection failed");
       if (localStorage.getItem("active_fb_db_id") === id) {
-          localStorage.removeItem("active_fb_db_id");
-          localStorage.removeItem("active_fb_page_id");
-          setConnectedDb(null);
-          setPageName(null);
+        localStorage.removeItem("active_fb_db_id");
+        localStorage.removeItem("active_fb_page_id");
+        setConnectedDb(null);
+        setPageName(null);
       }
     } finally {
       setLoading(false);
@@ -82,20 +90,26 @@ export default function MessengerDatabasePage() {
   };
 
   const fetchPageDetails = async (pageId: string) => {
-      try {
-          const { data, error } = await supabase
-            .from('page_access_token_message')
-            .select('name')
-            .eq('page_id', pageId)
-            .maybeSingle();
-          
-          if (data) {
-              const typedData = data as any;
-              setPageName(typedData.name);
-          }
-      } catch (e) {
-          console.error("Error fetching page details", e);
+    try {
+      const token = localStorage.getItem("auth_token");
+      if (!token) return;
+
+      const res = await fetch(`${BACKEND_URL}/messenger/pages`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) return;
+
+      const pages = await res.json();
+      const page = (Array.isArray(pages) ? pages : []).find((p: any) => String(p.page_id) === String(pageId));
+      if (page && page.name) {
+        setPageName(page.name);
       }
+    } catch (e) {
+      console.error("Error fetching page details", e);
+    }
   };
 
   const handleConnect = () => {

@@ -5,9 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import Logo from "@/components/Logo";
 import { Mail, ArrowLeft } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { BACKEND_URL } from "@/config";
 
 const ForgotPassword = () => {
   const { t } = useLanguage();
@@ -23,16 +23,29 @@ const ForgotPassword = () => {
     }
     setLoading(true);
     try {
-      const redirectTo = `${window.location.origin}/reset-password`;
-      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
-      if (error) {
-        toast.error(error.message);
-      } else {
-        toast.success(t("Password reset code sent to your email", "পাসওয়ার্ড রিসেট কোড আপনার ইমেইলে পাঠানো হয়েছে"));
-        navigate(`/reset-password?email=${encodeURIComponent(email)}`);
+      const res = await fetch(`${BACKEND_URL}/api/auth/request-otp`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.success) {
+        throw new Error(body.error || t("Failed to send login code", "লগইন কোড পাঠানো যায়নি"));
       }
+      toast.success(
+        t(
+          "Login code sent to your email. Use it on the login page.",
+          "লগইন কোড আপনার ইমেইলে পাঠানো হয়েছে। লগইন পেইজে কোডটি ব্যবহার করুন।"
+        )
+      );
+      navigate("/login");
     } catch (err: any) {
-      toast.error(err.message || t("Failed to send reset link", "রিসেট লিংক পাঠাতে ব্যর্থ"));
+      toast.error(
+        err.message ||
+          t("Failed to send login code", "লগইন কোড পাঠাতে ব্যর্থ")
+      );
     } finally {
       setLoading(false);
     }

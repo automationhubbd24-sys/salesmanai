@@ -15,7 +15,7 @@ import {
   CreditCard,
   Lock
 } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { BACKEND_URL } from "@/config";
 
 export default function DashboardHome() {
   const { platform } = useParams();
@@ -30,45 +30,47 @@ export default function DashboardHome() {
   const platformName = platform ? platform.charAt(0).toUpperCase() + platform.slice(1) : 'Platform';
 
   useEffect(() => {
-    async function getUser() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        setUserEmail(user.email);
-        
+    async function loadStats() {
+      const token = localStorage.getItem("auth_token");
+      const email = localStorage.getItem("auth_email");
+      if (!token || !email) {
+        return;
+      }
+
+      setUserEmail(email);
+
+      try {
         if (isWhatsApp) {
-          // Fetch simple stats for WhatsApp (Only user's sessions)
-          const { count: sessionCount } = await supabase
-            .from('whatsapp_message_database')
-            .select('*', { count: 'exact', head: true })
-            .eq('user_id', user.id);
-            
-          setStats(prev => ({ ...prev, sessions: sessionCount || 0 }));
+          const res = await fetch(`${BACKEND_URL}/whatsapp/sessions`, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            const mySessions = Array.isArray(data) ? data : [];
+            setStats(prev => ({ ...prev, sessions: mySessions.length || 0 }));
+          }
         } else if (platform === 'messenger') {
-            // Fetch connected pages for Messenger
-            let targetEmail = user.email;
-            
-            // Check if team member
-            const { data: teamData } = await (supabase
-                .from('team_members') as any)
-                .select('owner_email')
-                .eq('member_email', user.email)
-                .maybeSingle();
-
-            if (teamData) {
-                targetEmail = teamData.owner_email;
-            }
-
-            const { count: pageCount } = await supabase
-                .from('page_access_token_message')
-                .select('*', { count: 'exact', head: true })
-                .eq('email', targetEmail)
-                .in('subscription_status', ['active', 'trial']);
-            
-            setStats(prev => ({ ...prev, sessions: pageCount || 0 }));
+          const res = await fetch(`${BACKEND_URL}/messenger/pages`, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            const pages = Array.isArray(data) ? data : [];
+            const activePages = pages.filter((p: any) =>
+              ['active', 'trial'].includes(p.subscription_status)
+            );
+            setStats(prev => ({ ...prev, sessions: activePages.length || 0 }));
+          }
         }
+      } catch (e) {
+        console.error("Dashboard stats error", e);
       }
     }
-    getUser();
+    loadStats();
   }, [isWhatsApp, platform]);
 
   return (

@@ -2,6 +2,23 @@
 -- Enable UUID extension
 create extension if not exists "uuid-ossp";
 
+create table if not exists users (
+  id uuid default uuid_generate_v4() primary key,
+  email text not null unique,
+  created_at timestamp with time zone default now()
+);
+
+create table if not exists email_otp_codes (
+  id uuid default uuid_generate_v4() primary key,
+  email text not null,
+  code text not null,
+  expires_at timestamp with time zone not null,
+  used boolean default false,
+  created_at timestamp with time zone default now()
+);
+
+create index if not exists idx_email_otp_email_created_at on email_otp_codes(email, created_at desc);
+
 -- 1. Table for WhatsApp Sessions (Managed by WAHA)
 create table if not exists whatsapp_sessions (
   id uuid default uuid_generate_v4() primary key,

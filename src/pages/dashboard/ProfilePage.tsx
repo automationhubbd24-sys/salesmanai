@@ -3,7 +3,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Mail, Shield, User, Users, Trash2, Plus, AlertCircle, UserPlus, Edit, Smartphone, Facebook } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
@@ -18,6 +17,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
+import { BACKEND_URL } from "@/config";
 
 export default function ProfilePage() {
   const [user, setUser] = useState<{ email?: string; id?: string } | null>(null);
@@ -35,49 +35,67 @@ export default function ProfilePage() {
   const [resourceLoading, setResourceLoading] = useState(false);
 
   useEffect(() => {
-    const getUser = async () => {
-      const { data } = await supabase.auth.getUser();
-      if (data.user) {
-        setUser({ email: data.user.email, id: data.user.id });
-        fetchTeamMembers(data.user.email || "");
-      }
-    };
-    getUser();
+    const email = localStorage.getItem("auth_email");
+    const userId = localStorage.getItem("auth_user_id");
+    if (email && userId) {
+      setUser({ email, id: userId });
+      fetchTeamMembers(email);
+    }
   }, []);
 
   const fetchTeamMembers = async (email: string) => {
     if (!email) return;
-    const { data, error } = await (supabase
-      .from('team_members') as any)
-      .select('*')
-      .eq('owner_email', email);
-    
-    if (error) {
-      console.error('Error fetching team:', error);
-    } else {
-      setTeamMembers(data || []);
+    try {
+      const token = localStorage.getItem("auth_token");
+      if (!token) return;
+
+      const res = await fetch(`${BACKEND_URL}/teams/members`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to load team");
+      }
+
+      const data = await res.json();
+      setTeamMembers(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Error fetching team:", err);
     }
   };
 
   const fetchResources = async () => {
     if (!user?.email) return;
     setResourceLoading(true);
-    
-    // FB Pages
-    const { data: fbData } = await supabase
-      .from('page_access_token_message')
-      .select('page_id, name')
-      .eq('email', user.email);
-    setAvailableFbPages(fbData || []);
+    try {
+      const token = localStorage.getItem("auth_token");
+      if (!token) return;
 
-    // WA Sessions
-    const { data: waData } = await supabase
-      .from('whatsapp_message_database')
-      .select('session_name, status')
-      .eq('user_id', user.id);
-    setAvailableWaSessions(waData || []);
-    
-    setResourceLoading(false);
+      const [fbRes, waRes] = await Promise.all([
+        fetch(`${BACKEND_URL}/messenger/pages`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch(`${BACKEND_URL}/whatsapp/sessions`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ]);
+
+      if (fbRes.ok) {
+        const fbData = await fbRes.json();
+        const pages = Array.isArray(fbData) ? fbData : [];
+        setAvailableFbPages(pages.map((p: any) => ({ page_id: p.page_id, name: p.name })));
+      }
+
+      if (waRes.ok) {
+        const waData = await waRes.json();
+        const sessions = Array.isArray(waData) ? waData : [];
+        setAvailableWaSessions(sessions.map((s: any) => ({ session_name: s.session_name || s.name, status: s.status })));
+      }
+    } finally {
+      setResourceLoading(false);
+    }
   };
 
   const openAddModal = () => {
@@ -119,25 +137,44 @@ export default function ProfilePage() {
     setLoading(true);
     
     const permissions = {
-        fb_pages: selectedFbPages,
-        wa_sessions: selectedWaSessions
+      fb_pages: selectedFbPages,
+      wa_sessions: selectedWaSessions,
     };
 
-    const { error } = await (supabase.from('team_members') as any).insert({
-      owner_email: user.email,
-      member_email: newMemberEmail.toLowerCase(),
-      status: 'active',
-      permissions: permissions
-    });
+    try {
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        toast.error("Please login again");
+        return;
+      }
 
-    if (error) {
-      toast.error("Failed to add member: " + error.message);
-    } else {
+      const res = await fetch(`${BACKEND_URL}/teams/members`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          member_email: newMemberEmail.toLowerCase(),
+          permissions,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to add member");
+      }
+
       toast.success("Team member added successfully");
       setIsAddModalOpen(false);
-      fetchTeamMembers(user.email);
+      if (user?.email) {
+        fetchTeamMembers(user.email);
+      }
+    } catch (err: any) {
+      toast.error("Failed to add member: " + (err.message || "Unknown error"));
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const handleUpdateMember = async () => {
@@ -146,31 +183,68 @@ export default function ProfilePage() {
     setLoading(true);
 
     const permissions = {
-        fb_pages: selectedFbPages,
-        wa_sessions: selectedWaSessions
+      fb_pages: selectedFbPages,
+      wa_sessions: selectedWaSessions,
     };
 
-    const { error } = await (supabase.from('team_members') as any)
-      .update({ permissions: permissions })
-      .eq('id', editingMemberId);
+    try {
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        toast.error("Please login again");
+        return;
+      }
 
-    if (error) {
-      toast.error("Failed to update member: " + error.message);
-    } else {
+      const res = await fetch(`${BACKEND_URL}/teams/members/${editingMemberId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ permissions }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to update member");
+      }
+
       toast.success("Team member updated successfully");
       setIsAddModalOpen(false);
-      fetchTeamMembers(user.email);
+      if (user?.email) {
+        fetchTeamMembers(user.email);
+      }
+    } catch (err: any) {
+      toast.error("Failed to update member: " + (err.message || "Unknown error"));
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const handleRemoveMember = async (id: string) => {
-    const { error } = await (supabase.from('team_members') as any).delete().eq('id', id);
-    if (error) {
-      toast.error("Failed to remove member");
-    } else {
+    try {
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        toast.error("Please login again");
+        return;
+      }
+
+      const res = await fetch(`${BACKEND_URL}/teams/members/${id}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to remove member");
+      }
+
       toast.success("Member removed");
-      if (user?.email) fetchTeamMembers(user.email);
+      if (user?.email) {
+        fetchTeamMembers(user.email);
+      }
+    } catch {
+      toast.error("Failed to remove member");
     }
   };
 

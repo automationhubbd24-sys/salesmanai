@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
 import { BACKEND_URL } from "@/config";
 
 export interface WahaSession {
@@ -55,83 +54,18 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
   const refreshSessions = React.useCallback(async () => {
     setLoading(true);
     try {
-      // 1. Get current user
-      const { data: { user } } = await supabase.auth.getUser();
-      
-      if (!user?.email) {
-          setSessions([]);
-          return;
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        setSessions([]);
+        setIsTeamMember(false);
+        setTeams([]);
+        setActiveTeam(null);
+        setTeamOwnerEmail(null);
+        return;
       }
 
-      // Check Team Membership (Allow Multiple Teams)
-      const { data: teamData } = await (supabase
-          .from('team_members') as any)
-          .select('id, owner_email, permissions, status')
-          .eq('member_email', user.email)
-          .eq('status', 'active');
-      
-      const rawTeams = teamData || [];
-      const teamMap = new Map<string, any>();
-      rawTeams.forEach((row: any) => {
-          const key = row.owner_email;
-          if (!key) return;
-          if (!teamMap.has(key)) {
-              teamMap.set(key, row);
-          } else {
-              const existing = teamMap.get(key);
-              const merged: any = { ...existing };
-              const fb1 = existing?.permissions?.fb_pages;
-              const fb2 = row?.permissions?.fb_pages;
-              const wa1 = existing?.permissions?.wa_sessions;
-              const wa2 = row?.permissions?.wa_sessions;
-              merged.permissions = {
-                  ...(existing.permissions || {}),
-                  ...(row.permissions || {}),
-                  fb_pages: Array.from(
-                      new Set([
-                          ...(Array.isArray(fb1) ? fb1 : []),
-                          ...(Array.isArray(fb2) ? fb2 : []),
-                      ])
-                  ),
-                  wa_sessions: Array.from(
-                      new Set([
-                          ...(Array.isArray(wa1) ? wa1 : []),
-                          ...(Array.isArray(wa2) ? wa2 : []),
-                      ])
-                  ),
-              };
-              teamMap.set(key, merged);
-          }
-      });
-      const foundTeams = Array.from(teamMap.values());
-      setIsTeamMember(foundTeams.length > 0);
-      setTeams(foundTeams);
-
-      // Restore active team from storage or default to first
-      let currentActiveTeam = activeTeam;
-      if (viewMode === 'team' && foundTeams.length > 0) {
-          const storedOwner = localStorage.getItem('active_team_owner_wa');
-          if (storedOwner) {
-              const matched = foundTeams.find((t: any) => t.owner_email === storedOwner);
-              if (matched) currentActiveTeam = matched;
-              else currentActiveTeam = foundTeams[0];
-          } else if (!currentActiveTeam) {
-              currentActiveTeam = foundTeams[0];
-          }
-          if (currentActiveTeam !== activeTeam) {
-             setActiveTeam(currentActiveTeam);
-          }
-          setTeamOwnerEmail(currentActiveTeam?.owner_email || null);
-      } else {
-          setTeamOwnerEmail(null);
-      }
-
-      // 2. Fetch all from WAHA via Backend
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-      
       const res = await fetch(`${BACKEND_URL}/whatsapp/sessions`, {
-        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+        headers: { Authorization: `Bearer ${token}` }
       });
       const wahaSessions = await res.json();
       const allSessions: WahaSession[] = Array.isArray(wahaSessions) ? wahaSessions : [];

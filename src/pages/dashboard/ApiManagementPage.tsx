@@ -1,6 +1,4 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { Database } from "@/integrations/supabase/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,8 +7,15 @@ import { Trash, Plus, Check, X } from "lucide-react";
 import { toast } from "sonner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { BACKEND_URL } from "@/config";
 
-type ApiItem = Database['public']['Tables']['api_list']['Row'];
+interface ApiItem {
+    id: number;
+    provider: string;
+    model: string;
+    api: string;
+    status?: string;
+}
 
 export default function ApiManagementPage() {
     const [apis, setApis] = useState<ApiItem[]>([]);
@@ -18,116 +23,103 @@ export default function ApiManagementPage() {
     const [newApi, setNewApi] = useState("");
     const [provider, setProvider] = useState("gemini");
     const [model, setModel] = useState("gemini-2.5-flash");
-    const [isAuthenticated, setIsAuthenticated] = useState(false);
-    const [usernameInput, setUsernameInput] = useState("");
-    const [passwordInput, setPasswordInput] = useState("");
-    const [loginLoading, setLoginLoading] = useState(false);
 
     useEffect(() => {
-        if (isAuthenticated) {
-            fetchApis();
-        }
-    }, [isAuthenticated]);
+        fetchApis();
+    }, []);
 
     const fetchApis = async () => {
         setLoading(true);
-        const { data, error } = await supabase.from('api_list').select('*').order('id', { ascending: false });
-        if (error) {
-            toast.error("Failed to fetch API list");
-        } else {
-            setApis(data || []);
+        try {
+            let token: string | null = null;
+            if (typeof window !== "undefined") {
+                token = localStorage.getItem("auth_token");
+            }
+            if (!token) {
+                setApis([]);
+                return;
+            }
+            const res = await fetch(`${BACKEND_URL}/api/api-list`, {
+                headers: {
+                    Authorization: `Bearer ${token}`
+                }
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok || !body.success) {
+                throw new Error(body.error || "Failed to fetch API list");
+            }
+            setApis(body.items || []);
+        } catch (error: any) {
+            toast.error(error.message || "Failed to fetch API list");
+        } finally {
+            setLoading(false);
         }
-        setLoading(false);
     };
 
     const addApi = async () => {
         if (!newApi) return;
-        const { error } = await supabase.from('api_list').insert([{
-            provider,
-            model,
-            api: newApi,
-            is_active: true
-        }] as any);
-
-        if (error) {
-            toast.error("Failed to add API Key");
-        } else {
+        try {
+            let token: string | null = null;
+            if (typeof window !== "undefined") {
+                token = localStorage.getItem("auth_token");
+            }
+            if (!token) {
+                toast.error("Please login again");
+                return;
+            }
+            const res = await fetch(`${BACKEND_URL}/api/api-list`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    provider,
+                    model,
+                    api: newApi
+                })
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok || !body.success) {
+                throw new Error(body.error || "Failed to add API Key");
+            }
             toast.success("API Key added successfully");
             setNewApi("");
             fetchApis();
+        } catch (error: any) {
+            toast.error(error.message || "Failed to add API Key");
         }
     };
 
     const deleteApi = async (id: number) => {
-        const { error } = await supabase.from('api_list').delete().eq('id', id);
-        if (error) {
-            toast.error("Failed to delete API Key");
-        } else {
+        try {
+            let token: string | null = null;
+            if (typeof window !== "undefined") {
+                token = localStorage.getItem("auth_token");
+            }
+            if (!token) {
+                toast.error("Please login again");
+                return;
+            }
+            const res = await fetch(`${BACKEND_URL}/api/api-list/${id}`, {
+                method: "DELETE",
+                headers: {
+                    Authorization: `Bearer ${token}`
+                }
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok || !body.success) {
+                throw new Error(body.error || "Failed to delete API Key");
+            }
             toast.success("API Key deleted");
             fetchApis();
-        }
-    };
-
-    const handleLogin = async () => {
-        if (!usernameInput || !passwordInput) {
-            toast.error("Please enter username and password");
-            return;
-        }
-        setLoginLoading(true);
-        try {
-            const { data, error } = await (supabase as any)
-                .from('app_users')
-                .select('*')
-                .eq('key', usernameInput)
-                .eq('pas', passwordInput)
-                .maybeSingle();
-            if (error) throw error;
-            if (data) {
-                setIsAuthenticated(true);
-                toast.success("Login successful");
-            } else {
-                toast.error("Invalid credentials");
-            }
         } catch (error: any) {
-            toast.error("Login failed: " + (error.message || "Unknown error"));
-        } finally {
-            setLoginLoading(false);
+            toast.error(error.message || "Failed to delete API Key");
         }
     };
 
     return (
         <div className="container mx-auto p-6 space-y-6">
-            {!isAuthenticated ? (
-              <Card className="w-full max-w-md mx-auto shadow-lg border-t-4 border-t-primary">
-                <CardHeader className="text-center space-y-2">
-                  <CardTitle className="text-2xl">Restricted Area</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Username (Key)</Label>
-                    <Input 
-                      value={usernameInput} 
-                      onChange={e => setUsernameInput(e.target.value)} 
-                      placeholder="Enter admin key"
-                      onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Password</Label>
-                    <Input 
-                      type="password" 
-                      value={passwordInput} 
-                      onChange={e => setPasswordInput(e.target.value)} 
-                      placeholder="Enter password"
-                      onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-                    />
-                  </div>
-                  <Button className="w-full font-bold bg-[#00ff88] text-black hover:bg-[#00f07f]" onClick={handleLogin} disabled={loginLoading}>
-                    {loginLoading ? "Authenticating..." : "Access"}
-                  </Button>
-                </CardContent>
-              </Card>
-            ) : (
             <Card>
                 <CardHeader>
                     <CardTitle>API Key Management (Global Pool)</CardTitle>
@@ -188,7 +180,7 @@ export default function ApiManagementPage() {
                                                 {api.api ? `${api.api.substring(0, 8)}...${api.api.substring(api.api.length - 4)}` : '******'}
                                             </TableCell>
                                             <TableCell>
-                                                {api.is_active ? <Check className="text-green-500 h-4 w-4" /> : <X className="text-red-500 h-4 w-4" />}
+                                                {api.status === "active" ? <Check className="text-green-500 h-4 w-4" /> : <X className="text-red-500 h-4 w-4" />}
                                             </TableCell>
                                             <TableCell className="text-right">
                                                 <Button variant="ghost" size="icon" onClick={() => deleteApi(api.id)}>
@@ -203,7 +195,6 @@ export default function ApiManagementPage() {
                     </div>
                 </CardContent>
             </Card>
-            )}
         </div>
     );
 }

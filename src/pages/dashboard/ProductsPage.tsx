@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -120,8 +119,10 @@ export default function ProductsPage() {
     useEffect(() => {
         if (userId) {
             const timer = setTimeout(async () => {
-                const { data: { session } } = await supabase.auth.getSession();
-                const token = session?.access_token;
+                let token: string | null = null;
+                if (typeof window !== "undefined") {
+                    token = localStorage.getItem("auth_token");
+                }
                 fetchProducts(userId, searchQuery, token || undefined);
             }, 500);
             return () => clearTimeout(timer);
@@ -130,13 +131,26 @@ export default function ProductsPage() {
 
     const checkAccess = async () => {
         try {
-            const { data: { user } } = await supabase.auth.getUser();
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!user) return;
-            setUserId(user.id);
-
-            const token = session?.access_token;
-            fetchProducts(user.id, "", token || undefined);
+            if (typeof window === "undefined") {
+                return;
+            }
+            const storedUser = localStorage.getItem("auth_user");
+            const storedToken = localStorage.getItem("auth_token");
+            if (!storedUser || !storedToken) {
+                return;
+            }
+            let parsedUser: any = null;
+            try {
+                parsedUser = JSON.parse(storedUser);
+            } catch {
+                return;
+            }
+            const uid = parsedUser && parsedUser.id ? String(parsedUser.id) : null;
+            if (!uid) {
+                return;
+            }
+            setUserId(uid);
+            fetchProducts(uid, "", storedToken);
         } catch (error) {
             console.error("Access check failed:", error);
         } finally {
@@ -187,21 +201,19 @@ export default function ProductsPage() {
 
     const fetchPages = async () => {
         try {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session) return;
+            if (typeof window === "undefined") {
+                return;
+            }
+            const token = localStorage.getItem("auth_token");
+            if (!token) return;
 
-            const headers = { Authorization: `Bearer ${session.access_token}` };
+            const headers = { Authorization: `Bearer ${token}` };
 
-            // 1. Fetch Messenger Pages
-            // Note: messenger routes are mounted at /messenger, not /api/messenger
             const resMsg = await fetch(`${BACKEND_URL}/messenger/pages`, { headers });
             const dataMsg = await resMsg.json();
-            console.log("Messenger Pages:", dataMsg);
             
-            // 2. Fetch WhatsApp Sessions
             const resWa = await fetch(`${BACKEND_URL}/whatsapp/sessions`, { headers });
             const dataWa = await resWa.json();
-            console.log("WhatsApp Sessions:", dataWa);
 
             let combinedPages: any[] = [];
 
@@ -398,8 +410,10 @@ export default function ProductsPage() {
                 ? `${BACKEND_URL}/api/products/${editProductId}`
                 : `${BACKEND_URL}/api/products`;
 
-            const { data: { session } } = await supabase.auth.getSession();
-            const token = session?.access_token;
+            let token: string | null = null;
+            if (typeof window !== "undefined") {
+                token = localStorage.getItem("auth_token");
+            }
 
             const headers: HeadersInit = {};
             if (token) {
@@ -437,8 +451,10 @@ export default function ProductsPage() {
         
         setIsSubmitting(true);
         try {
-            const { data: { session } } = await supabase.auth.getSession();
-            const token = session?.access_token;
+            let token: string | null = null;
+            if (typeof window !== "undefined") {
+                token = localStorage.getItem("auth_token");
+            }
 
             const headers: HeadersInit = {
                 'Content-Type': 'application/json'
@@ -470,8 +486,10 @@ export default function ProductsPage() {
         if (!userId) return;
 
         try {
-            const { data: { session } } = await supabase.auth.getSession();
-            const token = session?.access_token;
+            let token: string | null = null;
+            if (typeof window !== "undefined") {
+                token = localStorage.getItem("auth_token");
+            }
 
             const params = new URLSearchParams();
             params.set("user_id", userId);

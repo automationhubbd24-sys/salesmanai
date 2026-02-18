@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { useWhatsApp } from "@/context/WhatsAppContext";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { Calendar as CalendarIcon, Download, ShoppingBag, Copy, Check, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "react-router-dom";
+import { BACKEND_URL } from "@/config";
 
 export default function WhatsAppOrderTrackingPage() {
   const { currentSession } = useWhatsApp();
@@ -53,10 +53,14 @@ Phone: ${order.number || 'N/A'}`;
     const fetchOrders = async () => {
       setOrderLoading(true);
       try {
-        let query = (supabase.from('whatsapp_order_tracking') as any)
-            .select('*')
-            .eq('session_name', currentSession.name)
-            .order('created_at', { ascending: false });
+        const token = localStorage.getItem("auth_token");
+        if (!token) {
+          setOrders([]);
+          return;
+        }
+
+        const params = new URLSearchParams();
+        params.set("session_name", currentSession.name);
 
         const today = new Date();
         today.setHours(0, 0, 0, 0);
@@ -67,21 +71,34 @@ Phone: ${order.number || 'N/A'}`;
         const yesterday = new Date(today);
         yesterday.setDate(yesterday.getDate() - 1);
 
-        if (dateFilter === 'today') {
-           query = query.gte('created_at', today.toISOString()).lt('created_at', tomorrow.toISOString());
-        } else if (dateFilter === 'yesterday') {
-           query = query.gte('created_at', yesterday.toISOString()).lt('created_at', today.toISOString());
-        } else if (dateFilter === 'custom' && date) {
-           const customStart = new Date(date);
-           customStart.setHours(0, 0, 0, 0);
-           const customEnd = new Date(date);
-           customEnd.setHours(23, 59, 59, 999);
-           query = query.gte('created_at', customStart.toISOString()).lte('created_at', customEnd.toISOString());
+        if (dateFilter === "today") {
+          params.set("from", today.getTime().toString());
+          params.set("to", tomorrow.getTime().toString());
+        } else if (dateFilter === "yesterday") {
+          params.set("from", yesterday.getTime().toString());
+          params.set("to", today.getTime().toString());
+        } else if (dateFilter === "custom" && date) {
+          const customStart = new Date(date);
+          customStart.setHours(0, 0, 0, 0);
+          const customEnd = new Date(date);
+          customEnd.setHours(23, 59, 59, 999);
+          params.set("from", customStart.getTime().toString());
+          params.set("to", customEnd.getTime().toString());
         }
 
-        const { data, error } = await query;
-        if (error) throw error;
-        setOrders(data || []);
+        const url = `${BACKEND_URL}/whatsapp/orders?${params.toString()}`;
+        const res = await fetch(url, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (!res.ok) {
+          throw new Error("Failed to fetch orders");
+        }
+
+        const data = await res.json();
+        setOrders(Array.isArray(data) ? data : []);
       } catch (error) {
         console.error("Error fetching orders:", error);
         toast.error("Failed to fetch orders");

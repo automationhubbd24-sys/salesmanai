@@ -104,12 +104,21 @@ async function updateKeyCache(force = false) {
 
     console.log("[KeyService] Refreshing API Key Cache from DB...");
     
-    let { data: keys, error } = await dbService.supabase
-        .from('api_list')
-        .select('*')
-        .order('id', { ascending: true });
+    const pgClient = require('./pgClient');
+    let keys = [];
+    let error = null;
 
-    if (keys) {
+    try {
+        const result = await pgClient.query(
+            'SELECT * FROM api_list ORDER BY id ASC',
+            []
+        );
+        keys = result.rows || [];
+    } catch (e) {
+        error = e;
+    }
+
+    if (keys && keys.length > 0) {
         const now = Date.now();
         const filtered = [];
         for (const k of keys) {
@@ -372,27 +381,40 @@ async function flushUsageStats() {
     if (updates.length === 0) return;
 
     try {
-        // Try Bulk Upsert first (Much faster)
-        const { error } = await dbService.supabase
-            .from('api_list')
-            .upsert(updates, { onConflict: 'api', ignoreDuplicates: false });
+        const pgClient = require('./pgClient');
 
-        if (error) {
-            // console.warn("[KeyService] Bulk upsert failed (likely no unique constraint on 'api'). Falling back to loop...", error.message);
-            // Fallback to loop if upsert fails
-            for (const update of updates) {
-                await dbService.supabase
-                    .from('api_list')
-                    .update({ 
-                        usage_today: update.usage_today,
-                        usage_tokens_today: update.usage_tokens_today,
-                        last_date_checked: update.last_date_checked,
-                        last_used_at: update.last_used_at,
-                        status: update.status
-                    })
-                    .eq('api', update.api);
-            }
-        }
+        const values = [];
+        const valuePlaceholders = [];
+
+        updates.forEach((u, index) => {
+            const baseIndex = index * 7;
+            valuePlaceholders.push(
+                `($${baseIndex + 1}, $${baseIndex + 2}, $${baseIndex + 3}, $${baseIndex + 4}, $${baseIndex + 5}, $${baseIndex + 6}, $${baseIndex + 7})`
+            );
+            values.push(
+                u.api,
+                u.usage_today,
+                u.usage_tokens_today,
+                u.last_date_checked,
+                u.last_used_at,
+                u.status,
+                u.provider
+            );
+        });
+
+        const queryText = `
+            INSERT INTO api_list (api, usage_today, usage_tokens_today, last_date_checked, last_used_at, status, provider)
+            VALUES ${valuePlaceholders.join(', ')}
+            ON CONFLICT (api)
+            DO UPDATE SET
+                usage_today = EXCLUDED.usage_today,
+                usage_tokens_today = EXCLUDED.usage_tokens_today,
+                last_date_checked = EXCLUDED.last_date_checked,
+                last_used_at = EXCLUDED.last_used_at,
+                status = EXCLUDED.status
+        `;
+
+        await pgClient.query(queryText, values);
     } catch (err) {
         console.error(`[KeyService] Failed to flush stats`, err.message);
     }

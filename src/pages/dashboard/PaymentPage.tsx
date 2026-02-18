@@ -7,9 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { CreditCard, Wallet, Plus, History, CheckCircle, Clock, XCircle, Loader2, Gift, Copy } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Database } from "@/integrations/supabase/types";
+import { BACKEND_URL } from "@/config";
 
 // Override Transaction type to match the new schema
 type Transaction = {
@@ -46,29 +45,28 @@ export default function PaymentPage() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        return;
+      }
 
-      // Fetch Balance
-      const { data: configData } = await supabase
-        .from('user_configs')
-        .select('balance')
-        .eq('user_id', user.id)
-        .maybeSingle();
-      
-      const config = configData as { balance: number } | null;
-      
-      setBalance(config?.balance || 0);
+      const res = await fetch(`${BACKEND_URL}/api/auth/payments/me`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
 
-      // Fetch Transactions
-      const { data: txns } = await supabase
-        .from('payment_transactions')
-        .select('*')
-        .eq('user_email', user.email)
-        .order('created_at', { ascending: false });
-      
-      if (txns) setTransactions(txns as unknown as Transaction[]);
+      if (!res.ok) {
+        throw new Error("Failed to load payment data");
+      }
 
+      const data = await res.json();
+      setBalance(typeof data.balance === "number" ? data.balance : 0);
+      if (Array.isArray(data.transactions)) {
+        setTransactions(data.transactions);
+      } else {
+        setTransactions([]);
+      }
     } catch (error) {
       console.error(error);
       toast.error("Failed to load payment data");
@@ -102,20 +100,29 @@ export default function PaymentPage() {
 
     try {
         setSubmitting(true);
-        const { data: { user } } = await supabase.auth.getUser();
-        
-        if (!user) throw new Error("User not found");
+        const token = localStorage.getItem("auth_token");
+        if (!token) {
+          throw new Error("Please login again");
+        }
 
-        const { error } = await (supabase as any).from('payment_transactions').insert({
-            user_email: user.email,
-            amount: amount,
+        const res = await fetch(`${BACKEND_URL}/api/auth/payments/deposit`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            amount,
             method: selectedMethod,
-            status: 'pending',
-            trx_id: transactionId,
-            sender_number: senderNumber
+            trxId: transactionId,
+            senderNumber,
+          }),
         });
 
-        if (error) throw error;
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(body.error || "Failed to submit deposit");
+        }
 
         toast.success("Deposit request submitted! Waiting for admin approval.");
         setTransactionId("");
@@ -139,59 +146,29 @@ export default function PaymentPage() {
 
     setRedeeming(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Not authenticated");
-
-      // Check code
-      const { data: rawCodeData, error: codeError } = await supabase
-        .from('referral_codes')
-        .select('*')
-        .eq('code', redeemCode)
-        .eq('status', 'active')
-        .maybeSingle();
-
-      const codeData = rawCodeData as Database['public']['Tables']['referral_codes']['Row'] | null;
-
-      if (codeError || !codeData) {
-        toast.error("Invalid or inactive code");
-        setRedeeming(false);
-        return;
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        throw new Error("Please login again");
       }
 
-      if (codeData.type !== 'balance') {
-        toast.error("This code is not for balance topup");
-        setRedeeming(false);
-        return;
-      }
-
-      // Add balance
-      const amount = Number(codeData.value);
-      
-      // Update balance
-      const { error: balanceError } = await (supabase as any)
-        .from('user_configs')
-        .update({ balance: balance + amount })
-        .eq('user_id', user.id);
-
-      if (balanceError) throw balanceError;
-
-      // Mark code as used (inactive)
-      await (supabase as any)
-        .from('referral_codes')
-        .update({ status: 'inactive' })
-        .eq('id', codeData.id);
-
-      // Log transaction
-      await (supabase as any).from('payment_transactions').insert({
-        user_email: user.email,
-        amount: amount,
-        method: 'coupon',
-        status: 'completed',
-        trx_id: `COUPON-${redeemCode}`,
-        sender_number: 'System'
+      const res = await fetch(`${BACKEND_URL}/api/auth/payments/redeem`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ code: redeemCode }),
       });
 
-      toast.success(`Successfully redeemed ${amount} BDT!`);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.error || "Redemption failed");
+      }
+
+      const newBalance = typeof body.balance === "number" ? body.balance : balance;
+      setBalance(newBalance);
+
+      toast.success("Successfully redeemed coupon!");
       setRedeemCode("");
       fetchData();
 

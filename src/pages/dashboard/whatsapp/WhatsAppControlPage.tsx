@@ -5,7 +5,6 @@ import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Bot, MessageSquare, Loader2, Save, Image, MessageCircle, Lock, PackageSearch, ReplyAll, Mic, Upload, Users, MessageSquareText, Hand, StopCircle, RefreshCcw, ChevronLeft, Activity } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Link, useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -89,11 +88,15 @@ export default function WhatsAppControlPage() {
 
   const fetchConfig = async (id: string) => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        toast.error(t("Please login again", "অনুগ্রহ করে আবার লগইন করুন"));
+        setLoading(false);
+        return;
+      }
 
       const res = await fetch(`${BACKEND_URL}/whatsapp/config/${id}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
+        headers: { Authorization: `Bearer ${token}` }
       });
 
       if (!res.ok) {
@@ -145,41 +148,29 @@ export default function WhatsAppControlPage() {
 
   const fetchMetrics = async (sName: string) => {
     try {
-      const now = new Date();
-      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-      const startOfYesterday = new Date(startOfToday - 24 * 60 * 60 * 1000).getTime();
-      const endOfYesterday = startOfToday - 1;
+      const token = localStorage.getItem("auth_token");
+      if (!token) return;
 
-      const { data: todayRows } = await supabase
-        .from('whatsapp_chats')
-        .select('sender_id, reply_by, token_usage, timestamp')
-        .eq('session_name', sName)
-        .gte('timestamp', startOfToday);
+      const params = new URLSearchParams();
+      params.set("session_name", sName);
 
-      const { data: yRows } = await supabase
-        .from('whatsapp_chats')
-        .select('sender_id, reply_by, token_usage, timestamp')
-        .eq('session_name', sName)
-        .gte('timestamp', startOfYesterday)
-        .lte('timestamp', endOfYesterday);
+      const res = await fetch(`${BACKEND_URL}/whatsapp/stats?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
 
-      const sumTokens = (rows: any[] | null) => (rows || []).reduce((acc, r) => acc + (Number(r.token_usage) || 0), 0);
-      const countBot = (rows: any[] | null) => (rows || []).filter(r => r.reply_by === 'bot').length;
-      const countCustomers = (rows: any[] | null) => {
-        const set = new Set<string>();
-        (rows || []).forEach(r => {
-          if (r.reply_by === 'user') set.add(r.sender_id);
-        });
-        return set.size;
-      };
+      if (!res.ok) return;
+
+      const data = await res.json();
+      const allTimeReplies = Number(data.allTimeBotReplies) || 0;
+      const allTimeTokens = Number(data.allTimeTokenCount) || 0;
 
       setStats({
-        todayTokens: sumTokens(todayRows || []),
-        yesterdayTokens: sumTokens(yRows || []),
-        todayBotReplies: countBot(todayRows || []),
-        yesterdayBotReplies: countBot(yRows || []),
-        todayCustomers: countCustomers(todayRows || []),
-        yesterdayCustomers: countCustomers(yRows || [])
+        todayTokens: allTimeTokens,
+        yesterdayTokens: 0,
+        todayBotReplies: allTimeReplies,
+        yesterdayBotReplies: 0,
+        todayCustomers: 0,
+        yesterdayCustomers: 0,
       });
     } catch (e) {
       console.error('Metrics error', e);
@@ -188,13 +179,25 @@ export default function WhatsAppControlPage() {
 
   const fetchRecent = async (sName: string) => {
     try {
-      const { data } = await supabase
-        .from('whatsapp_chats')
-        .select('sender_id, recipient_id, text, reply_by, token_usage, timestamp')
-        .eq('session_name', sName)
-        .order('timestamp', { ascending: false })
-        .limit(20);
-      setRecentChats(data || []);
+      const token = localStorage.getItem("auth_token");
+      if (!token) return;
+
+      const now = Date.now();
+      const from = now - 24 * 60 * 60 * 1000;
+
+      const params = new URLSearchParams();
+      params.set("session_name", sName);
+      params.set("from", String(from));
+      params.set("to", String(now));
+
+      const res = await fetch(`${BACKEND_URL}/whatsapp/messages?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) return;
+
+      const data = await res.json();
+      setRecentChats(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error('Recent fetch error', e);
     }
@@ -216,14 +219,16 @@ export default function WhatsAppControlPage() {
         updates[key] = config[key];
       });
 
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        throw new Error(t("Please login again", "অনুগ্রহ করে আবার লগইন করুন"));
+      }
 
       const res = await fetch(`${BACKEND_URL}/whatsapp/config/${dbId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {})
+          Authorization: `Bearer ${token}`
         },
         body: JSON.stringify(updates)
       });

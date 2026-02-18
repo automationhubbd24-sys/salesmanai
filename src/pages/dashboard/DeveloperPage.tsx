@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
 import { Copy, RefreshCw, Code, Eye, EyeOff, Activity, ArrowRight, Key } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 import { BACKEND_URL, EXTERNAL_API_BASE } from "@/config";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 
@@ -70,8 +69,8 @@ export default function DeveloperPage() {
 
     const fetchUsage = async () => {
         try {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session) return;
+            const token = localStorage.getItem("auth_token");
+            if (!token) return;
 
             let url = `${BACKEND_URL}/api/external/usage`;
             if (startDate && endDate) {
@@ -80,7 +79,7 @@ export default function DeveloperPage() {
 
             const res = await fetch(url, {
                 headers: {
-                    'Authorization': `Bearer ${session.access_token}`
+                    'Authorization': `Bearer ${token}`
                 }
             });
             const data = await res.json();
@@ -94,12 +93,12 @@ export default function DeveloperPage() {
     const fetchKey = async () => {
         setLoading(true);
         try {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session) return;
+            const token = localStorage.getItem("auth_token");
+            if (!token) return;
 
             const res = await fetch(`${BACKEND_URL}/api/external/key`, {
                 headers: {
-                    'Authorization': `Bearer ${session.access_token}`
+                    'Authorization': `Bearer ${token}`
                 }
             });
             const data = await res.json();
@@ -114,13 +113,13 @@ export default function DeveloperPage() {
     const doRegenerate = async () => {
         setIsRegenerating(true);
         try {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session) return;
+            const token = localStorage.getItem("auth_token");
+            if (!token) return;
 
             const res = await fetch(`${BACKEND_URL}/api/external/key/regenerate`, {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${session.access_token}`
+                    'Authorization': `Bearer ${token}`
                 }
             });
 

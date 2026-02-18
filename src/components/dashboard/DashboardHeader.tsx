@@ -11,7 +11,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
@@ -25,24 +24,27 @@ export function DashboardHeader({ title, onMenuClick }: DashboardHeaderProps) {
   const navigate = useNavigate();
 
   useEffect(() => {
-    const getUser = async () => {
-      const { data } = await supabase.auth.getUser();
-      if (data.user) {
-        setUser({ email: data.user.email });
+    try {
+      const stored = localStorage.getItem("auth_user");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && typeof parsed.email === "string") {
+          setUser({ email: parsed.email });
+        }
       }
-    };
-    getUser();
+    } catch (e) {
+      console.error("Failed to parse auth_user from localStorage", e);
+    }
   }, []);
 
   const handleLogout = async () => {
-    // Clear all local storage keys to prevent session leakage
     localStorage.removeItem("active_fb_page_id");
     localStorage.removeItem("active_fb_db_id");
     localStorage.removeItem("active_wp_db_id");
     localStorage.removeItem("active_wa_session_id");
     localStorage.removeItem("supabase.auth.token");
-
-    await supabase.auth.signOut();
+    localStorage.removeItem("auth_token");
+    localStorage.removeItem("auth_user");
     toast.success("Logged out successfully");
     navigate("/login");
   };

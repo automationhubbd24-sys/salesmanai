@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
@@ -29,6 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { BACKEND_URL } from "@/config";
 
 export default function WhatsAppConversionPage() {
   type WaChat = {
@@ -56,14 +56,25 @@ export default function WhatsAppConversionPage() {
 
   const fetchContacts = async (sessionName: string) => {
     try {
-      const { data, error } = await supabase
-        .from('whatsapp_contacts')
-        .select('phone_number, is_locked')
-        .eq('session_name', sessionName)
-        .eq('is_locked', true);
-      if (error) throw error;
+      const token = localStorage.getItem("auth_token");
+      if (!token) return;
+
+      const params = new URLSearchParams();
+      params.set("session_name", sessionName);
+
+      const res = await fetch(`${BACKEND_URL}/whatsapp/contacts?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) return;
+
+      const data = await res.json();
       const map: Record<string, boolean> = {};
-      (data || []).forEach((c: any) => { map[c.phone_number] = c.is_locked; });
+      (Array.isArray(data) ? data : []).forEach((c: any) => {
+        map[c.phone_number] = c.is_locked;
+      });
       setLockedContacts(map);
     } catch (e) {
       console.error("Error fetching contacts:", e);
@@ -75,22 +86,35 @@ export default function WhatsAppConversionPage() {
     const currentStatus = !!lockedContacts[phoneNumber];
     const newStatus = !currentStatus;
     try {
-      // Optimistic UI update
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        setLockedContacts(prev => ({ ...prev, [phoneNumber]: currentStatus }));
+        toast.error("Please login again");
+        return;
+      }
+
       setLockedContacts(prev => ({ ...prev, [phoneNumber]: newStatus }));
-      const { error } = await (supabase
-        .from('whatsapp_contacts') as any)
-        .upsert({
+
+      const res = await fetch(`${BACKEND_URL}/whatsapp/contacts/lock`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
           session_name: activeSessionName,
           phone_number: phoneNumber,
           is_locked: newStatus,
-          last_interaction: new Date().toISOString()
-        }, { onConflict: 'session_name,phone_number' });
-      if (error) {
+        }),
+      });
+
+      if (!res.ok) {
         setLockedContacts(prev => ({ ...prev, [phoneNumber]: currentStatus }));
         toast.error("Failed to update lock status");
-      } else {
-        toast.success(newStatus ? "Conversation Locked (Handover)" : "Conversation Unlocked (AI Active)");
+        return;
       }
+
+      toast.success(newStatus ? "Conversation Locked (Handover)" : "Conversation Unlocked (AI Active)");
     } catch (e) {
       console.error(e);
       setLockedContacts(prev => ({ ...prev, [phoneNumber]: currentStatus }));
@@ -144,22 +168,28 @@ export default function WhatsAppConversionPage() {
   }, []); // Fetch stats once on mount
 
   const fetchSessionNameFromId = async (id: string) => {
-      try {
-          const { data, error } = await supabase
-              .from('whatsapp_message_database')
-              .select('session_name')
-              .eq('id', parseInt(id))
-              .single();
-          
-          if (data && (data as any).session_name) {
-              const sName = (data as any).session_name;
-              localStorage.setItem("active_wa_session_id", sName); // Fix the missing key
-              setActiveSessionName(sName);
-              fetchStats(sName);
-          }
-      } catch (e) {
-          console.error("Error recovering session name", e);
+    try {
+      const token = localStorage.getItem("auth_token");
+      if (!token) return;
+
+      const res = await fetch(`${BACKEND_URL}/whatsapp/session-name/${id}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) return;
+
+      const data = await res.json();
+      if (data && data.session_name) {
+        const sName = String(data.session_name);
+        localStorage.setItem("active_wa_session_id", sName);
+        setActiveSessionName(sName);
+        fetchStats(sName);
       }
+    } catch (e) {
+      console.error("Error recovering session name", e);
+    }
   };
 
 
@@ -174,61 +204,69 @@ export default function WhatsAppConversionPage() {
   const fetchMessages = async (sessionName: string, from: Date, to: Date) => {
     setLoading(true);
     try {
-        const { data, error } = await supabase
-            .from('whatsapp_chats')
-            .select('*')
-            .eq('session_name', sessionName)
-            .gte('timestamp', from.getTime()) 
-            .lte('timestamp', to.getTime()) 
-            .order('timestamp', { ascending: false });
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        setMessages([]);
+        setFilteredBotReplyCount(0);
+        setFilteredTokenCount(0);
+        return;
+      }
 
-        if (error) throw error;
+      const params = new URLSearchParams();
+      params.set("session_name", sessionName);
+      params.set("from", from.getTime().toString());
+      params.set("to", to.getTime().toString());
 
-        // Count stats for selected range
-        const rows: WaChat[] = (data as WaChat[]) || [];
-        const botReplies = rows.filter(m => m.reply_by === 'bot').length || 0;
-        setFilteredBotReplyCount(botReplies);
+      const res = await fetch(`${BACKEND_URL}/whatsapp/messages?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
 
-        const tokens = rows.reduce((acc, curr) => acc + (curr.token_usage || 0), 0) || 0;
-        setFilteredTokenCount(tokens);
+      if (!res.ok) {
+        throw new Error("Failed to fetch messages");
+      }
 
-        setMessages(rows);
+      const data = await res.json();
+      const rows: WaChat[] = (Array.isArray(data) ? data : []) as WaChat[];
+
+      const botReplies = rows.filter(m => m.reply_by === "bot").length || 0;
+      setFilteredBotReplyCount(botReplies);
+
+      const tokens = rows.reduce((acc, curr) => acc + (curr.token_usage || 0), 0) || 0;
+      setFilteredTokenCount(tokens);
+
+      setMessages(rows);
     } catch (error: any) {
-        console.error("Error fetching messages:", error);
-        toast.error("Failed to fetch messages: " + error.message);
+      console.error("Error fetching messages:", error);
+      toast.error("Failed to fetch messages: " + error.message);
     } finally {
-        setLoading(false);
+      setLoading(false);
     }
   };
 
   const fetchStats = async (sessionName: string) => {
-      try {
-          // All time bot replies
-          const { count, error: countError } = await supabase
-              .from('whatsapp_chats')
-              .select('*', { count: 'exact', head: true })
-              .eq('session_name', sessionName)
-              .eq('reply_by', 'bot');
-          
-          if (!countError) {
-              setAllTimeBotReplies(count || 0);
-          }
+    try {
+      const token = localStorage.getItem("auth_token");
+      if (!token) return;
 
-          // All time tokens
-          const { data: tokenData, error: tokenError } = await supabase
-              .from('whatsapp_chats')
-              .select('token_usage')
-              .eq('session_name', sessionName)
-              .gt('token_usage', 0); // Only rows with tokens
-          
-          // @ts-ignore
-          const tokenRows = (tokenData as { token_usage?: number }[]) || [];
-          const totalTokens = tokenRows.reduce((acc, curr) => acc + (curr.token_usage || 0), 0) || 0;
-          setAllTimeTokenCount(totalTokens);
+      const params = new URLSearchParams();
+      params.set("session_name", sessionName);
 
-      } catch (e) {
-          console.error("Stats fetch error", e);
-      }
+      const res = await fetch(`${BACKEND_URL}/whatsapp/stats?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) return;
+
+      const data = await res.json();
+      setAllTimeBotReplies(data.allTimeBotReplies || 0);
+      setAllTimeTokenCount(data.allTimeTokenCount || 0);
+    } catch (e) {
+      console.error("Stats fetch error", e);
+    }
   };
 
   const handleRefresh = () => {

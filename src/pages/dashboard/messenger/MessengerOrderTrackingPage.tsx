@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -22,6 +21,7 @@ import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { Calendar as CalendarIcon, Download, ShoppingBag, Copy, Check } from "lucide-react";
 import { toast } from "sonner";
+import { BACKEND_URL } from "@/config";
 
 export default function MessengerOrderTrackingPage() {
   const [orders, setOrders] = useState<any[]>([]);
@@ -48,13 +48,15 @@ Phone: ${order.number || 'N/A'}`;
     const fetchOrders = async () => {
       setOrderLoading(true);
       try {
-        let query = (supabase.from('fb_order_tracking') as any).select('*').order('created_at', { ascending: false });
-        
-        // Filter by active page ID to prevent data leakage
+        const token = localStorage.getItem("auth_token");
         const activePageId = localStorage.getItem("active_fb_page_id");
-        if (activePageId) {
-           query = query.eq('page_id', activePageId);
+        if (!token || !activePageId) {
+          setOrders([]);
+          return;
         }
+
+        const params = new URLSearchParams();
+        params.set("page_id", activePageId);
 
         const today = new Date();
         today.setHours(0, 0, 0, 0);
@@ -66,20 +68,32 @@ Phone: ${order.number || 'N/A'}`;
         yesterday.setDate(yesterday.getDate() - 1);
 
         if (dateFilter === 'today') {
-           query = query.gte('created_at', today.toISOString()).lt('created_at', tomorrow.toISOString());
+          params.set("from", today.getTime().toString());
+          params.set("to", tomorrow.getTime().toString());
         } else if (dateFilter === 'yesterday') {
-           query = query.gte('created_at', yesterday.toISOString()).lt('created_at', today.toISOString());
+          params.set("from", yesterday.getTime().toString());
+          params.set("to", today.getTime().toString());
         } else if (dateFilter === 'custom' && date) {
-           const customStart = new Date(date);
-           customStart.setHours(0, 0, 0, 0);
-           const customEnd = new Date(date);
-           customEnd.setHours(23, 59, 59, 999);
-           query = query.gte('created_at', customStart.toISOString()).lte('created_at', customEnd.toISOString());
+          const customStart = new Date(date);
+          customStart.setHours(0, 0, 0, 0);
+          const customEnd = new Date(date);
+          customEnd.setHours(23, 59, 59, 999);
+          params.set("from", customStart.getTime().toString());
+          params.set("to", customEnd.getTime().toString());
         }
 
-        const { data, error } = await query;
-        if (error) throw error;
-        setOrders(data || []);
+        const res = await fetch(`${BACKEND_URL}/messenger/orders?${params.toString()}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (!res.ok) {
+          throw new Error("Failed to fetch orders");
+        }
+
+        const data = await res.json();
+        setOrders(Array.isArray(data) ? data : []);
       } catch (error) {
         console.error("Error fetching orders:", error);
         toast.error("Failed to fetch orders");

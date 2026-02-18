@@ -3,7 +3,6 @@ import { useNavigate, Link } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { MessageSquare, Facebook, Instagram, ArrowRight, Zap, Activity, ShieldCheck } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 import { BACKEND_URL } from "@/config";
 
 export default function PlatformSelection() {
@@ -14,11 +13,18 @@ export default function PlatformSelection() {
 
   useEffect(() => {
     async function getUser() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        // Try to get full name from metadata or fallback to email
-        const fullName = user.user_metadata?.full_name;
-        setUserName(fullName || user.email?.split('@')[0] || "User");
+      try {
+        const raw = localStorage.getItem("auth_user");
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          const fullName = parsed.full_name;
+          const email = parsed.email;
+          setUserName(fullName || (email ? String(email).split("@")[0] : "User"));
+        } else {
+          setUserName("User");
+        }
+      } catch {
+        setUserName("User");
       }
       setLoading(false);
     }

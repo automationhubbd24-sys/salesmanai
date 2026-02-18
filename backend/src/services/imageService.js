@@ -1,12 +1,9 @@
-const { createClient } = require('@supabase/supabase-js');
 const sharp = require('sharp');
+const fs = require('fs');
+const path = require('path');
 
-// Initialize Supabase (Reuse env vars)
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_KEY;
-const supabase = createClient(supabaseUrl, supabaseKey);
-
-const BUCKET_NAME = 'product-images';
+const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
+const UPLOAD_ROOT = process.env.IMAGE_UPLOAD_DIR || path.join(__dirname, '..', '..', 'uploads', 'product-images');
 
 /**
  * Uploads and optimizes an image for product entry.
@@ -26,27 +23,18 @@ async function uploadProductImage(fileBuffer, mimeType, userId) {
 
         // 2. Generate Unique Filename
         const timestamp = Date.now();
-        const filename = `${userId}/${timestamp}.jpg`;
+        const userFolder = String(userId || 'anonymous');
+        const dirPath = path.join(UPLOAD_ROOT, userFolder);
+        const fileName = `${timestamp}.jpg`;
+        const filePath = path.join(dirPath, fileName);
 
-        // 3. Upload to Supabase Storage
-        const { data, error } = await supabase.storage
-            .from(BUCKET_NAME)
-            .upload(filename, optimizedBuffer, {
-                contentType: 'image/jpeg',
-                cacheControl: '3600',
-                upsert: false
-            });
+        await fs.promises.mkdir(dirPath, { recursive: true });
+        await fs.promises.writeFile(filePath, optimizedBuffer);
 
-        if (error) {
-            throw new Error(`Supabase Upload Error: ${error.message}`);
-        }
+        const base = PUBLIC_BASE_URL.replace(/\/$/, '');
+        const relativeUrl = `/uploads/product-images/${encodeURIComponent(userFolder)}/${encodeURIComponent(fileName)}`;
 
-        // 4. Get Public URL
-        const { data: publicData } = supabase.storage
-            .from(BUCKET_NAME)
-            .getPublicUrl(filename);
-
-        return publicData.publicUrl;
+        return `${base}${relativeUrl}`;
 
     } catch (error) {
         console.error("[ImageService] Upload Failed:", error);

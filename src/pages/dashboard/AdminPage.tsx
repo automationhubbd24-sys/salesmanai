@@ -10,9 +10,7 @@ import { Shield, Database as DatabaseIcon, Trash2, Edit, CheckCircle, CreditCard
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Database } from "@/integrations/supabase/types";
 import { BACKEND_URL } from "@/config";
 import OpenRouterConfigPage from "./OpenRouterConfigPage";
 
@@ -27,7 +25,14 @@ type Transaction = {
   created_at: string;
 };
 
-type Coupon = Database["public"]["Tables"]["referral_codes"]["Row"];
+type Coupon = {
+  id: number;
+  code: string;
+  value: number;
+  type: string;
+  status: string;
+  created_at: string;
+};
 
 type GeminiKeyTestResult = {
   id: number;
@@ -378,22 +383,19 @@ export default function AdminPage() {
 
     setLoginLoading(true);
     try {
-      // Query 'app_users' table
-      const { data, error } = await (supabase as any)
-        .from('app_users')
-        .select('*')
-        .eq('key', usernameInput)
-        .eq('pas', passwordInput)
-        .maybeSingle();
+      const res = await fetch(`${BACKEND_URL}/api/auth/admin/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: usernameInput, password: passwordInput }),
+      });
 
-      if (error) throw error;
-
-      if (data) {
-        setIsAuthenticated(true);
-        toast.success("Login successful");
-      } else {
-        toast.error("Invalid credentials");
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Invalid credentials");
       }
+
+      setIsAuthenticated(true);
+      toast.success("Login successful");
     } catch (error: any) {
       console.error(error);
       toast.error("Login failed: " + (error.message || "Unknown error"));
@@ -403,41 +405,42 @@ export default function AdminPage() {
   };
 
   const fetchTransactions = async () => {
-    setLoadingTxns(true);
-    const { data } = await supabase
-      .from('payment_transactions')
-      .select('*')
-      .order('created_at', { ascending: false });
-    if (data) setTransactions(data as unknown as Transaction[]);
-    setLoadingTxns(false);
+    try {
+      setLoadingTxns(true);
+      const res = await fetch(`${BACKEND_URL}/api/auth/admin/transactions`);
+      const data = await res.json();
+      if (res.ok && Array.isArray(data.transactions)) {
+        setTransactions(data.transactions as Transaction[]);
+      }
+    } finally {
+      setLoadingTxns(false);
+    }
   };
 
   const fetchCoupons = async () => {
-    setLoadingCoupons(true);
-    const { data } = await supabase
-      .from('referral_codes')
-      .select('*')
-      .order('created_at', { ascending: false });
-    if (data) setCoupons(data);
-    setLoadingCoupons(false);
+    try {
+      setLoadingCoupons(true);
+      const res = await fetch(`${BACKEND_URL}/api/auth/admin/coupons`);
+      const data = await res.json();
+      if (res.ok && Array.isArray(data.coupons)) {
+        setCoupons(data.coupons as Coupon[]);
+      }
+    } finally {
+      setLoadingCoupons(false);
+    }
   };
 
   const handleApproveTxn = async (txn: any) => {
     try {
       setProcessingId(txn.id);
-      
-      // Use RPC function to securely update balance and status in one transaction
-      // This bypasses RLS issues on user_configs
-      const { error } = await (supabase as any).rpc('approve_deposit', { txn_id: txn.id });
+      const res = await fetch(`${BACKEND_URL}/api/auth/admin/transactions/${txn.id}/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
 
-      if (error) {
-        console.error("RPC Error:", error);
-        // Fallback for legacy support (if function not created yet)
-        if (error.message?.includes('function') && error.message?.includes('does not exist')) {
-            toast.error("Database function missing. Please run the provided SQL script.");
-            return;
-        }
-        throw error;
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to approve");
       }
 
       toast.success(`Transaction approved. Added ${txn.amount} BDT to user.`);
@@ -455,12 +458,13 @@ export default function AdminPage() {
   const handleRejectTxn = async (txn: Transaction) => {
     try {
       setProcessingId(txn.id);
-      const { error } = await (supabase as any)
-        .from('payment_transactions')
-        .update({ status: 'failed' })
-        .eq('id', txn.id);
-      
-      if (error) throw error;
+      const res = await fetch(`${BACKEND_URL}/api/auth/admin/transactions/${txn.id}/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        throw new Error("Failed to reject");
+      }
       
       toast.success("Transaction rejected.");
       fetchTransactions();
@@ -479,14 +483,19 @@ export default function AdminPage() {
     }
 
     try {
-      const { error } = await (supabase as any).from('referral_codes').insert({
-        code: couponCode,
-        value: Number(couponValue),
-        type: 'balance',
-        status: 'active'
+      const res = await fetch(`${BACKEND_URL}/api/auth/admin/coupons`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code: couponCode,
+          value: Number(couponValue),
+        }),
       });
 
-      if (error) throw error;
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to create coupon");
+      }
 
       toast.success("Coupon created!");
       setCouponCode("");
@@ -500,8 +509,19 @@ export default function AdminPage() {
 
   const toggleCouponStatus = async (coupon: Coupon) => {
     const newStatus = coupon.status === 'active' ? 'inactive' : 'active';
-    await (supabase as any).from('referral_codes').update({ status: newStatus }).eq('id', coupon.id);
-    fetchCoupons();
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/auth/admin/coupons/${coupon.id}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (!res.ok) {
+        throw new Error("Failed to update status");
+      }
+      fetchCoupons();
+    } catch {
+      toast.error("Failed to update coupon status");
+    }
   };
 
   const handleManualTopup = async () => {

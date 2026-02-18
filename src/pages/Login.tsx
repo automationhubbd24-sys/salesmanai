@@ -4,38 +4,67 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import Logo from "@/components/Logo";
-import { Eye, EyeOff, ArrowLeft, Mail, Lock, MessageCircle, Zap, Shield, Users } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { ArrowLeft, Mail, Lock, MessageCircle, Zap, Shield, Users } from "lucide-react";
 import { toast } from "sonner";
 import logoImage from "@/assets/logo.png";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { BACKEND_URL } from "@/config";
 
 const Login = () => {
   const navigate = useNavigate();
   const { t } = useLanguage();
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
+  const [code, setCode] = useState("");
+  const [otpSent, setOtpSent] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!email) {
+      toast.error(t("Please enter your email", "অনুগ্রহ করে আপনার ইমেইল দিন"));
+      return;
+    }
     setLoading(true);
-
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (error) {
-        toast.error(error.message);
+      if (!otpSent) {
+        const res = await fetch(`${BACKEND_URL}/api/auth/request-otp`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ email }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || !body.success) {
+          throw new Error(body.error || t("Failed to send login code", "লগইন কোড পাঠানো যায়নি"));
+        }
+        toast.success(t("Login code sent to your email", "আপনার ইমেইলে লগইন কোড পাঠানো হয়েছে"));
+        setOtpSent(true);
       } else {
+        if (!code || code.length < 4) {
+          toast.error(t("Enter the code from your email", "ইমেইলে পাওয়া কোডটি লিখুন"));
+          return;
+        }
+        const res = await fetch(`${BACKEND_URL}/api/auth/verify-otp`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ email, code }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || !body.token) {
+          throw new Error(body.error || t("Invalid or expired code", "কোডটি সঠিক নয় বা মেয়াদ শেষ"));
+        }
+        localStorage.setItem("auth_token", body.token);
+        if (body.user) {
+          localStorage.setItem("auth_user", JSON.stringify(body.user));
+        }
         toast.success(t("Login successful!", "লগইন সফল হয়েছে!"));
         navigate("/dashboard");
       }
-    } catch (error) {
-      toast.error(t("An error occurred during login", "লগইন করার সময় একটি সমস্যা হয়েছে"));
+    } catch (error: any) {
+      toast.error(error.message || t("An error occurred during login", "লগইন করার সময় একটি সমস্যা হয়েছে"));
     } finally {
       setLoading(false);
     }
@@ -133,29 +162,21 @@ const Login = () => {
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <Label htmlFor="password" className="text-sm font-medium">{t("Password", "পাসওয়ার্ড")}</Label>
-                <Link to="/reset-password" className="text-sm font-medium text-[#00ff88] transition-colors hover:opacity-80">
-                  {t("Forgot password?", "পাসওয়ার্ড ভুলে গেছেন?")}
-                </Link>
+                <Label htmlFor="code" className="text-sm font-medium">
+                  {t("Login Code (OTP)", "লগইন কোড (ওটিপি)")}
+                </Label>
               </div>
               <div className="relative">
                 <Lock className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-500" />
                 <Input
-                  id="password"
-                  type={showPassword ? "text" : "password"}
-                  placeholder={t("Enter your password", "আপনার পাসওয়ার্ড লিখুন")}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  id="code"
+                  type="text"
+                  placeholder={t("Enter the code you received", "ইমেইলে পাওয়া কোডটি লিখুন")}
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
                   className="h-12 pl-12 pr-12 text-base bg-[#0f0f0f] border border-gray-800 focus-visible:ring-[#00ff88]"
-                  required
+                  disabled={!otpSent}
                 />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 transition-colors hover:text-white"
-                >
-                  {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                </button>
               </div>
             </div>
 
@@ -163,10 +184,10 @@ const Login = () => {
               {loading ? (
                 <span className="flex items-center gap-2">
                   <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />
-                  {t("Signing in...", "সাইন ইন হচ্ছে...")}
+                  {otpSent ? t("Verifying...", "যাচাই করা হচ্ছে...") : t("Sending code...", "কোড পাঠানো হচ্ছে...")}
                 </span>
               ) : (
-                t("Sign In", "সাইন ইন")
+                otpSent ? t("Verify & Sign In", "যাচাই করে সাইন ইন করুন") : t("Send Login Code", "লগইন কোড পাঠান")
               )}
             </Button>
           </form>

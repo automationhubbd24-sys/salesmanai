@@ -35,13 +35,20 @@ const validateApiKey = async (req) => {
         return { error: { status: 401, message: 'Invalid API Key format', type: 'invalid_request_error', code: 'invalid_api_key' } };
     }
 
-    const { data: userConfig, error } = await dbService.supabase
-        .from('user_configs')
-        .select('user_id, balance, service_api_key')
-        .eq('service_api_key', apiKey)
-        .maybeSingle();
+    const pgClient = require('../services/pgClient');
 
-    if (error) {
+    let userConfig = null;
+
+    try {
+        const result = await pgClient.query(
+            'SELECT user_id, balance, service_api_key FROM user_configs WHERE service_api_key = $1 LIMIT 1',
+            [apiKey]
+        );
+
+        if (result.rows.length > 0) {
+            userConfig = result.rows[0];
+        }
+    } catch (error) {
         console.error(`[ExternalAPI] Database Error for Key: ${apiKey.substring(0, 8)}...`, error);
         return { error: { status: 500, message: 'Internal Database Error', type: 'api_error' } };
     }
@@ -101,15 +108,16 @@ exports.handleChatCompletion = async (req, res) => {
         // 2. Free Tier Logic (Lifetime 20 requests if balance is low)
         let freeTierActive = false;
         try {
-            const { count: totalCount } = await dbService.supabase
-                .from('api_usage_stats')
-                .select('*', { count: 'exact', head: true })
-                .eq('user_id', userConfig.user_id);
-            if (Number(userConfig.balance) < 0.01 && (totalCount || 0) < 20) {
+            const pgClient = require('../services/pgClient');
+            const countResult = await pgClient.query(
+                'SELECT COUNT(*)::int AS cnt FROM api_usage_stats WHERE user_id = $1',
+                [userConfig.user_id]
+            );
+            const totalCount = countResult.rows.length > 0 ? countResult.rows[0].cnt : 0;
+            if (Number(userConfig.balance) < 0.01 && totalCount < 20) {
                 freeTierActive = true;
             }
         } catch (e) {
-            // ignore counting errors
         }
 
         // 3. Check Balance (skip if free tier active)
@@ -394,18 +402,14 @@ exports.getApiKey = async (req, res) => {
         const userId = req.user?.id; 
         if (!userId) return res.status(401).json({ error: 'Unauthorized' });
         
-        const { data, error } = await dbService.supabase
-            .from('user_configs')
-            .select('service_api_key')
-            .eq('user_id', userId)
-            .maybeSingle();
-
-        if (error) {
-            console.error("Fetch Key Error:", error);
-            return res.status(500).json({ error: error.message });
-        }
+        const pgClient = require('../services/pgClient');
+        const result = await pgClient.query(
+            'SELECT service_api_key FROM user_configs WHERE user_id = $1 LIMIT 1',
+            [userId]
+        );
+        const row = result.rows[0] || null;
         
-        res.json({ api_key: data?.service_api_key || null });
+        res.json({ api_key: row?.service_api_key || null });
     } catch (error) {
         console.error("Fetch Key Exception:", error);
         res.status(500).json({ error: error.message });
@@ -425,23 +429,16 @@ exports.regenerateApiKey = async (req, res) => {
         const newKey = 'sk-' + crypto.randomBytes(24).toString('hex');
         console.log(`[KeyGen] Generating new key for user: ${userId}`);
 
-        // Use upsert to handle both insert and update safely
-        const { data, error } = await dbService.supabase
-            .from('user_configs')
-            .upsert({ 
-                user_id: userId, 
-                service_api_key: newKey,
-                updated_at: new Date().toISOString()
-            }, { 
-                onConflict: 'user_id'
-            })
-            .select()
-            .single();
-
-        if (error) {
-            console.error(`[KeyGen] Database Error for user ${userId}:`, error);
-            return res.status(500).json({ error: `Database error: ${error.message}` });
-        }
+        const pgClient = require('../services/pgClient');
+        await pgClient.query(
+            `INSERT INTO user_configs (user_id, service_api_key, updated_at)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (user_id)
+             DO UPDATE SET
+                service_api_key = EXCLUDED.service_api_key,
+                updated_at = EXCLUDED.updated_at`,
+            [userId, newKey, new Date()]
+        );
 
         console.log(`[KeyGen] Successfully generated key for user: ${userId}`);
         res.json({ api_key: newKey });
@@ -458,72 +455,83 @@ exports.getUsageStats = async (req, res) => {
 
         const { startDate, endDate } = req.query;
 
-        // 1. Fetch recent usage stats (last 100)
-        let query = dbService.supabase
-            .from('api_usage_stats')
-            .select('*')
-            .eq('user_id', userId)
-            .order('created_at', { ascending: false });
+        const pgClient = require('../services/pgClient');
 
-        const { data: stats, error } = await query.limit(100);
-
-        if (error) {
-            if (error.code === '42P01') return res.json({ stats: [], summary: {} });
-            throw error;
-        }
+        const recentResult = await pgClient.query(
+            `SELECT *
+             FROM api_usage_stats
+             WHERE user_id = $1
+             ORDER BY created_at DESC
+             LIMIT 100`,
+            [userId]
+        );
+        const stats = recentResult.rows || [];
 
         // 2. Calculate Totals
         // Total Cost & Tokens & Requests
-        const { data: totalData } = await dbService.supabase
-            .from('api_usage_stats')
-            .select('cost,tokens')
-            .eq('user_id', userId);
-        
-        const totalCost = (totalData || []).reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
-        const totalTokens = (totalData || []).reduce((sum, item) => sum + (Number(item.tokens) || 0), 0);
-        const totalRequests = (totalData || []).length;
+
+        const totalResult = await pgClient.query(
+            'SELECT cost, tokens FROM api_usage_stats WHERE user_id = $1',
+            [userId]
+        );
+        const totalRows = totalResult.rows || [];
+
+        const totalCost = totalRows.reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
+        const totalTokens = totalRows.reduce((sum, item) => sum + (Number(item.tokens) || 0), 0);
+        const totalRequests = totalRows.length;
 
         // Today's Cost/Tokens/Requests
         const today = new Date().toISOString().split('T')[0];
-        const { data: todayData } = await dbService.supabase
-            .from('api_usage_stats')
-            .select('cost,tokens')
-            .eq('user_id', userId)
-            .gte('created_at', `${today}T00:00:00Z`);
+        const todayResult = await pgClient.query(
+            `SELECT cost, tokens
+             FROM api_usage_stats
+             WHERE user_id = $1
+               AND created_at >= $2::timestamptz`,
+            [userId, `${today}T00:00:00Z`]
+        );
+        const todayRows = todayResult.rows || [];
 
-        const todayCost = (todayData || []).reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
-        const todayTokens = (todayData || []).reduce((sum, item) => sum + (Number(item.tokens) || 0), 0);
-        const todayRequests = (todayData || []).length;
+        const todayCost = todayRows.reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
+        const todayTokens = todayRows.reduce((sum, item) => sum + (Number(item.tokens) || 0), 0);
+        const todayRequests = todayRows.length;
 
         // Yesterday Cost/Tokens/Requests
         const y = new Date();
         y.setDate(y.getDate() - 1);
         const yesterday = y.toISOString().split('T')[0];
-        const { data: yesterdayData } = await dbService.supabase
-            .from('api_usage_stats')
-            .select('cost,tokens')
-            .eq('user_id', userId)
-            .gte('created_at', `${yesterday}T00:00:00Z`)
-            .lte('created_at', `${yesterday}T23:59:59Z`);
-        const yesterdayCost = (yesterdayData || []).reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
-        const yesterdayTokens = (yesterdayData || []).reduce((sum, item) => sum + (Number(item.tokens) || 0), 0);
-        const yesterdayRequests = (yesterdayData || []).length;
+        const yesterdayResult = await pgClient.query(
+            `SELECT cost, tokens
+             FROM api_usage_stats
+             WHERE user_id = $1
+               AND created_at >= $2::timestamptz
+               AND created_at <= $3::timestamptz`,
+            [userId, `${yesterday}T00:00:00Z`, `${yesterday}T23:59:59Z`]
+        );
+        const yesterdayRows = yesterdayResult.rows || [];
+
+        const yesterdayCost = yesterdayRows.reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
+        const yesterdayTokens = yesterdayRows.reduce((sum, item) => sum + (Number(item.tokens) || 0), 0);
+        const yesterdayRequests = yesterdayRows.length;
 
         // Custom Range Cost
         let rangeCost = 0;
         let rangeTokens = 0;
         let rangeRequests = 0;
         if (startDate && endDate) {
-            const { data: rangeData } = await dbService.supabase
-                .from('api_usage_stats')
-                .select('cost,tokens')
-                .eq('user_id', userId)
-                .gte('created_at', `${startDate}T00:00:00Z`)
-                .lte('created_at', `${endDate}T23:59:59Z`);
+            const rangeResult = await pgClient.query(
+                `SELECT cost, tokens
+                 FROM api_usage_stats
+                 WHERE user_id = $1
+                   AND created_at >= $2::timestamptz
+                   AND created_at <= $3::timestamptz`,
+                [userId, `${startDate}T00:00:00Z`, `${endDate}T23:59:59Z`]
+            );
             
-            rangeCost = (rangeData || []).reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
-            rangeTokens = (rangeData || []).reduce((sum, item) => sum + (Number(item.tokens) || 0), 0);
-            rangeRequests = (rangeData || []).length;
+            const rangeRows = rangeResult.rows || [];
+
+            rangeCost = rangeRows.reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
+            rangeTokens = rangeRows.reduce((sum, item) => sum + (Number(item.tokens) || 0), 0);
+            rangeRequests = rangeRows.length;
         }
 
         res.json({ 

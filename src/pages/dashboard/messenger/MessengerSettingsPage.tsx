@@ -5,7 +5,6 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { Save, Bot, Lock, Sparkles, Key, Check, Image } from "lucide-react";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -133,102 +132,84 @@ export default function MessengerSettingsPage() {
 
   const fetchConfig = useCallback(async (id: string, pId: string) => {
     try {
-      // Fetch text_prompt from fb_message_database
-      const { data: dbData, error: dbError } = await supabase
-        .from('fb_message_database')
-        .select('*')
-        .eq('id', parseInt(id))
-        .single();
-
-      if (dbError) throw dbError;
-
-      // Fetch AI settings from page_access_token_message
-      const { data: pageData, error: pageError } = await supabase
-        .from('page_access_token_message')
-        .select('*')
-        .eq('page_id', pId)
-        .single();
-        
-      if (pageError) throw pageError;
-
-      if (dbData && pageData) {
-        const dbRow = dbData as any;
-        const pageRow = pageData as any;
-        
-        setVerified(dbRow.verified !== false);
-        setInitialTextPrompt(dbRow.text_prompt || "");
-        setInitialImagePrompt(dbRow.image_prompt || "");
-
-        // Check ownership
-        const { data: { user } } = await supabase.auth.getUser();
-        const isPageOwner = user?.id === pageRow.user_id;
-        setIsOwner(isPageOwner);
-        
-        const apiKey = pageRow.api_key || "";
-        
-        // --- SHARED CREDIT FETCH ---
-        let currentCredit = 0; // Initialize to 0, ignoring page-specific credit
-        
-        // If page is linked to a user, fetch the User's shared credit balance
-        let ownerId = pageRow.user_id;
-        if (!ownerId) {
-             // Fallback: Try to get current user ID
-             const { data: { user } } = await supabase.auth.getUser();
-             if (user) ownerId = user.id;
-        }
-
-        if (ownerId) {
-            const { data: userData } = await supabase
-                .from('user_configs')
-                .select('message_credit')
-                .eq('user_id', ownerId)
-                .maybeSingle();
-            
-            if (userData) {
-                currentCredit = (userData as any).message_credit || 0;
-            }
-        }
-        // ---------------------------
-
-        // Check if plan is active and has credits
-        // Show active if strictly active OR if we have credits (meaning user is using shared balance)
-        const isActive = (pageRow.subscription_status === 'active' || currentCredit > 0);
-        setPlanActive(isActive);
-        setMessageCredit(currentCredit);
-
-        // LOGIC FIX: Respect explicit 'cheap_engine' setting from DB
-        // If cheap_engine is explicitly FALSE, it means user wants Own API, even if they have credits.
-        let isManaged = false;
-        
-        if (pageRow.cheap_engine === false) {
-             isManaged = false; // User explicitly chose Own API
-        } else if (pageRow.cheap_engine === true) {
-             isManaged = true; // User explicitly chose Managed
-        } else {
-             // Legacy/Fallback: If apiKey is managed OR (isActive AND apiKey is empty/managed)
-             isManaged = apiKey === MANAGED_SECRET_KEY || (isActive && !apiKey);
-        }
-
-        setMode(isManaged ? "managed" : "own");
-        setActiveMode(isManaged ? "managed" : "own");
-
-        // Clean model name (remove :free suffix for display)
-        const rawModel = pageRow.chat_model || "openrouter/auto";
-        const displayModel = rawModel.replace(':free', '');
-
-        form.reset({
-          provider: pageRow.ai || "openrouter",
-          api_key: isManaged ? "" : apiKey, // Hide secret key
-          chatmodel: displayModel,
-          text_prompt: dbRow.text_prompt || "",
-        });
-        
-        // Set behavior settings
-        setWait(dbRow.wait || 8);
-        setMemoryContextName(dbRow.memory_context_name || "");
-        setMemoryLimit(dbRow.check_conversion || 20);
-        setOrderLockMinutes(dbRow.order_lock_minutes || 1440);
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        setLoading(false);
+        toast.error("Please login again");
+        return;
       }
+
+      const resConfig = await fetch(`${BACKEND_URL}/messenger/config/${id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!resConfig.ok) {
+        const body = await resConfig.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to load DB config");
+      }
+
+      const dbRow: any = await resConfig.json();
+
+      const resPage = await fetch(`${BACKEND_URL}/messenger/pages`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!resPage.ok) {
+        const body = await resPage.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to load page config");
+      }
+
+      const pages = await resPage.json();
+      const pageRow: any = Array.isArray(pages)
+        ? pages.find((p: any) => String(p.page_id) === String(pId))
+        : null;
+
+      if (!dbRow || !pageRow) {
+        setLoading(false);
+        return;
+      }
+
+      setVerified(dbRow.verified !== false);
+      setInitialTextPrompt(dbRow.text_prompt || "");
+      setInitialImagePrompt(dbRow.image_prompt || "");
+
+      setIsOwner(!dbRow.is_shared);
+
+      const apiKey = pageRow.api_key || "";
+
+      const currentCredit = Number(pageRow.message_credit || 0);
+
+      const isActive =
+        pageRow.subscription_status === "active" || currentCredit > 0;
+      setPlanActive(isActive);
+      setMessageCredit(currentCredit);
+
+      let isManaged = false;
+      if (pageRow.cheap_engine === false) {
+        isManaged = false;
+      } else if (pageRow.cheap_engine === true) {
+        isManaged = true;
+      } else {
+        isManaged = apiKey === MANAGED_SECRET_KEY || (isActive && !apiKey);
+      }
+
+      setMode(isManaged ? "managed" : "own");
+      setActiveMode(isManaged ? "managed" : "own");
+
+      const rawModel = pageRow.chat_model || "openrouter/auto";
+      const displayModel = rawModel.replace(":free", "");
+
+      form.reset({
+        provider: pageRow.ai || "openrouter",
+        api_key: isManaged ? "" : apiKey,
+        chatmodel: displayModel,
+        text_prompt: dbRow.text_prompt || "",
+      });
+
+      setWait(dbRow.wait || 8);
+      setMemoryContextName(dbRow.memory_context_name || "");
+      setMemoryLimit(dbRow.check_conversion || 20);
+      setOrderLockMinutes(dbRow.order_lock_minutes || 1440);
     } catch (error) {
       console.error("Error fetching config:", error);
       toast.error("Failed to load AI settings");
@@ -268,20 +249,20 @@ export default function MessengerSettingsPage() {
     if (!pageId) return;
     setProductLoading(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        toast.error("Please login again");
+        return;
+      }
 
       const params = new URLSearchParams();
       params.set("page_id", pageId);
       params.set("limit", "50");
 
       const url = `${BACKEND_URL}/api/products?${params.toString()}`;
-      const headers: HeadersInit = {};
-      if (token) {
-        headers.Authorization = `Bearer ${token}`;
-      }
-
-      const res = await fetch(url, { headers });
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       if (!res.ok) {
         throw new Error("Failed to load products");
       }
@@ -351,8 +332,10 @@ export default function MessengerSettingsPage() {
     if (!dbId) return;
     setPromptSaving(true);
     try {
-        const { data: { session } } = await supabase.auth.getSession();
-        const token = session?.access_token;
+        const token = localStorage.getItem("auth_token");
+        if (!token) {
+          throw new Error("Please login again");
+        }
 
         let body: any = {};
         let processedPrompt = "";
@@ -374,7 +357,7 @@ export default function MessengerSettingsPage() {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
-                ...(token ? { Authorization: `Bearer ${token}` } : {})
+                Authorization: `Bearer ${token}`
             },
             body: JSON.stringify(body)
         });
@@ -416,14 +399,16 @@ export default function MessengerSettingsPage() {
     if (!dbId) return;
     setBehaviorSaving(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        throw new Error("Please login again");
+      }
 
       const res = await fetch(`${BACKEND_URL}/messenger/config/${dbId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {})
+          Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({
           wait: wait,
@@ -481,76 +466,8 @@ export default function MessengerSettingsPage() {
 
   const handlePurchaseCredits = async () => {
       if (!pageId) return;
-      setLoading(true);
-      try {
-          const creditMap: Record<string, number> = {
-              '500_free': 500,
-              '1000': 1000,
-              '5000': 5000,
-              '10000': 10000
-          };
-          
-          const creditToAdd = creditMap[selectedPlan] || 500;
-          
-          const priceMap: Record<string, number> = { 
-              '500_free': 0, 
-              '1000': 400, 
-              '5000': 1500, 
-              '10000': 2500 
-          };
-          const price = priceMap[selectedPlan] || 0;
-
-          // If price > 0, use secure RPC
-          if (price > 0) {
-              const { data: rpcData, error: rpcError } = await (supabase as any)
-                .rpc('purchase_credits', {
-                    p_page_id: pageId,
-                    p_credit_amount: creditToAdd,
-                    p_cost: price
-                });
-
-              if (rpcError) throw new Error(rpcError.message);
-              toast.success(`Purchased ${creditToAdd} credits for ৳${price}`);
-          } else {
-              const { error: rpcError } = await (supabase as any)
-                .rpc('purchase_credits', {
-                    p_page_id: pageId,
-                    p_credit_amount: creditToAdd,
-                    p_cost: 0
-                });
-                
-              if (rpcError) throw new Error(rpcError.message);
-              toast.success(`Activated Free Plan (${creditToAdd} credits)`);
-          }
-
-          // Fetch updated credit
-          const { data: pageData } = await supabase
-            .from('page_access_token_message')
-            .select('user_id')
-            .eq('page_id', pageId)
-            .single();
-            
-          if ((pageData as any)?.user_id) {
-             const { data: ownerConfig } = await supabase
-                .from('user_configs')
-                .select('message_credit')
-                .eq('user_id', (pageData as any).user_id)
-                .single();
-             
-             if (ownerConfig) {
-                 setMessageCredit((ownerConfig as any).message_credit);
-                 setPlanActive(true);
-             }
-          }
-
-          setIsPricingOpen(false);
-
-      } catch (error: any) {
-          console.error("Purchase error:", error);
-          toast.error("Purchase failed: " + error.message);
-      } finally {
-          setLoading(false);
-      }
+      toast.info("Credits add korar jonno Payment/Admin panel use korun.");
+      setIsPricingOpen(false);
   };
 
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
@@ -576,15 +493,17 @@ export default function MessengerSettingsPage() {
     }
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        throw new Error("Please login again");
+      }
 
       if (values.text_prompt) {
         const resPrompt = await fetch(`${BACKEND_URL}/messenger/config/${dbId}`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {})
+            Authorization: `Bearer ${token}`
           },
           body: JSON.stringify({ text_prompt: values.text_prompt })
         });
@@ -603,12 +522,22 @@ export default function MessengerSettingsPage() {
           cheap_engine: mode === "managed" 
       };
 
-      const { error: pageError } = await (supabase
-        .from('page_access_token_message') as any)
-        .update(updates)
-        .eq('page_id', pageId);
+      const resUpdate = await fetch(`${BACKEND_URL}/messenger/pages/config`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          page_id: pageId,
+          updates
+        })
+      });
 
-      if (pageError) throw pageError;
+      if (!resUpdate.ok) {
+        const body = await resUpdate.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to save settings");
+      }
 
       setActiveMode(mode); // Update active mode indicator
       toast.success("AI settings saved successfully");

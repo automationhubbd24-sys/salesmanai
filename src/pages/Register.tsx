@@ -5,10 +5,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import Logo from "@/components/Logo";
 import { Eye, EyeOff, ArrowLeft, Mail, Lock, User, Phone, CheckCircle2, Sparkles } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import logoImage from "@/assets/logo.png";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { BACKEND_URL } from "@/config";
 import {
   Dialog,
   DialogContent,
@@ -39,22 +39,29 @@ const Register = () => {
   const [verifying, setVerifying] = useState(false);
 
   const handleVerifyOtp = async () => {
-    if (!otp || otp.length !== 6) return;
+    if (!otp || otp.length < 4) return;
     setVerifying(true);
     try {
-      const { error } = await supabase.auth.verifyOtp({
-        email: formData.email,
-        token: otp,
-        type: 'signup',
+      const res = await fetch(`${BACKEND_URL}/api/auth/verify-otp`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email: formData.email, code: otp }),
       });
-
-      if (error) throw error;
-
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.token) {
+        throw new Error(body.error || t("Invalid or expired code", "কোডটি সঠিক নয় বা মেয়াদ শেষ"));
+      }
+      localStorage.setItem("auth_token", body.token);
+      if (body.user) {
+        localStorage.setItem("auth_user", JSON.stringify(body.user));
+      }
       toast.success(t("Email verified successfully!", "ইমেইল সফলভাবে যাচাই করা হয়েছে!"));
       setShowOtpModal(false);
       navigate("/dashboard");
     } catch (error: any) {
-      toast.error(error.message);
+      toast.error(error.message || t("Failed to verify code", "কোড যাচাই করতে ব্যর্থ"));
     } finally {
       setVerifying(false);
     }
@@ -80,28 +87,29 @@ const Register = () => {
     setLoading(true);
 
     try {
-      const { error } = await supabase.auth.signUp({
-        email: formData.email,
-        password: formData.password,
-        options: {
-          emailRedirectTo: window.location.origin,
-          data: {
-            full_name: formData.fullName,
-            phone: formData.phone,
-          },
+      const res = await fetch(`${BACKEND_URL}/api/auth/request-otp`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
+        body: JSON.stringify({ email: formData.email }),
       });
-
-      if (error) {
-        toast.error(error.message);
-      } else {
-        // Check if session is null, meaning email confirmation is required
-        // Or if we explicitly want to show OTP entry for verification
-        toast.success(t("Registration successful! Please check your email for the OTP.", "রেজিস্ট্রেশন সফল হয়েছে! ওটিপি-র জন্য আপনার ইমেইল চেক করুন।"));
-        setShowOtpModal(true);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.success) {
+        throw new Error(body.error || t("Failed to send verification code", "ভেরিফিকেশন কোড পাঠানো যায়নি"));
       }
-    } catch (error) {
-      toast.error(t("An error occurred during registration", "রেজিস্ট্রেশন করার সময় একটি সমস্যা হয়েছে"));
+      toast.success(
+        t(
+          "Registration successful! Check your email for the login code.",
+          "রেজিস্ট্রেশন সফল হয়েছে! লগইন কোডের জন্য আপনার ইমেইল চেক করুন।"
+        )
+      );
+      setShowOtpModal(true);
+    } catch (error: any) {
+      toast.error(
+        error.message ||
+          t("An error occurred during registration", "রেজিস্ট্রেশন করার সময় একটি সমস্যা হয়েছে")
+      );
     } finally {
       setLoading(false);
     }

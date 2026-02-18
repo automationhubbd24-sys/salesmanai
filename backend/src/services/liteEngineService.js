@@ -47,14 +47,20 @@ class LiteEngineService {
      * Strategy: Random active key to distribute load.
      */
     async getRotatedClient() {
-        // 1. Fetch random active key
-        const { data: keys, error } = await dbService.supabase
-            .from('lite_engine_keys')
-            .select('api_key, id')
-            .eq('status', 'active')
-            .limit(100); // Fetch a batch to pick random
+        const pgClient = require('./pgClient');
 
-        if (error || !keys || keys.length === 0) {
+        let keys = [];
+        try {
+            const result = await pgClient.query(
+                'SELECT api_key, id FROM lite_engine_keys WHERE status = $1 LIMIT 100',
+                ['active']
+            );
+            keys = result.rows || [];
+        } catch (e) {
+            console.error('[LiteEngine] Failed to load keys from DB:', e.message);
+        }
+
+        if (!keys || keys.length === 0) {
             console.error('[LiteEngine] NO ACTIVE KEYS FOUND! Fallback to ENV.');
             return {
                 client: new OpenAI({ apiKey: process.env.GROQ_API_KEY, baseURL: 'https://api.groq.com/openai/v1' }),
@@ -62,15 +68,12 @@ class LiteEngineService {
             };
         }
 
-        // 2. Pick Random Key
         const randomKey = keys[Math.floor(Math.random() * keys.length)];
         
-        // 3. Update Last Used (Async - don't block)
-        dbService.supabase
-            .from('lite_engine_keys')
-            .update({ last_used_at: new Date(), requests_today: 1 }) // Increment logic needed in SQL or separate counter
-            .eq('id', randomKey.id)
-            .then(() => {});
+        pgClient.query(
+            'UPDATE lite_engine_keys SET last_used_at = NOW(), requests_today = requests_today + 1 WHERE id = $1',
+            [randomKey.id]
+        ).catch(() => {});
 
         console.log(`[LiteEngine] Using Key ID: ${randomKey.id} (Pool Size: ${keys.length})`);
         
@@ -89,10 +92,11 @@ class LiteEngineService {
     async markKeyOffline(keyId) {
         if (!keyId) return;
         console.warn(`[LiteEngine] Marking key ID ${keyId} as OFFLINE due to invalid credentials.`);
-        await dbService.supabase
-            .from('lite_engine_keys')
-            .update({ status: 'offline' })
-            .eq('id', keyId);
+        const pgClient = require('./pgClient');
+        await pgClient.query(
+            'UPDATE lite_engine_keys SET status = $1 WHERE id = $2',
+            ['offline', keyId]
+        );
     }
 
     /**

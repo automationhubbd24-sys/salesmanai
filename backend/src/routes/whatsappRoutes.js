@@ -3,6 +3,45 @@ const router = express.Router();
 const whatsappController = require('../controllers/whatsappController');
 const whatsappService = require('../services/whatsappService');
 const dbService = require('../services/dbService');
+const pgClient = require('../services/pgClient');
+const jwt = require('jsonwebtoken');
+const authMiddleware = require('../middleware/authMiddleware');
+
+async function hasSessionAccess(sessionName, userId, userEmail) {
+    const configResult = await pgClient.query(
+        'SELECT user_id, email, session_name FROM whatsapp_message_database WHERE session_name = $1 LIMIT 1',
+        [sessionName]
+    );
+
+    if (configResult.rowCount === 0) {
+        return false;
+    }
+
+    const row = configResult.rows[0];
+    if (row.user_id === userId || row.email === userEmail) {
+        return true;
+    }
+
+    if (!userEmail) {
+        return false;
+    }
+
+    const teamResult = await pgClient.query(
+        'SELECT permissions FROM team_members WHERE member_email = $1 AND status = $2',
+        [userEmail, 'active']
+    );
+
+    for (const t of teamResult.rows) {
+        const sessions = t.permissions && Array.isArray(t.permissions.wa_sessions)
+            ? t.permissions.wa_sessions
+            : [];
+        if (sessions.includes(row.session_name)) {
+            return true;
+        }
+    }
+
+    return false;
+}
 
 // WAHA Webhook Listener (POST)
 // Endpoint: /whatsapp/webhook
@@ -24,18 +63,16 @@ router.get('/session/qr/:sessionName', async (req, res) => {
 // Get Sessions (Merged with DB Info & Team Permissions)
 router.get('/sessions', async (req, res) => {
     try {
-        // 1. Auth Check
         const authHeader = req.headers.authorization;
         let userId = null;
         let userEmail = null;
         
-        if (authHeader) {
+        if (authHeader && authHeader.startsWith('Bearer ')) {
             const token = authHeader.replace('Bearer ', '');
-            const { data: { user }, error } = await dbService.supabase.auth.getUser(token);
-            if (user) {
-                userId = user.id;
-                userEmail = user.email;
-            }
+            const secret = process.env.JWT_SECRET;
+            const payload = jwt.verify(token, secret);
+            userId = payload.sub;
+            userEmail = payload.email;
         }
 
         if (!userId) {
@@ -43,42 +80,33 @@ router.get('/sessions', async (req, res) => {
             return res.json([]);
         }
 
-        // 2. Fetch User's Own Sessions (By ID or Email)
-        const { data: mySessions, error: myError } = await dbService.supabase
-            .from('whatsapp_message_database')
-            .select('id, session_name, expires_at, plan_days, status, subscription_status, user_id, email')
-            .or(`user_id.eq.${userId},email.eq.${userEmail}`);
-
-        if (myError) throw myError;
+        const { rows: mySessions } = await pgClient.query(
+            'SELECT id, session_name, expires_at, plan_days, status, subscription_status, user_id, email FROM whatsapp_message_database WHERE user_id = $1 OR email = $2',
+            [userId, userEmail]
+        );
 
         // 3. Fetch Shared Sessions (Team Members)
         let sharedSessionNames = [];
         if (userEmail) {
-            const { data: teamData, error: teamError } = await dbService.supabase
-                .from('team_members')
-                .select('permissions')
-                .eq('member_email', userEmail)
-                .eq('status', 'active');
-            
-            if (!teamError && teamData) {
-                teamData.forEach(row => {
-                    if (row.permissions && Array.isArray(row.permissions.wa_sessions)) {
-                        sharedSessionNames.push(...row.permissions.wa_sessions);
-                    }
-                });
-            }
+            const { rows: teamData } = await pgClient.query(
+                'SELECT permissions FROM team_members WHERE member_email = $1 AND status = $2',
+                [userEmail, 'active']
+            );
+
+            teamData.forEach(row => {
+                if (row.permissions && Array.isArray(row.permissions.wa_sessions)) {
+                    sharedSessionNames.push(...row.permissions.wa_sessions);
+                }
+            });
         }
 
         let sharedSessions = [];
         if (sharedSessionNames.length > 0) {
-            const { data: sharedData, error: sharedError } = await dbService.supabase
-                .from('whatsapp_message_database')
-                .select('id, session_name, expires_at, plan_days, status, subscription_status, user_id, email')
-                .in('session_name', sharedSessionNames);
-            
-            if (!sharedError && sharedData) {
-                sharedSessions = sharedData;
-            }
+            const { rows: sharedData } = await pgClient.query(
+                'SELECT id, session_name, expires_at, plan_days, status, subscription_status, user_id, email FROM whatsapp_message_database WHERE session_name = ANY($1::text[])',
+                [sharedSessionNames]
+            );
+            sharedSessions = sharedData;
         }
 
         // 4. Combine DB Sessions
@@ -125,29 +153,27 @@ router.get('/config/:id', async (req, res) => {
         const { id } = req.params;
         const authHeader = req.headers.authorization;
 
-        if (!authHeader) {
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
             return res.status(401).json({ error: 'Unauthorized' });
         }
 
         const token = authHeader.replace('Bearer ', '');
-        const { data: { user }, error } = await dbService.supabase.auth.getUser(token);
+        const secret = process.env.JWT_SECRET;
+        const payload = jwt.verify(token, secret);
 
-        if (error || !user) {
-            return res.status(401).json({ error: 'Invalid token' });
-        }
+        const userId = payload.sub;
+        const userEmail = payload.email;
 
-        const userId = user.id;
-        const userEmail = user.email;
+        const configResult = await pgClient.query(
+            'SELECT * FROM whatsapp_message_database WHERE id = $1',
+            [parseInt(id, 10)]
+        );
 
-        const { data: row, error: rowError } = await dbService.supabase
-            .from('whatsapp_message_database')
-            .select('*')
-            .eq('id', parseInt(id, 10))
-            .single();
-
-        if (rowError || !row) {
+        if (configResult.rowCount === 0) {
             return res.status(404).json({ error: 'Config not found' });
         }
+
+        const row = configResult.rows[0];
 
         let allowed = false;
         if (row.user_id === userId || row.email === userEmail) {
@@ -155,21 +181,18 @@ router.get('/config/:id', async (req, res) => {
         }
 
         if (!allowed && userEmail) {
-            const { data: teamData, error: teamError } = await dbService.supabase
-                .from('team_members')
-                .select('permissions')
-                .eq('member_email', userEmail)
-                .eq('status', 'active');
+            const { rows: teamData } = await pgClient.query(
+                'SELECT permissions FROM team_members WHERE member_email = $1 AND status = $2',
+                [userEmail, 'active']
+            );
 
-            if (!teamError && teamData) {
-                for (const t of teamData) {
-                    const sessions = t.permissions && Array.isArray(t.permissions.wa_sessions)
-                        ? t.permissions.wa_sessions
-                        : [];
-                    if (sessions.includes(row.session_name)) {
-                        allowed = true;
-                        break;
-                    }
+            for (const t of teamData) {
+                const sessions = t.permissions && Array.isArray(t.permissions.wa_sessions)
+                    ? t.permissions.wa_sessions
+                    : [];
+                if (sessions.includes(row.session_name)) {
+                    allowed = true;
+                    break;
                 }
             }
         }
@@ -185,35 +208,259 @@ router.get('/config/:id', async (req, res) => {
     }
 });
 
+router.get('/orders', authMiddleware, async (req, res) => {
+    try {
+        const sessionName = String(req.query.session_name || '').trim();
+        const from = req.query.from ? Number(req.query.from) : null;
+        const to = req.query.to ? Number(req.query.to) : null;
+
+        if (!sessionName) {
+            return res.status(400).json({ error: 'session_name is required' });
+        }
+
+        const userId = req.user.id;
+        const userEmail = req.user.email;
+
+        const allowed = await hasSessionAccess(sessionName, userId, userEmail);
+        if (!allowed) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
+
+        const values = [sessionName];
+        const conditions = ['session_name = $1'];
+        let idx = 2;
+
+        if (Number.isFinite(from)) {
+            conditions.push(`created_at >= to_timestamp($${idx} / 1000.0)`);
+            values.push(from);
+            idx += 1;
+        }
+        if (Number.isFinite(to)) {
+            conditions.push(`created_at <= to_timestamp($${idx} / 1000.0)`);
+            values.push(to);
+        }
+
+        const where = conditions.join(' AND ');
+        const queryText = `
+            SELECT id, product_name, number, location, product_quantity, price, created_at
+            FROM whatsapp_order_tracking
+            WHERE ${where}
+            ORDER BY created_at DESC
+        `;
+
+        const result = await pgClient.query(queryText, values);
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Get WhatsApp orders error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.get('/messages', authMiddleware, async (req, res) => {
+    try {
+        const sessionName = String(req.query.session_name || '').trim();
+        const from = req.query.from ? Number(req.query.from) : null;
+        const to = req.query.to ? Number(req.query.to) : null;
+
+        if (!sessionName) {
+            return res.status(400).json({ error: 'session_name is required' });
+        }
+
+        const userId = req.user.id;
+        const userEmail = req.user.email;
+
+        const allowed = await hasSessionAccess(sessionName, userId, userEmail);
+        if (!allowed) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
+
+        if (!Number.isFinite(from) || !Number.isFinite(to)) {
+            return res.status(400).json({ error: 'from and to (ms) are required' });
+        }
+
+        const result = await pgClient.query(
+            `
+            SELECT id, message_id, timestamp, sender_id, recipient_id, text, reply_by, status, token_usage, model_used
+            FROM whatsapp_chats
+            WHERE session_name = $1
+              AND timestamp >= $2
+              AND timestamp <= $3
+            ORDER BY timestamp DESC
+            `,
+            [sessionName, from, to]
+        );
+
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Get WhatsApp messages error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.get('/stats', authMiddleware, async (req, res) => {
+    try {
+        const sessionName = String(req.query.session_name || '').trim();
+
+        if (!sessionName) {
+            return res.status(400).json({ error: 'session_name is required' });
+        }
+
+        const userId = req.user.id;
+        const userEmail = req.user.email;
+
+        const allowed = await hasSessionAccess(sessionName, userId, userEmail);
+        if (!allowed) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
+
+        const countResult = await pgClient.query(
+            `
+            SELECT COUNT(*)::int AS count
+            FROM whatsapp_chats
+            WHERE session_name = $1
+              AND reply_by = 'bot'
+            `,
+            [sessionName]
+        );
+
+        const tokenResult = await pgClient.query(
+            `
+            SELECT COALESCE(SUM(token_usage), 0)::int AS total_tokens
+            FROM whatsapp_chats
+            WHERE session_name = $1
+              AND token_usage > 0
+            `,
+            [sessionName]
+        );
+
+        const allTimeBotReplies = countResult.rows[0]?.count || 0;
+        const allTimeTokenCount = tokenResult.rows[0]?.total_tokens || 0;
+
+        res.json({ allTimeBotReplies, allTimeTokenCount });
+    } catch (err) {
+        console.error('Get WhatsApp stats error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.get('/contacts', authMiddleware, async (req, res) => {
+    try {
+        const sessionName = String(req.query.session_name || '').trim();
+
+        if (!sessionName) {
+            return res.status(400).json({ error: 'session_name is required' });
+        }
+
+        const userId = req.user.id;
+        const userEmail = req.user.email;
+
+        const allowed = await hasSessionAccess(sessionName, userId, userEmail);
+        if (!allowed) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
+
+        const result = await pgClient.query(
+            `
+            SELECT phone_number, is_locked
+            FROM whatsapp_contacts
+            WHERE session_name = $1
+              AND is_locked = true
+            `,
+            [sessionName]
+        );
+
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Get WhatsApp contacts error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.post('/contacts/lock', authMiddleware, async (req, res) => {
+    try {
+        const sessionName = String(req.body.session_name || '').trim();
+        const phoneNumber = String(req.body.phone_number || '').trim();
+        const isLocked = Boolean(req.body.is_locked);
+
+        if (!sessionName || !phoneNumber) {
+            return res.status(400).json({ error: 'session_name and phone_number are required' });
+        }
+
+        const userId = req.user.id;
+        const userEmail = req.user.email;
+
+        const allowed = await hasSessionAccess(sessionName, userId, userEmail);
+        if (!allowed) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
+
+        await pgClient.query(
+            `
+            INSERT INTO whatsapp_contacts (session_name, phone_number, is_locked, last_interaction)
+            VALUES ($1, $2, $3, NOW())
+            ON CONFLICT (session_name, phone_number)
+            DO UPDATE SET is_locked = EXCLUDED.is_locked, last_interaction = EXCLUDED.last_interaction
+            `,
+            [sessionName, phoneNumber, isLocked]
+        );
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Update WhatsApp contact lock error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.get('/session-name/:id', authMiddleware, async (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        if (!id || Number.isNaN(id)) {
+            return res.status(400).json({ error: 'Invalid id' });
+        }
+
+        const result = await pgClient.query(
+            'SELECT session_name FROM whatsapp_message_database WHERE id = $1',
+            [id]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'Not found' });
+        }
+
+        res.json({ session_name: result.rows[0].session_name });
+    } catch (err) {
+        console.error('Get WhatsApp session name error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Update WhatsApp Config (Owner or Team Member with Access)
 router.put('/config/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const authHeader = req.headers.authorization;
 
-        if (!authHeader) {
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
             return res.status(401).json({ error: 'Unauthorized' });
         }
 
         const token = authHeader.replace('Bearer ', '');
-        const { data: { user }, error } = await dbService.supabase.auth.getUser(token);
+        const secret = process.env.JWT_SECRET;
+        const payload = jwt.verify(token, secret);
 
-        if (error || !user) {
-            return res.status(401).json({ error: 'Invalid token' });
-        }
+        const userId = payload.sub;
+        const userEmail = payload.email;
 
-        const userId = user.id;
-        const userEmail = user.email;
+        const configResult = await pgClient.query(
+            'SELECT * FROM whatsapp_message_database WHERE id = $1',
+            [parseInt(id, 10)]
+        );
 
-        const { data: row, error: rowError } = await dbService.supabase
-            .from('whatsapp_message_database')
-            .select('*')
-            .eq('id', parseInt(id, 10))
-            .single();
-
-        if (rowError || !row) {
+        if (configResult.rowCount === 0) {
             return res.status(404).json({ error: 'Config not found' });
         }
+
+        const row = configResult.rows[0];
 
         let allowed = false;
         if (row.user_id === userId || row.email === userEmail) {
@@ -221,21 +468,18 @@ router.put('/config/:id', async (req, res) => {
         }
 
         if (!allowed && userEmail) {
-            const { data: teamData, error: teamError } = await dbService.supabase
-                .from('team_members')
-                .select('permissions')
-                .eq('member_email', userEmail)
-                .eq('status', 'active');
+            const { rows: teamData } = await pgClient.query(
+                'SELECT permissions FROM team_members WHERE member_email = $1 AND status = $2',
+                [userEmail, 'active']
+            );
 
-            if (!teamError && teamData) {
-                for (const t of teamData) {
-                    const sessions = t.permissions && Array.isArray(t.permissions.wa_sessions)
-                        ? t.permissions.wa_sessions
-                        : [];
-                    if (sessions.includes(row.session_name)) {
-                        allowed = true;
-                        break;
-                    }
+            for (const t of teamData) {
+                const sessions = t.permissions && Array.isArray(t.permissions.wa_sessions)
+                    ? t.permissions.wa_sessions
+                    : [];
+                if (sessions.includes(row.session_name)) {
+                    allowed = true;
+                    break;
                 }
             }
         }
@@ -273,18 +517,20 @@ router.put('/config/:id', async (req, res) => {
             }
         }
 
-        const { data: updated, error: updateError } = await dbService.supabase
-            .from('whatsapp_message_database')
-            .update(updates)
-            .eq('id', parseInt(id, 10))
-            .select()
-            .single();
-
-        if (updateError) {
-            return res.status(500).json({ error: updateError.message });
+        const keys = Object.keys(updates);
+        if (keys.length === 0) {
+            return res.status(400).json({ error: 'No valid fields provided for update' });
         }
 
-        res.json(updated);
+        const setClauses = keys.map((key, index) => `${key} = $${index + 2}`);
+        const values = [parseInt(id, 10), ...keys.map(k => updates[k])];
+
+        const updateResult = await pgClient.query(
+            `UPDATE whatsapp_message_database SET ${setClauses.join(', ')} WHERE id = $1 RETURNING *`,
+            values
+        );
+
+        res.json(updateResult.rows[0]);
     } catch (err) {
         console.error("Update WhatsApp Config Error:", err);
         res.status(500).json({ error: err.message });
@@ -385,17 +631,13 @@ router.post('/session/create', async (req, res) => {
         const selectedEngine = engine || 'WEBJS'; // Default WEBJS if not sent
 
         const authHeader = req.headers.authorization;
-        
-        if (!authHeader) {
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
             return res.status(401).json({ error: 'Unauthorized' });
         }
-        
         const token = authHeader.replace('Bearer ', '');
-        const { data: { user }, error } = await dbService.supabase.auth.getUser(token);
-        
-        if (error || !user) {
-            return res.status(401).json({ error: 'Invalid token' });
-        }
+        const secret = process.env.JWT_SECRET;
+        const payload = jwt.verify(token, secret);
+        const user = { id: payload.sub, email: payload.email };
 
         // Pricing Logic
         const PRICING = {
@@ -672,14 +914,18 @@ router.post('/session/renew', async (req, res) => {
 
         const cost = PLAN_COSTS[days] || (days * 10); // Fallback to 10 per day
 
-        // 1. Get Session Owner
-        const { data: session, error: fetchError } = await dbService.supabase
-            .from('whatsapp_message_database')
-            .select('user_id')
-            .eq('session_name', sessionName)
-            .single();
+        const pgClient = require('../services/pgClient');
 
-        if (fetchError || !session) return res.status(404).json({ error: "Session not found" });
+        const sessionRes = await pgClient.query(
+            'SELECT user_id FROM whatsapp_message_database WHERE session_name = $1 LIMIT 1',
+            [sessionName]
+        );
+
+        if (sessionRes.rows.length === 0 || !sessionRes.rows[0].user_id) {
+            return res.status(404).json({ error: "Session not found" });
+        }
+
+        const session = sessionRes.rows[0];
 
         // 2. Deduct Balance
         try {
@@ -744,14 +990,16 @@ router.delete('/session/delete', async (req, res) => {
 router.get('/contacts/:sessionName', async (req, res) => {
     try {
         const { sessionName } = req.params;
-        const { data, error } = await dbService.supabase
-            .from('whatsapp_contacts')
-            .select('phone_number, is_locked')
-            .eq('session_name', sessionName)
-            .eq('is_locked', true);
-            
-        if (error) throw error;
-        res.json(data);
+        const pgClient = require('../services/pgClient');
+
+        const result = await pgClient.query(
+            `SELECT phone_number, is_locked
+             FROM whatsapp_contacts
+             WHERE session_name = $1 AND is_locked = true`,
+            [sessionName]
+        );
+
+        res.json(result.rows || []);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

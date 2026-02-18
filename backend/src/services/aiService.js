@@ -215,18 +215,17 @@ async function generateResponse({ pageId, userId, userMessage, history, imageUrl
     // Only fetch from DB if explicitSenderName is missing or 'Unknown'
     if (!explicitSenderName || explicitSenderName === 'Unknown') {
         try {
-            const dbService = require('./dbService');
+            const pgClient = require('./pgClient');
             if (platform === 'whatsapp') {
-                 const { data } = await dbService.supabase
-                    .from('whatsapp_contacts')
-                    .select('name')
-                    .eq('phone_number', userId)
-                    .eq('session_name', pageId)
-                    .maybeSingle();
-                 if (data && data.name && data.name !== 'Unknown') senderName = data.name;
+                const result = await pgClient.query(
+                    'SELECT name FROM whatsapp_contacts WHERE phone_number = $1 AND session_name = $2 LIMIT 1',
+                    [userId, pageId]
+                );
+                if (result.rows.length > 0 && result.rows[0].name && result.rows[0].name !== 'Unknown') {
+                    senderName = result.rows[0].name;
+                }
             }
         } catch (e) {
-            // Ignore error, fallback to ID
         }
     }
 

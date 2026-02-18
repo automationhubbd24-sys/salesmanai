@@ -4,34 +4,14 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { Save, ExternalLink, ChevronDown, ChevronUp, Settings2, Bot, Lock } from "lucide-react";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  Form,
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from "@/components/ui/form";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { BACKEND_URL } from "@/config";
 
 const formSchema = z.object({
   provider: z.string().min(1, "Please select a provider"),
@@ -81,25 +61,22 @@ export default function SettingsPage() {
 
   const fetchConfig = async (id: string) => {
     try {
-      const { data, error } = await supabase
-        .from('whatsapp_message_database')
-        .select('*')
-        .eq('id', parseInt(id))
-        .single();
+      const token = localStorage.getItem("auth_token");
+      const res = await fetch(`${BACKEND_URL}/whatsapp/db/${id}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
 
-      if (error) throw error;
+      if (!res.ok) throw new Error("Failed to load config");
 
-      if (data) {
-        // Explicitly cast data to any to bypass 'never' type inference
-        const row = data as any;
-        setVerified(row.verified !== false);
-        form.reset({
-          provider: row.provider || "google",
-          api_key: row.api_key || "",
-          chatmodel: row.chatmodel || "gemini-2.5-flash",
-          text_prompt: row.text_prompt || "",
-        });
-      }
+      const row: any = await res.json();
+
+      setVerified(row.verified !== false);
+      form.reset({
+        provider: row.provider || "openrouter",
+        api_key: row.api_key || "",
+        chatmodel: row.chatmodel || "gemini-2.5-flash",
+        text_prompt: row.text_prompt || "",
+      });
     } catch (error) {
       console.error("Error fetching config:", error);
       toast.error("Failed to load AI settings");
@@ -112,17 +89,26 @@ export default function SettingsPage() {
     if (!dbId) return;
     setLoading(true);
     try {
-      const { error } = await (supabase
-        .from('wp_message_database') as any)
-        .update({
-            provider: values.provider,
-            api_key: values.api_key,
-            chatmodel: values.chatmodel,
-            text_prompt: values.text_prompt
-        })
-        .eq('id', parseInt(dbId));
+      const token = localStorage.getItem("auth_token");
+      const res = await fetch(`${BACKEND_URL}/whatsapp/db/${dbId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          provider: values.provider,
+          api_key: values.api_key,
+          chatmodel: values.chatmodel,
+          text_prompt: values.text_prompt,
+        }),
+      });
 
-      if (error) throw error;
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || body.message || "Failed to save settings");
+      }
+
       toast.success("AI settings saved successfully");
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : "Unknown error";

@@ -22,13 +22,13 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
     let viewerEmail = null;
 
     const authHeader = req.headers.authorization;
-    if (authHeader) {
+    if (authHeader && authHeader.startsWith('Bearer ')) {
         const token = authHeader.replace('Bearer ', '');
-        const { data: { user }, error } = await dbService.supabase.auth.getUser(token);
-        if (!error && user) {
-            userId = user.id;
-            viewerEmail = user.email;
-        }
+        const jwt = require('jsonwebtoken');
+        const secret = process.env.JWT_SECRET;
+        const payload = jwt.verify(token, secret);
+        userId = payload.sub || baseUserId || null;
+        viewerEmail = payload.email || null;
     }
 
     if (!userId) {
@@ -38,39 +38,34 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
     let effectiveUserId = userId;
 
     if (viewerEmail) {
-        const { data: teamRows } = await dbService.supabase
-            .from('team_members')
-            .select('owner_email')
-            .eq('member_email', viewerEmail)
-            .eq('status', 'active');
+        const pgClient = require('../services/pgClient');
 
-        if (Array.isArray(teamRows) && teamRows.length === 1 && teamRows[0].owner_email) {
-            const ownerEmail = teamRows[0].owner_email;
+        const teamResult = await pgClient.query(
+            'SELECT owner_email FROM team_members WHERE member_email = $1 AND status = $2',
+            [viewerEmail, 'active']
+        );
+
+        if (teamResult.rows.length === 1 && teamResult.rows[0].owner_email) {
+            const ownerEmail = teamResult.rows[0].owner_email;
             let ownerUserId = null;
 
-            const { data: pageOwner } = await dbService.supabase
-                .from('page_access_token_message')
-                .select('user_id')
-                .eq('email', ownerEmail)
-                .not('user_id', 'is', null)
-                .limit(1)
-                .maybeSingle();
+            const pageOwnerResult = await pgClient.query(
+                'SELECT user_id FROM page_access_token_message WHERE email = $1 AND user_id IS NOT NULL LIMIT 1',
+                [ownerEmail]
+            );
 
-            if (pageOwner && pageOwner.user_id) {
-                ownerUserId = pageOwner.user_id;
+            if (pageOwnerResult.rows.length > 0 && pageOwnerResult.rows[0].user_id) {
+                ownerUserId = pageOwnerResult.rows[0].user_id;
             }
 
             if (!ownerUserId) {
-                const { data: waOwner } = await dbService.supabase
-                    .from('whatsapp_message_database')
-                    .select('user_id')
-                    .eq('email', ownerEmail)
-                    .not('user_id', 'is', null)
-                    .limit(1)
-                    .maybeSingle();
+                const waOwnerResult = await pgClient.query(
+                    'SELECT user_id FROM whatsapp_message_database WHERE email = $1 AND user_id IS NOT NULL LIMIT 1',
+                    [ownerEmail]
+                );
 
-                if (waOwner && waOwner.user_id) {
-                    ownerUserId = waOwner.user_id;
+                if (waOwnerResult.rows.length > 0 && waOwnerResult.rows[0].user_id) {
+                    ownerUserId = waOwnerResult.rows[0].user_id;
                 }
             }
 
@@ -86,28 +81,24 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
 async function resolveProductOwnerUserId(req, baseUserId, pageId) {
     if (pageId) {
         const pid = String(pageId);
-        const { data: pageRow } = await dbService.supabase
-            .from('page_access_token_message')
-            .select('user_id')
-            .eq('page_id', pid)
-            .not('user_id', 'is', null)
-            .limit(1)
-            .maybeSingle();
+        const pgClient = require('../services/pgClient');
 
-        if (pageRow && pageRow.user_id) {
-            return pageRow.user_id;
+        const pageRes = await pgClient.query(
+            'SELECT user_id FROM page_access_token_message WHERE page_id = $1 AND user_id IS NOT NULL LIMIT 1',
+            [pid]
+        );
+
+        if (pageRes.rows.length > 0 && pageRes.rows[0].user_id) {
+            return pageRes.rows[0].user_id;
         }
 
-        const { data: waRow } = await dbService.supabase
-            .from('whatsapp_message_database')
-            .select('user_id')
-            .eq('session_name', pid)
-            .not('user_id', 'is', null)
-            .limit(1)
-            .maybeSingle();
+        const waRes = await pgClient.query(
+            'SELECT user_id FROM whatsapp_message_database WHERE session_name = $1 AND user_id IS NOT NULL LIMIT 1',
+            [pid]
+        );
 
-        if (waRow && waRow.user_id) {
-            return waRow.user_id;
+        if (waRes.rows.length > 0 && waRes.rows[0].user_id) {
+            return waRes.rows[0].user_id;
         }
     }
 
@@ -212,15 +203,14 @@ exports.getProducts = async (req, res) => {
         let targetUserId = null;
 
         if (pageId) {
-            const { data: pageRow } = await dbService.supabase
-                .from('page_access_token_message')
-                .select('user_id')
-                .eq('page_id', pageId)
-                .not('user_id', 'is', null)
-                .maybeSingle();
+            const pgClient = require('../services/pgClient');
+            const pageRes = await pgClient.query(
+                'SELECT user_id FROM page_access_token_message WHERE page_id = $1 AND user_id IS NOT NULL LIMIT 1',
+                [pageId]
+            );
 
-            if (pageRow && pageRow.user_id) {
-                targetUserId = pageRow.user_id;
+            if (pageRes.rows.length > 0 && pageRes.rows[0].user_id) {
+                targetUserId = pageRes.rows[0].user_id;
             }
         }
 

@@ -1,70 +1,59 @@
 const express = require('express');
 const router = express.Router();
 const dbService = require('../services/dbService');
+const pgClient = require('../services/pgClient');
+const jwt = require('jsonwebtoken');
+const authMiddleware = require('../middleware/authMiddleware');
 
 // Get Messenger Pages (Merged with Team Permissions)
 router.get('/pages', async (req, res) => {
     try {
-        // 1. Auth Check
         const authHeader = req.headers.authorization;
         let userId = null;
         let userEmail = null;
         
-        if (authHeader) {
+        if (authHeader && authHeader.startsWith('Bearer ')) {
             const token = authHeader.replace('Bearer ', '');
-            const { data: { user }, error } = await dbService.supabase.auth.getUser(token);
-            if (user) {
-                userId = user.id;
-                userEmail = user.email;
-            }
+            const secret = process.env.JWT_SECRET;
+            const payload = jwt.verify(token, secret);
+            userId = payload.sub;
+            userEmail = payload.email;
         }
 
         if (!userId) {
             return res.status(401).json({ error: 'Unauthorized' });
         }
 
-        // 2. Fetch User's Own Pages
-        // We use Service Role via dbService to bypass RLS, but we filter by ownership
-        const { data: myPages, error: myError } = await dbService.supabase
-            .from('page_access_token_message')
-            .select('*')
-            .eq('email', userEmail); // Assuming email is the owner identifier
-
-        if (myError) throw myError;
+        const { rows: myPages } = await pgClient.query(
+            'SELECT * FROM page_access_token_message WHERE email = $1',
+            [userEmail]
+        );
 
         // 3. Fetch Shared Pages (Team Members)
         let sharedPageIds = [];
         if (userEmail) {
-            const { data: teamData, error: teamError } = await dbService.supabase
-                .from('team_members')
-                .select('permissions, owner_email')
-                .eq('member_email', userEmail)
-                .eq('status', 'active'); // Use 'active' as per schema (was 'accepted' in WAHA code, but schema says 'active')
-            
-            if (!teamError && teamData) {
-                teamData.forEach(row => {
-                    // Check permissions.fb_pages
-                    if (row.permissions && row.permissions.fb_pages) {
-                        const pages = row.permissions.fb_pages;
-                        if (Array.isArray(pages)) {
-                            // Convert all to string to be safe
-                            sharedPageIds.push(...pages.map(id => String(id)));
-                        }
+            const { rows: teamData } = await pgClient.query(
+                'SELECT permissions, owner_email FROM team_members WHERE member_email = $1 AND status = $2',
+                [userEmail, 'active']
+            );
+
+            teamData.forEach(row => {
+                if (row.permissions && row.permissions.fb_pages) {
+                    const pages = row.permissions.fb_pages;
+                    if (Array.isArray(pages)) {
+                        sharedPageIds.push(...pages.map(id => String(id)));
                     }
-                });
-            }
+                }
+            });
         }
 
         let sharedPages = [];
         if (sharedPageIds.length > 0) {
-            const { data: sharedData, error: sharedError } = await dbService.supabase
-                .from('page_access_token_message')
-                .select('*')
-                .in('page_id', sharedPageIds);
-            
-            if (!sharedError && sharedData) {
-                sharedPages = sharedData;
-            }
+            const { rows: sharedData } = await pgClient.query(
+                'SELECT * FROM page_access_token_message WHERE page_id = ANY($1::text[])',
+                [sharedPageIds]
+            );
+            sharedPages = sharedData;
         }
 
         // 4. Combine
@@ -73,19 +62,15 @@ router.get('/pages', async (req, res) => {
         // Deduplicate by page_id
         const uniquePages = Array.from(new Map(allPages.map(item => [item.page_id, item])).values());
 
-        // 5. Fetch Additional DB Info (fb_message_database)
         const allPageIds = uniquePages.map(p => p.page_id);
         let dbConfigs = [];
         
         if (allPageIds.length > 0) {
-            const { data: dbData, error: dbError } = await dbService.supabase
-                .from('fb_message_database')
-                .select('*')
-                .in('page_id', allPageIds);
-            
-            if (!dbError && dbData) {
-                dbConfigs = dbData;
-            }
+            const { rows: dbData } = await pgClient.query(
+                'SELECT * FROM fb_message_database WHERE page_id = ANY($1::text[])',
+                [allPageIds]
+            );
+            dbConfigs = dbData;
         }
 
         // 6. Merge and Enhance
@@ -116,40 +101,35 @@ router.get('/config/:id', async (req, res) => {
         const { id } = req.params;
         const authHeader = req.headers.authorization;
 
-        if (!authHeader) {
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
             return res.status(401).json({ error: 'Unauthorized' });
         }
 
         const token = authHeader.replace('Bearer ', '');
-        const { data: { user }, error } = await dbService.supabase.auth.getUser(token);
+        const secret = process.env.JWT_SECRET;
+        const payload = jwt.verify(token, secret);
 
-        if (error || !user) {
-            return res.status(401).json({ error: 'Invalid token' });
-        }
+        const userEmail = payload.email;
 
-        const userEmail = user.email;
+        const configResult = await pgClient.query(
+            'SELECT * FROM fb_message_database WHERE id = $1',
+            [parseInt(id, 10)]
+        );
 
-        const { data: configRow, error: cfgError } = await dbService.supabase
-            .from('fb_message_database')
-            .select('*')
-            .eq('id', parseInt(id, 10))
-            .single();
-
-        if (cfgError || !configRow) {
+        if (configResult.rowCount === 0) {
             return res.status(404).json({ error: 'Config not found' });
         }
 
+        const configRow = configResult.rows[0];
+
         const pageId = configRow.page_id;
 
-        const { data: pageRow, error: pageError } = await dbService.supabase
-            .from('page_access_token_message')
-            .select('page_id, email')
-            .eq('page_id', pageId)
-            .maybeSingle();
+        const pageResult = await pgClient.query(
+            'SELECT page_id, email FROM page_access_token_message WHERE page_id = $1',
+            [pageId]
+        );
 
-        if (pageError) {
-            return res.status(500).json({ error: pageError.message });
-        }
+        const pageRow = pageResult.rows[0] || null;
 
         let allowed = false;
 
@@ -158,21 +138,18 @@ router.get('/config/:id', async (req, res) => {
         }
 
         if (!allowed && userEmail) {
-            const { data: teamData, error: teamError } = await dbService.supabase
-                .from('team_members')
-                .select('permissions')
-                .eq('member_email', userEmail)
-                .eq('status', 'active');
+            const { rows: teamData } = await pgClient.query(
+                'SELECT permissions FROM team_members WHERE member_email = $1 AND status = $2',
+                [userEmail, 'active']
+            );
 
-            if (!teamError && teamData) {
-                for (const t of teamData) {
-                    const pages = t.permissions && Array.isArray(t.permissions.fb_pages)
-                        ? t.permissions.fb_pages
-                        : [];
-                    if (pages.map(String).includes(String(pageId))) {
-                        allowed = true;
-                        break;
-                    }
+            for (const t of teamData) {
+                const pages = t.permissions && Array.isArray(t.permissions.fb_pages)
+                    ? t.permissions.fb_pages
+                    : [];
+                if (pages.map(String).includes(String(pageId))) {
+                    allowed = true;
+                    break;
                 }
             }
         }
@@ -194,40 +171,35 @@ router.put('/config/:id', async (req, res) => {
         const { id } = req.params;
         const authHeader = req.headers.authorization;
 
-        if (!authHeader) {
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
             return res.status(401).json({ error: 'Unauthorized' });
         }
 
         const token = authHeader.replace('Bearer ', '');
-        const { data: { user }, error } = await dbService.supabase.auth.getUser(token);
+        const secret = process.env.JWT_SECRET;
+        const payload = jwt.verify(token, secret);
 
-        if (error || !user) {
-            return res.status(401).json({ error: 'Invalid token' });
-        }
+        const userEmail = payload.email;
 
-        const userEmail = user.email;
+        const configResult = await pgClient.query(
+            'SELECT * FROM fb_message_database WHERE id = $1',
+            [parseInt(id, 10)]
+        );
 
-        const { data: configRow, error: cfgError } = await dbService.supabase
-            .from('fb_message_database')
-            .select('*')
-            .eq('id', parseInt(id, 10))
-            .single();
-
-        if (cfgError || !configRow) {
+        if (configResult.rowCount === 0) {
             return res.status(404).json({ error: 'Config not found' });
         }
 
+        const configRow = configResult.rows[0];
+
         const pageId = configRow.page_id;
 
-        const { data: pageRow, error: pageError } = await dbService.supabase
-            .from('page_access_token_message')
-            .select('page_id, email')
-            .eq('page_id', pageId)
-            .maybeSingle();
+        const pageResult = await pgClient.query(
+            'SELECT page_id, email FROM page_access_token_message WHERE page_id = $1',
+            [pageId]
+        );
 
-        if (pageError) {
-            return res.status(500).json({ error: pageError.message });
-        }
+        const pageRow = pageResult.rows[0] || null;
 
         let allowed = false;
 
@@ -236,21 +208,18 @@ router.put('/config/:id', async (req, res) => {
         }
 
         if (!allowed && userEmail) {
-            const { data: teamData, error: teamError } = await dbService.supabase
-                .from('team_members')
-                .select('permissions')
-                .eq('member_email', userEmail)
-                .eq('status', 'active');
+            const { rows: teamData } = await pgClient.query(
+                'SELECT permissions FROM team_members WHERE member_email = $1 AND status = $2',
+                [userEmail, 'active']
+            );
 
-            if (!teamError && teamData) {
-                for (const t of teamData) {
-                    const pages = t.permissions && Array.isArray(t.permissions.fb_pages)
-                        ? t.permissions.fb_pages
-                        : [];
-                    if (pages.map(String).includes(String(pageId))) {
-                        allowed = true;
-                        break;
-                    }
+            for (const t of teamData) {
+                const pages = t.permissions && Array.isArray(t.permissions.fb_pages)
+                    ? t.permissions.fb_pages
+                    : [];
+                if (pages.map(String).includes(String(pageId))) {
+                    allowed = true;
+                    break;
                 }
             }
         }
@@ -283,18 +252,20 @@ router.put('/config/:id', async (req, res) => {
             }
         }
 
-        const { data: updated, error: updateError } = await dbService.supabase
-            .from('fb_message_database')
-            .update(updates)
-            .eq('id', parseInt(id, 10))
-            .select()
-            .single();
-
-        if (updateError) {
-            return res.status(500).json({ error: updateError.message });
+        const keys = Object.keys(updates);
+        if (keys.length === 0) {
+            return res.status(400).json({ error: 'No valid fields provided for update' });
         }
 
-        res.json(updated);
+        const setClauses = keys.map((key, index) => `${key} = $${index + 2}`);
+        const values = [parseInt(id, 10), ...keys.map(k => updates[k])];
+
+        const updateResult = await pgClient.query(
+            `UPDATE fb_message_database SET ${setClauses.join(', ')} WHERE id = $1 RETURNING *`,
+            values
+        );
+
+        res.json(updateResult.rows[0]);
     } catch (error) {
         console.error("Error updating Messenger config:", error);
         res.status(500).json({ error: error.message });
@@ -306,28 +277,22 @@ router.delete('/page/:pageId', async (req, res) => {
         const { pageId } = req.params;
         const authHeader = req.headers.authorization;
 
-        if (!authHeader) {
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
             return res.status(401).json({ error: 'Unauthorized' });
         }
 
         const token = authHeader.replace('Bearer ', '');
-        const { data: { user }, error } = await dbService.supabase.auth.getUser(token);
+        const secret = process.env.JWT_SECRET;
+        const payload = jwt.verify(token, secret);
 
-        if (error || !user) {
-            return res.status(401).json({ error: 'Invalid token' });
-        }
+        const userEmail = payload.email;
 
-        const userEmail = user.email;
+        const pageResult = await pgClient.query(
+            'SELECT page_id, email FROM page_access_token_message WHERE page_id = $1',
+            [pageId]
+        );
 
-        const { data: pageRow, error: pageError } = await dbService.supabase
-            .from('page_access_token_message')
-            .select('page_id, email')
-            .eq('page_id', pageId)
-            .maybeSingle();
-
-        if (pageError) {
-            return res.status(500).json({ error: pageError.message });
-        }
+        const pageRow = pageResult.rows[0] || null;
 
         if (!pageRow) {
             return res.status(404).json({ error: 'Page not found' });
@@ -347,3 +312,114 @@ router.delete('/page/:pageId', async (req, res) => {
 });
 
 module.exports = router;
+
+router.get('/orders', authMiddleware, async (req, res) => {
+    try {
+        const pageId = String(req.query.page_id || '').trim();
+        const from = req.query.from ? Number(req.query.from) : null;
+        const to = req.query.to ? Number(req.query.to) : null;
+
+        if (!pageId) {
+            return res.status(400).json({ error: 'page_id is required' });
+        }
+
+        const values = [pageId];
+        const conditions = ['page_id = $1'];
+        let idx = 2;
+
+        if (Number.isFinite(from)) {
+            conditions.push(`created_at >= to_timestamp($${idx} / 1000.0)`);
+            values.push(from);
+            idx += 1;
+        }
+        if (Number.isFinite(to)) {
+            conditions.push(`created_at <= to_timestamp($${idx} / 1000.0)`);
+            values.push(to);
+        }
+
+        const where = conditions.join(' AND ');
+        const queryText = `
+            SELECT id, product_name, number, location, product_quantity, price, created_at
+            FROM fb_order_tracking
+            WHERE ${where}
+            ORDER BY created_at DESC
+        `;
+
+        const result = await pgClient.query(queryText, values);
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Messenger orders error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.get('/chats', authMiddleware, async (req, res) => {
+    try {
+        const pageId = String(req.query.page_id || '').trim();
+        const from = req.query.from ? String(req.query.from) : null;
+        const to = req.query.to ? String(req.query.to) : null;
+
+        if (!pageId) {
+            return res.status(400).json({ error: 'page_id is required' });
+        }
+
+        if (!from || !to) {
+            return res.status(400).json({ error: 'from and to are required ISO date strings' });
+        }
+
+        const result = await pgClient.query(
+            `
+            SELECT id, page_id, created_at, reply_by, token, ai_model, message, sender
+            FROM fb_chats
+            WHERE page_id = $1
+              AND created_at >= $2::timestamptz
+              AND created_at <= $3::timestamptz
+            ORDER BY created_at DESC
+            `,
+            [pageId, from, to]
+        );
+
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Messenger chats error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.get('/stats', authMiddleware, async (req, res) => {
+    try {
+        const pageId = String(req.query.page_id || '').trim();
+
+        if (!pageId) {
+            return res.status(400).json({ error: 'page_id is required' });
+        }
+
+        const replyResult = await pgClient.query(
+            `
+            SELECT COUNT(*)::int AS count
+            FROM fb_chats
+            WHERE page_id = $1
+              AND reply_by = 'bot'
+            `,
+            [pageId]
+        );
+
+        const tokenResult = await pgClient.query(
+            `
+            SELECT COALESCE(SUM(token), 0)::int AS total_tokens
+            FROM fb_chats
+            WHERE page_id = $1
+              AND token > 0
+            `,
+            [pageId]
+        );
+
+        res.json({
+            allTimeBotReplies: replyResult.rows[0]?.count || 0,
+            allTimeTokenCount: tokenResult.rows[0]?.total_tokens || 0,
+        });
+    } catch (err) {
+        console.error('Messenger stats error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});

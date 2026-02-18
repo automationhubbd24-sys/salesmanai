@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -95,20 +94,16 @@ export default function MessengerIntegrationPage() {
     // --- Effects ---
 
     useEffect(() => {
-        // Get user email
-        const getUser = async () => {
-            const { data: { user } } = await supabase.auth.getUser();
-            if (user?.email) {
-                setUserId(user.id);
-                // Determine effective email based on viewMode
-                if (viewMode === 'team' && isTeamMember && activeTeam) {
-                    setUserEmail(activeTeam.owner_email);
-                } else {
-                    setUserEmail(user.email);
-                }
+        const email = localStorage.getItem("auth_email");
+        const id = localStorage.getItem("auth_user_id");
+        if (email && id) {
+            setUserId(id);
+            if (viewMode === 'team' && isTeamMember && activeTeam) {
+                setUserEmail(activeTeam.owner_email);
+            } else {
+                setUserEmail(email);
             }
-        };
-        getUser();
+        }
 
         // Initialize Facebook SDK
         window.fbAsyncInit = function() {
@@ -135,7 +130,6 @@ export default function MessengerIntegrationPage() {
 
     }, []);
 
-    // Fetch pages when userEmail is available
     useEffect(() => {
         if (userEmail) {
             fetchPages();
@@ -292,14 +286,13 @@ export default function MessengerIntegrationPage() {
         });
     };
 
-    const savePagesToSupabase = async (facebookPages: FacebookPage[]) => {
+    const savePagesToBackend = async (facebookPages: FacebookPage[]) => {
         if (!userEmail) {
             toast.error("User email not found. Please reload.");
             setConnecting(false);
             return;
         }
 
-        // Check if primary email is Gmail (User Request)
         const isGmail = userEmail.toLowerCase().endsWith('@gmail.com');
         if (!isGmail) {
             toast.error("Integration is restricted to Gmail accounts only for security.");
@@ -307,24 +300,17 @@ export default function MessengerIntegrationPage() {
             return;
         }
 
+        const token = localStorage.getItem("auth_token");
+        if (!token) {
+            toast.error("Please login again");
+            setConnecting(false);
+            return;
+        }
+
         let successCount = 0;
         for (const page of facebookPages) {
             try {
-                // 1. Check if configuration already exists to get/generate ID
-                const { data: existingConfig } = await supabase
-                    .from('fb_message_database')
-                    .select('id')
-                    .eq('page_id', page.id)
-                    .maybeSingle();
-
-                let dbId: number;
-                
-                if (existingConfig) {
-                    dbId = (existingConfig as any).id;
-                } else {
-                    // Generate random 6-digit code
-                    dbId = Math.floor(100000 + Math.random() * 900000);
-                }
+                let dbId: number | null = null;
 
                 // 1.5 Subscribe App to Page (Critical for Webhooks/n8n)
                 try {
@@ -399,55 +385,38 @@ export default function MessengerIntegrationPage() {
                     });
                 }
 
-                // 2. Upsert into page_access_token_message
-                const { error: tokenError } = await supabase
-                    .from('page_access_token_message')
-                    .upsert({
+                const res = await fetch(`${BACKEND_URL}/messenger/pages/manual`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${token}`,
+                    },
+                    body: JSON.stringify({
                         page_id: page.id,
                         name: page.name,
                         page_access_token: page.access_token,
-                        subscription_status: 'active', // ALWAYS ACTIVE (Free Integration)
-                        subscription_plan: 'unlimited_free', // No more plans
-                        message_credit: 0, // Usage requires credits
                         email: userEmail,
-                        user_id: userId, // Ensure user_id is set to UUID for Centralized Credit Check
-                        secret_key: String(dbId),
-                        found_id: String(dbId)
-                    } as any, { onConflict: 'page_id' });
+                        user_id: userId,
+                    }),
+                });
 
-                if (tokenError) {
-                    console.error(`Error saving page ${page.name}:`, tokenError);
-                    toast.error(`DB Error (${page.name}): ${tokenError.message}`);
+                const body = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    const msg = body.error || "Failed to save page";
+                    console.error(`Error saving page ${page.name}:`, msg);
+                    toast.error(`DB Error (${page.name}): ${msg}`);
                     logFrontendError({
-                        message: `Supabase Upsert Error: ${tokenError.message}`,
-                        context: 'MessengerIntegrationPage:savePagesToSupabase:Upsert',
+                        message: `Backend Save Error: ${msg}`,
+                        context: 'MessengerIntegrationPage:savePagesToBackend:Upsert',
                         pageName: page.name,
                         pageId: page.id,
-                        details: tokenError
+                        details: body,
                     });
                     continue;
                 }
 
-                // 3. Create entry in fb_message_database if it didn't exist
-                if (!existingConfig) {
-                    const { error: configError } = await supabase
-                        .from('fb_message_database')
-                        .insert({
-                            id: dbId,
-                            page_id: page.id,
-                            reply_message: false,
-                            swipe_reply: false,
-                            image_detection: false,
-                            image_send: false,
-                            template: false,
-                            order_tracking: false
-                        } as any);
-                    
-                    if (configError) {
-                         console.error(`Error creating config for ${page.name}:`, configError);
-                         toast.error(`Config Error (${page.name}): ${configError.message}`);
-                         // We don't continue here, as the main token is saved, but we warn
-                    }
+                if (body && typeof body.id === "number") {
+                    dbId = body.id;
                 }
 
                 successCount++;
@@ -544,7 +513,7 @@ export default function MessengerIntegrationPage() {
             });
 
             console.log('Pages fetched:', pageResponse);
-            await savePagesToSupabase(pageResponse.data);
+            await savePagesToBackend(pageResponse.data);
 
         } catch (error: any) {
             console.error("Facebook Connect Error:", error);
@@ -588,7 +557,7 @@ export default function MessengerIntegrationPage() {
                 access_token: directAccessToken
             };
 
-            await savePagesToSupabase([pageObj]);
+            await savePagesToBackend([pageObj]);
             
             setDirectPageName("");
             setDirectPageId("");
@@ -618,23 +587,22 @@ export default function MessengerIntegrationPage() {
                 await unsubscribeAppFromPage(page.page_id, page.page_access_token);
             }
 
-            // 2. Remove from fb_message_database (Config) first to prevent FK issues or lingering config
-            const { error: dbError } = await supabase
-                .from('fb_message_database')
-                .delete()
-                .eq('page_id', page.page_id);
-            
-            if (dbError) {
-                console.warn("Error deleting from fb_message_database (might not exist):", dbError);
+            const token = localStorage.getItem("auth_token");
+            if (!token) {
+                throw new Error("Please login again");
             }
 
-            // 3. Remove from page_access_token_message (Tokens)
-            const { error } = await supabase
-                .from('page_access_token_message')
-                .delete()
-                .eq('page_id', page.page_id);
+            const res = await fetch(`${BACKEND_URL}/messenger/pages/${page.page_id}`, {
+                method: "DELETE",
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                },
+            });
 
-            if (error) throw error;
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}));
+                throw new Error(body.error || "Failed to remove from database");
+            }
 
             // 4. Clear from local storage if active
             const activeId = localStorage.getItem("active_fb_page_id");
@@ -675,24 +643,15 @@ export default function MessengerIntegrationPage() {
         // }
 
         try {
-            // Find linked database entry
-            const { data, error } = await supabase
-                .from('fb_message_database')
-                .select('id')
-                .eq('page_id', page.page_id)
-                .maybeSingle();
-
-            if (error) throw error;
-
-            if (data) {
-                localStorage.setItem("active_fb_db_id", String((data as any).id));
-                localStorage.setItem("active_fb_page_id", page.page_id);
-                toast.success(`Connected to ${page.name}`);
-                navigate("/dashboard/messenger/control");
-            } else {
-                // Option to create if missing? For now just warn.
+            if (!page.found_id) {
                 toast.error("No configuration found for this page. Please contact admin.");
+                return;
             }
+
+            localStorage.setItem("active_fb_db_id", String(page.found_id));
+            localStorage.setItem("active_fb_page_id", page.page_id);
+            toast.success(`Connected to ${page.name}`);
+            navigate("/dashboard/messenger/control");
         } catch (error) {
             console.error("Error connecting to page:", error);
             toast.error("Failed to connect to page database");

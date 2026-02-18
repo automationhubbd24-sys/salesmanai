@@ -5,7 +5,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { 
   Loader2, 
@@ -136,49 +135,44 @@ export default function IntegrationPage() {
   ];
 
   const fetchBalance = React.useCallback(async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      
-      const { data, error } = await supabase
-        .from('user_configs')
-        .select('balance')
-        .eq('user_id', user.id)
-        .maybeSingle();
-      
-      if (error) {
-          console.error("Error fetching balance:", error);
-      }
-
-      if (data) {
-          setBalance((data as any).balance);
-      }
   }, []);
 
   const fetchSessions = React.useCallback(async () => {
-     setLoading(true);
-     try {
-       const { data: { user } } = await supabase.auth.getUser();
-       if (!user) return;
-       
-       // Relaxed query: match user_id OR user_email (if user_id is missing/null in DB)
-       const { data, error } = await supabase
-         .from('whatsapp_message_database')
-         .select('*')
-         .eq('user_id', user.id)
-         .order('created_at', { ascending: false });
+    setLoading(true);
+    try {
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        setSessions([]);
+        return;
+      }
 
-       if (error) throw error;
-       
-       console.log(`[IntegrationPage] Fetched ${data?.length} sessions from DB.`);
-       if (data) {
-           setSessions(data as WhatsAppSession[]);
-       }
-     } catch (error: unknown) {
-       console.error('Error fetching sessions:', error);
-       toast.error('Failed to load sessions');
-     } finally {
-       setLoading(false);
-     }
+      const res = await fetch(`${BACKEND_URL}/whatsapp/sessions`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to load sessions");
+      }
+
+      const data = await res.json();
+      const items = Array.isArray(data) ? data : [];
+      const mapped: WhatsAppSession[] = items.map((s: any) => ({
+        id: String(s.wp_db_id ?? s.wp_id ?? s.id ?? s.name),
+        session_name: String(s.session_name ?? s.name),
+        status: String(s.status || "UNKNOWN"),
+        qr_code: s.qr_code,
+        user_email: s.user_email,
+        user_id: s.user_id,
+        updated_at: s.updated_at,
+        session_id: s.session_id
+      }));
+      setSessions(mapped);
+    } catch (error: unknown) {
+      console.error("Error fetching sessions:", error);
+      toast.error("Failed to load sessions");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -247,22 +241,10 @@ export default function IntegrationPage() {
   const createSession = async () => {
     setCreating(true);
     try {
-      let { data: { session } } = await supabase.auth.getSession();
-      
-      // Strict check for session validity
-      if (!session || !session.user || !session.access_token) {
-        // Try to refresh session
-        const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
-        if (refreshError || !refreshData.session) {
-             throw new Error("User session expired. Please logout and login again.");
-        }
-        session = refreshData.session;
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        throw new Error("Please login again to create a session.");
       }
-      
-      const { data: { user: authUser } } = await supabase.auth.getUser();
-      const user = authUser || session.user; // Fallback to session user if getUser fails
-
-      if (!user?.email) throw new Error("User email not found. Please contact support.");
 
       // Generate random suffix for unique session name (6 chars)
       const suffix = Math.random().toString(36).substring(2, 8);
@@ -270,9 +252,7 @@ export default function IntegrationPage() {
 
       const payload = { 
         sessionName: finalSessionName, 
-        userEmail: user.email, 
-        userId: user.id,
-        planDays: selectedPlan // Send plan days to backend
+        planDays: selectedPlan
       };
       console.log("Sending payload to /whatsapp/session/create:", payload);
 
@@ -280,7 +260,7 @@ export default function IntegrationPage() {
         method: 'POST',
         headers: { 
             'Content-Type': 'application/json',
-            'Authorization': session?.access_token ? `Bearer ${session.access_token}` : ''
+            'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify(payload)
       });
@@ -293,16 +273,12 @@ export default function IntegrationPage() {
       
       // Optimistically add to list
       const newSession: WhatsAppSession = {
-          id: data.id || data.session_name,
-          session_name: data.session_name,
-          status: 'created',
-          qr_code: data.qr_code,
-          user_email: user.email,
-          user_id: user.id
+        id: data.id || data.session_name,
+        session_name: data.session_name,
+        status: 'created',
+        qr_code: data.qr_code
       };
       setSessions(prev => [newSession, ...prev]);
-
-      // Immediately show QR from response if available, or show loader
       setQrSession(newSession);
 
       fetchSessions();
@@ -421,16 +397,9 @@ export default function IntegrationPage() {
   };
 
   const performAction = async (sessionName: string, action: 'start' | 'stop' | 'delete' | 'restart') => {
-      let { data: { session } } = await supabase.auth.getSession();
-      
-      // Strict check for session validity
-      if (!session || !session.user || !session.access_token) {
-        // Try to refresh session
-        const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
-        if (refreshError || !refreshData.session) {
-             throw new Error("User session expired. Please logout and login again.");
-        }
-        session = refreshData.session;
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        throw new Error("Please login again to manage sessions.");
       }
 
       if (action === 'delete') {
@@ -442,7 +411,7 @@ export default function IntegrationPage() {
           method: 'POST',
           headers: { 
               'Content-Type': 'application/json',
-              'Authorization': session?.access_token ? `Bearer ${session.access_token}` : ''
+              'Authorization': `Bearer ${token}`
           },
           body: JSON.stringify({ sessionName })
         });
@@ -463,7 +432,7 @@ export default function IntegrationPage() {
         method: 'POST',
         headers: { 
             'Content-Type': 'application/json',
-            'Authorization': session?.access_token ? `Bearer ${session.access_token}` : ''
+            'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ sessionName })
       });
