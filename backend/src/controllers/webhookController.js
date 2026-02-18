@@ -1201,6 +1201,14 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         await dbService.saveChatMessage(sessionId, 'user', finalUserMessage);
         // Save Assistant Reply (Text only)
         await dbService.saveChatMessage(sessionId, 'assistant', replyText);
+        // Save Image Memory (system note) so AI can see previously sent product images
+        if (aiResponse.images && Array.isArray(aiResponse.images) && aiResponse.images.length > 0) {
+            const summary = aiResponse.images
+                .map(img => `${img.title || 'Image'} | ${img.url}`)
+                .join(' ; ');
+            const memoryNote = `[IMAGE MEMORY] Sent product images in this reply: ${summary}`;
+            await dbService.saveChatMessage(sessionId, 'system', memoryNote);
+        }
 
         await dbService.saveLead({
             page_id: pageId,

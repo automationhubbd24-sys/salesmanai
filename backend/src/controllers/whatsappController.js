@@ -1834,6 +1834,24 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
             token_usage: aiResponse.token_usage // Save Total Token Usage (Vision + Chat)
         });
 
+        // Save Image Memory (system note) so AI can see previously sent product images for this chat
+        if (aiResponse.images && Array.isArray(aiResponse.images) && aiResponse.images.length > 0) {
+            const summary = aiResponse.images
+                .map(img => `${img.title || 'Image'} | ${img.url}`)
+                .join(' ; ');
+            const memoryNote = `[IMAGE MEMORY] Sent product images in this reply: ${summary}`;
+            await dbService.saveWhatsAppChat({
+                session_name: sessionName,
+                sender_id: sessionName,
+                recipient_id: senderId,
+                message_id: `imgmem_${Date.now()}`,
+                text: memoryNote,
+                timestamp: Date.now(),
+                status: 'image_memory',
+                reply_by: 'system'
+            });
+        }
+
     } catch (err) {
         console.error(`[WA] Error processing buffered messages: ${err.message}`);
         // Log System Error
