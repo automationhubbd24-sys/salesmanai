@@ -354,12 +354,20 @@ export default function MessengerSettingsPage() {
         const { data: { session } } = await supabase.auth.getSession();
         const token = session?.access_token;
 
-        const currentText = textPromptRef.current?.value || "";
-        const currentImage = imagePromptRef.current?.value || "";
+        let body: any = {};
+        let processedPrompt = "";
+        let currentImage = "";
 
-        const processedPrompt = boldProductsInPrompt(currentText);
-        if (textPromptRef.current) {
-          textPromptRef.current.value = processedPrompt;
+        if (activeTab === "text") {
+          const currentText = textPromptRef.current?.value || "";
+          processedPrompt = boldProductsInPrompt(currentText);
+          if (textPromptRef.current) {
+            textPromptRef.current.value = processedPrompt;
+          }
+          body.text_prompt = processedPrompt;
+        } else {
+          currentImage = imagePromptRef.current?.value || "";
+          body.image_prompt = currentImage;
         }
 
         const res = await fetch(`${BACKEND_URL}/messenger/config/${dbId}`, {
@@ -368,10 +376,7 @@ export default function MessengerSettingsPage() {
                 'Content-Type': 'application/json',
                 ...(token ? { Authorization: `Bearer ${token}` } : {})
             },
-            body: JSON.stringify({ 
-                text_prompt: processedPrompt,
-                image_prompt: currentImage
-            })
+            body: JSON.stringify(body)
         });
 
         if (!res.ok) {
@@ -380,20 +385,22 @@ export default function MessengerSettingsPage() {
             throw new Error(message);
         }
         
-        form.setValue('text_prompt', processedPrompt);
-        setInitialTextPrompt(processedPrompt);
-        setInitialImagePrompt(currentImage);
-        
-        toast.success("System & Image prompts updated successfully!");
-        
-        // Auto-Trigger RAG Ingestion in Background
-        if (pageId) {
+        if (activeTab === "text") {
+          form.setValue('text_prompt', processedPrompt);
+          setInitialTextPrompt(processedPrompt);
+          toast.success("System prompt updated successfully!");
+
+          if (pageId) {
             fetch(`${BACKEND_URL}/api/ai/ingest`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ pageId: pageId, promptText: processedPrompt })
             }).then(() => console.log("RAG Ingestion Triggered"))
               .catch(err => console.error("RAG Ingestion Failed", err));
+          }
+        } else {
+          setInitialImagePrompt(currentImage);
+          toast.success("Image prompt updated successfully!");
         }
 
         setIsPromptOpen(false);
