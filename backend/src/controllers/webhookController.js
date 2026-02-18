@@ -116,40 +116,10 @@ const handleWebhook = async (req, res) => {
                 const isConfigured = (isActuallyActive && validStatuses.includes(isActuallyActive.subscription_status));
 
                 if (isConfigured && (hasCredit || hasOwnKey)) {
-                    allowedPagesCache.add(pageId); // Add to cache
+                    allowedPagesCache.add(pageId); 
                 } else {
                     console.warn(`[Gatekeeper] BLOCKED unauthorized event for Page ID: ${pageId}. Status: ${isActuallyActive?.subscription_status}, Credit: ${isActuallyActive?.message_credit}, OwnAPI: ${hasOwnKey}`);
-
-                    // --- LOG BLOCK EVENT FOR FRONTEND VISIBILITY ---
-                    try {
-                        if (body.entry) {
-                    for (const entry of body.entry) {
-                        if (entry.messaging) {
-                            for (const msg of entry.messaging) {
-                                if (msg.sender && msg.sender.id) {
-                                    const txt = msg.message?.text || '[Media/Action]';
-                                    // Log to DB so it appears in conversation
-                                    await dbService.saveFbChat({
-                                        page_id: pageId,
-                                        sender_id: msg.sender.id,
-                                        recipient_id: pageId,
-                                        message_id: msg.message?.mid || `blk_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-                                        text: `[BLOCKED] ${txt} (Reason: ${isActuallyActive?.subscription_status || 'Unknown'})`,
-                                        timestamp: new Date(),
-                                        status: 'blocked',
-                                        reply_by: 'user'
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-                    } catch (e) {
-                        console.error('[Gatekeeper] Error logging block:', e);
-                    }
-                    // -----------------------------------------------
-
-                    return res.status(200).send('EVENT_RECEIVED'); // Return 200 to satisfy FB but drop packet
+                    return res.status(200).send('EVENT_RECEIVED'); 
                  }
              }
         }
@@ -684,7 +654,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 }
             } else {
                 // It's a Text Message
-                if (!pagePrompts.reply_message) {
+                if (pagePrompts && pagePrompts.reply_message === false) {
                     const logMsg = `[AI] Reply Message disabled (reply_message=false) for page ${pageId}. Ignoring.`;
                     console.log(logMsg);
                     logToFile(logMsg);

@@ -1,7 +1,7 @@
 const axios = require('axios');
 
 async function run() {
-    const WEBHOOK_URL = process.env.WEBHOOK_URL || 'http://localhost:3001/webhook';
+    const WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://webhook.salesmanchatbot.online/';
     const PAGE_ID = process.env.TEST_PAGE_ID || 'TEST_PAGE_ID';
     const SENDER_ID = process.env.TEST_SENDER_ID || 'TEST_SENDER_ID';
 
@@ -43,4 +43,3 @@ async function run() {
 }
 
 run();
-
