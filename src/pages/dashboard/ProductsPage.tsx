@@ -61,7 +61,8 @@ export default function ProductsPage() {
     const [productCurrency, setProductCurrency] = useState("USD");
     const [isCustomCurrency, setIsCustomCurrency] = useState(false);
     const [productStock, setProductStock] = useState("0");
-    const [productKeywords, setProductKeywords] = useState("");
+    const [productKeywords, setProductKeywords] = useState<string[]>([]);
+    const [keywordInput, setKeywordInput] = useState("");
     const [productImage, setProductImage] = useState<File | null>(null);
     const [imagePreview, setImagePreview] = useState<string | null>(null);
     const [productImages, setProductImages] = useState<File[]>([]);
@@ -251,11 +252,74 @@ export default function ProductsPage() {
         setImagePreview(newPreviews[0] || null);
     };
 
+    const normalizeKeywords = (value: string) => {
+        return value
+            .split(/[,\n]/)
+            .map(k => k.trim())
+            .filter(k => k.length > 0);
+    };
+
+    const addKeywordFromInput = () => {
+        const raw = keywordInput.replace(/\s+/g, " ").trim();
+        if (!raw) {
+            setKeywordInput("");
+            return;
+        }
+        const parts = normalizeKeywords(raw);
+        if (parts.length === 0) {
+            setKeywordInput("");
+            return;
+        }
+        const lowerExisting = new Set(productKeywords.map(k => k.toLowerCase()));
+        const merged = [...productKeywords];
+        parts.forEach(p => {
+            if (!lowerExisting.has(p.toLowerCase())) {
+                merged.push(p);
+                lowerExisting.add(p.toLowerCase());
+            }
+        });
+        setProductKeywords(merged);
+        setKeywordInput("");
+    };
+
+    const removeKeywordAt = (index: number) => {
+        const next = [...productKeywords];
+        next.splice(index, 1);
+        setProductKeywords(next);
+    };
+
+    const handleKeywordInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const value = e.target.value;
+        if (value.endsWith("  ")) {
+            setKeywordInput(value);
+            addKeywordFromInput();
+            return;
+        }
+        if (value.includes("\n")) {
+            setKeywordInput(value.replace(/\n/g, ""));
+            addKeywordFromInput();
+            return;
+        }
+        setKeywordInput(value);
+    };
+
+    const handleKeywordKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            addKeywordFromInput();
+        }
+        if (e.key === "," || e.key === "Tab") {
+            e.preventDefault();
+            addKeywordFromInput();
+        }
+    };
+
     const handleEdit = (product: Product) => {
         setEditProductId(product.id);
         setProductName(product.name);
         setProductDesc(product.description || "");
-        setProductKeywords(product.keywords || "");
+        setProductKeywords(product.keywords ? normalizeKeywords(product.keywords) : []);
+        setKeywordInput("");
         setProductPrice(product.price?.toString() || "0");
         
         const standardCurrencies = ["USD", "BDT", "EUR", "GBP", "INR", "PKR", "CAD", "AUD", "AED", "SAR", "MYR", "SGD"];
@@ -297,7 +361,7 @@ export default function ProductsPage() {
             formData.append("user_id", userId);
             formData.append("name", productName);
             formData.append("description", productDesc);
-            formData.append("keywords", productKeywords);
+            formData.append("keywords", productKeywords.join(", "));
             formData.append("price", productPrice);
             formData.append("currency", productCurrency);
             formData.append("stock", productStock);
@@ -452,7 +516,8 @@ export default function ProductsPage() {
         setProductStock("0");
         setProductCurrency("USD");
         setIsCustomCurrency(false);
-        setProductKeywords("");
+        setProductKeywords([]);
+        setKeywordInput("");
         setProductImage(null);
         setImagePreview(null);
         setProductImages([]);
@@ -632,15 +697,33 @@ export default function ProductsPage() {
                                 </div>
                                 <div className="grid gap-2">
                                     <Label htmlFor="keywords">AI Keywords (Label Text)</Label>
-                                    <Input
-                                        id="keywords"
-                                        placeholder="e.g. fair & lovely, vitamin c, skin brightening"
-                                        className="bg-[#101010]/80 border-white/10 focus:border-[#00ff88]/40 text-xs"
-                                        value={productKeywords}
-                                        onChange={(e) => setProductKeywords(e.target.value)}
-                                    />
+                                    <div className="flex flex-wrap gap-1 rounded-md border border-white/10 bg-[#050505]/80 px-2 py-1 min-h-[42px]">
+                                        {productKeywords.map((k, idx) => (
+                                            <button
+                                                key={idx}
+                                                type="button"
+                                                className="inline-flex items-center gap-1 rounded-full bg-[#00ff88]/10 border border-[#00ff88]/40 px-2 py-0.5 text-[11px] text-[#00ff88] hover:bg-[#00ff88]/20"
+                                                onClick={() => removeKeywordAt(idx)}
+                                            >
+                                                <span className="max-w-[140px] truncate">{k}</span>
+                                                <span className="text-[9px] opacity-80">×</span>
+                                            </button>
+                                        ))}
+                                        <input
+                                            id="keywords"
+                                            value={keywordInput}
+                                            onChange={handleKeywordInputChange}
+                                            onKeyDown={handleKeywordKeyDown}
+                                            className="flex-1 min-w-[120px] bg-transparent outline-none border-none text-xs text-white placeholder:text-muted-foreground"
+                                            placeholder={
+                                                productKeywords.length === 0
+                                                    ? "Type keyword, press Enter or double space"
+                                                    : "Add more..."
+                                            }
+                                        />
+                                    </div>
                                     <span className="text-[10px] text-muted-foreground">
-                                        Product er gaye ja lekha thake oigula comma diye likho. AI search e use hobe.
+                                        Product er gaye ja brand/line lekha thake segula choto choto keyword hisebe add koro.
                                     </span>
                                 </div>
 
