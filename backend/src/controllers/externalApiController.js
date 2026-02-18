@@ -273,7 +273,7 @@ exports.handleChatCompletion = async (req, res) => {
                 message: userMessage,
                 history: history,
                 images: imageUrls,
-                systemPrompt: systemPrompt || "You are a helpful assistant."
+                systemPrompt: systemPrompt || ""
             });
             aiText = cleanAiText(result);
 

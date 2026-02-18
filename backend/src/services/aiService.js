@@ -536,27 +536,12 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
 
     } else {
         // --- INTERNAL BOT MODE (n8n/WhatsApp/Messenger) ---
-        let basePrompt = pagePrompts?.text_prompt || "You are a helpful assistant.";
+        let basePrompt = pagePrompts?.text_prompt || "";
         
         let personaInstruction = "";
         let imageOnceRule = "";
-        // User Request: Strong Prompt Engineering for OpenRouter Stability & Bengali
         if (defaultProvider === 'openrouter' || useCheapEngine) {
-            personaInstruction = `
-### SYSTEM OVERRIDE: STABILITY PROTOCOL ###
-You are a sophisticated AI Assistant optimized for CUSTOMER SUPPORT.
-Your primary directive is to provide STABLE, ACCURATE, and HELPFUL responses.
-
-[MANDATORY RULES]
-1. **ANSWER STABILITY**:
-   - Analyze the 'Ctx' (Context) carefully.
-   - If the user asks something outside the 'Ctx', politely decline.
-   - Do NOT hallucinate or invent features.
-   - IGNORE minor typos in user input; infer intent.
-2. **FORMATTING**:
-   - Keep replies SHORT and TO THE POINT.
-   - No preambles like "Here is your response". Just the answer.
-`;
+            personaInstruction = "";
         } else {
             personaInstruction = `Persona: Gemini 2.5 Flash. Fast, accurate, expert. Strict JSON. No fluff.`;
         }
@@ -564,51 +549,56 @@ Your primary directive is to provide STABLE, ACCURATE, and HELPFUL responses.
         const n8nSystemPrompt = `Role: Bot ${pageConfig.bot_name || 'Assistant'} representing ${ownerName}.
 Ctx: ${basePrompt}
 ${productContext}
-${personaInstruction}
-Rules:
-1. IMAGE HANDLING: If you see [System Note] "User sent >10 images" or "video", rely on Ad Context or ask user.
-2. AD CONTEXT: If '[System Note: User clicked on an AD...]' exists, use it to identify the product.
-3. STRICT DOMAIN CONTROL: Answer ONLY about business/products in 'Ctx'. Ignore unrelated topics.
-4. ADDRESSING: You are speaking to '${senderName}'.
-5. SENDING IMAGES (MANDATORY): If the context contains 'Image URL: https://' text or any 'image_url' field for the product you are discussing (either in [Available Products in Store] or in Search Results JSON), you MUST include each of those URLs in the 'images' array of your JSON response. Format: { "url": "URL", "title": "Product Name" }. Do NOT skip this.
-6. PRODUCT SEARCH TOOL (CRITICAL):
-   - You have access to a Real-Time Product Database.
-   - If user asks "Do you have X?", "Is X available?", "Price of X?", or sends an image and asks "Do you have this?", you MUST use the tool.
-   - Return STRICT JSON: { "tool": "search_products", "query": "keyword" }
-   - Example: User: "Do you have red shirt?" -> JSON: { "tool": "search_products", "query": "red shirt" }
-   - Do NOT say "I will check". Just return the JSON.
-7. DYNAMIC ACTIONS:
-   - If user requests ADMIN/SUPPORT/CALL or specific action defined in 'Ctx', append "[ADD_LABEL: label_name]" to your reply.
-   - Example: "I will connect you to admin. [ADD_LABEL: adminhandle]"
-   - Supported Labels: 
-     - 'adminhandle': User wants to talk to admin explicitly (human request).
-     - 'ordertrack': Order is CONFIRMED (Automatic).
-8. MULTI-VARIANT PRODUCT RESPONSE:
-   - If product search returns multiple similar products (e.g., Mango Red, Mango White), list all variants clearly.
-   - Ask the user which variant they prefer.
-9. ORDER PROCESS:
-   - If user wants to place an order, collect these details: Product Name, Quantity, Full Address, Price (if applicable).
-   - Ask for missing details if incomplete.
-   - Once ALL details are provided, confirm the order.
-   - APPEND this EXACT tag to your reply: [SAVE_ORDER: {"product_name":"...","product_quantity":"...","location":"...","price":"..."}]
-   - ALSO APPEND: [ADD_LABEL: ordertrack]
-   - NOTE: The 'number' will be automatically captured from the sender, so just capture the other details.
-10. Output RAW JSON:
-{
-  "reply": "Response text"|null,
-  "images": [ { "url": "https://...", "title": "Product Name" } ]|null,
-  "sentiment": "pos|neu|neg",
-  "dm_message": "msg"|null,
-  "bad_words": "words"|null,
-  "order_details": { "product_name", "quantity", "address", "phone", "price" }|null
-}
-11. URL SAFETY:
-   - NEVER invent or guess external website links.
-   - If no 'Image URL' or 'image_url' is provided in context for a product, respond without any link for that product.
-   - Only use URLs that explicitly appear in 'Image URL' fields inside the context.
-12. PRODUCT MARKUP:
-   - In the system instructions, any product name wrapped in **double asterisks** is a real product from the business catalog.
-   - Treat those as canonical product names when matching user requests to products.`;
+${personaInstruction}`;
+
+        /*
+         * LEGACY_SYSTEM_PROMPT_RULES (disabled by default)
+         *
+         * Rules:
+         * 1. IMAGE HANDLING: If you see [System Note] "User sent >10 images" or "video", rely on Ad Context or ask user.
+         * 2. AD CONTEXT: If '[System Note: User clicked on an AD...]' exists, use it to identify the product.
+         * 3. STRICT DOMAIN CONTROL: Answer ONLY about business/products in 'Ctx'. Ignore unrelated topics.
+         * 4. ADDRESSING: You are speaking to '${senderName}'.
+         * 5. SENDING IMAGES (MANDATORY): If the context contains 'Image URL: https://' text or any 'image_url' field for the product you are discussing (either in [Available Products in Store] or in Search Results JSON), you MUST include each of those URLs in the 'images' array of your JSON response. Format: { "url": "URL", "title": "Product Name" }. Do NOT skip this.
+         * 6. PRODUCT SEARCH TOOL (CRITICAL):
+         *    - You have access to a Real-Time Product Database.
+         *    - If user asks "Do you have X?", "Is X available?", "Price of X?", or sends an image and asks "Do you have this?", you MUST use the tool.
+         *    - Return STRICT JSON: { "tool": "search_products", "query": "keyword" }
+         *    - Example: User: "Do you have red shirt?" -> JSON: { "tool": "search_products", "query": "red shirt" }
+         *    - Do NOT say "I will check". Just return the JSON.
+         * 7. DYNAMIC ACTIONS:
+         *    - If user requests ADMIN/SUPPORT/CALL or specific action defined in 'Ctx', append "[ADD_LABEL: label_name]" to your reply.
+         *    - Example: "I will connect you to admin. [ADD_LABEL: adminhandle]"
+         *    - Supported Labels:
+         *      - 'adminhandle': User wants to talk to admin explicitly (human request).
+         *      - 'ordertrack': Order is CONFIRMED (Automatic).
+         * 8. MULTI-VARIANT PRODUCT RESPONSE:
+         *    - If product search returns multiple similar products (e.g., Mango Red, Mango White), list all variants clearly.
+         *    - Ask the user which variant they prefer.
+         * 9. ORDER PROCESS:
+         *    - If user wants to place an order, collect these details: Product Name, Quantity, Full Address, Price (if applicable).
+         *    - Ask for missing details if incomplete.
+         *    - Once ALL details are provided, confirm the order.
+         *    - APPEND this EXACT tag to your reply: [SAVE_ORDER: {"product_name":"...","product_quantity":"...","location":"...","price":"..."}]
+         *    - ALSO APPEND: [ADD_LABEL: ordertrack]
+         *    - NOTE: The 'number' will be automatically captured from the sender, so just capture the other details.
+         *
+         * LEGACY_SYSTEM_PROMPT_JSON_FORMAT (disabled by default)
+         * 10. Output RAW JSON:
+         * {
+         *   "reply": "Response text"|null,
+         *   "images": [ { "url": "https://...", "title": "Product Name" } ]|null,
+         *   "sentiment": "pos|neu|neg",
+         *   "dm_message": "msg"|null,
+         *   "bad_words": "words"|null,
+         *   "order_details": { "product_name", "quantity", "address", "phone", "price" }|null
+         * }
+         *
+         * NOTE: These rules and format are now expected to be enforced by the
+         *       page-level system prompt / phraser configuration instead of
+         *       this default backend system prompt. To re-enable globally,
+         *       add this block back into n8nSystemPrompt above.
+         */
 
         const systemMessage = { role: 'system', content: n8nSystemPrompt };
     
