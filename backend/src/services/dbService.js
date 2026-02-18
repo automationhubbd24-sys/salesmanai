@@ -575,72 +575,6 @@ async function saveWhatsAppOrderTracking(orderData) {
     
     console.log(`[WA Order] Attempting to save order for ${sender_id}...`);
 
-    let windowStart = null;
-
-    try {
-        const { data: configRow, error: cfgError } = await supabase
-            .from('whatsapp_message_database')
-            .select('order_lock_minutes')
-            .eq('session_name', session_name)
-            .maybeSingle();
-
-        if (cfgError) {
-            console.warn(`[WA Order] Failed to fetch order lock config: ${cfgError.message}`);
-        }
-
-        const minutes = configRow && configRow.order_lock_minutes != null
-            ? Number(configRow.order_lock_minutes)
-            : 1440;
-
-        if (minutes > 0) {
-            windowStart = new Date(Date.now() - minutes * 60 * 1000).toISOString();
-        }
-    } catch (e) {
-        console.warn(`[WA Order] Error while resolving order lock window: ${e.message}`);
-    }
-
-    const since = windowStart || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    
-    const { data: recentOrders, error: checkError } = await supabase
-        .from('whatsapp_order_tracking')
-        .select('*')
-        .eq('number', number)
-        .gte('created_at', since)
-        .order('id', { ascending: false });
-
-    if (checkError) console.error("[WA Order] Error checking duplicates:", checkError.message);
-    
-    let existingOrder = null;
-
-    if (recentOrders && recentOrders.length > 0) {
-        const normalize = (str) => (str || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-        const currentProd = normalize(product_name);
-        
-        existingOrder = recentOrders.find(o => {
-            const existingProd = normalize(o.product_name);
-            const isMatch = existingProd.includes(currentProd) || currentProd.includes(existingProd);
-            const isPending = !o.status || o.status === 'pending';
-            return isMatch && isPending;
-        });
-    }
-
-    if (existingOrder) {
-        console.log(`[WA Order] Found existing PENDING order (ID: ${existingOrder.id}). Updating...`);
-        
-        const updatePayload = {};
-        if (location && location !== existingOrder.location) updatePayload.location = location;
-        if (product_quantity && product_quantity !== existingOrder.product_quantity) updatePayload.product_quantity = product_quantity;
-        if (price && price !== existingOrder.price) updatePayload.price = price;
-        
-        if (Object.keys(updatePayload).length > 0) {
-            await supabase
-                .from('whatsapp_order_tracking')
-                .update(updatePayload)
-                .eq('id', existingOrder.id);
-        }
-        return null;
-    }
-
     const { data, error } = await supabase
         .from('whatsapp_order_tracking')
         .insert([{
@@ -977,91 +911,6 @@ async function saveOrderTracking(orderData) {
     
     console.log(`[Order] Attempting to save order for ${sender_id}...`);
 
-    let windowStart = null;
-
-    try {
-        const { data: cfg, error: cfgError } = await supabase
-            .from('fb_message_database')
-            .select('order_lock_minutes')
-            .eq('page_id', page_id)
-            .maybeSingle();
-
-        if (cfgError) {
-            console.warn(`[Order] Failed to fetch order lock config: ${cfgError.message}`);
-        }
-
-        const minutes = cfg && cfg.order_lock_minutes != null
-            ? Number(cfg.order_lock_minutes)
-            : 1440;
-
-        if (minutes > 0) {
-            windowStart = new Date(Date.now() - minutes * 60 * 1000).toISOString();
-        }
-    } catch (e) {
-        console.warn(`[Order] Error while resolving order lock window: ${e.message}`);
-    }
-
-    const since = windowStart || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    
-    const { data: recentOrders, error: checkError } = await supabase
-        .from('fb_order_tracking')
-        .select('*')
-        .eq('number', number) // Identify by User (Phone/ID)
-        .gte('created_at', since)
-        .order('id', { ascending: false });
-
-    if (checkError) console.error("[Order] Error checking duplicates:", checkError.message);
-    
-    let existingOrder = null;
-
-    if (recentOrders && recentOrders.length > 0) {
-        // 2. Fuzzy Match Product Name
-        // Simple normalization: lowercase, remove spaces/special chars
-        const normalize = (str) => (str || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-        const currentProd = normalize(product_name);
-        
-        // Find if any recent order matches this product
-        existingOrder = recentOrders.find(o => {
-            // Check Product Name Match
-            const existingProd = normalize(o.product_name);
-            // Check Similarity (Exact contains)
-            const isMatch = existingProd.includes(currentProd) || currentProd.includes(existingProd);
-            // Check Status (Only update if PENDING)
-            // Assuming default status is 'pending' or null. If 'shipped'/'completed', allow new order.
-            const isPending = !o.status || o.status === 'pending' || o.status === 'new';
-            
-            return isMatch && isPending;
-        });
-    }
-
-    if (existingOrder) {
-        console.log(`[Order] Found existing PENDING order (ID: ${existingOrder.id}) for "${product_name}". Updating...`);
-        
-        // UPSERT LOGIC: Update the existing order with new details
-        // Only update fields if they are provided (not null) and different
-        const updatePayload = {};
-        
-        if (location && location !== existingOrder.location) updatePayload.location = location;
-        if (product_quantity && product_quantity !== existingOrder.product_quantity) updatePayload.product_quantity = product_quantity;
-        if (price && price !== existingOrder.price) updatePayload.price = price;
-        // if (product_name) updatePayload.product_name = product_name; // Keep original name or update? Maybe keep original to avoid confusion.
-        
-        if (Object.keys(updatePayload).length > 0) {
-            const { error: updateError } = await supabase
-                .from('fb_order_tracking')
-                .update(updatePayload)
-                .eq('id', existingOrder.id);
-                
-            if (updateError) console.error(`[Order] Failed to update order ${existingOrder.id}:`, updateError.message);
-            else console.log(`[Order] Successfully updated order ${existingOrder.id} with new info.`);
-        } else {
-            console.log(`[Order] No new info to update for order ${existingOrder.id}. Skipping.`);
-        }
-        
-        return null; // Stop here, don't create new order
-    }
-    // -----------------------------
-
     const { data, error } = await supabase
         .from('fb_order_tracking')
         .insert([{
@@ -1072,7 +921,6 @@ async function saveOrderTracking(orderData) {
             location,
             product_quantity,
             price
-            // created_at is default now()
         }])
         .select();
 
