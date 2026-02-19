@@ -536,9 +536,16 @@ async function approveDepositTransaction(txn) {
     try {
         await client.query('BEGIN');
 
+        // 0. Find user_id from users table
+        const userRes = await client.query('SELECT id FROM users WHERE email = $1', [txn.user_email]);
+        if (userRes.rows.length === 0) {
+            throw new Error(`User not found for email: ${txn.user_email}`);
+        }
+        const userId = userRes.rows[0].id;
+
         // 1. Update transaction status
         await client.query(
-            "UPDATE payment_transactions SET status = 'approved', updated_at = NOW() WHERE id = $1",
+            "UPDATE payment_transactions SET status = 'approved' WHERE id = $1",
             [txn.id]
         );
 
@@ -551,7 +558,7 @@ async function approveDepositTransaction(txn) {
              VALUES ($1, $2, $3)
              ON CONFLICT (user_id) 
              DO UPDATE SET balance = COALESCE(user_configs.balance, 0) + $2`,
-            [txn.user_id, amount, txn.email]
+            [userId, amount, txn.user_email]
         );
 
         await client.query('COMMIT');
@@ -1189,6 +1196,18 @@ async function deleteWhatsAppEntry(sessionName) {
 async function deleteMessengerPage(pageId) {
     const client = require('./pgClient');
     try {
+        await client.query('DELETE FROM fb_contacts WHERE page_id = $1', [pageId]);
+    } catch (e) {
+        console.warn("[DB] Failed to delete from fb_contacts:", e.message);
+    }
+
+    try {
+        await client.query('DELETE FROM fb_included_users WHERE page_id = $1', [pageId]);
+    } catch (e) {
+        console.warn("[DB] Failed to delete from fb_included_users:", e.message);
+    }
+
+    try {
         await client.query('DELETE FROM fb_chats WHERE page_id = $1', [pageId]);
     } catch (e) {
         console.warn("[DB] Failed to delete from fb_chats:", e.message);
@@ -1213,6 +1232,18 @@ async function deleteMessengerPage(pageId) {
     }
 
     try {
+        await client.query('DELETE FROM label_actions WHERE page_id = $1', [pageId]);
+    } catch (e) {
+        console.warn("[DB] Failed to delete from label_actions:", e.message);
+    }
+
+    try {
+        await client.query('DELETE FROM page_prompts WHERE page_id = $1', [pageId]);
+    } catch (e) {
+        console.warn("[DB] Failed to delete from page_prompts:", e.message);
+    }
+
+    try {
         await client.query('DELETE FROM fb_message_database WHERE page_id = $1', [pageId]);
     } catch (e) {
         console.warn("[DB] Failed to delete from fb_message_database:", e.message);
@@ -1222,6 +1253,7 @@ async function deleteMessengerPage(pageId) {
         await client.query('DELETE FROM page_access_token_message WHERE page_id = $1', [pageId]);
     } catch (e) {
         console.warn("[DB] Failed to delete from page_access_token_message:", e.message);
+        throw e; // Rethrow if main deletion fails
     }
 }
 

@@ -12,12 +12,14 @@ const dbAdminRoutes = require('./routes/dbAdminRoutes');
 const apiListRoutes = require('./routes/apiListRoutes');
 const teamRoutes = require('./routes/teamRoutes');
 
+const path = require('path');
 const app = express();
 
 
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 
 // Routes
 // We mount the webhook route at /webhook or /api/webhook based on preference

@@ -172,16 +172,52 @@ router.get('/config/:id', async (req, res) => {
 
         const userEmail = payload.email;
 
+        let configRow = null;
+
+        // Try lookup by primary key (id) first
         const configResult = await pgClient.query(
             'SELECT * FROM fb_message_database WHERE id = $1',
             [parseInt(id, 10)]
         );
 
-        if (configResult.rowCount === 0) {
-            return res.status(404).json({ error: 'Config not found' });
+        if (configResult.rowCount > 0) {
+            configRow = configResult.rows[0];
+        } else {
+            // Fallback: Try lookup by page_id (in case id passed is actually page_id)
+            const configByPageId = await pgClient.query(
+                'SELECT * FROM fb_message_database WHERE page_id = $1',
+                [id]
+            );
+            if (configByPageId.rowCount > 0) {
+                configRow = configByPageId.rows[0];
+            }
         }
 
-        const configRow = configResult.rows[0];
+        if (!configRow) {
+            // Second Fallback: Auto-create if page exists in page_access_token_message but config missing
+             const pageExists = await pgClient.query(
+                'SELECT page_id FROM page_access_token_message WHERE page_id = $1',
+                [id]
+            );
+            
+            if (pageExists.rowCount > 0) {
+                 try {
+                    const insertRes = await pgClient.query(
+                        `INSERT INTO fb_message_database (page_id, text_prompt)
+                         VALUES ($1, $2)
+                         RETURNING *`,
+                        [id, 'You are a helpful sales assistant.']
+                    );
+                    configRow = insertRes.rows[0];
+                } catch (err) {
+                    console.error("Error auto-creating fb config in /config/:id:", err);
+                }
+            }
+        }
+
+        if (!configRow) {
+            return res.status(404).json({ error: 'Config not found' });
+        }
 
         const pageId = configRow.page_id;
 
@@ -313,8 +349,31 @@ router.put('/config/:id', async (req, res) => {
             }
         }
 
+        // Handle AI Provider & API Key updates separately (stored in page_access_token_message)
+        const aiProvider = req.body.ai_provider || req.body.ai;
+        if (aiProvider || req.body.api_key !== undefined) {
+             const tokenUpdates = {};
+             if (aiProvider) tokenUpdates.ai = aiProvider;
+             if (req.body.api_key !== undefined) tokenUpdates.api_key = req.body.api_key;
+
+             const tokenKeys = Object.keys(tokenUpdates);
+             if (tokenKeys.length > 0) {
+                 const tokenSet = tokenKeys.map((k, i) => `${k} = $${i + 2}`).join(', ');
+                 const tokenValues = [pageId, ...tokenKeys.map(k => tokenUpdates[k])];
+                 
+                 await pgClient.query(
+                     `UPDATE page_access_token_message SET ${tokenSet} WHERE page_id = $1`,
+                     tokenValues
+                 );
+             }
+        }
+
         const keys = Object.keys(updates);
         if (keys.length === 0) {
+            // If only AI settings were updated, return success
+            if (aiProvider || req.body.api_key !== undefined) {
+                 return res.json({ success: true, message: 'AI settings updated' });
+            }
             return res.status(400).json({ error: 'No valid fields provided for update' });
         }
 
