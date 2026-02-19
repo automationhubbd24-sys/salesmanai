@@ -38,6 +38,12 @@ create table if not exists whatsapp_sessions (
   updated_at timestamp with time zone default now()
 );
 
+create table if not exists app_users (
+  id bigserial primary key,
+  key text not null unique,
+  pas text
+);
+
 -- 2. Table for User Configurations (AI Providers, API Keys)
 create table if not exists user_configs (
   id uuid default uuid_generate_v4() primary key,
