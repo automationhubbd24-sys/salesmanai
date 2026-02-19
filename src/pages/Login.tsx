@@ -43,6 +43,16 @@ const Login = () => {
       localStorage.setItem("auth_token", body.token);
       if (body.user) {
         localStorage.setItem("auth_user", JSON.stringify(body.user));
+        if (body.user.email) {
+          localStorage.setItem("auth_email", body.user.email);
+        } else {
+          localStorage.setItem("auth_email", email);
+        }
+        if (body.user.id) {
+          localStorage.setItem("auth_user_id", String(body.user.id));
+        }
+      } else {
+        localStorage.setItem("auth_email", email);
       }
       toast.success(t("Login successful!", "লগইন সফল হয়েছে!"));
       navigate("/dashboard");

@@ -4,15 +4,27 @@ const bcrypt = require('bcryptjs');
 const { query } = require('./pgClient');
 
 async function findOrCreateUserByEmail(email) {
-    const existing = await query('SELECT id, email FROM users WHERE email = $1', [email]);
+    const existing = await query('SELECT id, email, full_name, phone FROM users WHERE email = $1', [email]);
     if (existing.rows.length > 0) {
-        return existing.rows[0];
+        const row = existing.rows[0];
+        return {
+            id: row.id,
+            email: row.email,
+            full_name: row.full_name || null,
+            phone: row.phone || null
+        };
     }
     const inserted = await query(
-        'INSERT INTO users (email) VALUES ($1) RETURNING id, email',
+        'INSERT INTO users (email) VALUES ($1) RETURNING id, email, full_name, phone',
         [email]
     );
-    return inserted.rows[0];
+    const row = inserted.rows[0];
+    return {
+        id: row.id,
+        email: row.email,
+        full_name: row.full_name || null,
+        phone: row.phone || null
+    };
 }
 
 async function setUserPassword(email, password, fullName, phone) {
@@ -24,18 +36,31 @@ async function setUserPassword(email, password, fullName, phone) {
             'UPDATE users SET password_hash = $1, full_name = COALESCE($2, full_name), phone = COALESCE($3, phone) WHERE id = $4',
             [passwordHash, fullName || null, phone || null, id]
         );
-        return { id, email };
+        const updated = await query('SELECT id, email, full_name, phone FROM users WHERE id = $1 LIMIT 1', [id]);
+        const row = updated.rows[0];
+        return {
+            id: row.id,
+            email: row.email,
+            full_name: row.full_name || null,
+            phone: row.phone || null
+        };
     }
     const inserted = await query(
-        'INSERT INTO users (email, password_hash, full_name, phone) VALUES ($1, $2, $3, $4) RETURNING id, email',
+        'INSERT INTO users (email, password_hash, full_name, phone) VALUES ($1, $2, $3, $4) RETURNING id, email, full_name, phone',
         [email, passwordHash, fullName || null, phone || null]
     );
-    return inserted.rows[0];
+    const row = inserted.rows[0];
+    return {
+        id: row.id,
+        email: row.email,
+        full_name: row.full_name || null,
+        phone: row.phone || null
+    };
 }
 
 async function verifyPassword(email, password) {
     const result = await query(
-        'SELECT id, email, password_hash FROM users WHERE email = $1 LIMIT 1',
+        'SELECT id, email, password_hash, full_name, phone FROM users WHERE email = $1 LIMIT 1',
         [email]
     );
     if (result.rows.length === 0) {
@@ -49,7 +74,15 @@ async function verifyPassword(email, password) {
     if (!match) {
         return { ok: false };
     }
-    return { ok: true, user: { id: user.id, email: user.email } };
+    return {
+        ok: true,
+        user: {
+            id: user.id,
+            email: user.email,
+            full_name: user.full_name || null,
+            phone: user.phone || null
+        }
+    };
 }
 
 function generateOtpCode() {

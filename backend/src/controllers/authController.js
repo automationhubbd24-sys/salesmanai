@@ -388,6 +388,159 @@ exports.createDepositRequest = async (req, res) => {
     }
 };
 
+exports.requestPasswordReset = async (req, res) => {
+    try {
+        const email = String(req.body.email || '').trim().toLowerCase();
+        if (!email) {
+            return res.status(400).json({ error: 'Email is required' });
+        }
+
+        const existing = await pgClient.query(
+            'SELECT id, email FROM users WHERE email = $1 LIMIT 1',
+            [email]
+        );
+
+        if (existing.rows.length === 0) {
+            return res.json({ success: true });
+        }
+
+        const otp = await authService.createOtp(email);
+        await authService.sendOtpEmail(email, otp.code);
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('requestPasswordReset error:', error);
+        res.status(500).json({ error: 'Failed to send reset code' });
+    }
+};
+
+exports.verifyPasswordResetCode = async (req, res) => {
+    try {
+        const email = String(req.body.email || '').trim().toLowerCase();
+        const code = String(req.body.code || '').trim();
+
+        if (!email || !code) {
+            return res.status(400).json({ error: 'Email and code are required' });
+        }
+
+        const now = new Date().toISOString();
+        const result = await pgClient.query(
+            `SELECT id, code, expires_at, used
+             FROM email_otp_codes
+             WHERE email = $1
+             ORDER BY created_at DESC
+             LIMIT 5`,
+            [email]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(400).json({ error: 'Invalid code' });
+        }
+
+        const match = result.rows.find(row => row.code === code);
+        if (!match) {
+            return res.status(400).json({ error: 'Invalid code' });
+        }
+
+        if (match.used) {
+            return res.status(400).json({ error: 'Code already used' });
+        }
+
+        if (match.expires_at <= now) {
+            return res.status(400).json({ error: 'Code expired' });
+        }
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('verifyPasswordResetCode error:', error);
+        res.status(500).json({ error: 'Verification failed' });
+    }
+};
+
+exports.completePasswordReset = async (req, res) => {
+    try {
+        const email = String(req.body.email || '').trim().toLowerCase();
+        const code = String(req.body.code || '').trim();
+        const password = String(req.body.password || '');
+
+        if (!email || !code || !password) {
+            return res.status(400).json({ error: 'Email, code and password are required' });
+        }
+
+        if (password.length < 6) {
+            return res.status(400).json({ error: 'Password must be at least 6 characters' });
+        }
+
+        const now = new Date().toISOString();
+        const result = await pgClient.query(
+            `SELECT id, code, expires_at, used
+             FROM email_otp_codes
+             WHERE email = $1
+             ORDER BY created_at DESC
+             LIMIT 5`,
+            [email]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(400).json({ error: 'Invalid code' });
+        }
+
+        const match = result.rows.find(row => row.code === code);
+        if (!match) {
+            return res.status(400).json({ error: 'Invalid code' });
+        }
+
+        if (match.used) {
+            return res.status(400).json({ error: 'Code already used' });
+        }
+
+        if (match.expires_at <= now) {
+            return res.status(400).json({ error: 'Code expired' });
+        }
+
+        await pgClient.query('UPDATE email_otp_codes SET used = true WHERE id = $1', [match.id]);
+
+        await authService.setUserPassword(email, password, null, null);
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('completePasswordReset error:', error);
+        res.status(500).json({ error: 'Failed to update password' });
+    }
+};
+
+exports.changePassword = async (req, res) => {
+    try {
+        const email = req.user && req.user.email;
+        if (!email) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+
+        const oldPassword = String(req.body.oldPassword || '');
+        const newPassword = String(req.body.newPassword || '');
+
+        if (!oldPassword || !newPassword) {
+            return res.status(400).json({ error: 'Old and new passwords are required' });
+        }
+
+        if (newPassword.length < 6) {
+            return res.status(400).json({ error: 'New password must be at least 6 characters' });
+        }
+
+        const result = await authService.verifyPassword(email, oldPassword);
+        if (!result.ok) {
+            return res.status(400).json({ error: 'Old password is incorrect' });
+        }
+
+        await authService.setUserPassword(email, newPassword, null, null);
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('changePassword error:', error);
+        res.status(500).json({ error: 'Failed to change password' });
+    }
+};
+
 // Redeem balance coupon code
 exports.redeemCoupon = async (req, res) => {
     try {

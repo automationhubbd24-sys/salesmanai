@@ -36,7 +36,7 @@ const ResetPassword = () => {
     }
     setLoading(true);
     try {
-      const res = await fetch(`${BACKEND_URL}/auth/password/reset/request`, {
+      const res = await fetch(`${BACKEND_URL}/api/auth/password/reset/request`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
@@ -65,7 +65,7 @@ const ResetPassword = () => {
     }
     setLoading(true);
     try {
-      const res = await fetch(`${BACKEND_URL}/auth/password/reset/verify`, {
+      const res = await fetch(`${BACKEND_URL}/api/auth/password/reset/verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, code: otp }),
@@ -99,7 +99,7 @@ const ResetPassword = () => {
     }
     setLoading(true);
     try {
-      const res = await fetch(`${BACKEND_URL}/auth/password/reset/complete`, {
+      const res = await fetch(`${BACKEND_URL}/api/auth/password/reset/complete`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, code: otp, password }),

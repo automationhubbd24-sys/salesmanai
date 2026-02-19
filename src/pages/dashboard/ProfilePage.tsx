@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Mail, Shield, User, Users, Trash2, Plus, AlertCircle, UserPlus, Edit, Smartphone, Facebook } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import {
   Table,
@@ -20,10 +21,14 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { BACKEND_URL } from "@/config";
 
 export default function ProfilePage() {
-  const [user, setUser] = useState<{ email?: string; id?: string } | null>(null);
+  const [user, setUser] = useState<{ email?: string; id?: string; full_name?: string; phone?: string } | null>(null);
   const [teamMembers, setTeamMembers] = useState<any[]>([]);
   const [newMemberEmail, setNewMemberEmail] = useState("");
   const [loading, setLoading] = useState(false);
+  const [oldPassword, setOldPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordLoading, setPasswordLoading] = useState(false);
 
   // Resource Selection State
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -35,11 +40,46 @@ export default function ProfilePage() {
   const [resourceLoading, setResourceLoading] = useState(false);
 
   useEffect(() => {
-    const email = localStorage.getItem("auth_email");
-    const userId = localStorage.getItem("auth_user_id");
-    if (email && userId) {
-      setUser({ email, id: userId });
-      fetchTeamMembers(email);
+    try {
+      const stored = localStorage.getItem("auth_user");
+      let email: string | null = null;
+      let id: string | null = null;
+      let full_name: string | null = null;
+      let phone: string | null = null;
+
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        email = parsed.email || null;
+        id = parsed.id ? String(parsed.id) : null;
+        full_name = parsed.full_name || null;
+        phone = parsed.phone || null;
+      }
+
+      if (!email) {
+        email = localStorage.getItem("auth_email");
+      }
+      if (!id) {
+        id = localStorage.getItem("auth_user_id");
+      }
+
+      if (email || id || full_name || phone) {
+        setUser({
+          email: email || undefined,
+          id: id || undefined,
+          full_name: full_name || undefined,
+          phone: phone || undefined,
+        });
+      }
+
+      if (email) {
+        localStorage.setItem("auth_email", email);
+        fetchTeamMembers(email);
+      }
+      if (id) {
+        localStorage.setItem("auth_user_id", id);
+      }
+    } catch (err) {
+      console.error("Failed to load profile user from storage", err);
     }
   }, []);
 
@@ -248,6 +288,9 @@ export default function ProfilePage() {
     }
   };
 
+  const displayName =
+    user?.full_name || (user?.email ? user.email.split("@")[0] : "User");
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -267,13 +310,13 @@ export default function ProfilePage() {
                 <Avatar className="h-24 w-24 border-4 border-white/10 shadow-xl bg-black/30">
                   <AvatarImage src="" />
                   <AvatarFallback className="bg-[#00ff88] text-black text-3xl font-bold">
-                    {user?.email?.charAt(0).toUpperCase() || "U"}
+                    {(displayName && displayName.charAt(0).toUpperCase()) || "U"}
                   </AvatarFallback>
                 </Avatar>
               </div>
               
               <h3 className="text-xl font-bold text-foreground">
-                {user?.email?.split("@")[0] || "User"}
+                {displayName}
               </h3>
               <p className="text-sm text-muted-foreground mb-4">{user?.email}</p>
               
@@ -289,7 +332,7 @@ export default function ProfilePage() {
                   <div className="flex-1 min-w-0">
                     <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Name</p>
                     <p className="text-sm font-semibold truncate">
-                      {user?.email?.split("@")[0] || "User"}
+                      {displayName}
                     </p>
                   </div>
                 </div>
@@ -314,6 +357,18 @@ export default function ProfilePage() {
                     <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Account ID</p>
                     <p className="text-xs font-mono text-muted-foreground truncate">
                       {user?.id}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center p-4 bg-[#0f0f0f] rounded-xl gap-4 transition-colors hover:bg-[#00ff88]/10 border border-white/10">
+                  <div className="p-2 bg-black/40 rounded-full shadow-sm border border-white/10">
+                    <Smartphone className="text-orange-500 h-5 w-5" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Phone Number</p>
+                    <p className="text-sm font-semibold truncate">
+                      {user?.phone || "Not set"}
                     </p>
                   </div>
                 </div>
@@ -525,6 +580,109 @@ export default function ProfilePage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10 shadow-[0_12px_32px_rgba(0,0,0,0.15)]">
+        <CardHeader>
+          <CardTitle>Security</CardTitle>
+          <CardDescription>Change your account password</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!oldPassword || !newPassword || !confirmPassword) {
+                toast.error("Please fill in all password fields");
+                return;
+              }
+              if (newPassword.length < 6) {
+                toast.error("New password must be at least 6 characters");
+                return;
+              }
+              if (newPassword !== confirmPassword) {
+                toast.error("New passwords do not match");
+                return;
+              }
+              setPasswordLoading(true);
+              try {
+                const token = localStorage.getItem("auth_token");
+                if (!token) {
+                  toast.error("Please login again");
+                  return;
+                }
+                const res = await fetch(`${BACKEND_URL}/api/auth/password/change`, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${token}`,
+                  },
+                  body: JSON.stringify({
+                    oldPassword,
+                    newPassword,
+                  }),
+                });
+                const body = await res.json().catch(() => ({}));
+                if (!res.ok || !body.success) {
+                  throw new Error(body.error || body.message || "Failed to change password");
+                }
+                toast.success("Password updated successfully");
+                setOldPassword("");
+                setNewPassword("");
+                setConfirmPassword("");
+              } catch (err: any) {
+                toast.error(err.message || "Failed to change password");
+              } finally {
+                setPasswordLoading(false);
+              }
+            }}
+            className="space-y-4 max-w-xl"
+          >
+            <div className="space-y-2">
+              <Label htmlFor="oldPassword">Current Password</Label>
+              <Input
+                id="oldPassword"
+                type="password"
+                placeholder="Enter current password"
+                value={oldPassword}
+                onChange={(e) => setOldPassword(e.target.value)}
+                className="bg-[#0f0f0f] border border-white/10 focus-visible:ring-[#00ff88]"
+              />
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="newPassword">New Password</Label>
+                <Input
+                  id="newPassword"
+                  type="password"
+                  placeholder="Enter new password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="bg-[#0f0f0f] border border-white/10 focus-visible:ring-[#00ff88]"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="confirmPassword">Confirm New Password</Label>
+                <Input
+                  id="confirmPassword"
+                  type="password"
+                  placeholder="Confirm new password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="bg-[#0f0f0f] border border-white/10 focus-visible:ring-[#00ff88]"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <Button
+                type="submit"
+                disabled={passwordLoading}
+                className="bg-[#00ff88] text-black font-bold rounded-full hover:bg-[#00f07f] shadow-[0_10px_30px_rgba(0,255,136,0.25)]"
+              >
+                {passwordLoading ? "Updating..." : "Update Password"}
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   );
 }

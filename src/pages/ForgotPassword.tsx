@@ -23,7 +23,7 @@ const ForgotPassword = () => {
     }
     setLoading(true);
     try {
-      const res = await fetch(`${BACKEND_URL}/api/auth/request-otp`, {
+      const res = await fetch(`${BACKEND_URL}/api/auth/password/reset/request`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -32,19 +32,19 @@ const ForgotPassword = () => {
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok || !body.success) {
-        throw new Error(body.error || t("Failed to send login code", "লগইন কোড পাঠানো যায়নি"));
+        throw new Error(body.error || t("Failed to send reset code", "রিসেট কোড পাঠানো যায়নি"));
       }
       toast.success(
         t(
-          "Login code sent to your email. Use it on the login page.",
-          "লগইন কোড আপনার ইমেইলে পাঠানো হয়েছে। লগইন পেইজে কোডটি ব্যবহার করুন।"
+          "Password reset code sent to your email.",
+          "পাসওয়ার্ড রিসেট কোড আপনার ইমেইলে পাঠানো হয়েছে।"
         )
       );
-      navigate("/login");
+      navigate(`/reset-password?email=${encodeURIComponent(email)}`);
     } catch (err: any) {
       toast.error(
         err.message ||
-          t("Failed to send login code", "লগইন কোড পাঠাতে ব্যর্থ")
+          t("Failed to send reset code", "রিসেট কোড পাঠাতে ব্যর্থ")
       );
     } finally {
       setLoading(false);

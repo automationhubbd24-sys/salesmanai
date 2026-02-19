@@ -18,6 +18,10 @@ router.post('/request-otp', authController.requestOtp);
 router.post('/verify-otp', authController.verifyOtp);
 router.post('/register', authController.registerWithPassword);
 router.post('/login', authController.loginWithPassword);
+router.post('/password/reset/request', authController.requestPasswordReset);
+router.post('/password/reset/verify', authController.verifyPasswordResetCode);
+router.post('/password/reset/complete', authController.completePasswordReset);
+router.post('/password/change', authMiddleware, authController.changePassword);
 
 router.get('/payments/me', authMiddleware, authController.getMyPayments);
 router.post('/payments/deposit', authMiddleware, authController.createDepositRequest);

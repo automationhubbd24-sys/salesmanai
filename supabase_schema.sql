@@ -8,6 +8,11 @@ create table if not exists users (
   created_at timestamp with time zone default now()
 );
 
+-- Ensure columns needed for password-based auth exist
+alter table users add column if not exists password_hash text;
+alter table users add column if not exists full_name text;
+alter table users add column if not exists phone text;
+
 create table if not exists email_otp_codes (
   id uuid default uuid_generate_v4() primary key,
   email text not null,
