@@ -9,18 +9,6 @@ import { toast } from "sonner";
 import logoImage from "@/assets/logo.png";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { BACKEND_URL } from "@/config";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  InputOTP,
-  InputOTPGroup,
-  InputOTPSlot,
-} from "@/components/ui/input-otp";
 
 const Register = () => {
   const navigate = useNavigate();
@@ -34,38 +22,6 @@ const Register = () => {
   });
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [showOtpModal, setShowOtpModal] = useState(false);
-  const [otp, setOtp] = useState("");
-  const [verifying, setVerifying] = useState(false);
-
-  const handleVerifyOtp = async () => {
-    if (!otp || otp.length < 4) return;
-    setVerifying(true);
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/auth/verify-otp`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ email: formData.email, code: otp }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok || !body.token) {
-        throw new Error(body.error || t("Invalid or expired code", "কোডটি সঠিক নয় বা মেয়াদ শেষ"));
-      }
-      localStorage.setItem("auth_token", body.token);
-      if (body.user) {
-        localStorage.setItem("auth_user", JSON.stringify(body.user));
-      }
-      toast.success(t("Email verified successfully!", "ইমেইল সফলভাবে যাচাই করা হয়েছে!"));
-      setShowOtpModal(false);
-      navigate("/dashboard");
-    } catch (error: any) {
-      toast.error(error.message || t("Failed to verify code", "কোড যাচাই করতে ব্যর্থ"));
-    } finally {
-      setVerifying(false);
-    }
-  };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -87,24 +43,42 @@ const Register = () => {
     setLoading(true);
 
     try {
-      const res = await fetch(`${BACKEND_URL}/api/auth/request-otp`, {
+      const res = await fetch(`${BACKEND_URL}/api/auth/register`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ email: formData.email }),
+        body: JSON.stringify({
+          fullName: formData.fullName,
+          phone: formData.phone,
+          email: formData.email,
+          password: formData.password,
+        }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok || !body.success) {
-        throw new Error(body.error || t("Failed to send verification code", "ভেরিফিকেশন কোড পাঠানো যায়নি"));
+        throw new Error(body.error || t("Registration failed", "রেজিস্ট্রেশন ব্যর্থ হয়েছে"));
       }
-      toast.success(
-        t(
-          "Registration successful! Check your email for the login code.",
-          "রেজিস্ট্রেশন সফল হয়েছে! লগইন কোডের জন্য আপনার ইমেইল চেক করুন।"
-        )
-      );
-      setShowOtpModal(true);
+      const loginRes = await fetch(`${BACKEND_URL}/api/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: formData.email,
+          password: formData.password,
+        }),
+      });
+      const loginBody = await loginRes.json().catch(() => ({}));
+      if (!loginRes.ok || !loginBody.token) {
+        throw new Error(loginBody.error || t("Login failed after registration", "রেজিস্ট্রেশনের পরে লগইন করা যায়নি"));
+      }
+      localStorage.setItem("auth_token", loginBody.token);
+      if (loginBody.user) {
+        localStorage.setItem("auth_user", JSON.stringify(loginBody.user));
+      }
+      toast.success(t("Registration and login successful!", "রেজিস্ট্রেশন এবং লগইন সফল হয়েছে!"));
+      navigate("/dashboard");
     } catch (error: any) {
       toast.error(
         error.message ||
@@ -330,44 +304,6 @@ const Register = () => {
         </div>
       </div>
 
-      <Dialog open={showOtpModal} onOpenChange={setShowOtpModal}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>{t("Verify your email", "আপনার ইমেইল যাচাই করুন")}</DialogTitle>
-            <DialogDescription>
-              {t("We've sent a verification code to", "আমরা একটি যাচাইকরণ কোড পাঠিয়েছি")} {formData.email}. {t("Please enter it below to confirm your account.", "আপনার অ্যাকাউন্ট নিশ্চিত করতে নিচে এটি লিখুন।")}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex items-center justify-center py-4">
-            <InputOTP
-              maxLength={6}
-              value={otp}
-              onChange={(value) => setOtp(value)}
-            >
-              <InputOTPGroup>
-                <InputOTPSlot index={0} />
-                <InputOTPSlot index={1} />
-                <InputOTPSlot index={2} />
-                <InputOTPSlot index={3} />
-                <InputOTPSlot index={4} />
-                <InputOTPSlot index={5} />
-              </InputOTPGroup>
-            </InputOTP>
-          </div>
-          <div className="flex justify-end gap-3">
-            <Button
-              variant="outline"
-              onClick={() => setShowOtpModal(false)}
-              disabled={verifying}
-            >
-              {t("Cancel", "বাতিল করুন")}
-            </Button>
-            <Button onClick={handleVerifyOtp} disabled={verifying || otp.length !== 6}>
-              {verifying ? t("Verifying...", "যাচাই করা হচ্ছে...") : t("Verify Code", "কোড যাচাই করুন")}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };
