@@ -175,17 +175,18 @@ exports.createProduct = async (req, res) => {
         if (!name) return res.status(400).json({ error: "Product name is required" });
 
         // 3. Save to DB
+        // Stringify JSON fields to ensure compatibility with Postgres JSONB columns
         const product = await dbService.createProduct({
             user_id: userId,
             name,
             description,
             image_url: imageUrl,
-            variants,
+            variants: JSON.stringify(variants),
             is_active: isActive,
             price,
             currency,
             stock,
-            allowed_page_ids: allowedPages,
+            allowed_page_ids: allowedPages ? JSON.stringify(allowedPages) : null,
             keywords
         });
 

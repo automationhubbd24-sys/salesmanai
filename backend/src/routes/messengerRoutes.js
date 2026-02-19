@@ -74,18 +74,32 @@ router.get('/pages', async (req, res) => {
         }
 
         // 6. Merge and Enhance
-        const finalPages = uniquePages.map(p => {
-            const dbInfo = dbConfigs.find(d => d.page_id === p.page_id);
-            // Prioritize page info, merge dbInfo (which has text_prompt, etc.)
-            // Note: dbInfo might overwrite some fields if names collide, but usually they are distinct enough
-            // page_access_token_message has: page_id, name, email, etc.
-            // fb_message_database has: id (pk), page_id, text_prompt
-            return {
+        const finalPages = [];
+        
+        for (const p of uniquePages) {
+            let dbInfo = dbConfigs.find(d => d.page_id === p.page_id);
+            
+            // Auto-create config if missing (Fix for "No configuration found")
+            if (!dbInfo) {
+                try {
+                    const insertRes = await pgClient.query(
+                        `INSERT INTO fb_message_database (page_id, text_prompt)
+                         VALUES ($1, $2)
+                         RETURNING *`,
+                        [p.page_id, 'You are a helpful sales assistant.']
+                    );
+                    dbInfo = insertRes.rows[0];
+                } catch (err) {
+                    console.error("Error auto-creating fb config:", err);
+                }
+            }
+
+            finalPages.push({
                 ...p,
-                ...(dbInfo || {}), // Merge DB info
+                ...(dbInfo || {}),
                 is_shared: p.email !== userEmail
-            };
-        });
+            });
+        }
 
         res.json(finalPages);
 
@@ -312,6 +326,10 @@ router.put('/config/:id', async (req, res) => {
             values
         );
 
+        if (updateResult.rowCount === 0) {
+            return res.status(404).json({ error: 'Config not found or update failed' });
+        }
+
         res.json(updateResult.rows[0]);
     } catch (error) {
         console.error("Error updating Messenger config:", error);
@@ -416,7 +434,7 @@ router.get('/chats', authMiddleware, async (req, res) => {
 
         const result = await pgClient.query(
             `
-            SELECT id, page_id, created_at, reply_by, token, ai_model, message, sender
+            SELECT id, page_id, created_at, reply_by, token, ai_model, text as message, sender_id as sender
             FROM fb_chats
             WHERE page_id = $1
               AND created_at >= $2::timestamptz
@@ -451,6 +469,9 @@ router.get('/stats', authMiddleware, async (req, res) => {
             [pageId]
         );
 
+        // Check if token column exists before querying (backwards compatibility)
+        // Or assume it exists since we updated schema.
+        // We will assume schema is updated.
         const tokenResult = await pgClient.query(
             `
             SELECT COALESCE(SUM(token), 0)::int AS total_tokens

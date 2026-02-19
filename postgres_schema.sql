@@ -318,6 +318,7 @@ CREATE TABLE IF NOT EXISTS fb_chats (
   status VARCHAR DEFAULT 'pending',
   reply_by TEXT,
   ai_model TEXT,
+  token INTEGER DEFAULT 0,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -431,6 +432,7 @@ CREATE TABLE IF NOT EXISTS products (
   name TEXT NOT NULL,
   description TEXT,
   image_url TEXT,
+  reply_url TEXT,
   variants JSONB,
   is_active BOOLEAN DEFAULT TRUE,
   price NUMERIC DEFAULT 0,

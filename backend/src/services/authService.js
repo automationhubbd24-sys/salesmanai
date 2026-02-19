@@ -50,6 +50,19 @@ async function setUserPassword(email, password, fullName, phone) {
         [email, passwordHash, fullName || null, phone || null]
     );
     const row = inserted.rows[0];
+
+    // Add 100 free credits for new user
+    try {
+        await query(
+            `INSERT INTO user_configs (user_id, email, message_credit, balance)
+             VALUES ($1, $2, 100, 0)
+             ON CONFLICT (user_id) DO UPDATE SET message_credit = user_configs.message_credit + 100`,
+            [row.id, row.email]
+        );
+    } catch (err) {
+        console.error("Error adding free credits:", err);
+    }
+
     return {
         id: row.id,
         email: row.email,

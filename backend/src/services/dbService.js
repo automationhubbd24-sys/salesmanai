@@ -528,6 +528,43 @@ async function checkWhatsAppDuplicate(messageId) {
     }
 }
 
+// 16.5 Approve Deposit Transaction
+async function approveDepositTransaction(txn) {
+    const { getPool } = require('./pgClient');
+    const pool = getPool();
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        // 1. Update transaction status
+        await client.query(
+            "UPDATE payment_transactions SET status = 'approved', updated_at = NOW() WHERE id = $1",
+            [txn.id]
+        );
+
+        // 2. Add balance to user
+        // Ensure balance is treated as a number
+        const amount = parseFloat(txn.amount);
+        
+        await client.query(
+            `INSERT INTO user_configs (user_id, balance, email)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (user_id) 
+             DO UPDATE SET balance = COALESCE(user_configs.balance, 0) + $2`,
+            [txn.user_id, amount, txn.email]
+        );
+
+        await client.query('COMMIT');
+        return true;
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error("Error in approveDepositTransaction:", error);
+        throw error;
+    } finally {
+        client.release();
+    }
+}
+
 // 17. Save WhatsApp Order Tracking
 async function saveWhatsAppOrderTracking(orderData) {
     const { query } = require('./pgClient');
