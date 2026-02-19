@@ -16,6 +16,8 @@ router.post('/admin/coupons/:id/status', authController.updateCouponStatus);
 
 router.post('/request-otp', authController.requestOtp);
 router.post('/verify-otp', authController.verifyOtp);
+router.post('/register', authController.registerWithPassword);
+router.post('/login', authController.loginWithPassword);
 
 router.get('/payments/me', authMiddleware, authController.getMyPayments);
 router.post('/payments/deposit', authMiddleware, authController.createDepositRequest);

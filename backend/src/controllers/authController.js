@@ -263,6 +263,54 @@ exports.verifyOtp = async (req, res) => {
     }
 };
 
+exports.registerWithPassword = async (req, res) => {
+    try {
+        const fullName = String(req.body.fullName || '').trim();
+        const phone = String(req.body.phone || '').trim();
+        const email = String(req.body.email || '').trim().toLowerCase();
+        const password = String(req.body.password || '');
+
+        if (!fullName || !phone || !email || !password) {
+            return res.status(400).json({ error: 'All fields are required' });
+        }
+
+        if (password.length < 6) {
+            return res.status(400).json({ error: 'Password must be at least 6 characters' });
+        }
+
+        const user = await authService.setUserPassword(email, password, fullName, phone);
+        res.json({ success: true, user });
+    } catch (error) {
+        console.error('registerWithPassword error:', error);
+        res.status(500).json({ error: 'Registration failed' });
+    }
+};
+
+exports.loginWithPassword = async (req, res) => {
+    try {
+        const email = String(req.body.email || '').trim().toLowerCase();
+        const password = String(req.body.password || '');
+
+        if (!email || !password) {
+            return res.status(400).json({ error: 'Email and password are required' });
+        }
+
+        const result = await authService.verifyPassword(email, password);
+        if (!result.ok || !result.user) {
+            return res.status(400).json({ error: 'Invalid email or password' });
+        }
+
+        const token = authService.signToken(result.user);
+        res.json({
+            token,
+            user: result.user
+        });
+    } catch (error) {
+        console.error('loginWithPassword error:', error);
+        res.status(500).json({ error: 'Login failed' });
+    }
+};
+
 // Get current user's balance and transactions
 exports.getMyPayments = async (req, res) => {
     try {

@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
+const bcrypt = require('bcryptjs');
 const { query } = require('./pgClient');
 
 async function findOrCreateUserByEmail(email) {
@@ -12,6 +13,43 @@ async function findOrCreateUserByEmail(email) {
         [email]
     );
     return inserted.rows[0];
+}
+
+async function setUserPassword(email, password, fullName, phone) {
+    const passwordHash = await bcrypt.hash(password, 10);
+    const existing = await query('SELECT id FROM users WHERE email = $1', [email]);
+    if (existing.rows.length > 0) {
+        const id = existing.rows[0].id;
+        await query(
+            'UPDATE users SET password_hash = $1, full_name = COALESCE($2, full_name), phone = COALESCE($3, phone) WHERE id = $4',
+            [passwordHash, fullName || null, phone || null, id]
+        );
+        return { id, email };
+    }
+    const inserted = await query(
+        'INSERT INTO users (email, password_hash, full_name, phone) VALUES ($1, $2, $3, $4) RETURNING id, email',
+        [email, passwordHash, fullName || null, phone || null]
+    );
+    return inserted.rows[0];
+}
+
+async function verifyPassword(email, password) {
+    const result = await query(
+        'SELECT id, email, password_hash FROM users WHERE email = $1 LIMIT 1',
+        [email]
+    );
+    if (result.rows.length === 0) {
+        return { ok: false };
+    }
+    const user = result.rows[0];
+    if (!user.password_hash) {
+        return { ok: false };
+    }
+    const match = await bcrypt.compare(password, user.password_hash);
+    if (!match) {
+        return { ok: false };
+    }
+    return { ok: true, user: { id: user.id, email: user.email } };
 }
 
 function generateOtpCode() {
@@ -116,6 +154,7 @@ module.exports = {
     createOtp,
     verifyOtp,
     signToken,
-    sendOtpEmail
+    sendOtpEmail,
+    setUserPassword,
+    verifyPassword
 };
-
