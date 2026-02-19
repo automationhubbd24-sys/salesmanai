@@ -643,12 +643,12 @@ export default function MessengerIntegrationPage() {
         // }
 
         try {
-            if (!page.found_id) {
+            if (!page.id) {
                 toast.error("No configuration found for this page. Please contact admin.");
                 return;
             }
 
-            localStorage.setItem("active_fb_db_id", String(page.found_id));
+            localStorage.setItem("active_fb_db_id", String(page.id));
             localStorage.setItem("active_fb_page_id", page.page_id);
             toast.success(`Connected to ${page.name}`);
             navigate("/dashboard/messenger/control");

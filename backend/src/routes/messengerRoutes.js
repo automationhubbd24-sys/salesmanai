@@ -95,6 +95,53 @@ router.get('/pages', async (req, res) => {
     }
 });
 
+// Manual Upsert for Messenger Pages (Used by Facebook Connect + Manual Flow)
+router.post('/pages/manual', authMiddleware, async (req, res) => {
+    try {
+        const { page_id, name, page_access_token, email } = req.body;
+
+        if (!page_id || !name || !page_access_token || !email) {
+            return res.status(400).json({ error: 'page_id, name, page_access_token, and email are required' });
+        }
+
+        const existsResult = await pgClient.query(
+            'SELECT id FROM fb_message_database WHERE page_id = $1 LIMIT 1',
+            [String(page_id)]
+        );
+
+        let dbId = null;
+
+        if (existsResult.rows.length === 0) {
+            const insertResult = await pgClient.query(
+                `INSERT INTO fb_message_database (page_id, text_prompt)
+                 VALUES ($1, $2)
+                 RETURNING id`,
+                [String(page_id), 'You are a helpful sales assistant.']
+            );
+            dbId = insertResult.rows[0].id;
+        } else {
+            dbId = existsResult.rows[0].id;
+        }
+
+        const ownerEmail = email.toLowerCase();
+
+        await pgClient.query(
+            `INSERT INTO page_access_token_message (page_id, name, page_access_token, email)
+             VALUES ($1,$2,$3,$4)
+             ON CONFLICT (page_id) DO UPDATE SET
+                name = EXCLUDED.name,
+                page_access_token = EXCLUDED.page_access_token,
+                email = EXCLUDED.email`,
+            [String(page_id), name, page_access_token, ownerEmail]
+        );
+
+        res.json({ id: dbId });
+    } catch (error) {
+        console.error('Error saving Messenger page (manual):', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Get Messenger Config (Owner or Team Member with Access)
 router.get('/config/:id', async (req, res) => {
     try {

@@ -111,7 +111,7 @@ exports.listTransactions = async (req, res) => {
 exports.approveTransaction = async (req, res) => {
     try {
         const { id } = req.params;
-        const txnId = parseInt(id, 10);
+        const txnId = String(id || '').trim();
         if (!txnId) {
             return res.status(400).json({ error: 'Invalid id' });
         }
@@ -141,7 +141,7 @@ exports.approveTransaction = async (req, res) => {
 exports.rejectTransaction = async (req, res) => {
     try {
         const { id } = req.params;
-        const txnId = parseInt(id, 10);
+        const txnId = String(id || '').trim();
         if (!txnId) {
             return res.status(400).json({ error: 'Invalid id' });
         }

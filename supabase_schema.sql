@@ -222,5 +222,6 @@ create table if not exists team_members (
   member_email text not null,
   status text default 'active', -- active, pending
   created_at timestamp with time zone default now(),
+  permissions jsonb default '{}'::jsonb,
   constraint team_members_unique_pair unique (owner_email, member_email)
 );

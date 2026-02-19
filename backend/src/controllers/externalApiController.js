@@ -430,15 +430,27 @@ exports.regenerateApiKey = async (req, res) => {
         console.log(`[KeyGen] Generating new key for user: ${userId}`);
 
         const pgClient = require('../services/pgClient');
-        await pgClient.query(
-            `INSERT INTO user_configs (user_id, service_api_key, updated_at)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (user_id)
-             DO UPDATE SET
-                service_api_key = EXCLUDED.service_api_key,
-                updated_at = EXCLUDED.updated_at`,
-            [userId, newKey, new Date()]
+
+        const existing = await pgClient.query(
+            'SELECT id FROM user_configs WHERE user_id = $1 LIMIT 1',
+            [userId]
         );
+
+        if (existing.rows.length === 0) {
+            await pgClient.query(
+                `INSERT INTO user_configs (user_id, service_api_key, updated_at)
+                 VALUES ($1, $2, $3)`,
+                [userId, newKey, new Date()]
+            );
+        } else {
+            await pgClient.query(
+                `UPDATE user_configs
+                 SET service_api_key = $2,
+                     updated_at = $3
+                 WHERE user_id = $1`,
+                [userId, newKey, new Date()]
+            );
+        }
 
         console.log(`[KeyGen] Successfully generated key for user: ${userId}`);
         res.json({ api_key: newKey });
