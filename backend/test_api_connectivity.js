@@ -1,9 +1,12 @@
 
-const { createClient } = require('@supabase/supabase-js');
+const { Pool } = require('pg');
 const OpenAI = require('openai');
 require('dotenv').config();
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.DATABASE_URL && process.env.DATABASE_URL.includes('sslmode=require') ? { rejectUnauthorized: false } : false
+});
 
 async function testGroqKey(apiKey) {
     try {
@@ -51,7 +54,7 @@ async function testGeminiKey(apiKey) {
         });
 
         const completion = await openai.chat.completions.create({
-            model: 'gemini-2.5-flash-lite',
+            model: 'gemini-2.0-flash',
             messages: [{ role: 'user', content: 'hi from SalesmanChatbot key test' }],
             max_tokens: 8
         });
@@ -64,45 +67,55 @@ async function testGeminiKey(apiKey) {
 }
 
 async function runTests() {
-    console.log('--- API Key Connectivity Test ---');
+    console.log('--- API Key Connectivity Test (PostgreSQL) ---');
 
-    // 1. Groq (Lite Engine)
-    console.log('\n[Lite Engine - Groq]');
-    const { data: liteKeys } = await supabase.from('lite_engine_keys').select('*').eq('status', 'active');
-    if (!liteKeys || liteKeys.length === 0) {
-        console.log('❌ No active keys in lite_engine_keys');
-    } else {
-        for (const k of liteKeys) {
-            process.stdout.write(`Testing Key ${k.id.substring(0,8)}... (${k.api_key.substring(0, 8)}...): `);
-            await testGroqKey(k.api_key);
+    try {
+        // 1. Groq (Lite Engine)
+        console.log('\n[Lite Engine - Groq]');
+        const liteRes = await pool.query("SELECT * FROM lite_engine_keys WHERE status = 'active'");
+        const liteKeys = liteRes.rows;
+        
+        if (!liteKeys || liteKeys.length === 0) {
+            console.log('❌ No active keys in lite_engine_keys');
+        } else {
+            for (const k of liteKeys) {
+                process.stdout.write(`Testing Key ${k.id}... (${k.api_key.substring(0, 8)}...): `);
+                await testGroqKey(k.api_key);
+            }
         }
-    }
 
-    // 2. OpenRouter
-    console.log('\n[OpenRouter Engine]');
-    const { data: orKeys } = await supabase.from('openrouter_engine_keys').select('*').eq('is_active', true);
-    if (!orKeys || orKeys.length === 0) {
-        console.log('❌ No active keys in openrouter_engine_keys');
-    } else {
-        for (const k of orKeys) {
-            process.stdout.write(`Testing Key ${k.id.substring(0,8)}... (${k.api_key.substring(0, 8)}...): `);
-            await testOpenRouterKey(k.api_key);
-        }
-    }
+        // 2. OpenRouter
+        console.log('\n[OpenRouter Engine]');
+        const orRes = await pool.query("SELECT * FROM openrouter_engine_keys WHERE is_active = true");
+        const orKeys = orRes.rows;
 
-    // 3. Gemini (Pro Engine)
-    console.log('\n[Pro Engine - Gemini]');
-    const { data: proKeys } = await supabase.from('api_list').select('*');
-    if (!proKeys || proKeys.length === 0) {
-        console.log('❌ No keys in api_list');
-    } else {
-        for (const k of proKeys) {
-            // Filter out non-gemini keys if provider is known
-            if (k.provider && k.provider !== 'google' && k.provider !== 'gemini') continue;
-            
-            process.stdout.write(`Testing Key ${k.id}... (${k.api.substring(0, 8)}...): `);
-            await testGeminiKey(k.api);
+        if (!orKeys || orKeys.length === 0) {
+            console.log('❌ No active keys in openrouter_engine_keys');
+        } else {
+            for (const k of orKeys) {
+                process.stdout.write(`Testing Key ${k.id}... (${k.api_key.substring(0, 8)}...): `);
+                await testOpenRouterKey(k.api_key);
+            }
         }
+
+        // 3. Gemini (Pro Engine)
+        console.log('\n[Pro Engine - Gemini]');
+        const proRes = await pool.query("SELECT * FROM api_list");
+        const proKeys = proRes.rows;
+
+        if (!proKeys || proKeys.length === 0) {
+            console.log('❌ No keys in api_list');
+        } else {
+            for (const k of proKeys) {
+                process.stdout.write(`Testing Key ${k.id}... (${k.api_key.substring(0, 8)}...): `);
+                await testGeminiKey(k.api_key);
+            }
+        }
+
+    } catch (err) {
+        console.error("Error running tests:", err);
+    } finally {
+        await pool.end();
     }
 }
 

@@ -6,13 +6,13 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
+    "setup:db": "node setup_db.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@supabase/supabase-js": "^2.91.0",
     "@woocommerce/woocommerce-rest-api": "^1.0.2",
     "axios": "^1.13.3",
     "bcryptjs": "^2.4.3",

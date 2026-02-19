@@ -139,15 +139,12 @@ const Register = () => {
       localStorage.setItem("auth_token", body.token);
       if (body.user) {
         localStorage.setItem("auth_user", JSON.stringify(body.user));
-//<<<<<<< HEAD
         if (body.user.email) {
           localStorage.setItem("auth_email", body.user.email);
         }
         if (body.user.id) {
           localStorage.setItem("auth_user_id", String(body.user.id));
         }
-//=======
-//>>>>>>> 7583eba82a897a40b43f41b80e9caf6d40885c57
       }
       toast.success(
         t("Email verified and login successful!", "ইমেইল ভেরিফাই হয়েছে এবং লগইন সফল হয়েছে!")

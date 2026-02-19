@@ -947,7 +947,9 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 if (!product || !product.image_url) return;
                 let url = product.image_url;
                 if (!/^https?:\/\//i.test(url)) {
-                    url = `https://supabasexyz.salesmanchatbot.online/${url.replace(/^\/+/, '')}`;
+                    // Assume it's a relative path to our own storage
+                    const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
+                    url = `${baseUrl.replace(/\/$/, '')}/${url.replace(/^\/+/, '')}`;
                 }
 
                 const imageUrl = url;
@@ -984,16 +986,17 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             // Remove trailing punctuation (comma, dot) if accidentally matched
             url = url.replace(/[,.]$/, '');
 
-            const isSupabaseImage = /supabasexyz\.salesmanchatbot\.online\/storage\/v1\/object\/public\/product-images\/.+\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(url);
+            // Allow any image URL (local or remote)
+            const isImage = /\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(url);
 
-            if (isSupabaseImage) {
+            if (isImage) {
                 if (!extractedImages.some(img => img.url === url)) {
                     extractedImages.push({ url: url, title: title });
                 }
                 replyText = replyText.replace(fullMatch, '').trim();
             } else {
-                // Non-Supabase URLs stay as normal text
-                console.log(`[Image Extraction] Keeping non-Supabase IMAGE URL as text: ${url}`);
+                // Non-Image URLs stay as normal text
+                console.log(`[Image Extraction] Keeping non-Image URL as text: ${url}`);
             }
         }
 
@@ -1008,16 +1011,12 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             // Remove trailing punctuation
             url = url.replace(/[,.]$/, '');
 
-            const isSupabaseImage = /supabasexyz\.salesmanchatbot\.online\/storage\/v1\/object\/public\/product-images\/.+\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(url);
-
-            if (isSupabaseImage) {
-                if (!extractedImages.some(img => img.url === url)) {
-                    extractedImages.push({ url: url, title: 'View Image' });
-                }
-                replyText = replyText.replace(fullMatch, '').trim();
-            } else {
-                console.log(`[Image Extraction] Keeping non-Supabase direct image URL as text: ${url}`);
+            // Accept any valid image URL (Local or Remote)
+            // Previously restricted to Supabase, now open for local storage migration
+            if (!extractedImages.some(img => img.url === url)) {
+                extractedImages.push({ url: url, title: 'View Image' });
             }
+            replyText = replyText.replace(fullMatch, '').trim();
         }
 
         const labeledLinkRegex = /(?:(?:Image|Link|Sobi|Photo|Picture|চিত্র)\s*[:|-]?\s*)(https?:\/\/[^\s,]+)/gi;
@@ -1029,15 +1028,16 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
              // Remove trailing punctuation
              url = url.replace(/[,.]$/, '');
 
-             const isSupabaseImage = /supabasexyz\.salesmanchatbot\.online\/storage\/v1\/object\/public\/product-images\/.+\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(url);
+             // Check if it looks like an image file
+             const isImage = /\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(url);
 
-             if (isSupabaseImage) {
+             if (isImage) {
                  if (!extractedImages.some(img => img.url === url)) {
                     extractedImages.push({ url: url, title: 'View Link' });
                 }
                 replyText = replyText.replace(fullMatch, '').trim();
              } else {
-                 console.log(`[Image Extraction] Keeping non-Supabase labeled link as text: ${url}`);
+                 console.log(`[Image Extraction] Keeping non-image link as text: ${url}`);
              }
         }
         

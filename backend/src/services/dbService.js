@@ -837,40 +837,19 @@ async function saveOrderTracking(orderData) {
 
 // 13. Check Conversation Lock Status (Failure Lock)
 async function checkLockStatus(pageId, senderId) {
-    return false; // DISABLED PER USER REQUEST
-    /*
     try {
-        // Fetch last 4 bot replies
-        const { data, error } = await supabase
-            .from('fb_chats')
-            .select('status, timestamp')
-            .eq('page_id', pageId)
-            .eq('recipient_id', senderId)
-            .eq('reply_by', 'bot')
-            .order('timestamp', { ascending: false })
-            .limit(4);
-
-        if (error || !data || data.length < 4) return false;
-
-        // Check if all 4 are 'ai_ignored' (Silent Failures)
-        const allIgnored = data.every(msg => msg.status === 'ai_ignored');
-        if (!allIgnored) return false;
-
-        // Check if within 24 hours
-        // timestamp is stored as BigInt (Date.now())
-        const lastIgnoredTime = Number(data[0].timestamp); 
-        const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-        
-        if (Date.now() - lastIgnoredTime < ONE_DAY_MS) {
-            return true;
+        const result = await query(
+            'SELECT is_locked FROM fb_contacts WHERE page_id = $1 AND sender_id = $2 LIMIT 1',
+            [pageId, senderId]
+        );
+        if (result.rows.length > 0) {
+            return result.rows[0].is_locked === true;
         }
-        
         return false;
-    } catch (e) {
-        console.error("Lock Check Error:", e);
+    } catch (error) {
+        console.error("Error checking lock status:", error);
         return false;
     }
-    */
 }
 
 // 14. Check Daily AI Reply Count for WhatsApp (Admin Handover Logic)
@@ -1211,36 +1190,19 @@ async function deleteMessengerPage(pageId) {
 
 // 26. Check WhatsApp Lock Status
 async function checkWhatsAppLockStatus(sessionName, senderId) {
-    return false; // DISABLED PER USER REQUEST
-    /*
     try {
-        const { data, error } = await supabase
-            .from('whatsapp_chats')
-            .select('status, timestamp')
-            .eq('session_name', sessionName)
-            .eq('recipient_id', senderId)
-            .eq('reply_by', 'bot')
-            .order('timestamp', { ascending: false })
-            .limit(4);
-
-        if (error || !data || data.length < 4) return false;
-
-        const allIgnored = data.every(msg => msg.status === 'ai_ignored');
-        if (!allIgnored) return false;
-
-        const lastIgnoredTime = Number(data[0].timestamp); 
-        const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-        
-        if (Date.now() - lastIgnoredTime < ONE_DAY_MS) {
-            return true;
+        const result = await query(
+            'SELECT is_locked FROM whatsapp_contacts WHERE session_name = $1 AND phone_number = $2 LIMIT 1',
+            [sessionName, senderId]
+        );
+        if (result.rows.length > 0) {
+            return result.rows[0].is_locked === true;
         }
-        
         return false;
-    } catch (e) {
-        console.error("WA Lock Check Error:", e);
+    } catch (error) {
+        console.error("Error checking WhatsApp lock status:", error);
         return false;
     }
-    */
 }
 
 // --- Helper: Get Last N WhatsApp Messages (Raw) for Echo Check ---
