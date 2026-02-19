@@ -139,12 +139,15 @@ const Register = () => {
       localStorage.setItem("auth_token", body.token);
       if (body.user) {
         localStorage.setItem("auth_user", JSON.stringify(body.user));
+//<<<<<<< HEAD
         if (body.user.email) {
           localStorage.setItem("auth_email", body.user.email);
         }
         if (body.user.id) {
           localStorage.setItem("auth_user_id", String(body.user.id));
         }
+//=======
+//>>>>>>> 7583eba82a897a40b43f41b80e9caf6d40885c57
       }
       toast.success(
         t("Email verified and login successful!", "ইমেইল ভেরিফাই হয়েছে এবং লগইন সফল হয়েছে!")
@@ -352,6 +355,7 @@ const Register = () => {
             </div>
           </form>
 
+
           <Dialog open={otpStep} onOpenChange={setOtpStep}>
             <DialogContent className="max-w-md bg-[#0f0f0f]/95 border border-white/10 backdrop-blur-md">
               <DialogHeader>
@@ -391,6 +395,42 @@ const Register = () => {
               </form>
             </DialogContent>
           </Dialog>
+=======
+          {otpStep && (
+            <form onSubmit={handleVerifyOtp} className="mt-6 space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="otp" className="text-sm font-medium">
+                  {t("Email Verification Code", "ইমেইল ভেরিফিকেশন কোড")}
+                </Label>
+                <Input
+                  id="otp"
+                  type="text"
+                  inputMode="numeric"
+                  placeholder={t("Enter 6-digit code", "৬ ডিজিট কোড লিখুন")}
+                  value={otp}
+                  onChange={(e) => setOtp(e.target.value)}
+                  className="h-11 text-sm bg-[#0f0f0f] border border-gray-800 focus-visible:ring-[#00ff88] text-center tracking-[0.4em]"
+                  maxLength={6}
+                />
+                <p className="text-xs text-gray-400">
+                  {t(
+                    "We sent a verification code to your email. Please enter it to complete registration.",
+                    "আপনার ইমেইলে একটি ভেরিফিকেশন কোড পাঠানো হয়েছে। রেজিস্ট্রেশন সম্পূর্ণ করতে কোডটি লিখুন।"
+                  )}
+                </p>
+              </div>
+              <Button
+                type="submit"
+                className="h-11 w-full rounded-full bg-white text-black font-semibold hover:bg-gray-100 transition-all hover:scale-[1.01] active:scale-95"
+                disabled={verifyingOtp}
+              >
+                {verifyingOtp
+                  ? t("Verifying code...", "কোড ভেরিফাই করা হচ্ছে...")
+                  : t("Verify Email & Sign In", "ইমেইল ভেরিফাই করে সাইন ইন করুন")}
+              </Button>
+            </form>
+          )}
+
 
           <p className="mt-6 text-center text-xs text-gray-400">
             {t("By creating an account, you agree to our", "একটি অ্যাকাউন্ট তৈরি করার মাধ্যমে, আপনি আমাদের সাথে সম্মত হচ্ছেন")}{" "}
