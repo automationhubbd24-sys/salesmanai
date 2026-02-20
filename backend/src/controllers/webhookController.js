@@ -69,9 +69,13 @@ function schedulePageTask(pageId, task) {
     }
     const run = async () => {
         try {
-            await task();
+            // Add a timeout to prevent the queue from getting stuck if task hangs
+            await Promise.race([
+                task(),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("Task Timeout (30s)")), 30000))
+            ]);
         } catch (e) {
-            console.error('[BurstQueue] Task error:', e.message || e);
+            console.error(`[BurstQueue] Task error (Page ${pageId}):`, e.message || e);
         } finally {
             state.active -= 1;
             if (state.queue.length > 0) {
@@ -288,7 +292,7 @@ async function queueMessage(event) {
             reply_by: 'user'
         });
     } catch (err) {
-        console.error("Error saving to fb_chats (non-blocking):", err.message);
+        console.error(`Error saving to fb_chats (Page: ${pageId}, Msg: ${messageId}):`, err.message);
     }
     // -------------------------------------------------
 

@@ -754,7 +754,7 @@ ${productContext}`;
                     reply: null, // Returning null ensures the controller knows the request failed strictly.
                     error: `AI Provider Error: ${error.message}. Please check your API settings in the dashboard.`,
                     token_usage: 0,
-                    model: modelToUse
+                    model: pageConfig.chatmodel || defaultModel // FIX: Use pageConfig value directly if modelToUse is not in scope or undefined
                 };
             }
         }

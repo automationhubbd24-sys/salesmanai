@@ -89,7 +89,10 @@ async function checkDuplicate(messageId) {
         );
         return false;
     } catch (error) {
-        console.error("Error in checkDuplicate:", error);
+        if (error.code === '23505') { // Unique violation
+            return true;
+        }
+        console.error("Error in checkDuplicate:", error.message);
         return false;
     }
 }
@@ -290,7 +293,7 @@ async function saveFbChat(data) {
             params
         );
     } catch (error) {
-        console.error("Error saving to fb_chats:", error);
+        console.error(`Error saving to fb_chats (msg: ${data.message_id}, page: ${data.page_id}):`, error.message);
     }
 }
 

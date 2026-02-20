@@ -45,7 +45,7 @@ async function sendMessage(pageId, recipientId, text, accessToken) {
             const delays = [500, 1000, 2000];
             for (let i = 0; i < delays.length + 1; i++) {
                 try {
-                    const response = await axios.post(url, payload);
+                    const response = await axios.post(url, payload, { timeout: 20000 });
                     return response.data;
                 } catch (error) {
                     const status = error.response?.status;
@@ -151,7 +151,7 @@ async function sendTypingAction(recipientId, accessToken, action = 'typing_on') 
         await axios.post(url, {
             recipient: { id: recipientId },
             sender_action: action
-        });
+        }, { timeout: 5000 });
     } catch (error) {
         // Ignore typing errors, not critical
         // But check if token is invalid
@@ -185,7 +185,7 @@ async function getConversationMessages(pageId, userId, accessToken, limit = 5) {
         
         const url = `https://graph.facebook.com/v19.0/me/conversations?user_id=${userId}&fields=messages.limit(${limit}){message,from,created_time}&access_token=${accessToken}`;
         
-        const response = await axios.get(url);
+        const response = await axios.get(url, { timeout: 10000 });
         
         // Structure: data: [{ messages: { data: [...] } }]
         if (response.data && response.data.data && response.data.data.length > 0) {
@@ -331,7 +331,7 @@ async function getUserProfile(userId, accessToken) {
     try {
         // Attempt to fetch gender (though often restricted)
         const url = `https://graph.facebook.com/v19.0/${userId}?fields=first_name,last_name,name,gender&access_token=${accessToken}`;
-        const response = await axios.get(url);
+        const response = await axios.get(url, { timeout: 10000 });
         return response.data;
     } catch (error) {
         // console.error(`Error fetching user profile ${userId}:`, error.message);
