@@ -64,8 +64,7 @@ async function uploadProductImage(fileBuffer, mimeType, userId, baseUrl) {
                 Bucket: process.env.S3_BUCKET,
                 Key: key,
                 Body: finalBuffer,
-                ContentType: contentType,
-                ACL: 'public-read' // Optional, depends on bucket policy
+                ContentType: contentType
             });
 
             await s3Client.send(command);
