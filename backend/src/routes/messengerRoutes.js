@@ -173,6 +173,8 @@ router.get('/config/:id', async (req, res) => {
 
         const userEmail = payload.email;
 
+        console.log(`[GET /config/:id] Request ID: ${id}, User: ${userEmail}`);
+
         let configRow = null;
 
         // Try lookup by primary key (id) first IF it looks like a database integer (not a page ID)
@@ -186,6 +188,7 @@ router.get('/config/:id', async (req, res) => {
             );
              if (configResult.rowCount > 0) {
                 configRow = configResult.rows[0];
+                console.log(`[GET /config/:id] Found by DB ID: ${id}`);
             }
         }
 
@@ -198,10 +201,12 @@ router.get('/config/:id', async (req, res) => {
             );
             if (configByPageId.rowCount > 0) {
                 configRow = configByPageId.rows[0];
+                console.log(`[GET /config/:id] Found by Page ID: ${id}`);
             }
         }
 
         if (!configRow) {
+            console.log(`[GET /config/:id] Config not found for ${id}. Attempting auto-create...`);
             // Second Fallback: Auto-create if page exists in page_access_token_message but config missing
              const pageExists = await pgClient.query(
                 'SELECT page_id FROM page_access_token_message WHERE page_id = $1',
@@ -217,17 +222,18 @@ router.get('/config/:id', async (req, res) => {
                         [id, 'You are a helpful sales assistant.']
                     );
                     configRow = insertRes.rows[0];
+                    console.log(`[GET /config/:id] Auto-created config for Page ID: ${id}`);
                 } catch (err) {
                     console.error("Error auto-creating fb config in /config/:id:", err);
                 }
             } else {
                  // Final attempt: Check if the ID was actually a DB ID but missed (unlikely if isInteger logic holds)
-                 // Or maybe page_access_token_message has it but we missed it?
-                 // No further fallback possible without valid page_id
+                 console.log(`[GET /config/:id] Page not found in token table for ID: ${id}`);
             }
         }
 
         if (!configRow) {
+            console.warn(`[GET /config/:id] Final Result: Config not found for ${id}`);
             return res.status(404).json({ error: 'Config not found' });
         }
 
@@ -242,7 +248,8 @@ router.get('/config/:id', async (req, res) => {
 
         let allowed = false;
 
-        if (pageRow && pageRow.email === userEmail) {
+        // Case insensitive email check
+        if (pageRow && pageRow.email && pageRow.email.toLowerCase() === userEmail.toLowerCase()) {
             allowed = true;
         }
 
@@ -264,6 +271,7 @@ router.get('/config/:id', async (req, res) => {
         }
 
         if (!allowed) {
+            console.warn(`[GET /config/:id] Forbidden. Page Owner: ${pageRow?.email}, User: ${userEmail}`);
             return res.status(403).json({ error: 'Forbidden' });
         }
 
@@ -277,7 +285,8 @@ router.get('/config/:id', async (req, res) => {
 // Update Messenger Config (Owner or Team Member with Access)
 router.put('/config/:id', async (req, res) => {
     try {
-        const { id } = req.params;
+        let { id } = req.params;
+        id = String(id).trim();
         const authHeader = req.headers.authorization;
 
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -290,26 +299,46 @@ router.put('/config/:id', async (req, res) => {
 
         const userEmail = payload.email;
 
-        const configResult = await pgClient.query(
-            'SELECT * FROM fb_message_database WHERE id = $1',
-            [parseInt(id, 10)]
-        );
+        let configRow = null;
 
-        if (configResult.rowCount === 0) {
+        // Try lookup by primary key (id) first IF it looks like a database integer
+        const isInteger = /^\d+$/.test(id) && Number(id) < 2147483647;
+
+        if (isInteger) {
+            const configResult = await pgClient.query(
+                'SELECT * FROM fb_message_database WHERE id = $1',
+                [parseInt(id, 10)]
+            );
+             if (configResult.rowCount > 0) {
+                configRow = configResult.rows[0];
+            }
+        }
+
+        if (!configRow) {
+            // Fallback: Try lookup by page_id
+            const configByPageId = await pgClient.query(
+                'SELECT * FROM fb_message_database WHERE page_id = $1',
+                [id]
+            );
+            if (configByPageId.rowCount > 0) {
+                configRow = configByPageId.rows[0];
+            }
+        }
+
+        if (!configRow) {
             return res.status(404).json({ error: 'Config not found' });
         }
 
-        const configRow = configResult.rows[0];
-
         const pageId = configRow.page_id;
+        const dbId = configRow.id;
 
+        // Check Permissions
         const pageResult = await pgClient.query(
             'SELECT page_id, email FROM page_access_token_message WHERE page_id = $1',
             [pageId]
         );
-
-        const pageRow = pageResult.rows[0] || null;
-
+        
+        const pageRow = pageResult.rows[0];
         let allowed = false;
 
         if (pageRow && pageRow.email === userEmail) {
@@ -337,71 +366,88 @@ router.put('/config/:id', async (req, res) => {
             return res.status(403).json({ error: 'Forbidden' });
         }
 
+        // 1. Update fb_message_database (Settings)
         const allowedKeys = [
-            'reply_message',
-            'swipe_reply',
-            'image_detection',
-            'image_send',
-            'template',
-            'order_tracking',
-            'block_emoji',
-            'unblock_emoji',
-            'check_conversion',
-            'text_prompt',
-            'image_prompt',
-            'wait',
-            'memory_context_name',
-            'order_lock_minutes'
+            'reply_message', 'swipe_reply', 'image_detection', 'image_send', 'template', 'order_tracking',
+            'block_emoji', 'unblock_emoji', 'check_conversion', 'text_prompt', 'image_prompt', 'wait',
+            'memory_context_name', 'order_lock_minutes'
         ];
 
-        const updates = {};
-        for (const key of allowedKeys) {
-            if (Object.prototype.hasOwnProperty.call(req.body, key)) {
-                updates[key] = req.body[key];
+        const updates = [];
+        const values = [];
+        let idx = 1;
+
+        for (const key of Object.keys(req.body)) {
+            if (allowedKeys.includes(key)) {
+                updates.push(`${key} = $${idx}`);
+                values.push(req.body[key]);
+                idx++;
             }
         }
 
-        // Handle AI Provider & API Key updates separately (stored in page_access_token_message)
-        const aiProvider = req.body.ai_provider || req.body.ai;
-        if (aiProvider || req.body.api_key !== undefined) {
-             const tokenUpdates = {};
-             if (aiProvider) tokenUpdates.ai = aiProvider;
-             if (req.body.api_key !== undefined) tokenUpdates.api_key = req.body.api_key;
+        let updatedConfig = configRow;
 
-             const tokenKeys = Object.keys(tokenUpdates);
-             if (tokenKeys.length > 0) {
-                 const tokenSet = tokenKeys.map((k, i) => `${k} = $${i + 2}`).join(', ');
-                 const tokenValues = [pageId, ...tokenKeys.map(k => tokenUpdates[k])];
-                 
-                 await pgClient.query(
-                     `UPDATE page_access_token_message SET ${tokenSet} WHERE page_id = $1`,
-                     tokenValues
-                 );
-             }
-        }
-
-        const keys = Object.keys(updates);
-        if (keys.length === 0) {
-            // If only AI settings were updated, return success
-            if (aiProvider || req.body.api_key !== undefined) {
-                 return res.json({ success: true, message: 'AI settings updated' });
+        if (updates.length > 0) {
+            values.push(dbId);
+            const queryText = `
+                UPDATE fb_message_database
+                SET ${updates.join(', ')}
+                WHERE id = $${idx}
+                RETURNING *
+            `;
+            const updateResult = await pgClient.query(queryText, values);
+            if (updateResult.rowCount > 0) {
+                updatedConfig = updateResult.rows[0];
             }
-            return res.status(400).json({ error: 'No valid fields provided for update' });
         }
 
-        const setClauses = keys.map((key, index) => `${key} = $${index + 2}`);
-        const values = [parseInt(id, 10), ...keys.map(k => updates[k])];
+        // 2. Update page_access_token_message (AI Credentials & Page Access Token)
+        const tokenUpdates = [];
+        const tokenValues = [];
+        let tIdx = 1;
 
-        const updateResult = await pgClient.query(
-            `UPDATE fb_message_database SET ${setClauses.join(', ')} WHERE id = $1 RETURNING *`,
-            values
-        );
+        // Map frontend fields to DB columns
+        const aiProvider = req.body.ai_provider || req.body.ai || req.body.provider;
+        const chatModel = req.body.chat_model || req.body.model;
+        const apiKey = req.body.api_key;
+        const pageAccessToken = req.body.page_access_token_message || req.body.page_access_token;
 
-        if (updateResult.rowCount === 0) {
-            return res.status(404).json({ error: 'Config not found or update failed' });
+        if (aiProvider !== undefined) {
+            tokenUpdates.push(`ai = $${tIdx}`);
+            tokenValues.push(aiProvider);
+            tIdx++;
+        }
+        if (chatModel !== undefined) {
+            tokenUpdates.push(`chat_model = $${tIdx}`);
+            tokenValues.push(chatModel);
+            tIdx++;
+        }
+        if (apiKey !== undefined) {
+            tokenUpdates.push(`api_key = $${tIdx}`);
+            tokenValues.push(apiKey);
+            tIdx++;
+        }
+        if (pageAccessToken !== undefined) {
+            tokenUpdates.push(`page_access_token = $${tIdx}`);
+            tokenValues.push(pageAccessToken);
+            tIdx++;
         }
 
-        res.json(updateResult.rows[0]);
+        if (tokenUpdates.length > 0) {
+            tokenValues.push(pageId);
+            const tokenQuery = `
+                UPDATE page_access_token_message
+                SET ${tokenUpdates.join(', ')}
+                WHERE page_id = $${tIdx}
+            `;
+            try {
+                await pgClient.query(tokenQuery, tokenValues);
+            } catch (err) {
+                console.error("Failed to update page_access_token_message:", err);
+            }
+        }
+
+        res.json(updatedConfig);
     } catch (error) {
         console.error("Error updating Messenger config:", error);
         res.status(500).json({ error: error.message });
@@ -410,7 +456,8 @@ router.put('/config/:id', async (req, res) => {
 
 router.delete('/page/:pageId', async (req, res) => {
     try {
-        const { pageId } = req.params;
+        let { pageId } = req.params;
+        pageId = String(pageId).trim();
         const authHeader = req.headers.authorization;
 
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -423,38 +470,61 @@ router.delete('/page/:pageId', async (req, res) => {
 
         const userEmail = payload.email;
 
+        // Resolve pageId if it is a DB ID
+        const isInteger = /^\d+$/.test(pageId) && Number(pageId) < 2147483647;
+        if (isInteger) {
+             const dbRes = await pgClient.query('SELECT page_id FROM fb_message_database WHERE id = $1', [parseInt(pageId, 10)]);
+             if (dbRes.rows.length > 0) {
+                 pageId = dbRes.rows[0].page_id;
+             }
+        }
+
         const pageResult = await pgClient.query(
-            'SELECT page_id, email, page_access_token FROM page_access_token_message WHERE page_id = $1',
-            [pageId]
-        );
+                    'SELECT page_id, email, page_access_token FROM page_access_token_message WHERE page_id = $1',
+                    [pageId]
+                );
 
-        const pageRow = pageResult.rows[0] || null;
+                const pageRow = pageResult.rows[0] || null;
 
-        if (!pageRow) {
-            return res.status(404).json({ error: 'Page not found' });
-        }
+                // Log for debugging
+                console.log(`[DELETE /page/:pageId] ID: ${pageId}, User: ${userEmail}, Found: ${!!pageRow}, Owner: ${pageRow?.email}`);
 
-        if (pageRow.email !== userEmail) {
-            return res.status(403).json({ error: 'Forbidden' });
-        }
+                if (!pageRow) {
+                    // Even if page not found in token table, try to delete from other tables if it looks like a Page ID
+                    // But we can't verify ownership if pageRow is missing.
+                    // However, if the user is asking to delete a "ghost" page, we might want to allow it?
+                    // But for security, we should probably require it to exist in page_access_token_message OR check team permissions?
+                    // If it's not in page_access_token_message, it won't be in the list?
+                    // But if we resolved it from fb_message_database, it might exist there.
+                    
+                    // Let's assume strict ownership check for now.
+                    console.warn(`[DELETE] Page ${pageId} not found in page_access_token_message.`);
+                    return res.status(404).json({ error: 'Page not found' });
+                }
 
-        // Unsubscribe App from Facebook Page
-        if (pageRow.page_access_token) {
-            try {
-                const axios = require('axios');
-                await axios.delete(`https://graph.facebook.com/v19.0/${pageId}/subscribed_apps`, {
-                    params: { access_token: pageRow.page_access_token }
-                });
-                console.log(`[Facebook] App unsubscribed from page ${pageId}`);
-            } catch (fbError) {
-                console.error(`[Facebook] Failed to unsubscribe app from page ${pageId}:`, fbError.response?.data || fbError.message);
-                // Proceed with deletion even if this fails
-            }
-        }
+                // Fix case sensitivity check
+                if (pageRow.email && pageRow.email.toLowerCase() !== userEmail.toLowerCase()) {
+                    console.warn(`[DELETE] Forbidden. Owner: ${pageRow.email}, Request: ${userEmail}`);
+                    return res.status(403).json({ error: 'Forbidden' });
+                }
 
-        await dbService.deleteMessengerPage(pageId);
+                // Unsubscribe App from Facebook Page
+                if (pageRow.page_access_token) {
+                    try {
+                        const axios = require('axios');
+                        await axios.delete(`https://graph.facebook.com/v19.0/${pageId}/subscribed_apps`, {
+                            params: { access_token: pageRow.page_access_token }
+                        });
+                        console.log(`[Facebook] App unsubscribed from page ${pageId}`);
+                    } catch (fbError) {
+                        console.error(`[Facebook] Failed to unsubscribe app from page ${pageId}:`, fbError.response?.data || fbError.message);
+                        // Proceed with deletion even if this fails
+                    }
+                }
 
-        res.json({ success: true });
+                await dbService.deleteMessengerPage(pageId);
+
+                res.json({ success: true });
     } catch (error) {
         console.error("Error deleting Messenger page:", error);
         res.status(500).json({ error: error.message });
