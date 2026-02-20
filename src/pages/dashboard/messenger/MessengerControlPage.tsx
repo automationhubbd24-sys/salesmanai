@@ -73,7 +73,7 @@ export default function MessengerControlPage() {
     try {
       const token = localStorage.getItem("auth_token");
 
-      const res = await fetch(`${BACKEND_URL}/messenger/config/${id}`, {
+      const res = await fetch(`${BACKEND_URL}/api/messenger/config/${id}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {}
       });
 
@@ -113,7 +113,7 @@ export default function MessengerControlPage() {
       const payload = { ...config };
       const token = localStorage.getItem("auth_token");
 
-      const res = await fetch(`${BACKEND_URL}/messenger/config/${dbId}`, {
+      const res = await fetch(`${BACKEND_URL}/api/messenger/config/${dbId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -144,7 +144,7 @@ export default function MessengerControlPage() {
     try {
         const token = localStorage.getItem("auth_token");
 
-        const res = await fetch(`${BACKEND_URL}/messenger/config/${dbId}`, {
+        const res = await fetch(`${BACKEND_URL}/api/messenger/config/${dbId}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',

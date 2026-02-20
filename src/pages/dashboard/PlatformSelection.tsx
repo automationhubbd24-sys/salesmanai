@@ -33,7 +33,7 @@ export default function PlatformSelection() {
     // Fetch Global Active Sessions
     async function fetchStats() {
         try {
-            const res = await fetch(`${BACKEND_URL}/stats/total-sessions`);
+            const res = await fetch(`${BACKEND_URL}/api/stats/total-sessions`);
             if (res.ok) {
                 const data = await res.json();
                 setActiveSessions(data.count);

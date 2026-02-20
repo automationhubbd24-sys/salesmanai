@@ -41,7 +41,7 @@ export default function DashboardHome() {
 
       try {
         if (isWhatsApp) {
-          const res = await fetch(`${BACKEND_URL}/whatsapp/sessions`, {
+          const res = await fetch(`${BACKEND_URL}/api/whatsapp/sessions`, {
             headers: {
               Authorization: `Bearer ${token}`,
             },
@@ -52,7 +52,7 @@ export default function DashboardHome() {
             setStats(prev => ({ ...prev, sessions: mySessions.length || 0 }));
           }
         } else if (platform === 'messenger') {
-          const res = await fetch(`${BACKEND_URL}/messenger/pages`, {
+          const res = await fetch(`${BACKEND_URL}/api/messenger/pages`, {
             headers: {
               Authorization: `Bearer ${token}`,
             },

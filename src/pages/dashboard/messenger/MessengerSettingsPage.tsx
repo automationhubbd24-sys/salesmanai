@@ -139,9 +139,9 @@ export default function MessengerSettingsPage() {
         return;
       }
 
-      const resConfig = await fetch(`${BACKEND_URL}/messenger/config/${id}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const resConfig = await fetch(`${BACKEND_URL}/api/messenger/config/${id}`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
 
       if (!resConfig.ok) {
         const body = await resConfig.json().catch(() => ({}));
@@ -150,9 +150,9 @@ export default function MessengerSettingsPage() {
 
       const dbRow: any = await resConfig.json();
 
-      const resPage = await fetch(`${BACKEND_URL}/messenger/pages`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const resPage = await fetch(`${BACKEND_URL}/api/messenger/pages`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
 
       if (!resPage.ok) {
         const body = await resPage.json().catch(() => ({}));

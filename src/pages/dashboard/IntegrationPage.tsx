@@ -146,9 +146,9 @@ export default function IntegrationPage() {
         return;
       }
 
-      const res = await fetch(`${BACKEND_URL}/whatsapp/sessions`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/sessions`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
 
       if (!res.ok) {
         throw new Error("Failed to load sessions");
@@ -256,7 +256,7 @@ export default function IntegrationPage() {
       };
       console.log("Sending payload to /whatsapp/session/create:", payload);
 
-      const res = await fetch(`${BACKEND_URL}/whatsapp/session/create`, {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/session/create`, {
         method: 'POST',
         headers: { 
             'Content-Type': 'application/json',

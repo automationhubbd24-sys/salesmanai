@@ -30,10 +30,15 @@ app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 // We mount the webhook route at /webhook or /api/webhook based on preference
 // The user's n8n.json used /webhook
 app.use('/webhook', webhookRoutes);
+app.use('/api/webhook', webhookRoutes); // Alias for consistency
 
 // Register other routes
 app.use('/whatsapp', whatsappRoutes);
+app.use('/api/whatsapp', whatsappRoutes); // Alias for /api prefix
+
 app.use('/messenger', messengerRoutes);
+app.use('/api/messenger', messengerRoutes); // Alias for /api prefix
+
 app.use('/api/auth', authRoutes); // Matches frontend call /api/auth/facebook/exchange-token
 app.use('/api/products', productRoutes);
 app.use('/api/external', externalApiRoutes);
@@ -41,8 +46,12 @@ app.use('/api/lite', liteEngineRoutes);
 app.use('/api/openrouter', openrouterEngineRoutes);
 app.use('/api/db-admin', dbAdminRoutes);
 app.use('/api/api-list', apiListRoutes);
+
 app.use('/teams', teamRoutes);
+app.use('/api/teams', teamRoutes); // Alias for /api prefix
+
 app.use('/stats', statsRoutes);
+app.use('/api/stats', statsRoutes); // Alias for /api prefix
 app.use('/api/ai', aiRoutes);
 
 // Basic health check

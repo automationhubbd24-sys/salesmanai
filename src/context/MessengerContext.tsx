@@ -59,7 +59,7 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      const res = await fetch(`${BACKEND_URL}/messenger/pages`, {
+      const res = await fetch(`${BACKEND_URL}/api/messenger/pages`, {
         headers: { Authorization: `Bearer ${token}` }
       });
 

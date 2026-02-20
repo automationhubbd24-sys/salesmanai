@@ -217,7 +217,7 @@ export default function WhatsAppConversionPage() {
       params.set("from", from.getTime().toString());
       params.set("to", to.getTime().toString());
 
-      const res = await fetch(`${BACKEND_URL}/whatsapp/messages?${params.toString()}`, {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/messages?${params.toString()}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },

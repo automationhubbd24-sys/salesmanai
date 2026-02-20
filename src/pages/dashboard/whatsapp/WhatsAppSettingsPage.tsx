@@ -283,7 +283,7 @@ export default function WhatsAppSettingsPage() {
         return;
       }
 
-      const res = await fetch(`${BACKEND_URL}/whatsapp/config/${id}`, {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${id}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
 

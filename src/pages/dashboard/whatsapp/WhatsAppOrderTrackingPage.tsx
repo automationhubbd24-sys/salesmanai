@@ -86,8 +86,7 @@ Phone: ${order.number || 'N/A'}`;
           params.set("to", customEnd.getTime().toString());
         }
 
-        const url = `${BACKEND_URL}/whatsapp/orders?${params.toString()}`;
-        const res = await fetch(url, {
+        const res = await fetch(`${BACKEND_URL}/api/whatsapp/orders?${params.toString()}`, {
           headers: {
             Authorization: `Bearer ${token}`,
           },

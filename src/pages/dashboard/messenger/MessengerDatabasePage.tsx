@@ -47,11 +47,11 @@ export default function MessengerDatabasePage() {
         return;
       }
 
-      const res = await fetch(`${BACKEND_URL}/messenger/config/${id}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const res = await fetch(`${BACKEND_URL}/api/messenger/config/${id}`, {
+            headers: {
+                Authorization: `Bearer ${token}`,
+            },
+        });
 
       if (res.status === 403 || res.status === 404) {
         toast.error("Database not found or access denied");

@@ -104,7 +104,7 @@ export default function SessionManager() {
     if (viewingSessionQr) {
       const fetchQr = async () => {
           try {
-              const res = await fetch(`${BACKEND_URL}/whatsapp/session/qr/${viewingSessionQr}`);
+              const res = await fetch(`${BACKEND_URL}/api/whatsapp/session/qr/${viewingSessionQr}`);
               const data = await res.json();
               if (data.qr_code) {
                   setQrCodeUrl(data.qr_code);
@@ -168,7 +168,7 @@ export default function SessionManager() {
       setIsPairingLoading(true);
       try {
           const token = localStorage.getItem("auth_token");
-          const res = await fetch(`${BACKEND_URL}/whatsapp/session/pairing-code`, {
+          const res = await fetch(`${BACKEND_URL}/api/whatsapp/session/pairing-code`, {
             method: 'POST',
             headers: { 
                 'Content-Type': 'application/json',
@@ -225,7 +225,7 @@ export default function SessionManager() {
 
       console.log("Creating session with payload:", payload);
 
-      const res = await fetch(`${BACKEND_URL}/whatsapp/session/create`, {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/session/create`, {
         method: 'POST',
         headers: { 
             'Content-Type': 'application/json',
@@ -297,7 +297,7 @@ export default function SessionManager() {
   const fetchQr = async (sessionName: string, retries = 10) => {
     try {
       setViewingSessionQr(sessionName);
-      const res = await fetch(`${BACKEND_URL}/whatsapp/session/qr/${sessionName}?t=${Date.now()}`, {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/session/qr/${sessionName}?t=${Date.now()}`, {
           method: 'GET'
       });
       
@@ -358,7 +358,7 @@ export default function SessionManager() {
           if (!token) {
             throw new Error("Please login again");
           }
-          const res = await fetch(`${BACKEND_URL}/whatsapp/session/renew`, {
+          const res = await fetch(`${BACKEND_URL}/api/whatsapp/session/renew`, {
               method: 'POST',
               headers: { 
                   'Content-Type': 'application/json',
@@ -393,7 +393,7 @@ export default function SessionManager() {
     
     try {
       const token = localStorage.getItem("auth_token");
-      const res = await fetch(`${BACKEND_URL}/whatsapp/session/${action}`, {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/session/${action}`, {
         method: action === 'delete' ? 'DELETE' : 'POST',
         headers: { 
             'Content-Type': 'application/json',

@@ -64,7 +64,7 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      const res = await fetch(`${BACKEND_URL}/whatsapp/sessions`, {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/sessions`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const wahaSessions = await res.json();

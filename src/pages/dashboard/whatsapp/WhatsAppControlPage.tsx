@@ -95,7 +95,7 @@ export default function WhatsAppControlPage() {
         return;
       }
 
-      const res = await fetch(`${BACKEND_URL}/whatsapp/config/${id}`, {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${id}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
 
@@ -154,7 +154,7 @@ export default function WhatsAppControlPage() {
       const params = new URLSearchParams();
       params.set("session_name", sName);
 
-      const res = await fetch(`${BACKEND_URL}/whatsapp/stats?${params.toString()}`, {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/stats?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -190,7 +190,7 @@ export default function WhatsAppControlPage() {
       params.set("from", String(from));
       params.set("to", String(now));
 
-      const res = await fetch(`${BACKEND_URL}/whatsapp/messages?${params.toString()}`, {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/messages?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -224,7 +224,7 @@ export default function WhatsAppControlPage() {
         throw new Error(t("Please login again", "অনুগ্রহ করে আবার লগইন করুন"));
       }
 
-      const res = await fetch(`${BACKEND_URL}/whatsapp/config/${dbId}`, {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${dbId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

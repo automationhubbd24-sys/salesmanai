@@ -56,11 +56,11 @@ export default function DatabasePage() {
         return;
       }
 
-      const res = await fetch(`${BACKEND_URL}/whatsapp/config/${id}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${id}`, {
+            headers: {
+                Authorization: `Bearer ${token}`,
+            },
+        });
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));

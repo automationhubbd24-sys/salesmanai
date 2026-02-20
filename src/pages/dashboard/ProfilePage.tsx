@@ -89,7 +89,7 @@ export default function ProfilePage() {
       const token = localStorage.getItem("auth_token");
       if (!token) return;
 
-      const res = await fetch(`${BACKEND_URL}/teams/members`, {
+      const res = await fetch(`${BACKEND_URL}/api/teams/members`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -114,10 +114,10 @@ export default function ProfilePage() {
       if (!token) return;
 
       const [fbRes, waRes] = await Promise.all([
-        fetch(`${BACKEND_URL}/messenger/pages`, {
+        fetch(`${BACKEND_URL}/api/messenger/pages`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
-        fetch(`${BACKEND_URL}/whatsapp/sessions`, {
+        fetch(`${BACKEND_URL}/api/whatsapp/sessions`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
       ]);
@@ -188,7 +188,7 @@ export default function ProfilePage() {
         return;
       }
 
-      const res = await fetch(`${BACKEND_URL}/teams/members`, {
+      const res = await fetch(`${BACKEND_URL}/api/teams/members`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -268,7 +268,7 @@ export default function ProfilePage() {
         return;
       }
 
-      const res = await fetch(`${BACKEND_URL}/teams/members/${id}`, {
+      const res = await fetch(`${BACKEND_URL}/api/teams/members/${id}`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${token}`,

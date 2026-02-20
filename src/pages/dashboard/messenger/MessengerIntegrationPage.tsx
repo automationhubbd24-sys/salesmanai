@@ -387,7 +387,7 @@ export default function MessengerIntegrationPage() {
                     });
                 }
 
-                const res = await fetch(`${BACKEND_URL}/messenger/pages/manual`, {
+                const res = await fetch(`${BACKEND_URL}/api/messenger/pages/manual`, {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
@@ -604,7 +604,7 @@ export default function MessengerIntegrationPage() {
                 throw new Error("Invalid Page ID (missing in object)");
             }
 
-            const res = await fetch(`${BACKEND_URL}/messenger/pages/${page.page_id}`, {
+            const res = await fetch(`${BACKEND_URL}/api/messenger/pages/${page.page_id}`, {
                 method: "DELETE",
                 headers: {
                     Authorization: `Bearer ${token}`,

@@ -82,11 +82,11 @@ Phone: ${order.number || 'N/A'}`;
           params.set("to", customEnd.getTime().toString());
         }
 
-        const res = await fetch(`${BACKEND_URL}/messenger/orders?${params.toString()}`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
+        const res = await fetch(`${BACKEND_URL}/api/messenger/orders?${params.toString()}`, {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                },
+            });
 
         if (!res.ok) {
           throw new Error("Failed to fetch orders");
