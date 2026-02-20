@@ -454,7 +454,7 @@ router.put('/config/:id', async (req, res) => {
     }
 });
 
-router.delete('/page/:pageId', async (req, res) => {
+router.delete('/pages/:pageId', async (req, res) => {
     try {
         let { pageId } = req.params;
         pageId = String(pageId).trim();
@@ -487,7 +487,7 @@ router.delete('/page/:pageId', async (req, res) => {
                 const pageRow = pageResult.rows[0] || null;
 
                 // Log for debugging
-                console.log(`[DELETE /page/:pageId] ID: ${pageId}, User: ${userEmail}, Found: ${!!pageRow}, Owner: ${pageRow?.email}`);
+                console.log(`[DELETE /pages/:pageId] ID: ${pageId}, User: ${userEmail}, Found: ${!!pageRow}, Owner: ${pageRow?.email}`);
 
                 if (!pageRow) {
                     // Even if page not found in token table, try to delete from other tables if it looks like a Page ID

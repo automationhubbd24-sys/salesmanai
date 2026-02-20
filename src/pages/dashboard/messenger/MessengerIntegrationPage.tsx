@@ -587,7 +587,11 @@ export default function MessengerIntegrationPage() {
         try {
             // 1. Try to unsubscribe from Facebook (best effort)
             if (page.page_access_token) {
-                await unsubscribeAppFromPage(page.page_id, page.page_access_token);
+                try {
+                    await unsubscribeAppFromPage(page.page_id, page.page_access_token);
+                } catch (fbError) {
+                    console.warn("Frontend Unsubscribe Failed (Ignored):", fbError);
+                }
             }
 
             const token = localStorage.getItem("auth_token");
