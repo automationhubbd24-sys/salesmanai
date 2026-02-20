@@ -109,7 +109,16 @@ async function resolveProductOwnerUserId(req, baseUserId, pageId) {
 exports.checkStatus = async (req, res) => {
     try {
         const baseUserId = req.query.user_id || null;
-        const { effectiveUserId } = await getEffectiveUserIdFromRequest(req, baseUserId);
+        let effectiveUserId = null;
+        
+        try {
+            const result = await getEffectiveUserIdFromRequest(req, baseUserId);
+            effectiveUserId = result.effectiveUserId;
+        } catch (authError) {
+            console.error("Auth Error in checkStatus:", authError.message);
+            // Don't fail hard, just treat as no user
+            effectiveUserId = null;
+        }
 
         if (!effectiveUserId) {
             return res.status(400).json({ error: "user_id is required" });
@@ -118,6 +127,7 @@ exports.checkStatus = async (req, res) => {
         const hasAccess = await dbService.checkProductFeatureAccess(effectiveUserId);
         res.json({ locked: !hasAccess });
     } catch (error) {
+        console.error("Check Status Error:", error);
         res.status(500).json({ error: error.message });
     }
 };
@@ -140,9 +150,12 @@ exports.createProduct = async (req, res) => {
         let imageUrl = null;
         if (req.file) {
             try {
-                const protocol = req.protocol;
-                const host = req.get('host');
-                const baseUrl = process.env.BACKEND_URL || `${protocol}://${host}`;
+                // VPS FIX: Prefer PUBLIC_BASE_URL from env, then BACKEND_URL, then construct from request
+                // We pass 'undefined' to let imageService use its robust fallback logic which includes PUBLIC_BASE_URL
+                const envBaseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL;
+                const reqBaseUrl = `${req.protocol}://${req.get('host')}`;
+                const baseUrl = envBaseUrl || reqBaseUrl;
+                
                 imageUrl = await imageService.uploadProductImage(req.file.buffer, req.file.mimetype, userId, baseUrl);
             } catch (imgError) {
                 return res.status(500).json({ error: "Image upload failed: " + imgError.message });
@@ -251,9 +264,11 @@ exports.updateProduct = async (req, res) => {
         let imageUrl = undefined; // undefined means no change
         if (req.file) {
             try {
-                const protocol = req.protocol;
-                const host = req.get('host');
-                const baseUrl = process.env.BACKEND_URL || `${protocol}://${host}`;
+                // VPS FIX: Prefer PUBLIC_BASE_URL from env
+                const envBaseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL;
+                const reqBaseUrl = `${req.protocol}://${req.get('host')}`;
+                const baseUrl = envBaseUrl || reqBaseUrl;
+                
                 imageUrl = await imageService.uploadProductImage(req.file.buffer, req.file.mimetype, userId, baseUrl);
             } catch (imgError) {
                 return res.status(500).json({ error: "Image upload failed: " + imgError.message });

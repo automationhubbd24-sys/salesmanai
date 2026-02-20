@@ -159,6 +159,22 @@ async function sendTypingAction(recipientId, accessToken, action = 'typing_on') 
     }
 }
 
+// Get Single Message (Fallback for Swipe Reply)
+async function getMessageById(messageId, accessToken) {
+    if (accessToken === 'TEST_TOKEN') return null;
+    try {
+        const url = `https://graph.facebook.com/v19.0/${messageId}?fields=message,from&access_token=${accessToken}`;
+        const response = await axios.get(url);
+        if (response.data && response.data.message) {
+            return response.data.message;
+        }
+        return null;
+    } catch (error) {
+        console.error(`[Facebook] Failed to fetch message ${messageId}:`, error.message);
+        return null;
+    }
+}
+
 // Check Last Message for Human Handover
 async function getConversationMessages(pageId, userId, accessToken, limit = 5) {
     if (accessToken === 'TEST_TOKEN') return [];

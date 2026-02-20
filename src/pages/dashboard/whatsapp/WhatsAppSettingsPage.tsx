@@ -459,29 +459,14 @@ export default function WhatsAppSettingsPage() {
         },
         body: JSON.stringify({
           text_prompt: values.text_prompt,
-        }),
-      });
-
-      if (!resDb.ok) {
-        const body = await resDb.json().catch(() => ({}));
-        throw new Error(body.error || "Failed to save prompt");
-      }
-
-      const resConfig = await fetch(`${BACKEND_URL}/api/external/user-config`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
           ai_provider: values.provider,
           api_key: values.api_key,
           model_name: values.chatmodel,
         }),
       });
 
-      if (!resConfig.ok) {
-        const body = await resConfig.json().catch(() => ({}));
+      if (!resDb.ok) {
+        const body = await resDb.json().catch(() => ({}));
         throw new Error(body.error || "Failed to save settings");
       }
 

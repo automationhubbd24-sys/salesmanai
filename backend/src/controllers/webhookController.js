@@ -561,7 +561,13 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         console.log("Fetching context data in parallel...");
         
         // Reduced history limit to save tokens (User Feedback: "System token besi kasse")
-        const historyLimit = 20; 
+        const historyLimit = 10; 
+
+        // --- MARK SEEN FIRST ---
+        // Ensure 'mark_seen' is sent BEFORE 'typing_on' to avoid cancelling the typing bubble.
+        // We fire and forget this to not block.
+        facebookService.sendTypingAction(senderId, pageConfig.page_access_token, 'mark_seen').catch(e => {});
+        // -----------------------
         
         const [pagePrompts, userProfile, fbMessages, history, typingResult] = await Promise.all([
             dbService.getPagePrompts(pageId),
@@ -800,16 +806,22 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         // ---------------------------------------
 
         // --- MARK SEEN (Delayed until after Stop Logic) ---
-        // We only mark as seen if we are actually going to process the message.
-        await facebookService.sendTypingAction(senderId, pageConfig.page_access_token, 'mark_seen');
+        // MOVED TO TOP (Before typing_on)
         // --------------------------------------------------
 
         // --- REPLY TO LOGIC ---
         // User Instruction: Try to find old message by message_id from fb_chats first.
-        // If not found, keep it null (no fallback to FB API).
+        // If not found, try fetching from FB API (Fallback).
         let replyContext = "";
         if (replyToId) {
-            const originalText = await dbService.getMessageById(replyToId);
+            let originalText = await dbService.getMessageById(replyToId);
+            
+            // Fallback: Fetch from Facebook if not in DB
+            if (!originalText) {
+                console.log(`[Swipe Reply] Message ${replyToId} not found in DB. Fetching from FB...`);
+                originalText = await facebookService.getMessageById(replyToId, pageConfig.page_access_token);
+            }
+
             if (originalText) {
                 // DETECT IMAGE ANALYSIS CONTEXT
                 // If the user is replying to a message that contains "Based on the image",
