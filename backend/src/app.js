@@ -12,14 +12,18 @@ const dbAdminRoutes = require('./routes/dbAdminRoutes');
 const apiListRoutes = require('./routes/apiListRoutes');
 const teamRoutes = require('./routes/teamRoutes');
 const statsRoutes = require('./routes/statsRoutes');
+const aiRoutes = require('./routes/aiRoutes');
 
 const path = require('path');
 const app = express();
 
+// Enable trust proxy for Coolify/Nginx/Load Balancers
+app.set('trust proxy', 1);
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 
 // Routes
@@ -39,6 +43,7 @@ app.use('/api/db-admin', dbAdminRoutes);
 app.use('/api/api-list', apiListRoutes);
 app.use('/teams', teamRoutes);
 app.use('/stats', statsRoutes);
+app.use('/api/ai', aiRoutes);
 
 // Basic health check
 

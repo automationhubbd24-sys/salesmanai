@@ -517,8 +517,46 @@ router.put('/config/:id', async (req, res) => {
             }
         }
 
+        // --- Handle User Config Updates (AI Settings) ---
+        // If these fields are present, update user_configs table for the session owner
+        const { ai_provider, api_key, model_name } = req.body;
+        if (ai_provider !== undefined || api_key !== undefined || model_name !== undefined) {
+            try {
+                // Determine the target user_id (Session Owner)
+                // row.user_id is the owner of the session
+                const targetUserId = row.user_id;
+                
+                if (targetUserId) {
+                    const userConfigUpdates = {};
+                    if (ai_provider !== undefined) userConfigUpdates.ai_provider = ai_provider;
+                    if (api_key !== undefined) userConfigUpdates.api_key = api_key;
+                    if (model_name !== undefined) userConfigUpdates.model_name = model_name;
+
+                    const ucKeys = Object.keys(userConfigUpdates);
+                    if (ucKeys.length > 0) {
+                        const ucSet = ucKeys.map((k, idx) => `${k} = $${idx + 2}`); // $1 is userId
+                        const ucValues = [targetUserId, ...ucKeys.map(k => userConfigUpdates[k])];
+                        
+                        await pgClient.query(
+                            `UPDATE user_configs SET ${ucSet.join(', ')} WHERE user_id = $1`,
+                            ucValues
+                        );
+                        console.log(`[WhatsApp] Updated user_configs for user ${targetUserId}`);
+                    }
+                }
+            } catch (ucErr) {
+                console.error("[WhatsApp] Failed to update user_configs:", ucErr);
+                // Continue to update session config, don't fail completely? 
+                // Or should we fail? Better to warn.
+            }
+        }
+
         const keys = Object.keys(updates);
         if (keys.length === 0) {
+             // If only user_config updates were present, return success with current row
+             if (ai_provider !== undefined || api_key !== undefined || model_name !== undefined) {
+                 return res.json(row);
+             }
             return res.status(400).json({ error: 'No valid fields provided for update' });
         }
 

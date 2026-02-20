@@ -11,5 +11,7 @@ router.get('/v1/models', externalApiController.listModels);
 router.get('/key', authMiddleware, externalApiController.getApiKey);
 router.post('/key/regenerate', authMiddleware, externalApiController.regenerateApiKey);
 router.get('/usage', authMiddleware, externalApiController.getUsageStats);
+router.post('/user-config', authMiddleware, externalApiController.updateUserConfig);
+router.get('/user-config', authMiddleware, externalApiController.getUserConfig);
 
 module.exports = router;

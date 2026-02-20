@@ -366,6 +366,8 @@ router.put('/config/:id', async (req, res) => {
             return res.status(403).json({ error: 'Forbidden' });
         }
 
+        console.log(`[PUT /config/:id] Body:`, req.body);
+
         // 1. Update fb_message_database (Settings)
         const allowedKeys = [
             'reply_message', 'swipe_reply', 'image_detection', 'image_send', 'template', 'order_tracking',
@@ -395,9 +397,14 @@ router.put('/config/:id', async (req, res) => {
                 WHERE id = $${idx}
                 RETURNING *
             `;
-            const updateResult = await pgClient.query(queryText, values);
-            if (updateResult.rowCount > 0) {
-                updatedConfig = updateResult.rows[0];
+            try {
+                const updateResult = await pgClient.query(queryText, values);
+                if (updateResult.rowCount > 0) {
+                    updatedConfig = updateResult.rows[0];
+                }
+            } catch (err) {
+                console.error("Failed to update fb_message_database:", err);
+                throw err;
             }
         }
 
@@ -408,7 +415,7 @@ router.put('/config/:id', async (req, res) => {
 
         // Map frontend fields to DB columns
         const aiProvider = req.body.ai_provider || req.body.ai || req.body.provider;
-        const chatModel = req.body.chat_model || req.body.model;
+        const chatModel = req.body.chat_model || req.body.model || req.body.model_name;
         const apiKey = req.body.api_key;
         const pageAccessToken = req.body.page_access_token_message || req.body.page_access_token;
 

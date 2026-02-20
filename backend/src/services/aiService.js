@@ -363,7 +363,19 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                      const priceDisplay = p.price ? `${p.price} ${p.currency || 'BDT'}` : 'N/A';
                      const stockDisplay = p.stock !== undefined ? p.stock : 'N/A';
                      const descDisplay = p.description ? p.description.replace(/\n/g, ' ').substring(0, 200) : 'N/A';
-                     const imgDisplay = (p.image_url && p.image_url.startsWith('http')) ? p.image_url : 'N/A';
+                     
+                     let imgDisplay = 'N/A';
+                     if (p.image_url) {
+                        if (p.image_url.startsWith('http')) {
+                            imgDisplay = p.image_url;
+                        } else {
+                            // Convert relative path to absolute URL
+                            const baseUrl = process.env.BACKEND_URL || 'http://localhost:3001';
+                            const cleanPath = p.image_url.startsWith('/') ? p.image_url : `/${p.image_url}`;
+                            imgDisplay = `${baseUrl}${cleanPath}`;
+                        }
+                     }
+
                      const keywordsDisplay = p.keywords ? p.keywords.replace(/\n/g, ' ').substring(0, 200) : 'N/A';
                      
                      productContext += `Item ${i+1}: ${p.name} | Price: ${priceDisplay} | Stock: ${stockDisplay} | Image URL: ${imgDisplay} | Desc: ${descDisplay} | Keywords: ${keywordsDisplay}${variantInfo}\n`;

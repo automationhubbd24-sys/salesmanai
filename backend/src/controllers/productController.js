@@ -140,7 +140,10 @@ exports.createProduct = async (req, res) => {
         let imageUrl = null;
         if (req.file) {
             try {
-                imageUrl = await imageService.uploadProductImage(req.file.buffer, req.file.mimetype, userId);
+                const protocol = req.protocol;
+                const host = req.get('host');
+                const baseUrl = process.env.BACKEND_URL || `${protocol}://${host}`;
+                imageUrl = await imageService.uploadProductImage(req.file.buffer, req.file.mimetype, userId, baseUrl);
             } catch (imgError) {
                 return res.status(500).json({ error: "Image upload failed: " + imgError.message });
             }
@@ -248,7 +251,10 @@ exports.updateProduct = async (req, res) => {
         let imageUrl = undefined; // undefined means no change
         if (req.file) {
             try {
-                imageUrl = await imageService.uploadProductImage(req.file.buffer, req.file.mimetype, userId);
+                const protocol = req.protocol;
+                const host = req.get('host');
+                const baseUrl = process.env.BACKEND_URL || `${protocol}://${host}`;
+                imageUrl = await imageService.uploadProductImage(req.file.buffer, req.file.mimetype, userId, baseUrl);
             } catch (imgError) {
                 return res.status(500).json({ error: "Image upload failed: " + imgError.message });
             }

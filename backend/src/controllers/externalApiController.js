@@ -431,32 +431,85 @@ exports.regenerateApiKey = async (req, res) => {
 
         const pgClient = require('../services/pgClient');
 
-        const existing = await pgClient.query(
+        // Check if config exists
+        const checkRes = await pgClient.query(
             'SELECT id FROM user_configs WHERE user_id = $1 LIMIT 1',
             [userId]
         );
 
-        if (existing.rows.length === 0) {
+        if (checkRes.rows.length === 0) {
+            // Create new config
             await pgClient.query(
-                `INSERT INTO user_configs (user_id, service_api_key, updated_at)
-                 VALUES ($1, $2, $3)`,
-                [userId, newKey, new Date()]
+                'INSERT INTO user_configs (user_id, email, service_api_key) VALUES ($1, $2, $3)',
+                [userId, req.user.email, newKey]
             );
         } else {
+            // Update existing
             await pgClient.query(
-                `UPDATE user_configs
-                 SET service_api_key = $2,
-                     updated_at = $3
-                 WHERE user_id = $1`,
-                [userId, newKey, new Date()]
+                'UPDATE user_configs SET service_api_key = $1 WHERE user_id = $2',
+                [newKey, userId]
             );
         }
-
-        console.log(`[KeyGen] Successfully generated key for user: ${userId}`);
+        
         res.json({ api_key: newKey });
+
     } catch (error) {
-        console.error("[KeyGen] Unexpected Exception:", error);
-        res.status(500).json({ error: `Internal server error: ${error.message}` });
+        console.error("Key Gen Exception:", error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
+exports.updateUserConfig = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+        const { ai_provider, api_key, model_name } = req.body;
+        const pgClient = require('../services/pgClient');
+
+        // Upsert user config
+        const query = `
+            INSERT INTO user_configs (user_id, email, ai_provider, api_key, model_name)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (user_id)
+            DO UPDATE SET
+                ai_provider = COALESCE(EXCLUDED.ai_provider, user_configs.ai_provider),
+                api_key = COALESCE(EXCLUDED.api_key, user_configs.api_key),
+                model_name = COALESCE(EXCLUDED.model_name, user_configs.model_name),
+                email = COALESCE(EXCLUDED.email, user_configs.email),
+                updated_at = NOW()
+            RETURNING *
+        `;
+
+        const values = [userId, req.user.email, ai_provider, api_key, model_name];
+        const result = await pgClient.query(query, values);
+
+        res.json({ success: true, config: result.rows[0] });
+    } catch (error) {
+        console.error("Update User Config Error:", error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
+exports.getUserConfig = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+        const pgClient = require('../services/pgClient');
+        const result = await pgClient.query(
+            'SELECT ai_provider, api_key, model_name FROM user_configs WHERE user_id = $1',
+            [userId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.json({});
+        }
+
+        res.json(result.rows[0]);
+    } catch (error) {
+        console.error("Get User Config Error:", error);
+        res.status(500).json({ error: error.message });
     }
 };
 

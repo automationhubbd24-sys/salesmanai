@@ -540,21 +540,28 @@ async function approveDepositTransaction(txn) {
 
         // 0. Find user_id from users table
         let userId = null;
+        // Try exact match first
         const userRes = await client.query('SELECT id FROM users WHERE email = $1', [txn.user_email]);
         
         if (userRes.rows.length > 0) {
             userId = userRes.rows[0].id;
         } else {
-            // Fallback: Check user_configs if email exists there (legacy or different auth)
+            // Fallback 1: Check user_configs if email exists there
             const configRes = await client.query('SELECT user_id FROM user_configs WHERE email = $1', [txn.user_email]);
             if (configRes.rows.length > 0) {
                 userId = configRes.rows[0].user_id;
+            } else {
+                // Fallback 2: Try case-insensitive search in users
+                const userResCase = await client.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [txn.user_email]);
+                if (userResCase.rows.length > 0) {
+                    userId = userResCase.rows[0].id;
+                }
             }
         }
 
         if (!userId) {
             console.error(`[ApproveTxn] User not found for email: ${txn.user_email}`);
-            throw new Error(`User not found for email: ${txn.user_email}`);
+            throw new Error(`User not found for email: ${txn.user_email} (Please ask user to login first to create account)`);
         }
 
         // 1. Update transaction status
@@ -569,16 +576,17 @@ async function approveDepositTransaction(txn) {
              throw new Error(`Invalid amount: ${txn.amount}`);
         }
         
+        // Update user_configs balance
         await client.query(
             `INSERT INTO user_configs (user_id, balance, email)
              VALUES ($1, $2, $3)
              ON CONFLICT (user_id) 
-             DO UPDATE SET balance = COALESCE(user_configs.balance, 0) + $2`,
+             DO UPDATE SET balance = COALESCE(user_configs.balance, 0) + $2, email = EXCLUDED.email`,
             [userId, amount, txn.user_email]
         );
 
         await client.query('COMMIT');
-        console.log(`[ApproveTxn] Successfully approved txn ${txn.id}`);
+        console.log(`[ApproveTxn] Successfully approved txn ${txn.id} for user ${userId}`);
         return true;
     } catch (error) {
         await client.query('ROLLBACK');
@@ -1388,7 +1396,8 @@ module.exports = {
     checkProductFeatureAccess,
 
     // --- ADMIN TOOLS ---
-    addBalanceByEmail
+    addBalanceByEmail,
+    approveDepositTransaction
 };
 
 // --- PRODUCT MANAGEMENT IMPLEMENTATION ---

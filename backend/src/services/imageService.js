@@ -10,9 +10,10 @@ const UPLOAD_ROOT = process.env.IMAGE_UPLOAD_DIR || path.join(__dirname, '..', '
  * @param {Buffer} fileBuffer - The file buffer from multer.
  * @param {string} mimeType - The original mime type.
  * @param {string} userId - The user ID (for folder organization).
+ * @param {string} [baseUrl] - The base URL (optional, defaults to env or localhost).
  * @returns {Promise<string>} - The public URL of the uploaded image.
  */
-async function uploadProductImage(fileBuffer, mimeType, userId) {
+async function uploadProductImage(fileBuffer, mimeType, userId, baseUrl) {
     try {
         // 1. Optimize Image with Sharp
         // Resize to max 1024px width/height, convert to JPEG for maximum WhatsApp/FB compatibility
@@ -31,7 +32,8 @@ async function uploadProductImage(fileBuffer, mimeType, userId) {
         await fs.promises.mkdir(dirPath, { recursive: true });
         await fs.promises.writeFile(filePath, optimizedBuffer);
 
-        const base = PUBLIC_BASE_URL.replace(/\/$/, '');
+        // 3. Construct URL
+        const base = baseUrl ? baseUrl.replace(/\/$/, '') : PUBLIC_BASE_URL.replace(/\/$/, '');
         const relativeUrl = `/uploads/product-images/${encodeURIComponent(userFolder)}/${encodeURIComponent(fileName)}`;
 
         return `${base}${relativeUrl}`;
