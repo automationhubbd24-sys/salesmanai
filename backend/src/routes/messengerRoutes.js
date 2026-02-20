@@ -412,7 +412,7 @@ router.delete('/page/:pageId', async (req, res) => {
         const userEmail = payload.email;
 
         const pageResult = await pgClient.query(
-            'SELECT page_id, email FROM page_access_token_message WHERE page_id = $1',
+            'SELECT page_id, email, access_token FROM page_access_token_message WHERE page_id = $1',
             [pageId]
         );
 
@@ -424,6 +424,20 @@ router.delete('/page/:pageId', async (req, res) => {
 
         if (pageRow.email !== userEmail) {
             return res.status(403).json({ error: 'Forbidden' });
+        }
+
+        // Unsubscribe App from Facebook Page
+        if (pageRow.access_token) {
+            try {
+                const axios = require('axios');
+                await axios.delete(`https://graph.facebook.com/v19.0/${pageId}/subscribed_apps`, {
+                    params: { access_token: pageRow.access_token }
+                });
+                console.log(`[Facebook] App unsubscribed from page ${pageId}`);
+            } catch (fbError) {
+                console.error(`[Facebook] Failed to unsubscribe app from page ${pageId}:`, fbError.response?.data || fbError.message);
+                // Proceed with deletion even if this fails
+            }
         }
 
         await dbService.deleteMessengerPage(pageId);
