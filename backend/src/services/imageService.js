@@ -15,22 +15,33 @@ const UPLOAD_ROOT = process.env.IMAGE_UPLOAD_DIR || path.join(__dirname, '..', '
  */
 async function uploadProductImage(fileBuffer, mimeType, userId, baseUrl) {
     try {
-        // 1. Optimize Image with Sharp
-        // Resize to max 1024px width/height, convert to JPEG for maximum WhatsApp/FB compatibility
-        const optimizedBuffer = await sharp(fileBuffer)
-            .resize(1024, 1024, { fit: 'inside', withoutEnlargement: true })
-            .jpeg({ quality: 80, mozjpeg: true })
-            .toBuffer();
+        let finalBuffer = fileBuffer;
+        let extension = 'jpg';
+
+        // Check if optimization is skipped to save CPU
+        if (process.env.SKIP_IMAGE_OPTIMIZATION === 'true') {
+            // Use original extension based on mimeType
+            if (mimeType === 'image/png') extension = 'png';
+            else if (mimeType === 'image/webp') extension = 'webp';
+            else if (mimeType === 'image/gif') extension = 'gif';
+        } else {
+            // 1. Optimize Image with Sharp (CPU Intensive)
+            // Resize to max 1024px width/height, convert to JPEG for maximum WhatsApp/FB compatibility
+            finalBuffer = await sharp(fileBuffer)
+                .resize(1024, 1024, { fit: 'inside', withoutEnlargement: true })
+                .jpeg({ quality: 80, mozjpeg: true })
+                .toBuffer();
+        }
 
         // 2. Generate Unique Filename
         const timestamp = Date.now();
         const userFolder = String(userId || 'anonymous');
         const dirPath = path.join(UPLOAD_ROOT, userFolder);
-        const fileName = `${timestamp}.jpg`;
+        const fileName = `${timestamp}.${extension}`;
         const filePath = path.join(dirPath, fileName);
 
         await fs.promises.mkdir(dirPath, { recursive: true });
-        await fs.promises.writeFile(filePath, optimizedBuffer);
+        await fs.promises.writeFile(filePath, finalBuffer);
 
         // 3. Construct URL
         const base = baseUrl ? baseUrl.replace(/\/$/, '') : PUBLIC_BASE_URL.replace(/\/$/, '');
