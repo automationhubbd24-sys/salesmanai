@@ -105,7 +105,7 @@ export default function AdminPage() {
   const [editJson, setEditJson] = useState("");
   const [editingRow, setEditingRow] = useState<any | null>(null);
   const [insertDialogOpen, setInsertDialogOpen] = useState(false);
-  const [insertJson, setInsertJson] = useState("{}");
+  const [insertForm, setInsertForm] = useState<any>({});
   const [sqlText, setSqlText] = useState("");
   const [sqlResult, setSqlResult] = useState<any | null>(null);
   const [sqlError, setSqlError] = useState<string | null>(null);
@@ -127,6 +127,30 @@ export default function AdminPage() {
       fetchDbTables();
     }
   }, [isAuthenticated]);
+
+  const openInsertRow = () => {
+    const initialFormState: any = {};
+    dbColumns.forEach(col => {
+      if (col.is_nullable === 'YES') {
+        initialFormState[col.column_name] = null;
+      } else {
+        // Attempt to provide a sensible default based on data type
+        if (col.data_type.includes('char') || col.data_type.includes('text')) {
+          initialFormState[col.column_name] = "";
+        } else if (col.data_type.includes('int') || col.data_type.includes('numeric') || col.data_type.includes('serial')) {
+          initialFormState[col.column_name] = 0;
+        } else if (col.data_type.includes('boolean')) {
+          initialFormState[col.column_name] = false;
+        } else if (col.data_type.includes('timestamp')) {
+          initialFormState[col.column_name] = new Date().toISOString();
+        } else {
+          initialFormState[col.column_name] = "";
+        }
+      }
+    });
+    setInsertForm(initialFormState);
+    setInsertDialogOpen(true);
+  };
 
   const fetchDbTables = async () => {
     try {
@@ -244,14 +268,21 @@ export default function AdminPage() {
   const handleInsertRow = async () => {
     if (!selectedTable) return;
     try {
-      const parsed = JSON.parse(insertJson);
+      // Convert empty strings to null for nullable columns
+      const rowToInsert = { ...insertForm };
+      for (const col of dbColumns) {
+        if (col.is_nullable === 'YES' && rowToInsert[col.column_name] === '') {
+          rowToInsert[col.column_name] = null;
+        }
+      }
+
       const res = await fetch(`${BACKEND_URL}/api/db-admin/table/${encodeURIComponent(selectedTable)}/insert`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          row: parsed,
+          row: rowToInsert,
         }),
       });
       const data = await res.json();
@@ -1364,10 +1395,7 @@ export default function AdminPage() {
                       </Button>
                       <Button
                         size="sm"
-                        onClick={() => {
-                          setInsertJson("{}");
-                          setInsertDialogOpen(true);
-                        }}
+                        onClick={openInsertRow}
                         disabled={!selectedTable}
                       >
                         Add Row
@@ -1529,16 +1557,47 @@ export default function AdminPage() {
           <Dialog open={insertDialogOpen} onOpenChange={setInsertDialogOpen}>
             <DialogContent className="max-w-3xl">
               <DialogHeader>
-                <DialogTitle>Insert Row</DialogTitle>
+                <DialogTitle>Insert Row into {selectedTable}</DialogTitle>
               </DialogHeader>
-              <div className="space-y-2">
-                <Label>Row JSON</Label>
-                <Textarea
-                  value={insertJson}
-                  onChange={(e) => setInsertJson(e.target.value)}
-                  className="font-mono text-xs h-64"
-                  placeholder='{"column": "value"}'
-                />
+              <div className="space-y-4 max-h-[60vh] overflow-y-auto p-1">
+                {dbColumns.map(col => (
+                  <div key={col.column_name} className="grid grid-cols-3 items-center gap-4">
+                    <Label htmlFor={col.column_name} className="text-right">
+                      {col.column_name}
+                      <span className="text-muted-foreground text-xs ml-1">({col.data_type})</span>
+                    </Label>
+                    {col.data_type.includes('boolean') ? (
+                      <Switch
+                        id={col.column_name}
+                        checked={insertForm[col.column_name] || false}
+                        onCheckedChange={(checked) => setInsertForm({ ...insertForm, [col.column_name]: checked })}
+                        className="col-span-2"
+                      />
+                    ) : col.data_type.includes('text') || col.data_type.includes('json') ? (
+                      <Textarea
+                        id={col.column_name}
+                        value={insertForm[col.column_name] ?? ''}
+                        onChange={(e) => setInsertForm({ ...insertForm, [col.column_name]: e.target.value })}
+                        placeholder={col.is_nullable === 'YES' ? 'Optional' : 'Required'}
+                        className="col-span-2 font-mono text-xs"
+                      />
+                    ) : (
+                      <Input
+                        id={col.column_name}
+                        type={col.data_type.includes('int') || col.data_type.includes('numeric') ? 'number' : 'text'}
+                        value={insertForm[col.column_name] ?? ''}
+                        onChange={(e) => {
+                          const value = col.data_type.includes('int') || col.data_type.includes('numeric')
+                            ? e.target.value === '' ? null : Number(e.target.value)
+                            : e.target.value;
+                          setInsertForm({ ...insertForm, [col.column_name]: value });
+                        }}
+                        placeholder={col.is_nullable === 'YES' ? 'Optional' : 'Required'}
+                        className="col-span-2"
+                      />
+                    )}
+                  </div>
+                ))}
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setInsertDialogOpen(false)}>
