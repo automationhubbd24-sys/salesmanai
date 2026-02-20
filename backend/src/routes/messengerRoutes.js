@@ -418,6 +418,7 @@ router.put('/config/:id', async (req, res) => {
         const chatModel = req.body.chat_model || req.body.model || req.body.model_name;
         const apiKey = req.body.api_key;
         const pageAccessToken = req.body.page_access_token_message || req.body.page_access_token;
+        const cheapEngine = req.body.cheap_engine;
 
         if (aiProvider !== undefined) {
             tokenUpdates.push(`ai = $${tIdx}`);
@@ -437,6 +438,11 @@ router.put('/config/:id', async (req, res) => {
         if (pageAccessToken !== undefined) {
             tokenUpdates.push(`page_access_token = $${tIdx}`);
             tokenValues.push(pageAccessToken);
+            tIdx++;
+        }
+        if (cheapEngine !== undefined) {
+            tokenUpdates.push(`cheap_engine = $${tIdx}`);
+            tokenValues.push(cheapEngine);
             tIdx++;
         }
 
