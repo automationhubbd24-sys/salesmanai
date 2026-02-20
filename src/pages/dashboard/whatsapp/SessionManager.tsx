@@ -66,7 +66,7 @@ export default function SessionManager() {
           const token = localStorage.getItem("auth_token");
           if (!token) return;
 
-          const res = await fetch(`${BACKEND_URL}/api/auth/payments/me`, {
+          const res = await fetch(`${BACKEND_URL}/auth/payments/me`, {
               headers: { Authorization: `Bearer ${token}` }
           });
 

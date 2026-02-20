@@ -179,7 +179,7 @@ export default function ProductsPage() {
                 params.set("page_id", pageId);
             }
 
-            const url = `${BACKEND_URL}/api/products?${params.toString()}`;
+            const url = `${BACKEND_URL}/products?${params.toString()}`;
 
             const headers: HeadersInit = {};
             if (token) {

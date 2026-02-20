@@ -72,7 +72,7 @@ export default function DeveloperPage() {
             const token = localStorage.getItem("auth_token");
             if (!token) return;
 
-            let url = `${BACKEND_URL}/api/external/usage`;
+            let url = `${BACKEND_URL}/external/usage`;
             if (startDate && endDate) {
                 url += `?startDate=${startDate}&endDate=${endDate}`;
             }
@@ -96,7 +96,7 @@ export default function DeveloperPage() {
             const token = localStorage.getItem("auth_token");
             if (!token) return;
 
-            const res = await fetch(`${BACKEND_URL}/api/external/key`, {
+            const res = await fetch(`${BACKEND_URL}/external/key`, {
                 headers: {
                     'Authorization': `Bearer ${token}`
                 }
@@ -116,7 +116,7 @@ export default function DeveloperPage() {
             const token = localStorage.getItem("auth_token");
             if (!token) return;
 
-            const res = await fetch(`${BACKEND_URL}/api/external/key/regenerate`, {
+            const res = await fetch(`${BACKEND_URL}/external/key/regenerate`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}`

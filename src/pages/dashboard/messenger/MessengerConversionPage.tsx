@@ -71,7 +71,7 @@ export default function MessengerConversionPage() {
       const params = new URLSearchParams();
       params.set("page_id", pageId);
 
-      const res = await fetch(`${BACKEND_URL}/messenger/stats?${params.toString()}`, {
+      const res = await fetch(`${BACKEND_URL}/api/messenger/stats?${params.toString()}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },

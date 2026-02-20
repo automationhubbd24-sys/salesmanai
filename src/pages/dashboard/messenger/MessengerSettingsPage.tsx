@@ -150,7 +150,7 @@ export default function MessengerSettingsPage() {
 
       const dbRow: any = await resConfig.json();
 
-      const resPage = await fetch(`${BACKEND_URL}/messenger/pages`, {
+      const resPage = await fetch(`${BACKEND_URL}/api/messenger/pages`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -259,7 +259,7 @@ export default function MessengerSettingsPage() {
       params.set("page_id", pageId);
       params.set("limit", "50");
 
-      const url = `${BACKEND_URL}/api/products?${params.toString()}`;
+      const url = `${BACKEND_URL}/products?${params.toString()}`;
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -353,7 +353,7 @@ export default function MessengerSettingsPage() {
           body.image_prompt = currentImage;
         }
 
-        const res = await fetch(`${BACKEND_URL}/messenger/config/${dbId}`, {
+        const res = await fetch(`${BACKEND_URL}/api/messenger/config/${dbId}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
@@ -404,7 +404,7 @@ export default function MessengerSettingsPage() {
         throw new Error("Please login again");
       }
 
-      const res = await fetch(`${BACKEND_URL}/messenger/config/${dbId}`, {
+      const res = await fetch(`${BACKEND_URL}/api/messenger/config/${dbId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -442,7 +442,7 @@ export default function MessengerSettingsPage() {
 
     setOptimizing(true);
       try {
-        const response = await fetch(`${BACKEND_URL}/api/ai/optimize-prompt`, {
+        const response = await fetch(`${BACKEND_URL}/ai/optimize-prompt`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ promptText: currentText })

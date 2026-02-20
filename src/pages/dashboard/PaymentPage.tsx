@@ -50,7 +50,7 @@ export default function PaymentPage() {
         return;
       }
 
-      const res = await fetch(`${BACKEND_URL}/api/auth/payments/me`, {
+      const res = await fetch(`${BACKEND_URL}/auth/payments/me`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -105,7 +105,7 @@ export default function PaymentPage() {
           throw new Error("Please login again");
         }
 
-        const res = await fetch(`${BACKEND_URL}/api/auth/payments/deposit`, {
+        const res = await fetch(`${BACKEND_URL}/auth/payments/deposit`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -151,7 +151,7 @@ export default function PaymentPage() {
         throw new Error("Please login again");
       }
 
-      const res = await fetch(`${BACKEND_URL}/api/auth/payments/redeem`, {
+      const res = await fetch(`${BACKEND_URL}/auth/payments/redeem`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

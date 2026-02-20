@@ -187,7 +187,7 @@ export default function MessengerControlPage() {
     if (!tempPrompt) return;
     setOptimizing(true);
     try {
-      const response = await fetch(`${BACKEND_URL}/api/ai/optimize-prompt`, {
+      const response = await fetch(`${BACKEND_URL}/ai/optimize-prompt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ promptText: tempPrompt })

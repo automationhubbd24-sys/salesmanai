@@ -39,11 +39,11 @@ export default function ApiManagementPage() {
                 setApis([]);
                 return;
             }
-            const res = await fetch(`${BACKEND_URL}/api/api-list`, {
-                headers: {
-                    Authorization: `Bearer ${token}`
-                }
-            });
+            const res = await fetch(`${BACKEND_URL}/api-list`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
             const body = await res.json().catch(() => ({}));
             if (!res.ok || !body.success) {
                 throw new Error(body.error || "Failed to fetch API list");
@@ -101,7 +101,7 @@ export default function ApiManagementPage() {
                 toast.error("Please login again");
                 return;
             }
-            const res = await fetch(`${BACKEND_URL}/api/api-list/${id}`, {
+            const res = await fetch(`${BACKEND_URL}/api-list/${id}`, {
                 method: "DELETE",
                 headers: {
                     Authorization: `Bearer ${token}`

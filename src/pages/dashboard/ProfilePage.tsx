@@ -188,7 +188,7 @@ export default function ProfilePage() {
         return;
       }
 
-      const res = await fetch(`${BACKEND_URL}/teams/members`, {
+      const res = await fetch(`${BACKEND_URL}/api/teams/members`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -234,7 +234,7 @@ export default function ProfilePage() {
         return;
       }
 
-      const res = await fetch(`${BACKEND_URL}/teams/members/${editingMemberId}`, {
+      const res = await fetch(`${BACKEND_URL}/api/teams/members/${editingMemberId}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
