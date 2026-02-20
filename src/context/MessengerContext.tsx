@@ -59,6 +59,35 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      // Fetch user's teams
+      try {
+        const teamRes = await fetch(`${BACKEND_URL}/api/teams/me`, {
+           headers: { Authorization: `Bearer ${token}` }
+        });
+        if (teamRes.ok) {
+            const myTeams = await teamRes.json();
+             if (Array.isArray(myTeams)) {
+                 setTeams(myTeams);
+                 setIsTeamMember(myTeams.length > 0);
+                 
+                 // Restore active team from local storage
+                 const storedOwner = localStorage.getItem('active_team_owner');
+                 if (storedOwner && !activeTeam) {
+                     const found = myTeams.find((t: any) => t.owner_email === storedOwner);
+                     if (found) setActiveTeam(found);
+                 }
+
+                 // If activeTeam is set but not in myTeams anymore, clear it
+                 if (activeTeam) {
+                     const stillMember = myTeams.find((t: any) => t.id === activeTeam.id);
+                     if (!stillMember) setActiveTeam(null);
+                 }
+             }
+        }
+      } catch (err) {
+        console.error("Failed to fetch teams", err);
+      }
+
       const res = await fetch(`${BACKEND_URL}/api/messenger/pages`, {
         headers: { Authorization: `Bearer ${token}` }
       });

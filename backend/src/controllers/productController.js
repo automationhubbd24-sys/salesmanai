@@ -45,32 +45,18 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
             [viewerEmail, 'active']
         );
 
-        if (teamResult.rows.length === 1 && teamResult.rows[0].owner_email) {
+        if (teamResult.rows.length > 0 && teamResult.rows[0].owner_email) {
             const ownerEmail = teamResult.rows[0].owner_email;
-            let ownerUserId = null;
-
-            const pageOwnerResult = await pgClient.query(
-                'SELECT user_id FROM page_access_token_message WHERE email = $1 AND user_id IS NOT NULL LIMIT 1',
+            
+            // Look up the owner's user_id directly from the users table
+            // This fixes the issue where team members couldn't access workspace if owner hadn't connected a page yet
+            const userResult = await pgClient.query(
+                'SELECT id FROM users WHERE email = $1',
                 [ownerEmail]
             );
 
-            if (pageOwnerResult.rows.length > 0 && pageOwnerResult.rows[0].user_id) {
-                ownerUserId = pageOwnerResult.rows[0].user_id;
-            }
-
-            if (!ownerUserId) {
-                const waOwnerResult = await pgClient.query(
-                    'SELECT user_id FROM whatsapp_message_database WHERE email = $1 AND user_id IS NOT NULL LIMIT 1',
-                    [ownerEmail]
-                );
-
-                if (waOwnerResult.rows.length > 0 && waOwnerResult.rows[0].user_id) {
-                    ownerUserId = waOwnerResult.rows[0].user_id;
-                }
-            }
-
-            if (ownerUserId) {
-                effectiveUserId = ownerUserId;
+            if (userResult.rows.length > 0) {
+                effectiveUserId = userResult.rows[0].id;
             }
         }
     }

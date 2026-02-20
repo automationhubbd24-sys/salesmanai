@@ -17,6 +17,21 @@ router.get('/members', authMiddleware, async (req, res) => {
     }
 });
 
+// Get teams I belong to
+router.get('/me', authMiddleware, async (req, res) => {
+    try {
+        const userEmail = req.user.email;
+        const result = await pgClient.query(
+            'SELECT id, owner_email, status, permissions, created_at FROM team_members WHERE member_email = $1 AND status = $2',
+            [userEmail, 'active']
+        );
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Get my teams error:', err);
+        res.status(500).json({ error: 'Failed to fetch my teams' });
+    }
+});
+
 router.post('/members', authMiddleware, async (req, res) => {
     try {
         const ownerEmail = req.user.email;
