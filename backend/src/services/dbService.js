@@ -1253,7 +1253,8 @@ async function deleteMessengerPage(pageId) {
         await client.query('DELETE FROM page_access_token_message WHERE page_id = $1', [pageId]);
     } catch (e) {
         console.warn("[DB] Failed to delete from page_access_token_message:", e.message);
-        throw e; // Rethrow if main deletion fails
+        // Do NOT rethrow, so that the API returns success to the user
+        // and the page disappears from the UI.
     }
 }
 

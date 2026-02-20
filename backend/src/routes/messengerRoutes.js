@@ -159,7 +159,8 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
 // Get Messenger Config (Owner or Team Member with Access)
 router.get('/config/:id', async (req, res) => {
     try {
-        const { id } = req.params;
+        let { id } = req.params;
+        id = String(id).trim(); // Sanitize input
         const authHeader = req.headers.authorization;
 
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -174,7 +175,8 @@ router.get('/config/:id', async (req, res) => {
 
         let configRow = null;
 
-        // Try lookup by primary key (id) first IF it looks like an integer
+        // Try lookup by primary key (id) first IF it looks like a database integer (not a page ID)
+        // Assume database IDs are relatively small (e.g. < 2 billion), while Page IDs are huge strings
         const isInteger = /^\d+$/.test(id) && Number(id) < 2147483647;
 
         if (isInteger) {
@@ -189,6 +191,7 @@ router.get('/config/:id', async (req, res) => {
 
         if (!configRow) {
             // Fallback: Try lookup by page_id (in case id passed is actually page_id string)
+            // Use TRIM to handle potential whitespace issues
             const configByPageId = await pgClient.query(
                 'SELECT * FROM fb_message_database WHERE page_id = $1',
                 [id]
@@ -217,6 +220,10 @@ router.get('/config/:id', async (req, res) => {
                 } catch (err) {
                     console.error("Error auto-creating fb config in /config/:id:", err);
                 }
+            } else {
+                 // Final attempt: Check if the ID was actually a DB ID but missed (unlikely if isInteger logic holds)
+                 // Or maybe page_access_token_message has it but we missed it?
+                 // No further fallback possible without valid page_id
             }
         }
 
@@ -417,7 +424,7 @@ router.delete('/page/:pageId', async (req, res) => {
         const userEmail = payload.email;
 
         const pageResult = await pgClient.query(
-            'SELECT page_id, email, access_token FROM page_access_token_message WHERE page_id = $1',
+            'SELECT page_id, email, page_access_token FROM page_access_token_message WHERE page_id = $1',
             [pageId]
         );
 
@@ -432,11 +439,11 @@ router.delete('/page/:pageId', async (req, res) => {
         }
 
         // Unsubscribe App from Facebook Page
-        if (pageRow.access_token) {
+        if (pageRow.page_access_token) {
             try {
                 const axios = require('axios');
                 await axios.delete(`https://graph.facebook.com/v19.0/${pageId}/subscribed_apps`, {
-                    params: { access_token: pageRow.access_token }
+                    params: { access_token: pageRow.page_access_token }
                 });
                 console.log(`[Facebook] App unsubscribed from page ${pageId}`);
             } catch (fbError) {
