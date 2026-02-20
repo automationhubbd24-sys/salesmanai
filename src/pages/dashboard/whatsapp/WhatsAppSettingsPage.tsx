@@ -125,7 +125,7 @@ export default function WhatsAppSettingsPage() {
             '10000': 2500 
         };
         const price = priceMap[selectedPlan] || 0;
-        const res = await fetch(`${BACKEND_URL}/external/purchase-credits`, {
+        const res = await fetch(`${BACKEND_URL}/api/external/purchase-credits`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -363,7 +363,7 @@ export default function WhatsAppSettingsPage() {
             image_prompt: tempImagePrompt
         };
 
-        const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${dbId}`, {
+        const res = await fetch(`${BACKEND_URL}/whatsapp/config/${dbId}`, {
           method: "PUT",
           headers: {
             "Content-Type": "application/json",

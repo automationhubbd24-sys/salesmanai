@@ -387,7 +387,7 @@ export default function MessengerIntegrationPage() {
                     });
                 }
 
-                const res = await fetch(`${BACKEND_URL}/api/messenger/pages/manual`, {
+                const res = await fetch(`${BACKEND_URL}/messenger/pages/manual`, {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
@@ -729,7 +729,7 @@ export default function MessengerIntegrationPage() {
                                     size="sm" 
                                     className="h-8 px-2"
                                     onClick={() => {
-                                        navigator.clipboard.writeText(`${BACKEND_URL}/api/webhook`);
+                                        navigator.clipboard.writeText(`${BACKEND_URL}/webhook`);
                                         toast.success("Copied Callback URL");
                                     }}
                                 >

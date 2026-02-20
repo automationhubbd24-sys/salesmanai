@@ -41,7 +41,7 @@ export default function DashboardHome() {
 
       try {
         if (isWhatsApp) {
-          const res = await fetch(`${BACKEND_URL}/api/whatsapp/sessions`, {
+          const res = await fetch(`${BACKEND_URL}/whatsapp/sessions`, {
             headers: {
               Authorization: `Bearer ${token}`,
             },

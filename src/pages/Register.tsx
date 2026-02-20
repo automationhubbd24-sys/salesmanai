@@ -116,7 +116,7 @@ const Register = () => {
     }
     setVerifyingOtp(true);
     try {
-      const res = await fetch(`${BACKEND_URL}/auth/verify-otp`, {
+      const res = await fetch(`${BACKEND_URL}/api/auth/verify-otp`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
