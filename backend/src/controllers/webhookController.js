@@ -441,16 +441,8 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
     }
 
     // If this is a swipe-reply, fetch quoted message text by ID for context
-    if (replyToId) {
-        try {
-            const quotedText = await dbService.getMessageById(replyToId);
-            if (quotedText && quotedText.trim()) {
-                combinedText = `[User Replying To: "${quotedText.trim()}"]\n\n${combinedText}`;
-            }
-        } catch (e) {
-            console.warn(`[FB] Failed to fetch quoted message ${replyToId}: ${e.message}`);
-        }
-    }
+    // REMOVED: This logic is now handled in the main reply generation block to avoid duplication.
+    // if (replyToId) { ... }
 
     console.log(`Processing buffered messages for ${sessionId}. Text: ${combinedText.substring(0,50)}... Images: ${allImages.length}, Audios: ${allAudios.length}`);
 
@@ -565,8 +557,14 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
 
         // --- MARK SEEN FIRST ---
         // Ensure 'mark_seen' is sent BEFORE 'typing_on' to avoid cancelling the typing bubble.
-        // We fire and forget this to not block.
-        facebookService.sendTypingAction(senderId, pageConfig.page_access_token, 'mark_seen').catch(e => {});
+        // We await this to ensure order, and add a small delay.
+        try {
+            await facebookService.sendTypingAction(senderId, pageConfig.page_access_token, 'mark_seen');
+        } catch (e) {}
+        
+        await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay
+        
+        const typingStartTime = Date.now();
         // -----------------------
         
         const [pagePrompts, userProfile, fbMessages, history, typingResult] = await Promise.all([
