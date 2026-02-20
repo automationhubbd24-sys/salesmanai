@@ -107,20 +107,26 @@ const handleWebhook = async (req, res) => {
              if (!allowedPagesCache.has(pageId)) {
                 // Double check DB before hard blocking (in case of new signup not in cache yet)
                 const isActuallyActive = await dbService.getPageConfig(pageId);
-                const validStatuses = ['active', 'trial', 'active_trial', 'active_paid'];
                 
-                // Strict Check: Status AND (Credit OR Own API)
-                // Note: getPageConfig now returns shared 'message_credit' from user_configs
-                const hasCredit = (isActuallyActive && isActuallyActive.message_credit > 0);
-                const hasOwnKey = (isActuallyActive && isActuallyActive.api_key && isActuallyActive.api_key.length > 5 && isActuallyActive.cheap_engine === false);
-                const isConfigured = (isActuallyActive && validStatuses.includes(isActuallyActive.subscription_status));
+                if (isActuallyActive) {
+                    // Note: getPageConfig now returns shared 'message_credit' from user_configs
+                    const hasCredit = (isActuallyActive.message_credit > 0);
+                    const hasOwnKey = (isActuallyActive.api_key && isActuallyActive.api_key.length > 5 && isActuallyActive.cheap_engine === false);
+                    
+                    // Allow if they have Credit OR Own Key, regardless of subscription_status (unless banned)
+                    // We treat 'null' status as 'free'/'pay-as-you-go'
+                    const isBanned = isActuallyActive.subscription_status === 'banned';
 
-                if (isConfigured && (hasCredit || hasOwnKey)) {
-                    allowedPagesCache.add(pageId); 
+                    if (!isBanned && (hasCredit || hasOwnKey)) {
+                        allowedPagesCache.add(pageId); 
+                    } else {
+                        console.warn(`[Gatekeeper] BLOCKED unauthorized event for Page ID: ${pageId}. Status: ${isActuallyActive.subscription_status}, Credit: ${isActuallyActive.message_credit}, OwnAPI: ${hasOwnKey}`);
+                        return res.status(200).send('EVENT_RECEIVED'); 
+                    }
                 } else {
-                    console.warn(`[Gatekeeper] BLOCKED unauthorized event for Page ID: ${pageId}. Status: ${isActuallyActive?.subscription_status}, Credit: ${isActuallyActive?.message_credit}, OwnAPI: ${hasOwnKey}`);
-                    return res.status(200).send('EVENT_RECEIVED'); 
-                 }
+                    // Page not found in DB
+                    return res.status(200).send('EVENT_RECEIVED');
+                }
              }
         }
         // ------------------------------------
