@@ -47,6 +47,8 @@ interface PageData {
     email?: string;
     secret_key?: string;
     found_id?: string;
+    db_id?: number;
+    id?: number; // Added to catch raw backend ID
     [key: string]: any;
 }
 
@@ -577,6 +579,7 @@ export default function MessengerIntegrationPage() {
     };
 
     const handleRemovePage = async (page: PageData) => {
+        console.log("handleRemovePage page object:", page); // Debug log
         if (!confirm(`Are you sure you want to disconnect ${page.name}? This will stop the bot from replying.`)) {
             return;
         }
@@ -590,6 +593,11 @@ export default function MessengerIntegrationPage() {
             const token = localStorage.getItem("auth_token");
             if (!token) {
                 throw new Error("Please login again");
+            }
+
+            if (!page.page_id) {
+                console.error("handleRemovePage: Invalid Page ID", page);
+                throw new Error("Invalid Page ID (missing in object)");
             }
 
             const res = await fetch(`${BACKEND_URL}/messenger/pages/${page.page_id}`, {
@@ -623,7 +631,7 @@ export default function MessengerIntegrationPage() {
                 pageName: page.name,
                 pageId: page.page_id
             });
-            toast.error("Failed to disconnect page");
+            toast.error(`Failed to disconnect: ${error.message}`);
         }
     };
 
@@ -635,21 +643,21 @@ export default function MessengerIntegrationPage() {
     };
 
     const handleManage = async (page: PageData) => {
+        console.log("handleManage page object:", page); // Debug log
         // ALWAYS ALLOW MANAGE (Free Integration)
-        // Check if active
-        // if (page.subscription_status !== 'active' && page.subscription_status !== 'trial') {
-        //    openSubscriptionModal(page);
-        //    return;
-        // }
-
         try {
-            if (!page.id) {
+            // Use db_id if available, otherwise fallback to page_id (backend will auto-create config)
+            // Priority: db_id (mapped from id in context) -> id (raw from backend) -> page_id (fallback)
+            const targetId = page.db_id || page.id || page.page_id;
+
+            if (!targetId) {
+                console.error("handleManage: No targetId found", page);
                 toast.error("No configuration found for this page. Please contact admin.");
                 return;
             }
 
-            localStorage.setItem("active_fb_db_id", String(page.id));
-            localStorage.setItem("active_fb_page_id", page.page_id);
+            localStorage.setItem("active_fb_db_id", String(targetId));
+            localStorage.setItem("active_fb_page_id", page.page_id || "");
             toast.success(`Connected to ${page.name}`);
             navigate("/dashboard/messenger/control");
         } catch (error) {
