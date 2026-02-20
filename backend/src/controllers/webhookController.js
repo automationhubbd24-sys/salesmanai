@@ -390,6 +390,45 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
     combinedText = combinedText.trim();
     if (adContext) combinedText += adContext;
     
+    // --- SAVE USER MESSAGES TO DB (fb_chats) ---
+    // Fix: Ensure user messages are saved before any processing/blocking
+    for (const msg of messages) {
+        try {
+            // Skip if it's just a placeholder or empty (unless it has media)
+            const hasContent = (msg.text && msg.text.trim()) || 
+                               (msg.images && msg.images.length > 0) || 
+                               (msg.audios && msg.audios.length > 0);
+            
+            if (!hasContent) continue;
+            
+            let msgText = msg.text || "";
+            if (msg.images && msg.images.length > 0) {
+                msgText += ` [Images: ${msg.images.length}]`;
+            }
+            if (msg.audios && msg.audios.length > 0) {
+                msgText += ` [Audio: ${msg.audios.length}]`;
+            }
+
+            // We use a separate try-catch for the DB call to not block the main flow
+            await dbService.saveFbChat({
+                page_id: pageId,
+                sender_id: senderId,
+                recipient_id: pageId,
+                message_id: msg.id,
+                text: msgText,
+                timestamp: Date.now(),
+                status: 'received',
+                reply_by: 'user'
+            });
+        } catch (saveErr) {
+            // Ignore duplicate key errors, log others
+            if (!saveErr.message.includes('unique') && !saveErr.message.includes('duplicate')) {
+                console.warn(`[FB] Failed to save user message ${msg.id}: ${saveErr.message}`);
+            }
+        }
+    }
+    // -------------------------------------------
+
     const normalizedForEmojiCheck = combinedText.replace(/\s/g, '');
     const hasAlphaNumericOrBangla = /[A-Za-z0-9\u0980-\u09FF]/.test(normalizedForEmojiCheck);
     const hasQuestionMark = normalizedForEmojiCheck.includes('?');
@@ -440,9 +479,15 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         }
 
         // 2. Check Subscription Status (Active/Trial)
-        const validStatuses = ['active', 'trial', 'active_trial', 'active_paid'];
-        if (!validStatuses.includes(pageConfig.subscription_status)) {
-             const logMsg = `Page ${pageId} subscription inactive (Status: ${pageConfig.subscription_status}).`;
+        // Note: getPageConfig now returns shared 'message_credit' from user_configs
+        const hasCredit = (pageConfig.message_credit > 0);
+        const hasOwnKey = (pageConfig.api_key && pageConfig.api_key.length > 5 && pageConfig.cheap_engine === false);
+        
+        // Allow if they have Credit OR Own Key, regardless of subscription_status (unless banned)
+        const isBanned = pageConfig.subscription_status === 'banned';
+
+        if (isBanned || (!hasCredit && !hasOwnKey)) {
+             const logMsg = `Page ${pageConfig.page_id} subscription inactive (Status: ${pageConfig.subscription_status}). Credit: ${pageConfig.message_credit}, OwnKey: ${hasOwnKey}`;
              console.log(logMsg);
              logToFile(logMsg);
              // Log System Error to DB for visibility
@@ -451,7 +496,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                  sender_id: pageId,
                  recipient_id: senderId,
                  message_id: `sys_${Date.now()}`,
-                 text: `[SYSTEM ERROR] Inactive Subscription: ${pageConfig.subscription_status}. Reply Halted.`,
+                 text: `[SYSTEM ERROR] Inactive Subscription/No Credits. Status: ${pageConfig.subscription_status}. Reply Halted.`,
                  timestamp: Date.now(),
                  status: 'system_error',
                  reply_by: 'system'

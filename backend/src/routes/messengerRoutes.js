@@ -595,7 +595,7 @@ router.get('/chats', authMiddleware, async (req, res) => {
 
         const result = await pgClient.query(
             `
-            SELECT id, page_id, created_at, reply_by, token, ai_model, text as message, sender_id as sender
+            SELECT id, page_id, created_at, reply_by, token, ai_model, text, sender_id, timestamp
             FROM fb_chats
             WHERE page_id = $1
               AND created_at >= $2::timestamptz
