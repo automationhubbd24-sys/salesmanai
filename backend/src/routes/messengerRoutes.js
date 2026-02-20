@@ -174,16 +174,21 @@ router.get('/config/:id', async (req, res) => {
 
         let configRow = null;
 
-        // Try lookup by primary key (id) first
-        const configResult = await pgClient.query(
-            'SELECT * FROM fb_message_database WHERE id = $1',
-            [parseInt(id, 10)]
-        );
+        // Try lookup by primary key (id) first IF it looks like an integer
+        const isInteger = /^\d+$/.test(id) && Number(id) < 2147483647;
 
-        if (configResult.rowCount > 0) {
-            configRow = configResult.rows[0];
-        } else {
-            // Fallback: Try lookup by page_id (in case id passed is actually page_id)
+        if (isInteger) {
+            const configResult = await pgClient.query(
+                'SELECT * FROM fb_message_database WHERE id = $1',
+                [parseInt(id, 10)]
+            );
+             if (configResult.rowCount > 0) {
+                configRow = configResult.rows[0];
+            }
+        }
+
+        if (!configRow) {
+            // Fallback: Try lookup by page_id (in case id passed is actually page_id string)
             const configByPageId = await pgClient.query(
                 'SELECT * FROM fb_message_database WHERE page_id = $1',
                 [id]
