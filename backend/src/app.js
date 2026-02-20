@@ -11,6 +11,7 @@ const openrouterEngineRoutes = require('./routes/openrouterEngineRoutes');
 const dbAdminRoutes = require('./routes/dbAdminRoutes');
 const apiListRoutes = require('./routes/apiListRoutes');
 const teamRoutes = require('./routes/teamRoutes');
+const statsRoutes = require('./routes/statsRoutes');
 
 const path = require('path');
 const app = express();
@@ -37,6 +38,7 @@ app.use('/api/openrouter', openrouterEngineRoutes);
 app.use('/api/db-admin', dbAdminRoutes);
 app.use('/api/api-list', apiListRoutes);
 app.use('/teams', teamRoutes);
+app.use('/stats', statsRoutes);
 
 // Basic health check
 

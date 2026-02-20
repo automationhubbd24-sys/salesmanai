@@ -534,14 +534,28 @@ async function approveDepositTransaction(txn) {
     const pool = getPool();
     const client = await pool.connect();
     try {
+        console.log(`[ApproveTxn] Processing txn ID: ${txn.id}, Email: ${txn.user_email}, Amount: ${txn.amount}`);
+        
         await client.query('BEGIN');
 
         // 0. Find user_id from users table
+        let userId = null;
         const userRes = await client.query('SELECT id FROM users WHERE email = $1', [txn.user_email]);
-        if (userRes.rows.length === 0) {
+        
+        if (userRes.rows.length > 0) {
+            userId = userRes.rows[0].id;
+        } else {
+            // Fallback: Check user_configs if email exists there (legacy or different auth)
+            const configRes = await client.query('SELECT user_id FROM user_configs WHERE email = $1', [txn.user_email]);
+            if (configRes.rows.length > 0) {
+                userId = configRes.rows[0].user_id;
+            }
+        }
+
+        if (!userId) {
+            console.error(`[ApproveTxn] User not found for email: ${txn.user_email}`);
             throw new Error(`User not found for email: ${txn.user_email}`);
         }
-        const userId = userRes.rows[0].id;
 
         // 1. Update transaction status
         await client.query(
@@ -550,8 +564,10 @@ async function approveDepositTransaction(txn) {
         );
 
         // 2. Add balance to user
-        // Ensure balance is treated as a number
         const amount = parseFloat(txn.amount);
+        if (isNaN(amount)) {
+             throw new Error(`Invalid amount: ${txn.amount}`);
+        }
         
         await client.query(
             `INSERT INTO user_configs (user_id, balance, email)
@@ -562,6 +578,7 @@ async function approveDepositTransaction(txn) {
         );
 
         await client.query('COMMIT');
+        console.log(`[ApproveTxn] Successfully approved txn ${txn.id}`);
         return true;
     } catch (error) {
         await client.query('ROLLBACK');

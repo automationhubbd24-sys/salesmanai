@@ -134,7 +134,7 @@ exports.approveTransaction = async (req, res) => {
         res.json({ success: true });
     } catch (error) {
         console.error('Approve transaction error:', error);
-        res.status(500).json({ error: 'Internal Server Error' });
+        res.status(500).json({ error: error.message || 'Internal Server Error' });
     }
 };
 
