@@ -3,6 +3,10 @@ const dbService = require('../services/dbService');
 const woocommerceService = require('../services/woocommerceService');
 const imageService = require('../services/imageService');
 
+// Simple In-Memory Cache for Team Checks (5 minutes TTL)
+const teamUserCache = new Map();
+const CACHE_TTL = 5 * 60 * 1000; 
+
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 5 * 1024 * 1024 },
@@ -26,30 +30,62 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
         const token = authHeader.replace('Bearer ', '');
         const jwt = require('jsonwebtoken');
         const secret = process.env.JWT_SECRET;
-        const payload = jwt.verify(token, secret);
-        userId = payload.sub || baseUserId || null;
-        viewerEmail = payload.email || null;
+        try {
+            const payload = jwt.verify(token, secret);
+            userId = payload.sub || baseUserId || null;
+            viewerEmail = payload.email || null;
+        } catch (e) {
+            console.error("JWT Verification failed:", e.message);
+        }
     }
 
-    if (!userId) {
+    console.log(`[AuthDebug] Base: ${baseUserId}, TokenUser: ${userId}, Email: ${viewerEmail}`);
+
+    const pgClient = require('../services/pgClient');
+
+    // Fallback: If no token email, try to find email from baseUserId or userId (from token)
+    const lookupId = baseUserId || userId;
+    if (!viewerEmail && lookupId) {
+         try {
+             const userRes = await pgClient.query('SELECT email FROM users WHERE id = $1', [lookupId]);
+             if (userRes.rows.length > 0) {
+                 viewerEmail = userRes.rows[0].email;
+                 console.log(`[AuthDebug] Resolved Email from ID (${lookupId}): ${viewerEmail}`);
+             }
+         } catch (e) {
+             console.error("[AuthDebug] Failed to resolve email from ID:", e);
+         }
+    }
+
+    if (!userId && !baseUserId) {
         return { effectiveUserId: null };
     }
 
-    let effectiveUserId = userId;
+    let effectiveUserId = userId || baseUserId;
 
     if (viewerEmail) {
-        const pgClient = require('../services/pgClient');
+        // Ensure email is lowercase and trimmed for matching
+        const normalizedEmail = viewerEmail.trim().toLowerCase();
+
+        // 1. Check Cache
+        if (teamUserCache.has(normalizedEmail)) {
+            const cached = teamUserCache.get(normalizedEmail);
+            if (Date.now() - cached.timestamp < CACHE_TTL) {
+                // console.log(`[AuthDebug] Cache Hit for ${normalizedEmail} -> ${cached.userId}`);
+                return { effectiveUserId: cached.userId };
+            }
+        }
 
         const teamResult = await pgClient.query(
             'SELECT owner_email FROM team_members WHERE member_email = $1 AND status = $2',
-            [viewerEmail, 'active']
+            [normalizedEmail, 'active']
         );
 
         if (teamResult.rows.length > 0 && teamResult.rows[0].owner_email) {
             const ownerEmail = teamResult.rows[0].owner_email;
+            console.log(`[AuthDebug] Found Team Owner Email: ${ownerEmail}`);
             
             // Look up the owner's user_id directly from the users table
-            // This fixes the issue where team members couldn't access workspace if owner hadn't connected a page yet
             const userResult = await pgClient.query(
                 'SELECT id FROM users WHERE email = $1',
                 [ownerEmail]
@@ -57,8 +93,16 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
 
             if (userResult.rows.length > 0) {
                 effectiveUserId = userResult.rows[0].id;
+                console.log(`[AuthDebug] Effective User ID (Owner): ${effectiveUserId}`);
+            } else {
+                console.log(`[AuthDebug] Owner email not found in users table: ${ownerEmail}`);
             }
+        } else {
+             console.log(`[AuthDebug] No active team membership found for: ${normalizedEmail}`);
         }
+
+        // 2. Set Cache
+        teamUserCache.set(normalizedEmail, { userId: effectiveUserId, timestamp: Date.now() });
     }
 
     return { effectiveUserId };

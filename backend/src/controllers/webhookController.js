@@ -1240,10 +1240,21 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         await dbService.saveChatMessage(sessionId, 'assistant', replyText);
         // Save Image Memory (system note) so AI can see previously sent product images
         if (aiResponse.images && Array.isArray(aiResponse.images) && aiResponse.images.length > 0) {
-            const summary = aiResponse.images
-                .map(img => `${img.title || 'Image'} | ${img.url}`)
-                .join(' ; ');
-            const memoryNote = `[IMAGE MEMORY] Sent product images in this reply: ${summary}`;
+            let memoryNote = "";
+            
+            // Priority: Use 'foundProducts' if available to be specific about WHICH product
+            if (aiResponse.foundProducts && Array.isArray(aiResponse.foundProducts) && aiResponse.foundProducts.length > 0) {
+                 const productNames = aiResponse.foundProducts.map(p => p.name).join(', ');
+                 const summary = aiResponse.images.map(img => img.url).join(' ; ');
+                 memoryNote = `[IMAGE MEMORY] Sent product images for: [${productNames}]. Images: ${summary}`;
+            } else {
+                 // Fallback: Just list titles/urls from images array
+                 const summary = aiResponse.images
+                    .map(img => `${img.title || 'Image'} | ${img.url}`)
+                    .join(' ; ');
+                 memoryNote = `[IMAGE MEMORY] Sent product images in this reply: ${summary}`;
+            }
+            
             await dbService.saveChatMessage(sessionId, 'system', memoryNote);
         }
 

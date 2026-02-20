@@ -341,54 +341,6 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
          cleanUserMessage = userMessage.replace(imageMatch[0], '').trim(); 
     }
 
-    // --- PRODUCT SEARCH INTEGRATION (Context Injection) ---
-    let productContext = "";
-    if (pageConfig.user_id) {
-        try {
-             // Search for relevant products based on user message
-            const products = await dbService.searchProducts(pageConfig.user_id, cleanUserMessage, pageConfig.page_id);
-            
-            if (products && products.length > 0) {
-                 productContext = "\n[Available Products in Store]\n";
-                 products.forEach((p, i) => {
-                     // Format variants cleanly
-                     let variantInfo = "";
-                     if (Array.isArray(p.variants) && p.variants.length > 0) {
-                        variantInfo = " | Variants: " + p.variants.map(v => 
-                            `${v.name} (${v.price} ${v.currency || 'BDT'})`
-                        ).join(', ');
-                     }
-                     
-                     // Row Format (Compact for AI)
-                     const priceDisplay = p.price ? `${p.price} ${p.currency || 'BDT'}` : 'N/A';
-                     const stockDisplay = p.stock !== undefined ? p.stock : 'N/A';
-                     const descDisplay = p.description ? p.description.replace(/\n/g, ' ').substring(0, 200) : 'N/A';
-                     
-                     let imgDisplay = 'N/A';
-                     if (p.image_url) {
-                        if (p.image_url.startsWith('http')) {
-                            imgDisplay = p.image_url;
-                        } else {
-                            // Convert relative path to absolute URL
-                            const baseUrl = process.env.BACKEND_URL || 'http://localhost:3001';
-                            const cleanPath = p.image_url.startsWith('/') ? p.image_url : `/${p.image_url}`;
-                            imgDisplay = `${baseUrl}${cleanPath}`;
-                        }
-                     }
-
-                     const keywordsDisplay = p.keywords ? p.keywords.replace(/\n/g, ' ').substring(0, 200) : 'N/A';
-                     
-                     productContext += `Item ${i+1}: ${p.name} | Price: ${priceDisplay} | Stock: ${stockDisplay} | Image URL: ${imgDisplay} | Desc: ${descDisplay} | Keywords: ${keywordsDisplay}${variantInfo}\n`;
-                 });
-                 productContext += "[End of Products]\n";
-                 console.log(`[AI] Injected ${products.length} products into context.`);
-             }
-        } catch (err) {
-            console.warn("[AI] Product search failed:", err.message);
-        }
-    }
-    // ----------------------------------------------------
-
     let mediaContext = "";
     
     if (imageUrls && imageUrls.length > 0) {
@@ -430,6 +382,57 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         cleanUserMessage += "\n" + mediaContext;
         console.log(`[AI] Added media context to user message. Total Tokens so far: ${totalTokenUsage}`);
     }
+
+    // --- PRODUCT SEARCH INTEGRATION (Context Injection) ---
+    // MOVED: Now runs AFTER media processing so we can search for products based on image/audio content!
+    let productContext = "";
+    let foundProducts = [];
+    if (pageConfig.user_id) {
+        try {
+            // Search for relevant products based on user message (which now includes image descriptions)
+            const products = await dbService.searchProducts(pageConfig.user_id, cleanUserMessage, pageConfig.page_id);
+            
+            if (products && products.length > 0) {
+                 foundProducts = products; // Store for return
+                 productContext = "\n[Available Products in Store]\n";
+                 products.forEach((p, i) => {
+                     // Format variants cleanly
+                     let variantInfo = "";
+                     if (Array.isArray(p.variants) && p.variants.length > 0) {
+                        variantInfo = " | Variants: " + p.variants.map(v => 
+                            `${v.name} (${v.price} ${v.currency || 'BDT'})`
+                        ).join(', ');
+                     }
+                     
+                     // Row Format (Compact for AI)
+                     const priceDisplay = p.price ? `${p.price} ${p.currency || 'BDT'}` : 'N/A';
+                     const stockDisplay = p.stock !== undefined ? p.stock : 'N/A';
+                     const descDisplay = p.description ? p.description.replace(/\n/g, ' ').substring(0, 200) : 'N/A';
+                     
+                     let imgDisplay = 'N/A';
+                     if (p.image_url) {
+                        if (p.image_url.startsWith('http')) {
+                            imgDisplay = p.image_url;
+                        } else {
+                            // Convert relative path to absolute URL
+                            const baseUrl = process.env.BACKEND_URL || 'http://localhost:3001';
+                            const cleanPath = p.image_url.startsWith('/') ? p.image_url : `/${p.image_url}`;
+                            imgDisplay = `${baseUrl}${cleanPath}`;
+                        }
+                     }
+
+                     const keywordsDisplay = p.keywords ? p.keywords.replace(/\n/g, ' ').substring(0, 200) : 'N/A';
+                     
+                     productContext += `Item ${i+1}: ${p.name} | Price: ${priceDisplay} | Stock: ${stockDisplay} | Image URL: ${imgDisplay} | Desc: ${descDisplay} | Keywords: ${keywordsDisplay}${variantInfo}\n`;
+                 });
+                 productContext += "[End of Products]\n";
+                 console.log(`[AI] Injected ${products.length} products into context.`);
+             }
+        } catch (err) {
+            console.warn("[AI] Product search failed:", err.message);
+        }
+    }
+    // ----------------------------------------------------
 
     // 1. Prepare Configuration
     let dynamicProvider = 'openrouter'; 
@@ -639,7 +642,7 @@ ${productContext}`;
             const aiText = data?.choices?.[0]?.message?.content || null;
             const tokenUsage = data?.usage?.total_tokens || 0;
             if (aiText) {
-                return { reply: aiText, sentiment: 'neutral', token_usage: tokenUsage + totalTokenUsage, model: modelToUse };
+                return { reply: aiText, sentiment: 'neutral', token_usage: tokenUsage + totalTokenUsage, model: modelToUse, foundProducts };
             }
         } catch (error) {
             console.warn(`[AI] SalesmanChatbot Own API Error:`, error.message);
@@ -729,16 +732,16 @@ ${productContext}`;
                             
                             const parsed2 = extractJsonFromAiResponse(rawContent2);
                             if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text;
-                            return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: modelToUse };
+                            return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: modelToUse, foundProducts };
                         }
                         // -------------------------------------
 
                         if (!parsed.reply) parsed.reply = parsed.response || parsed.text;
-                        return { ...parsed, token_usage: tokenUsage + totalTokenUsage, model: modelToUse };
+                        return { ...parsed, token_usage: tokenUsage + totalTokenUsage, model: modelToUse, foundProducts };
                     } catch (e) {
                         let cleanText = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
                         cleanText = extractReplyFromText(cleanText);
-                        return { reply: cleanText, sentiment: 'neutral', model: modelToUse, token_usage: tokenUsage + totalTokenUsage };
+                        return { reply: cleanText, sentiment: 'neutral', model: modelToUse, token_usage: tokenUsage + totalTokenUsage, foundProducts };
                     }
                 }
             } catch (error) {
@@ -856,11 +859,11 @@ ${productContext}`;
                     }
 
                     if (!parsed.reply) parsed.reply = parsed.response || parsed.text;
-                    return { ...parsed, model: 'gemini-2.5-flash', token_usage: tokenUsage + totalTokenUsage };
+                    return { ...parsed, model: 'gemini-2.5-flash', token_usage: tokenUsage + totalTokenUsage, foundProducts };
                 } catch (e) {
                      let cleanText = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
                      cleanText = extractReplyFromText(cleanText);
-                     return { reply: cleanText, sentiment: 'neutral', model: 'gemini-2.5-flash', token_usage: tokenUsage + totalTokenUsage };
+                     return { reply: cleanText, sentiment: 'neutral', model: 'gemini-2.5-flash', token_usage: tokenUsage + totalTokenUsage, foundProducts };
                 }
 
             } catch (flashError) {

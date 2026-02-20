@@ -1628,8 +1628,8 @@ async function searchProducts(userId, queryText, pageId = null) {
         return score;
     };
 
-    // Helper to build base query
-    const buildBaseQuerySql = (extraWhere, extraParams) => {
+    // Helper to get base query context (params and where clause)
+    const getBaseContext = () => {
         const params = [userId];
         let where = 'user_id = $1 AND is_active = true';
 
@@ -1637,28 +1637,21 @@ async function searchProducts(userId, queryText, pageId = null) {
             params.push(String(pageId));
             where += ` AND $${params.length} = ANY(allowed_page_ids)`;
         }
-
-        if (extraWhere) {
-            where += ` AND (${extraWhere})`;
-            if (Array.isArray(extraParams) && extraParams.length > 0) {
-                params.push(...extraParams);
-            }
-        }
-
         return { where, params };
     };
 
-    const exactSql = buildBaseQuerySql(
-        'name ILIKE $2 OR description ILIKE $3 OR keywords ILIKE $4',
-        [`%${cleanQuery}%`, `%${cleanQuery}%`, `%${cleanQuery}%`]
-    );
+    // 1. Exact Match
+    const ctx1 = getBaseContext();
+    const pStart1 = ctx1.params.length;
+    const exactWhere = `${ctx1.where} AND (name ILIKE $${pStart1 + 1} OR description ILIKE $${pStart1 + 2} OR keywords ILIKE $${pStart1 + 3})`;
+    ctx1.params.push(`%${cleanQuery}%`, `%${cleanQuery}%`, `%${cleanQuery}%`);
 
     const exactResult = await query(
         `SELECT name, description, image_url, variants, is_active, price, currency, keywords
          FROM products
-         WHERE ${exactSql.where}
+         WHERE ${exactWhere}
          LIMIT 5`,
-        exactSql.params
+        ctx1.params
     );
 
     const exactData = exactResult.rows || [];
@@ -1670,27 +1663,31 @@ async function searchProducts(userId, queryText, pageId = null) {
     const tokens = cleanQuery.split(/\s+/).filter(w => w.length > 2);
     
     if (tokens.length > 0) {
+        // 2. Fuzzy Token Match
+        const ctx2 = getBaseContext();
         const conditions = [];
-        const params = [];
-
+        
         tokens.forEach(token => {
-            conditions.push(`name ILIKE $${params.length + 1}`);
-            params.push(`%${token}%`);
-            conditions.push(`description ILIKE $${params.length + 1}`);
-            params.push(`%${token}%`);
-            conditions.push(`keywords ILIKE $${params.length + 1}`);
-            params.push(`%${token}%`);
+            const idx = ctx2.params.length + 1;
+            conditions.push(`name ILIKE $${idx}`);
+            ctx2.params.push(`%${token}%`);
+            
+            conditions.push(`description ILIKE $${idx + 1}`);
+            ctx2.params.push(`%${token}%`);
+            
+            conditions.push(`keywords ILIKE $${idx + 2}`);
+            ctx2.params.push(`%${token}%`);
         });
 
         const cond = conditions.join(' OR ');
-        const fuzzySql = buildBaseQuerySql(cond, params);
+        const fuzzyWhere = `${ctx2.where} AND (${cond})`;
 
         const fuzzyResult = await query(
             `SELECT name, description, image_url, variants, is_active, price, currency, keywords
              FROM products
-             WHERE ${fuzzySql.where}
+             WHERE ${fuzzyWhere}
              LIMIT 5`,
-            fuzzySql.params
+            ctx2.params
         );
 
         const fuzzyData = fuzzyResult.rows || [];
@@ -1699,6 +1696,7 @@ async function searchProducts(userId, queryText, pageId = null) {
             return [...fuzzyData].sort((a, b) => computeRelevance(b) - computeRelevance(a));
         }
 
+        // 3. Stem Match
         const stems = [];
         tokens.forEach(token => {
             const lower = token.toLowerCase();
@@ -1710,26 +1708,30 @@ async function searchProducts(userId, queryText, pageId = null) {
         });
 
         if (stems.length > 0) {
+            const ctx3 = getBaseContext();
             const stemConditions = [];
-            const stemParams = [];
+            
             stems.forEach(stem => {
-                stemConditions.push(`name ILIKE $${stemParams.length + 1}`);
-                stemParams.push(`%${stem}%`);
-                stemConditions.push(`description ILIKE $${stemParams.length + 1}`);
-                stemParams.push(`%${stem}%`);
-                stemConditions.push(`keywords ILIKE $${stemParams.length + 1}`);
-                stemParams.push(`%${stem}%`);
+                const idx = ctx3.params.length + 1;
+                stemConditions.push(`name ILIKE $${idx}`);
+                ctx3.params.push(`%${stem}%`);
+                
+                stemConditions.push(`description ILIKE $${idx + 1}`);
+                ctx3.params.push(`%${stem}%`);
+                
+                stemConditions.push(`keywords ILIKE $${idx + 2}`);
+                ctx3.params.push(`%${stem}%`);
             });
 
             const stemCond = stemConditions.join(' OR ');
-            const stemSql = buildBaseQuerySql(stemCond, stemParams);
+            const stemWhere = `${ctx3.where} AND (${stemCond})`;
 
             const stemResult = await query(
                 `SELECT name, description, image_url, variants, is_active, price, currency, keywords
                  FROM products
-                 WHERE ${stemSql.where}
+                 WHERE ${stemWhere}
                  LIMIT 5`,
-                stemSql.params
+                ctx3.params
             );
 
             const stemData = stemResult.rows || [];
@@ -1740,84 +1742,87 @@ async function searchProducts(userId, queryText, pageId = null) {
         }
     }
 
+    // --- 4. Levenshtein Fallback (Super Fuzzy - Token Based) ---
     try {
         const baseSql = buildBaseQuerySql(null, []);
         const scanResult = await query(
             `SELECT name, description, image_url, variants, is_active, price, currency, keywords
              FROM products
              WHERE ${baseSql.where}
-             LIMIT 50`,
+             ORDER BY id DESC
+             LIMIT 100`,
             baseSql.params
         );
 
         const allProducts = scanResult.rows || [];
 
         if (allProducts.length > 0) {
-            const getDistance = (s1, s2) => {
-                s1 = s1.toLowerCase();
-                s2 = s2.toLowerCase();
-                const costs = new Array(s2.length + 1);
-                for (let i = 0; i <= s1.length; i++) {
-                    let lastValue = i;
-                    for (let j = 0; j <= s2.length; j++) {
-                        if (i === 0) costs[j] = j;
-                        else {
-                            if (j > 0) {
-                                let newValue = costs[j - 1];
-                                if (s1.charAt(i - 1) !== s2.charAt(j - 1)) newValue = Math.min(Math.min(newValue, lastValue), costs[j]) + 1;
-                                costs[j - 1] = lastValue;
-                                lastValue = newValue;
-                            }
+            const queryTokens = cleanQuery.toLowerCase().split(/\s+/).filter(t => t.length > 2);
+            // If query is too short, just return empty
+            if (queryTokens.length === 0) return [];
+
+            // Optimized Levenshtein (Memory Efficient & Faster)
+            const getDistance = (a, b) => {
+                if (a === b) return 0;
+                if (a.length === 0) return b.length;
+                if (b.length === 0) return a.length;
+
+                // Swap to ensure we use the shorter string for columns (less memory)
+                if (a.length > b.length) [a, b] = [b, a];
+
+                let row = new Array(a.length + 1);
+                for (let i = 0; i <= a.length; i++) row[i] = i;
+
+                for (let i = 1; i <= b.length; i++) {
+                    let prev = i;
+                    for (let j = 1; j <= a.length; j++) {
+                        let val;
+                        if (b.charAt(i - 1) === a.charAt(j - 1)) {
+                            val = row[j - 1];
+                        } else {
+                            val = Math.min(row[j - 1], prev, row[j]) + 1;
                         }
+                        row[j - 1] = prev;
+                        prev = val;
                     }
-                    if (i > 0) costs[s2.length] = lastValue;
+                    row[a.length] = prev;
                 }
-                return costs[s2.length];
+                return row[a.length];
             };
 
             const scored = allProducts.map(p => {
-                // Split product name and keywords into tokens for better matching
-                const nameTokens = (p.name || "").toLowerCase().split(/\s+/);
-                const keywordTokens = (p.keywords || "")
-                    .toLowerCase()
-                    .split(/[,\s]+/)
-                    .filter(Boolean);
-                const productTokens = Array.from(new Set([...nameTokens, ...keywordTokens]));
+                const productTokens = (p.name + " " + (p.keywords || "")).toLowerCase().split(/[\s,]+/).filter(Boolean);
                 
-                // Calculate minimum distance to ANY token in the product name
-                let minWordDist = 100;
-                productTokens.forEach(pt => {
-                    const d = getDistance(cleanQuery, pt);
-                    if (d < minWordDist) minWordDist = d;
+                // Find the best match for ANY query token in the product tokens
+                let matchCount = 0;
+                let totalScore = 0;
+
+                queryTokens.forEach(qt => {
+                    let localMin = 100;
+                    productTokens.forEach(pt => {
+                        const dist = getDistance(qt, pt);
+                        if (dist < localMin) localMin = dist;
+                    });
+                    
+                    // Allow fuzzy match: distance <= 40% of length or absolute 2 chars
+                    const threshold = Math.max(2, Math.floor(qt.length * 0.4));
+                    
+                    if (localMin <= threshold) {
+                        matchCount++;
+                        // Score is better if distance is lower
+                        totalScore += (10 - localMin);
+                    }
                 });
 
-                // Also calculate distance to the full name (for short names)
-                const fullDist = getDistance(cleanQuery, p.name);
-                
-                const bestDist = Math.min(minWordDist, fullDist);
-
-                // Normalized score: 0 is perfect, higher is worse.
-                // Allow distance up to 3 for long words, 1 for short.
-                // Dynamic threshold based on query length
-                const threshold = cleanQuery.length > 4 ? 2 : 1;
-                
-                return { product: p, score: bestDist, valid: bestDist <= threshold };
+                return { product: p, score: matchCount > 0 ? (matchCount * 20 + totalScore) : -1 };
             });
 
-            const bestMatches = scored
-                .filter(s => s.valid)
-                .sort((a, b) => a.score - b.score)
-                .slice(0, 3)
-                .map(s => s.product);
-
-            if (bestMatches.length > 0) return bestMatches;
+            const bestMatches = scored.filter(s => s.score > 0).sort((a, b) => b.score - a.score);
+            
+            return bestMatches.slice(0, 5).map(s => s.product);
         }
     } catch (e) {
         console.error("[DB] Fuzzy Scan Error:", e);
-    }
-
-    if (exactError) {
-        console.error("[DB] Product Search Error:", exactError.message);
     }
     
     return [];
