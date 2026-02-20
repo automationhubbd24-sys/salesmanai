@@ -526,7 +526,9 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
 
     // --- PROMPT & MESSAGE CONSTRUCTION ---
     let messages = [];
-    let responseFormat = { type: "json_object" };
+    // User Update: Default to undefined (Text Mode) instead of JSON Object
+    // Enforcing JSON without explicit System Prompt instructions causes Gemini/OpenAI to return empty/error.
+    let responseFormat = undefined; 
 
     if (pageConfig.is_external_api) {
         // --- EXTERNAL API MODE (Minimal & White Label) ---
