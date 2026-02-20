@@ -487,7 +487,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         const isBanned = pageConfig.subscription_status === 'banned';
 
         if (isBanned || (!hasCredit && !hasOwnKey)) {
-             const logMsg = `Page ${pageConfig.page_id} subscription inactive (Status: ${pageConfig.subscription_status}). Credit: ${pageConfig.message_credit}, OwnKey: ${hasOwnKey}`;
+             const logMsg = `Page ${pageConfig.page_id} blocked. Status: ${pageConfig.subscription_status}, Credit: ${pageConfig.message_credit}, OwnKey: ${hasOwnKey}`;
              console.log(logMsg);
              logToFile(logMsg);
              // Log System Error to DB for visibility
@@ -496,7 +496,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                  sender_id: pageId,
                  recipient_id: senderId,
                  message_id: `sys_${Date.now()}`,
-                 text: `[SYSTEM ERROR] Inactive Subscription/No Credits. Status: ${pageConfig.subscription_status}. Reply Halted.`,
+                 text: `[SYSTEM ERROR] Blocked (Status: ${pageConfig.subscription_status}, Credit: ${pageConfig.message_credit}). Reply Halted.`,
                  timestamp: Date.now(),
                  status: 'system_error',
                  reply_by: 'system'
