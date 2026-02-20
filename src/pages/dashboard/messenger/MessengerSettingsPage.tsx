@@ -498,40 +498,21 @@ export default function MessengerSettingsPage() {
         throw new Error("Please login again");
       }
 
-      if (values.text_prompt) {
-        const resPrompt = await fetch(`${BACKEND_URL}/messenger/config/${dbId}`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`
-          },
-          body: JSON.stringify({ text_prompt: values.text_prompt })
-        });
-
-        if (!resPrompt.ok) {
-          const body = await resPrompt.json().catch(() => ({}));
-          const message = body.error || `Failed to save prompt (${resPrompt.status})`;
-          throw new Error(message);
-        }
-      }
-
-      const updates: any = {
-          ai: values.provider,
-          api_key: values.api_key,
-          chat_model: values.chatmodel,
-          cheap_engine: mode === "managed" 
+      const payload: any = {
+        text_prompt: values.text_prompt,
+        ai: values.provider,
+        api_key: values.api_key,
+        chat_model: values.chatmodel,
+        cheap_engine: mode === "managed" 
       };
 
-      const resUpdate = await fetch(`${BACKEND_URL}/messenger/pages/config`, {
-        method: "POST",
+      const resUpdate = await fetch(`${BACKEND_URL}/messenger/config/${dbId}`, {
+        method: "PUT",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({
-          page_id: pageId,
-          updates
-        })
+        body: JSON.stringify(payload)
       });
 
       if (!resUpdate.ok) {

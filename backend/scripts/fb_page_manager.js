@@ -1,6 +1,7 @@
 const { Pool } = require('pg');
 const axios = require('axios');
-require('dotenv').config({ path: '../.env' }); // Adjust path if needed
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 
 // DB Connection
 const pool = new Pool({

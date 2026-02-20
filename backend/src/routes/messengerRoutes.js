@@ -531,7 +531,6 @@ router.delete('/pages/:pageId', async (req, res) => {
     }
 });
 
-module.exports = router;
 
 router.get('/orders', authMiddleware, async (req, res) => {
     try {
@@ -607,13 +606,16 @@ router.get('/chats', authMiddleware, async (req, res) => {
 });
 
 router.get('/stats', authMiddleware, async (req, res) => {
+    console.log(`[GET /stats] Request for page_id: ${req.query.page_id}`);
     try {
         const pageId = String(req.query.page_id || '').trim();
 
         if (!pageId) {
+            console.warn('[GET /stats] Missing page_id');
             return res.status(400).json({ error: 'page_id is required' });
         }
 
+        console.log('[GET /stats] Querying reply count...');
         const replyResult = await pgClient.query(
             `
             SELECT COUNT(*)::int AS count
@@ -623,10 +625,9 @@ router.get('/stats', authMiddleware, async (req, res) => {
             `,
             [pageId]
         );
+        console.log('[GET /stats] Reply count result:', replyResult.rows[0]);
 
-        // Check if token column exists before querying (backwards compatibility)
-        // Or assume it exists since we updated schema.
-        // We will assume schema is updated.
+        console.log('[GET /stats] Querying token count...');
         const tokenResult = await pgClient.query(
             `
             SELECT COALESCE(SUM(token), 0)::int AS total_tokens
@@ -636,6 +637,7 @@ router.get('/stats', authMiddleware, async (req, res) => {
             `,
             [pageId]
         );
+        console.log('[GET /stats] Token count result:', tokenResult.rows[0]);
 
         res.json({
             allTimeBotReplies: replyResult.rows[0]?.count || 0,
@@ -643,6 +645,8 @@ router.get('/stats', authMiddleware, async (req, res) => {
         });
     } catch (err) {
         console.error('Messenger stats error:', err);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: err.message, stack: err.stack });
     }
 });
+
+module.exports = router;
