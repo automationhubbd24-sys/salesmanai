@@ -1662,7 +1662,9 @@ async function searchProducts(userId, queryText, pageId = null) {
 
         if (pageId) {
             params.push(String(pageId));
-            where += ` AND $${params.length} = ANY(allowed_page_ids)`;
+            // Fix: Handle allowed_page_ids as JSONB to avoid "op ANY/ALL" error
+            // Logic: Visible if NULL, Empty Array (JSON '[]'), or Page ID is in the list
+            where += ` AND (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb OR allowed_page_ids::jsonb @> jsonb_build_array($${params.length}))`;
         }
         return { where, params };
     };

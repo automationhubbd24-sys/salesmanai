@@ -1013,6 +1013,7 @@ Response: Natural conversation. NO JSON (except for search tool).`;
                     if (!parsed.reply) parsed.reply = parsed.response || parsed.text;
                     return { ...parsed, model: swarmModel, token_usage: tokenUsage + totalTokenUsage, foundProducts };
                 } catch (e) {
+                     console.error('[AI] Phase 2 Logic/Tool Failed:', e);
                      let cleanText = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
                      
                      // Attempt to extract images from text response
