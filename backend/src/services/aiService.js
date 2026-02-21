@@ -585,28 +585,30 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     } else {
         let basePrompt = pagePrompts?.text_prompt || "";
 
-        // --- CLEANUP LEGACY SYSTEM PROMPT FORMAT ---
-        // User Request: Remove price (0 BDT) from prompt and ensure format is ##product "name"
+        const systemPromptProductNames = [];
+
+        // --- CLEANUP & EXTRACT SHORTCUT PRODUCTS ---
+        // User Request: Extract product from ##product tag, clean it from text, but fetch details.
+        // Manual typing of product name (without tag) should NOT trigger fetch.
         if (basePrompt) {
-            // Case 1: ##PRODUCT "**name**" 0 BDT -> ##product "name"
-            basePrompt = basePrompt.replace(/##PRODUCT\s+["']?\**([a-zA-Z0-9_\-\s]+)\**["']?\s+\d+\s*BDT/gi, '##product "$1"');
-            // Case 2: ##PRODUCT "**name**" (just cleaning stars/quotes) -> ##product "name"
-            basePrompt = basePrompt.replace(/##PRODUCT\s+["']?\**([a-zA-Z0-9_\-\s]+)\**["']?/gi, '##product "$1"');
+             // Regex handles:
+            // 1. ##PRODUCT "**Name**" 100 BDT (Frontend Shortcut)
+            // 2. ##product "Name" (Standard)
+            // Captures the Name (Group 1) and replaces the whole tag with just "Name".
+            const shortcutRegex = /##PRODUCT\s*["'](?:\*\*)?(.+?)(?:\*\*)?["'](?:\s+\d+\s*\w+)?/gi;
+
+            basePrompt = basePrompt.replace(shortcutRegex, (match, name) => {
+                if (name) {
+                    const cleanName = name.trim();
+                    systemPromptProductNames.push(cleanName);
+                    return cleanName; // Replace ##PRODUCT tag with just the name
+                }
+                return match;
+            });
         }
-        // -------------------------------------------
 
         // --- DYNAMIC PRODUCT INJECTION FROM SYSTEM PROMPT ---
-        // User Request: If system prompt contains ##product "name", fetch that product and inject it.
         try {
-            const productRefRegex = /##product\s*"([^"]+)"/gi;
-            let match;
-            const systemPromptProductNames = [];
-            
-            while ((match = productRefRegex.exec(basePrompt)) !== null) {
-                if (match[1]) {
-                    systemPromptProductNames.push(match[1]);
-                }
-            }
 
             if (systemPromptProductNames.length > 0) {
                 console.log(`[AI] Found product references in System Prompt: ${systemPromptProductNames.join(', ')}`);
