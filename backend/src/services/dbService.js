@@ -285,14 +285,16 @@ async function saveFbChat(data) {
         data.text,
         data.timestamp,
         data.status || 'pending',
-        data.reply_by || 'user'
+        data.reply_by || 'user',
+        data.token || 0,
+        data.ai_model || null
     ];
 
     try {
         await query(
             `INSERT INTO fb_chats
-                (page_id, sender_id, recipient_id, message_id, text, timestamp, status, reply_by)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                (page_id, sender_id, recipient_id, message_id, text, timestamp, status, reply_by, token, ai_model)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
              ON CONFLICT (message_id) DO UPDATE SET
                 page_id = EXCLUDED.page_id,
                 sender_id = EXCLUDED.sender_id,
@@ -300,7 +302,9 @@ async function saveFbChat(data) {
                 text = EXCLUDED.text,
                 timestamp = EXCLUDED.timestamp,
                 status = EXCLUDED.status,
-                reply_by = EXCLUDED.reply_by`,
+                reply_by = EXCLUDED.reply_by,
+                token = EXCLUDED.token,
+                ai_model = EXCLUDED.ai_model`,
             params
         );
     } catch (error) {

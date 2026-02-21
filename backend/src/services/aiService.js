@@ -1521,9 +1521,14 @@ async function transcribeAudio(audioUrl, config) {
             // Groq Key -> Use Groq
             priorityChain.push({ provider: 'groq', model: 'whisper-large-v3', name: 'Groq Whisper (User Key)', key: userKey });
         } else if (userKey.startsWith('AIza')) {
-            // Gemini Key -> Use Gemini 1.5 Flash (Reliable for Audio)
-            // Note: 2.5/2.0 might not support audio via API yet or have different ID
-            priorityChain.push({ provider: 'google', model: 'gemini-1.5-flash', name: 'Gemini (User Key)', key: userKey });
+            // Gemini Key -> Use Gemini (Try User's Model first, else 1.5 Flash)
+            const userModel = (config.model && config.model.startsWith('gemini')) ? config.model : 'gemini-1.5-flash';
+            priorityChain.push({ provider: 'google', model: userModel, name: `Gemini (${userModel}) (User Key)`, key: userKey });
+            
+            // If User's model is NOT 1.5 Flash, add 1.5 Flash as backup with User Key (it's reliable for audio)
+            if (userModel !== 'gemini-1.5-flash') {
+                 priorityChain.push({ provider: 'google', model: 'gemini-1.5-flash', name: 'Gemini (1.5 Flash) (User Key)', key: userKey });
+            }
         }
     }
 
@@ -1575,7 +1580,7 @@ async function transcribeAudio(audioUrl, config) {
                 const payload = {
                     contents: [{
                         parts: [
-                            { text: "Transcribe this audio. If Bengali, write in Bengali script. If English, write in English. Do not translate. Output ONLY the transcription text." },
+                            { text: "Transcribe this audio. Priority languages: Bangla, then English, then Hindi. Output ONLY the transcription text." },
                             { inline_data: { mime_type: mimeType, data: audioBuffer.toString('base64') } }
                         ]
                     }]
