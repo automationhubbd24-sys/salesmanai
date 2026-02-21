@@ -99,64 +99,75 @@ const handleWebhook = async (req, res) => {
     // console.log('Webhook Body Received:', JSON.stringify(body, null, 2)); // Too verbose for production
 
     if (body.object === 'page') {
-        // --- GATEKEEPER CHECK (Fail Fast) ---
-        // Extract Page ID from the first entry (assuming batch is for same page usually)
-        const pageId = body.entry?.[0]?.id;
-        
-        if (pageId) {
-             // If cache is empty (server restart), try quick fetch or allow once to be safe?
-             // Better: If cache is empty, we force refresh.
-             if (allowedPagesCache.size === 0) await refreshAllowedPages();
-
-             if (!allowedPagesCache.has(pageId)) {
-                // Double check DB before hard blocking (in case of new signup not in cache yet)
-                const isActuallyActive = await dbService.getPageConfig(pageId);
-                
-                if (isActuallyActive) {
-                    // Note: getPageConfig now returns shared 'message_credit' from user_configs
-                    const hasCredit = (isActuallyActive.message_credit > 0);
-                    const hasOwnKey = (isActuallyActive.api_key && isActuallyActive.api_key.length > 5 && isActuallyActive.cheap_engine === false);
-                    
-                    // Allow if they have Credit OR Own Key, regardless of subscription_status (unless banned)
-                    // We treat 'null' status as 'free'/'pay-as-you-go'
-                    const isBanned = isActuallyActive.subscription_status === 'banned';
-
-                    if (!isBanned && (hasCredit || hasOwnKey)) {
-                        allowedPagesCache.add(pageId); 
-                    } else {
-                        console.warn(`[Gatekeeper] BLOCKED unauthorized event for Page ID: ${pageId}. Status: ${isActuallyActive.subscription_status}, Credit: ${isActuallyActive.message_credit}, OwnAPI: ${hasOwnKey}`);
-                        return res.status(200).send('EVENT_RECEIVED'); 
-                    }
-                } else {
-                    // Page not found in DB
-                    return res.status(200).send('EVENT_RECEIVED');
-                }
-             }
-        }
-        // ------------------------------------
-
+        // --- REALTIME OPTIMIZATION: Respond Immediately ---
+        // Facebook requires a 200 OK within a few seconds.
+        // We send it NOW, before any heavy lifting (DB, Gatekeeper, AI).
         res.status(200).send('EVENT_RECEIVED');
 
-        // Async Processing
-        for (const entry of body.entry) {
-            // 1. Handle Messaging Events (Direct Messages)
-            if (entry.messaging) {
-                for (const webhookEvent of entry.messaging) {
-                    if (webhookEvent) {
-                        await queueMessage(webhookEvent);
+        // Execute processing in background (Fire & Forget)
+        (async () => {
+            try {
+                // --- GATEKEEPER CHECK (Fail Fast) ---
+                // Extract Page ID from the first entry (assuming batch is for same page usually)
+                const pageId = body.entry?.[0]?.id;
+                
+                if (pageId) {
+                     // If cache is empty (server restart), try quick fetch or allow once to be safe?
+                     // Better: If cache is empty, we force refresh.
+                     if (allowedPagesCache.size === 0) await refreshAllowedPages();
+        
+                     if (!allowedPagesCache.has(pageId)) {
+                        // Double check DB before hard blocking (in case of new signup not in cache yet)
+                        const isActuallyActive = await dbService.getPageConfig(pageId);
+                        
+                        if (isActuallyActive) {
+                            // Note: getPageConfig now returns shared 'message_credit' from user_configs
+                            const hasCredit = (isActuallyActive.message_credit > 0);
+                            const hasOwnKey = (isActuallyActive.api_key && isActuallyActive.api_key.length > 5 && isActuallyActive.cheap_engine === false);
+                            
+                            // Allow if they have Credit OR Own Key, regardless of subscription_status (unless banned)
+                            // We treat 'null' status as 'free'/'pay-as-you-go'
+                            const isBanned = isActuallyActive.subscription_status === 'banned';
+        
+                            if (!isBanned && (hasCredit || hasOwnKey)) {
+                                allowedPagesCache.add(pageId); 
+                            } else {
+                                console.warn(`[Gatekeeper] BLOCKED unauthorized event for Page ID: ${pageId}. Status: ${isActuallyActive.subscription_status}, Credit: ${isActuallyActive.message_credit}, OwnAPI: ${hasOwnKey}`);
+                                return; // Stop processing
+                            }
+                        } else {
+                            // Page not found in DB
+                            return; // Stop processing
+                        }
+                     }
+                }
+                // ------------------------------------
+        
+                // Async Processing
+                for (const entry of body.entry) {
+                    // 1. Handle Messaging Events (Direct Messages)
+                    if (entry.messaging) {
+                        for (const webhookEvent of entry.messaging) {
+                            if (webhookEvent) {
+                                await queueMessage(webhookEvent);
+                            }
+                        }
+                    }
+                    
+                    // 2. Handle Changes Events (Comments / Feed)
+                    if (entry.changes) {
+                        for (const change of entry.changes) {
+                            if (change.field === 'feed') {
+                                await processCommentEvent(change.value);
+                            }
+                        }
                     }
                 }
+            } catch (bgError) {
+                console.error("[Webhook] Background Processing Error:", bgError);
             }
-            
-            // 2. Handle Changes Events (Comments / Feed)
-            if (entry.changes) {
-                for (const change of entry.changes) {
-                    if (change.field === 'feed') {
-                        await processCommentEvent(change.value);
-                    }
-                }
-            }
-        }
+        })();
+
     } else {
         res.sendStatus(404);
     }
