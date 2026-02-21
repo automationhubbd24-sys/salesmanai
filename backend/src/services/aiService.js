@@ -658,9 +658,9 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                              // Add it
                              foundProducts.push(p);
                              
-                             // User Request: Optimized Context Injection (Token Saving)
-                             // Only inject name, stock, and image. Truncate description. REMOVED PRICE.
-                             let shortDesc = p.description ? p.description.substring(0, 100) + '...' : '';
+                             // User Request: Full Context Injection (No Truncation)
+                             // Only inject name, stock, and image. Full description. REMOVED PRICE.
+                             let shortDesc = p.description || '';
                              
                              productContext += `Product: "${p.name}"\n`;
                              // Price removed per user request
@@ -778,7 +778,11 @@ You must output valid JSON only.
                 });
                 // Normalize Model Name for User Keys
                 // User Requirement: Use EXACTLY what user typed. No mapping.
-                let modelToUse = pageConfig.chatmodel || defaultModel;
+                // STRICT MODE: If Own API is used, user MUST provide a model. No default fallback.
+                let modelToUse = pageConfig.chatmodel;
+                if (!modelToUse) {
+                     throw new Error("No model selected for Own API. Please select a model in your settings.");
+                }
 
                 console.log(`[AI] Phase 1: Calling User Key (${currentProvider}/${modelToUse})...`);
 
