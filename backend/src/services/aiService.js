@@ -284,6 +284,7 @@ function extractImagesFromText(text) {
 
 // Helper to clean and extract JSON from AI response (handles <think> blocks and markdown)
 function extractJsonFromAiResponse(rawContent) {
+    let parsed = {};
     try {
         // 1. Remove <think>...</think> blocks (DeepSeek/Gemini reasoning)
         let cleanContent = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
@@ -299,16 +300,24 @@ function extractJsonFromAiResponse(rawContent) {
             cleanContent = cleanContent.substring(firstOpen, lastClose + 1);
         }
 
-        return JSON.parse(cleanContent);
+        parsed = JSON.parse(cleanContent);
     } catch (e) {
         console.warn("[AI] JSON Extraction Failed, attempting raw parse...");
         try {
-            return JSON.parse(rawContent); // Fallback to original
+            parsed = JSON.parse(rawContent); // Fallback to original
         } catch (e2) {
             console.warn("[AI] Raw JSON Parse Failed. Returning as reply text.");
-            return { reply: rawContent };
+            parsed = { reply: rawContent };
         }
     }
+
+    // NORMALIZE REPLY FIELD
+    // Map common keys to 'reply' if it's missing or empty
+    if (!parsed.reply) {
+        parsed.reply = parsed.response || parsed.text || parsed.message || parsed.answer || parsed.content || parsed.result;
+    }
+    
+    return parsed;
 }
 
 function extractReplyFromText(text) {
@@ -316,14 +325,12 @@ function extractReplyFromText(text) {
     try {
         const parsed = JSON.parse(text);
         if (parsed && typeof parsed === 'object') {
-            if (parsed.reply && typeof parsed.reply === 'string' && parsed.reply.trim() !== '') {
-                return parsed.reply;
-            }
-            if (parsed.text && typeof parsed.text === 'string' && parsed.text.trim() !== '') {
-                return parsed.text;
-            }
-            if (parsed.message && typeof parsed.message === 'string' && parsed.message.trim() !== '') {
-                return parsed.message;
+            // Check common keys for reply content
+            const possibleKeys = ['reply', 'text', 'message', 'answer', 'content', 'response', 'result'];
+            for (const key of possibleKeys) {
+                if (parsed[key] && typeof parsed[key] === 'string' && parsed[key].trim() !== '') {
+                    return parsed[key];
+                }
             }
 
             const keys = Object.keys(parsed);
