@@ -554,6 +554,16 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     } else {
         let basePrompt = pagePrompts?.text_prompt || "";
 
+        // --- CLEANUP LEGACY SYSTEM PROMPT FORMAT ---
+        // User Request: Remove price (0 BDT) from prompt and ensure format is ##product "name"
+        if (basePrompt) {
+            // Case 1: ##PRODUCT "**name**" 0 BDT -> ##product "name"
+            basePrompt = basePrompt.replace(/##PRODUCT\s+["']?\**([a-zA-Z0-9_\-\s]+)\**["']?\s+\d+\s*BDT/gi, '##product "$1"');
+            // Case 2: ##PRODUCT "**name**" (just cleaning stars/quotes) -> ##product "name"
+            basePrompt = basePrompt.replace(/##PRODUCT\s+["']?\**([a-zA-Z0-9_\-\s]+)\**["']?/gi, '##product "$1"');
+        }
+        // -------------------------------------------
+
         // --- DYNAMIC PRODUCT INJECTION FROM SYSTEM PROMPT ---
         // User Request: If system prompt contains ##product "name", fetch that product and inject it.
         try {
