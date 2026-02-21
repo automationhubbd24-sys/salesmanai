@@ -565,50 +565,40 @@ async function approveDepositTransaction(txn) {
 
         // 0. Find user_id from users table
         let userId = null;
-        // Try exact match first in auth.users (Supabase Auth)
+
+        // Priority 1: Check local 'users' table (public.users) - This is the primary auth table now
         try {
-            await client.query('SAVEPOINT auth_lookup');
-            const userRes = await client.query('SELECT id FROM auth.users WHERE email = $1', [txn.user_email]);
-            if (userRes.rows.length > 0) {
-                userId = userRes.rows[0].id;
+            await client.query('SAVEPOINT public_lookup');
+            const publicUserRes = await client.query('SELECT id FROM public.users WHERE LOWER(email) = LOWER($1)', [txn.user_email]);
+            if (publicUserRes.rows.length > 0) {
+                userId = publicUserRes.rows[0].id;
             }
-            await client.query('RELEASE SAVEPOINT auth_lookup');
+            await client.query('RELEASE SAVEPOINT public_lookup');
         } catch (e) {
-            await client.query('ROLLBACK TO SAVEPOINT auth_lookup');
-            console.warn("[ApproveTxn] Failed to query auth.users (permission issue?), falling back to user_configs:", e.message);
+            await client.query('ROLLBACK TO SAVEPOINT public_lookup');
+            console.warn("[ApproveTxn] Failed to query public.users:", e.message);
         }
 
         if (!userId) {
-            // Fallback 1: Check user_configs if email exists there
-            const configRes = await client.query('SELECT user_id FROM user_configs WHERE email = $1', [txn.user_email]);
+            // Priority 2: Check user_configs if email exists there
+            const configRes = await client.query('SELECT user_id FROM user_configs WHERE LOWER(email) = LOWER($1)', [txn.user_email]);
             if (configRes.rows.length > 0) {
                 userId = configRes.rows[0].user_id;
-            } else {
-                // Fallback 2: Try case-insensitive search in auth.users
-                try {
-                    await client.query('SAVEPOINT auth_lookup_case');
-                    const userResCase = await client.query('SELECT id FROM auth.users WHERE LOWER(email) = LOWER($1)', [txn.user_email]);
-                    if (userResCase.rows.length > 0) {
-                        userId = userResCase.rows[0].id;
-                    }
-                    await client.query('RELEASE SAVEPOINT auth_lookup_case');
-                } catch (e) {
-                    await client.query('ROLLBACK TO SAVEPOINT auth_lookup_case');
-                }
             }
         }
 
         if (!userId) {
-            // Last Resort: Check if public.users exists and try there
-             try {
-                await client.query('SAVEPOINT public_lookup');
-                const publicUserRes = await client.query('SELECT id FROM public.users WHERE email = $1', [txn.user_email]);
-                if (publicUserRes.rows.length > 0) {
-                    userId = publicUserRes.rows[0].id;
+            // Priority 3: Try Supabase auth.users (Legacy/Fallback)
+            try {
+                await client.query('SAVEPOINT auth_lookup');
+                const userRes = await client.query('SELECT id FROM auth.users WHERE LOWER(email) = LOWER($1)', [txn.user_email]);
+                if (userRes.rows.length > 0) {
+                    userId = userRes.rows[0].id;
                 }
-                await client.query('RELEASE SAVEPOINT public_lookup');
+                await client.query('RELEASE SAVEPOINT auth_lookup');
             } catch (e) {
-                await client.query('ROLLBACK TO SAVEPOINT public_lookup');
+                await client.query('ROLLBACK TO SAVEPOINT auth_lookup');
+                console.warn("[ApproveTxn] Failed to query auth.users:", e.message);
             }
         }
 

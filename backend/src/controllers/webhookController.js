@@ -28,15 +28,13 @@ refreshAllowedPages();
 setInterval(refreshAllowedPages, CACHE_TTL);
 // ------------------------------------
 
-// Helper to log to file
+// Helper to log to file (Async)
 function logToFile(message) {
     const logPath = path.join(__dirname, '../../debug.log');
     const timestamp = new Date().toISOString();
-    try {
-        fs.appendFileSync(logPath, `[${timestamp}] ${message}\n`);
-    } catch (e) {
-        console.error('Log Error:', e);
-    }
+    fs.appendFile(logPath, `[${timestamp}] ${message}\n`, (err) => {
+        if (err) console.error('Log Error:', err);
+    });
 }
 
 function escapeRegExp(str) {
