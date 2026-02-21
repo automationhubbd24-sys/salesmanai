@@ -672,41 +672,49 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
 
         // B. Process Audio (Voice)
         if (allAudios.length > 0) {
-            console.log(`[Batch] Transcribing ${allAudios.length} voice messages...`);
-            allAudios.forEach((url, i) => console.log(`[Batch] Audio URL [${i}]: ${url}`));
+            // Check Feature Flag (default false)
+            const audioEnabled = pagePrompts && pagePrompts.audio_detection === true;
 
-            // Process in parallel
-            const audioPromises = allAudios.map(url => aiService.transcribeAudio(url, pageConfig));
-            const audioResultsRaw = await Promise.all(audioPromises);
-            
-            // Extract text and usage
-            const audioTranscripts = audioResultsRaw.map((res, i) => {
-                const text = typeof res === 'object' ? (res.text || '') : String(res || '');
-                const usage = typeof res === 'object' ? (res.usage || 0) : 0;
-                totalAudioTokens += usage;
-                console.log(`[Batch] Audio [${i}] Result: "${text.substring(0, 50)}..."`);
-                return text;
-            });
+            if (audioEnabled) {
+                console.log(`[Batch] Transcribing ${allAudios.length} voice messages...`);
+                allAudios.forEach((url, i) => console.log(`[Batch] Audio URL [${i}]: ${url}`));
 
-            const combinedAudioTranscript = audioTranscripts.join('\n');
-            combinedText += `\n\n[System: User sent ${allAudios.length} voice messages. Transcripts follow:]\n${combinedAudioTranscript}`;
-            
-            // Save Audio Transcripts to DB as User Messages
-            try {
-                const audioMsgText = `[Voice Transcript] ${combinedAudioTranscript}`;
-                await dbService.saveFbChat({
-                    page_id: pageId,
-                    sender_id: senderId,
-                    recipient_id: pageId,
-                    message_id: `audio_${Date.now()}`, // Generate a unique ID since we don't have one per audio file easily here without mapping
-                    text: audioMsgText,
-                    timestamp: Date.now(),
-                    status: 'received',
-                    reply_by: 'user'
+                // Process in parallel
+                const audioPromises = allAudios.map(url => aiService.transcribeAudio(url, pageConfig));
+                const audioResultsRaw = await Promise.all(audioPromises);
+                
+                // Extract text and usage
+                const audioTranscripts = audioResultsRaw.map((res, i) => {
+                    const text = typeof res === 'object' ? (res.text || '') : String(res || '');
+                    const usage = typeof res === 'object' ? (res.usage || 0) : 0;
+                    totalAudioTokens += usage;
+                    console.log(`[Batch] Audio [${i}] Result: "${text.substring(0, 50)}..."`);
+                    return text;
                 });
-                console.log(`[FB] Saved audio transcript to DB for ${senderId}`);
-            } catch (e) {
-                console.error(`[FB] Failed to save audio transcript:`, e.message);
+
+                const combinedAudioTranscript = audioTranscripts.join('\n');
+                combinedText += `\n\n[System: User sent ${allAudios.length} voice messages. Transcripts follow:]\n${combinedAudioTranscript}`;
+                
+                // Save Audio Transcripts to DB as User Messages
+                try {
+                    const audioMsgText = `[Voice Transcript] ${combinedAudioTranscript}`;
+                    await dbService.saveFbChat({
+                        page_id: pageId,
+                        sender_id: senderId,
+                        recipient_id: pageId,
+                        message_id: `audio_${Date.now()}`, // Generate a unique ID since we don't have one per audio file easily here without mapping
+                        text: audioMsgText,
+                        timestamp: Date.now(),
+                        status: 'received',
+                        reply_by: 'user'
+                    });
+                    console.log(`[FB] Saved audio transcript to DB for ${senderId}`);
+                } catch (e) {
+                    console.error(`[FB] Failed to save audio transcript:`, e.message);
+                }
+            } else {
+                console.log(`[Batch] Audio Detection disabled for page ${pageId}. Skipping.`);
+                combinedText += `\n[System Note: User sent ${allAudios.length} voice messages. Audio detection is disabled, so they were not transcribed. Ask the user to type instead.]`;
             }
         }
         

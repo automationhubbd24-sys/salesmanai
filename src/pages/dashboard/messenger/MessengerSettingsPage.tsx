@@ -3,12 +3,13 @@ import { BACKEND_URL } from "@/config";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { Save, Bot, Lock, Sparkles, Key, Check, Image } from "lucide-react";
+import { Save, Bot, Lock, Sparkles, Key, Check, Image, Mic } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -95,6 +96,7 @@ export default function MessengerSettingsPage() {
   const [wait, setWait] = useState<number>(8);
   const [behaviorSaving, setBehaviorSaving] = useState(false);
   const [memoryLimit, setMemoryLimit] = useState<number>(20);
+  const [audioDetection, setAudioDetection] = useState(false);
   
   // New State for Optimization
   const [optimizing, setOptimizing] = useState(false);
@@ -206,6 +208,7 @@ export default function MessengerSettingsPage() {
 
       setWait(dbRow.wait || 8);
       setMemoryLimit(dbRow.check_conversion || 20);
+      setAudioDetection(dbRow.audio_detection || false);
     } catch (error) {
       console.error("Error fetching config:", error);
       toast.error("Failed to load AI settings");
@@ -401,7 +404,8 @@ export default function MessengerSettingsPage() {
         },
         body: JSON.stringify({
           wait: wait,
-          check_conversion: memoryLimit
+          check_conversion: memoryLimit,
+          audio_detection: audioDetection
         })
       });
 
@@ -1070,6 +1074,22 @@ export default function MessengerSettingsPage() {
                         <p className="text-sm text-muted-foreground">
                             Controls how many recent messages (1–50) the AI uses as memory context.
                         </p>
+                    </div>
+
+                    <div className="flex flex-row items-center justify-between rounded-lg border p-4 shadow-sm bg-muted/20">
+                        <div className="space-y-0.5">
+                            <Label className="text-base flex items-center gap-2">
+                                <Mic className="h-4 w-4 text-primary" />
+                                Audio Detection
+                            </Label>
+                            <p className="text-sm text-muted-foreground">
+                                Enable AI to listen and transcribe voice messages sent by users.
+                            </p>
+                        </div>
+                        <Switch
+                            checked={audioDetection}
+                            onCheckedChange={setAudioDetection}
+                        />
                     </div>
 
                     <div className="flex justify-end">

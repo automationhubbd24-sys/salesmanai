@@ -372,7 +372,7 @@ router.put('/config/:id', async (req, res) => {
         const allowedKeys = [
             'reply_message', 'swipe_reply', 'image_detection', 'image_send', 'template', 'order_tracking',
             'block_emoji', 'unblock_emoji', 'check_conversion', 'text_prompt', 'image_prompt', 'wait',
-            'memory_context_name', 'order_lock_minutes'
+            'memory_context_name', 'order_lock_minutes', 'audio_detection'
         ];
 
         const updates = [];

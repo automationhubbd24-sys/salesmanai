@@ -554,27 +554,51 @@ async function approveDepositTransaction(txn) {
     try {
         console.log(`[ApproveTxn] Processing txn ID: ${txn.id}, Email: ${txn.user_email}, Amount: ${txn.amount}`);
         
+        // 1. Check if already processed
+        const checkRes = await client.query("SELECT status FROM payment_transactions WHERE id = $1", [txn.id]);
+        if (checkRes.rows.length > 0 && (checkRes.rows[0].status === 'completed' || checkRes.rows[0].status === 'approved')) {
+            console.log(`[ApproveTxn] Transaction ${txn.id} already completed/approved. Skipping.`);
+            return true;
+        }
+
         await client.query('BEGIN');
 
         // 0. Find user_id from users table
         let userId = null;
-        // Try exact match first
-        const userRes = await client.query('SELECT id FROM users WHERE email = $1', [txn.user_email]);
-        
-        if (userRes.rows.length > 0) {
-            userId = userRes.rows[0].id;
-        } else {
+        // Try exact match first in auth.users (Supabase Auth)
+        try {
+            const userRes = await client.query('SELECT id FROM auth.users WHERE email = $1', [txn.user_email]);
+            if (userRes.rows.length > 0) {
+                userId = userRes.rows[0].id;
+            }
+        } catch (e) {
+            console.warn("[ApproveTxn] Failed to query auth.users (permission issue?), falling back to user_configs:", e.message);
+        }
+
+        if (!userId) {
             // Fallback 1: Check user_configs if email exists there
             const configRes = await client.query('SELECT user_id FROM user_configs WHERE email = $1', [txn.user_email]);
             if (configRes.rows.length > 0) {
                 userId = configRes.rows[0].user_id;
             } else {
-                // Fallback 2: Try case-insensitive search in users
-                const userResCase = await client.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [txn.user_email]);
-                if (userResCase.rows.length > 0) {
-                    userId = userResCase.rows[0].id;
-                }
+                // Fallback 2: Try case-insensitive search in auth.users
+                try {
+                    const userResCase = await client.query('SELECT id FROM auth.users WHERE LOWER(email) = LOWER($1)', [txn.user_email]);
+                    if (userResCase.rows.length > 0) {
+                        userId = userResCase.rows[0].id;
+                    }
+                } catch (e) {}
             }
+        }
+
+        if (!userId) {
+            // Last Resort: Check if public.users exists and try there
+             try {
+                const publicUserRes = await client.query('SELECT id FROM public.users WHERE email = $1', [txn.user_email]);
+                if (publicUserRes.rows.length > 0) {
+                    userId = publicUserRes.rows[0].id;
+                }
+            } catch (e) {}
         }
 
         if (!userId) {
@@ -583,8 +607,9 @@ async function approveDepositTransaction(txn) {
         }
 
         // 1. Update transaction status
+        // Use 'completed' to match other flows (admin_manual_topup, redeemCoupon)
         await client.query(
-            "UPDATE payment_transactions SET status = 'approved' WHERE id = $1",
+            "UPDATE payment_transactions SET status = 'completed' WHERE id = $1",
             [txn.id]
         );
 
@@ -595,16 +620,20 @@ async function approveDepositTransaction(txn) {
         }
         
         // Update user_configs balance
-        await client.query(
+        // We use UPSERT to ensure if row doesn't exist (but user exists in auth), it's created
+        const updateRes = await client.query(
             `INSERT INTO user_configs (user_id, balance, email)
              VALUES ($1, $2, $3)
              ON CONFLICT (user_id) 
-             DO UPDATE SET balance = COALESCE(user_configs.balance, 0) + $2, email = EXCLUDED.email`,
+             DO UPDATE SET balance = COALESCE(user_configs.balance, 0) + $2, email = EXCLUDED.email
+             RETURNING balance`,
             [userId, amount, txn.user_email]
         );
+        
+        const newBalance = updateRes.rows[0]?.balance;
 
         await client.query('COMMIT');
-        console.log(`[ApproveTxn] Successfully approved txn ${txn.id} for user ${userId}`);
+        console.log(`[ApproveTxn] Successfully approved txn ${txn.id} for user ${userId}. New Balance: ${newBalance}`);
         return true;
     } catch (error) {
         await client.query('ROLLBACK');
