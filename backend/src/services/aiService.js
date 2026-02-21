@@ -855,7 +855,7 @@ INSTRUCTIONS:
                                 if (!parsed2.reply && products.length > 0) {
                                      parsed2.reply = "আমি আপনার খোঁজা পণ্যগুলো পেয়েছি। নিচে দেখুন:"; 
                                 } else if (!parsed2.reply) {
-                                     parsed2.reply = "দুঃখিত, আমি এই মুহূর্তে উত্তরটি প্রসেস করতে পারছি না।";
+                                     parsed2.reply = null; // SILENT MODE: Return null instead of error message
                                 }
 
                                 // IMAGE INJECTION LOGIC
