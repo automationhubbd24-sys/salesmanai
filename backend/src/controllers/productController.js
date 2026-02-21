@@ -318,7 +318,9 @@ exports.updateProduct = async (req, res) => {
 
         if (req.body.variants) {
             try {
-                updates.variants = JSON.parse(req.body.variants);
+                // Parse to validate, then re-stringify for DB
+                const parsedVariants = JSON.parse(req.body.variants);
+                updates.variants = JSON.stringify(parsedVariants);
             } catch (e) {
                 return res.status(400).json({ error: "Invalid variants JSON format" });
             }
@@ -326,7 +328,9 @@ exports.updateProduct = async (req, res) => {
 
         if (req.body.allowed_page_ids) {
             try {
-                updates.allowed_page_ids = JSON.parse(req.body.allowed_page_ids);
+                // Parse to validate, then re-stringify for DB
+                const parsedAllowed = JSON.parse(req.body.allowed_page_ids);
+                updates.allowed_page_ids = JSON.stringify(parsedAllowed);
             } catch (e) {
                 return res.status(400).json({ error: "Invalid allowed_page_ids JSON format" });
             }
