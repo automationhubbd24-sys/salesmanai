@@ -61,7 +61,8 @@ export default function PaymentPage() {
       }
 
       const data = await res.json();
-      setBalance(typeof data.balance === "number" ? data.balance : 0);
+      console.log("Payment Data:", data); // Debug log
+      setBalance(Number(data.balance) || 0);
       if (Array.isArray(data.transactions)) {
         setTransactions(data.transactions);
       } else {
@@ -190,14 +191,27 @@ export default function PaymentPage() {
       toast.success("Number copied to clipboard");
   };
 
+  const getUserIdFromToken = () => {
+    try {
+      const token = localStorage.getItem("auth_token");
+      if (!token) return "No Token";
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      return payload.sub || "Unknown";
+    } catch (e) {
+      return "Error";
+    }
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       {/* Header */}
-      <div>
-        <h2 className="text-2xl font-bold text-foreground">Payment / Topup</h2>
-        <p className="text-muted-foreground">
-          Manage your balance and payment methods
-        </p>
+      <div className="flex justify-between items-center">
+        <div>
+          <h2 className="text-3xl font-bold text-foreground tracking-tight">Payment / Topup</h2>
+          <p className="text-muted-foreground">
+            Manage your balance and payment methods (ID: {getUserIdFromToken()})
+          </p>
+        </div>
       </div>
 
       {/* Balance Cards */}

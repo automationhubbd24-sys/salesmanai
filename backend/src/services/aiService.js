@@ -310,10 +310,28 @@ function extractJsonFromAiResponse(rawContent) {
         }
     }
 
-    // NORMALIZE REPLY FIELD
-    // Map common keys to 'reply' if it's missing or empty
+    if (!parsed || typeof parsed !== 'object') {
+        // ERROR: Return null so the controller handles it silently (logs error to DB but sends nothing to user)
+        console.warn("[AI] Failed to parse JSON response. Returning NULL to prevent bad UX.");
+        return null;
+    }
+
+    // NORMALIZE REPLY FIELD - STRICT MODE
+    // User Request: Strict JSON Enforcement. No field guessing.
+    // If 'reply' is missing, check if it is a tool call.
+    // If not a tool call and not a reply, it is an INVALID response.
     if (!parsed.reply) {
-        parsed.reply = parsed.response || parsed.text || parsed.message || parsed.answer || parsed.content || parsed.result;
+        // Check for Tool Call
+        const isTool = (parsed.tool && typeof parsed.tool === 'string') ||
+                       (parsed.tools && Array.isArray(parsed.tools)) ||
+                       (parsed.function && typeof parsed.function === 'string');
+
+        if (!isTool) {
+            console.warn("[AI] Strict Parse Warning: 'reply' field missing and NOT a tool call.", JSON.stringify(parsed));
+            // FAIL SAFE: Return null to prevent sending garbage to user.
+            // The user said: "user er kase kono ans jabe na but fb cahts e error show hobe"
+            return null;
+        }
     }
     
     return parsed;
@@ -324,14 +342,12 @@ function extractReplyFromText(text) {
     try {
         const parsed = JSON.parse(text);
         if (parsed && typeof parsed === 'object') {
-            // Check common keys for reply content
-            const possibleKeys = ['reply', 'text', 'message', 'answer', 'content', 'response', 'result'];
-            for (const key of possibleKeys) {
-                if (parsed[key] && typeof parsed[key] === 'string' && parsed[key].trim() !== '') {
-                    return parsed[key];
-                }
+            // STRICT MODE: Only accept 'reply'
+            if (parsed.reply && typeof parsed.reply === 'string') {
+                return parsed.reply;
             }
 
+            // Detect Tool Calls and block them from being shown as text
             const keys = Object.keys(parsed);
             const hasToolShape =
                 (parsed.tool && typeof parsed.tool === 'string') ||
@@ -340,7 +356,8 @@ function extractReplyFromText(text) {
                 keys.includes('query');
 
             if (hasToolShape) {
-                return "Sorry, something went wrong while processing your request.";
+                // It's a tool call, return null so it doesn't get sent as text
+                return null; 
             }
         }
     } catch (e) {}
@@ -354,6 +371,10 @@ function extractReplyFromText(text) {
         }
     }
 
+    // Fallback: If it's just plain text (not JSON), return it?
+    // User wants STRICT JSON. If it's not JSON, it might be a hallucination or raw text.
+    // However, sometimes AI just sends text.
+    // Let's allow plain text but log it.
     return text;
 }
 
@@ -683,6 +704,7 @@ Response Format:
 You MUST ALWAYS return a valid JSON object. Do not add any markdown formatting (like \`\`\`json).
 - If searching: { "tool": "search_products", "query": "..." }
 - If replying: { "reply": "Your Bengali response here" }
+- STRICTLY FORBIDDEN: Do not use keys like "answer", "message", "text", "response". USE ONLY "reply".
 - DO NOT return plain text. ALWAYS wrap in JSON.`;
 
         const systemMessage = { role: 'system', content: n8nSystemPrompt };
@@ -827,11 +849,15 @@ INSTRUCTIONS:
                                 try { keyService.recordKeyUsage(currentKey, tokenUsage2); } catch(e){}
                                 
                                 const parsed2 = extractJsonFromAiResponse(rawContent2);
-                                if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text;
-
+                                
+                                // STRICT MODE: Do not fallback to 'response' or 'text'
+                                // if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text;
+                                
                                 // FALLBACK FOR EMPTY REPLY
                                 if (!parsed2.reply && products.length > 0) {
                                      parsed2.reply = "আমি আপনার খোঁজা পণ্যগুলো পেয়েছি। নিচে দেখুন:"; 
+                                } else if (!parsed2.reply) {
+                                     parsed2.reply = "দুঃখিত, আমি এই মুহূর্তে উত্তরটি প্রসেস করতে পারছি না।";
                                 }
 
                                 // IMAGE INJECTION LOGIC

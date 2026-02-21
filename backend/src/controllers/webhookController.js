@@ -237,29 +237,19 @@ async function queueMessage(event) {
 
     // 2. Handle Attachments (Images & Stickers)
     if (event.message?.attachments) {
-        // Separate Stickers from Real Images
-        const stickers = event.message.attachments.filter(att => 
-            att.type === 'image' && (event.message.sticker_id || att.payload.sticker_id)
-        );
+        // FIX: Removed event.message.sticker_id check to allow Screenshots/Images that might trigger false positives
+        // UPDATE: Also removing att.payload.sticker_id check to ensure NO product images are missed. 
+        // If a sticker is analyzed, AI will just describe it, which is better than missing a product.
         
-        const realImages = event.message.attachments.filter(att => 
-            att.type === 'image' && !event.message.sticker_id && !att.payload.sticker_id
-        );
-
-        // Handle Stickers -> Convert to Emoji
-        if (stickers.length > 0) {
-            console.log(`[Webhook] Detected ${stickers.length} Sticker(s). Converting to Emoji.`);
-            // Default to Thumbs Up 👍 for stickers as it's the most common (Blue Thumb)
-            // We can append it to text so AI sees it as an emoji
-            messageText = (messageText ? messageText + " " : "") + "👍"; 
-        }
-
-        const imageUrls = realImages.map(att => att.payload.url);
+        const imageUrls = event.message.attachments
+            .filter(att => att.type === 'image')
+            .map(att => att.payload.url);
         
         if (imageUrls.length > 0) {
             console.log(`[Webhook] Image URLs Queued: ${imageUrls.length}`);
             // We just store the URLs now, analysis happens in processBufferedMessages
         }
+
         
         // 3. Handle Audio (Voice Messages) - DEFERRED PROCESSING
         const audioUrls = event.message.attachments
@@ -954,8 +944,20 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             totalVisionTokens + totalAudioTokens // Pass aggregated token usage
         );
         
-        if (!aiResponse) {
-             console.error(`[Webhook] AI generation failed for ${senderId}. No response generated.`);
+        if (aiResponse == null) {
+             console.error(`[Webhook] AI generation failed or returned NULL for ${senderId}. No response sent to user.`);
+             
+             // Log Error to DB but DO NOT send fallback message to user
+             await dbService.saveFbChat({
+                page_id: pageId,
+                sender_id: pageId,
+                recipient_id: senderId,
+                message_id: `fail_${Date.now()}`,
+                text: `[AI Error] Response was NULL/Empty. Silently ignored to prevent bad UX.`,
+                timestamp: Date.now(),
+                status: 'ai_ignored',
+                reply_by: 'bot'
+            });
              return;
         }
 
