@@ -1,6 +1,5 @@
 const keyService = require('./keyService');
 const dbService = require('./dbService'); // Added for Product Search Tool
-const liteEngineService = require('./liteEngineService'); // Added for Own API Voice
 const commandApiService = require('./commandApiService'); // Command API Table Strategy
 const axios = require('axios');
 const OpenAI = require('openai');
@@ -1449,34 +1448,6 @@ async function transcribeAudio(audioUrl, config) {
         const response = await axios.get(audioUrl, { responseType: 'arraybuffer', headers, validateStatus: s => s === 200 });
         audioBuffer = Buffer.from(response.data);
 
-        // OWN API CHECK (LiteEngine / SalesmanChatbot)
-        // If the user is using the "Own API" (cheap_engine=false or explicit provider)
-        // We do this AFTER download because LiteEngine needs Buffer/File, not just URL (due to headers)
-        if (config && config.api_key && config.cheap_engine === false) {
-             console.log(`[Audio] Using Own API (LiteEngine) for transcription...`);
-             try {
-                 // Attach name for Groq/OpenAI SDK compatibility
-                 audioBuffer.name = 'audio.mp3'; 
-                 
-                 const transcription = await liteEngineService.transcribeAudio(audioBuffer);
-                 
-                 // Deduct Balance (0.005 BDT per request)
-                 // Only if user_id is present (it should be for Own API users)
-                 if (config.user_id) {
-                     await dbService.deductUserBalance(config.user_id, 0.005, 'Audio Transcription (Own API)');
-                 }
-
-                 if (transcription && transcription.text) {
-                     console.log(`[Audio] Own API Success: "${transcription.text.substring(0,30)}..."`);
-                     return { text: transcription.text, usage: 1 };
-                 }
-             } catch (ownApiErr) {
-                 console.error(`[Audio] Own API Failed: ${ownApiErr.message}`);
-                 // Fallback to standard flow if Own API fails?
-                 // If they paid for Own API, we should probably fail or notify?
-                 // But let's try fallback to ensure service continuity.
-             }
-        }
         const contentType = response.headers['content-type'] || 'audio/ogg';
         
         // Map to Gemini-supported MIME types
@@ -1564,24 +1535,6 @@ async function transcribeAudio(audioUrl, config) {
     }
 
     return { text: "[Audio Transcription Failed]", usage: 0 };
-}
-            headers: { ...formData.getHeaders(), 'Authorization': `Bearer ${apiKey}` },
-            timeout: 10000
-        });
-
-        if (res.data.text) {
-            // Estimate usage: 1 min ~ 100 tokens? Or just 0 for now as it's not token-based
-            // Let's use 0 to be safe, or we can add a nominal fee if user insists.
-            // User said "token ba cost consume kore". 
-            // Since Groq is free (mostly) or cheap, 0 is fine.
-            return { text: res.data.text, usage: 0 };
-        }
-
-    } catch (e) {
-        console.error(`[Audio] Groq Fallback Failed:`, e.message);
-    }
-
-    return { text: "[Audio Message (Transcription Failed)]", usage: 0 };
 }
 
 module.exports = {
