@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Bot, MessageSquare, Loader2, Save, Image, Sparkles, MessageCircle, Lock, PackageSearch, ReplyAll, LayoutTemplate, Hand, StopCircle, RefreshCcw, Edit } from "lucide-react";
+import { Bot, MessageSquare, Loader2, Save, Image, Sparkles, MessageCircle, Lock, PackageSearch, ReplyAll, LayoutTemplate, Hand, StopCircle, RefreshCcw, Edit, Mic } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "react-router-dom";
 
@@ -31,6 +31,7 @@ export default function MessengerControlPage() {
     image_send: false,
     template: false,
     order_tracking: false,
+    audio_detection: false,
     block_emoji: '',
     unblock_emoji: '',
     check_conversion: 10,
@@ -92,6 +93,7 @@ export default function MessengerControlPage() {
         image_send: row.image_send ?? false,
         template: row.template ?? false,
         order_tracking: row.order_tracking ?? false,
+        audio_detection: row.audio_detection ?? false,
         block_emoji: row.block_emoji ?? '',
         unblock_emoji: row.unblock_emoji ?? '',
         check_conversion: row.check_conversion ?? 10,
@@ -377,6 +379,25 @@ export default function MessengerControlPage() {
             <Switch 
               checked={config.order_tracking}
               onCheckedChange={(c) => setConfig({...config, order_tracking: c})}
+            />
+          </CardContent>
+        </Card>
+
+        {/* Audio Detection */}
+        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
+          <CardContent className="p-6 flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="p-3 rounded-full border border-[#00ff88]/40 bg-[#00ff88]/10 text-[#00ff88] shadow-[0_0_25px_rgba(0,255,136,0.25)]">
+                 <Mic size={24} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-lg font-semibold cursor-pointer">Audio Detection</Label>
+                <p className="text-sm text-muted-foreground">Enable voice message transcription.</p>
+              </div>
+            </div>
+            <Switch 
+              checked={config.audio_detection}
+              onCheckedChange={(c) => setConfig({...config, audio_detection: c})}
             />
           </CardContent>
         </Card>
