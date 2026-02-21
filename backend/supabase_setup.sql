@@ -1,35 +1,26 @@
--- Supabase Storage Setup for Product Images
--- Run this in your Supabase SQL Editor
+-- Supabase Storage Setup (Simplified)
+-- Run this in SQL Editor to create the bucket.
+-- If you encounter "must be owner" errors with policies, please use the Supabase Dashboard (instructions below).
 
--- 1. Create the bucket 'product-images' if it doesn't exist
+-- 1. Create the bucket 'product-images'
 insert into storage.buckets (id, name, public)
 values ('product-images', 'product-images', true)
 on conflict (id) do nothing;
 
--- Ensure it is public (in case it existed but was private)
-update storage.buckets
-set public = true
-where id = 'product-images';
+-- 2. IMPORTANT: Configuration via Dashboard
+-- Due to permission restrictions in the SQL Editor for some projects, it is safer to set policies via the UI.
 
--- 2. Enable RLS (Row Level Security) - Good practice, though we might use Service Role key
-alter table storage.objects enable row level security;
-
--- 3. Policy: Allow Public Read Access (Anyone can view images)
-drop policy if exists "Public Access" on storage.objects;
-create policy "Public Access"
-on storage.objects for select
-using ( bucket_id = 'product-images' );
-
--- 4. Policy: Allow Uploads (Adjust as needed for security)
--- For now, allowing anyone to insert to this bucket to ensure the backend can upload
--- In production, you might want to restrict this to authenticated users only
-drop policy if exists "Allow Uploads" on storage.objects;
-create policy "Allow Uploads"
-on storage.objects for insert
-with check ( bucket_id = 'product-images' );
-
--- 5. Policy: Allow Updates (If needed)
-drop policy if exists "Allow Updates" on storage.objects;
-create policy "Allow Updates"
-on storage.objects for update
-using ( bucket_id = 'product-images' );
+-- INSTRUCTIONS:
+-- 1. Go to your Supabase Dashboard -> Storage.
+-- 2. You should see a bucket named "product-images". If not, create it manually and make it "Public".
+-- 3. Click on the "Configuration" or "Policies" tab for the 'product-images' bucket.
+-- 4. Add a New Policy for READ access:
+--    - Name: "Public Access"
+--    - Allowed Operations: SELECT
+--    - Target roles: checked for 'anon' and 'authenticated'
+--    - Click Save.
+-- 5. Add a New Policy for UPLOAD access:
+--    - Name: "Allow Uploads"
+--    - Allowed Operations: INSERT
+--    - Target roles: checked for 'anon' and 'authenticated'
+--    - Click Save.
