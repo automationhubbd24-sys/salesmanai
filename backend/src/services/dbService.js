@@ -1773,7 +1773,7 @@ async function searchProducts(userId, queryText, pageId = null) {
 
     // --- 4. Levenshtein Fallback (Super Fuzzy - Token Based) ---
     try {
-        const baseSql = buildBaseQuerySql(null, []);
+        const baseSql = getBaseContext();
         const scanResult = await query(
             `SELECT name, description, image_url, variants, is_active, price, currency, keywords
              FROM products
