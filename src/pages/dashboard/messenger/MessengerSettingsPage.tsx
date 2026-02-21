@@ -289,10 +289,10 @@ export default function MessengerSettingsPage() {
 
   const handleInsertProductIntoPrompt = (product: PromptProduct) => {
     const name = product?.name || "Unnamed Product";
-    const priceText = product?.price ? `${product.price} ${product.currency || "USD"}` : "";
-    const line = priceText
-      ? `\n##PRODUCT "${name}" ${priceText}`
-      : `\n##PRODUCT "${name}"`;
+    // User requested to remove price from shortcut insertion
+    // LLM will fetch details via tool call based on product name
+    const line = `\n##PRODUCT "${name}"`;
+    
     if (textPromptRef.current) {
       const textarea = textPromptRef.current;
       const currentValue = textarea.value || "";
@@ -655,7 +655,6 @@ export default function MessengerSettingsPage() {
                                       className="text-xs px-2 py-1 rounded-full border border-[#00ff88]/30 bg-[#00ff88]/5 hover:bg-[#00ff88]/15 hover:border-[#00ff88] transition-colors"
                                     >
                                       {p.name || "Untitled"}
-                                      {p.price ? ` • ${p.price} ${p.currency || "USD"}` : ""}
                                     </button>
                                   ))}
                             </div>
