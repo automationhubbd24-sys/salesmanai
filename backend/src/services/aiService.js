@@ -778,8 +778,9 @@ You must output valid JSON only.
                 });
                 // Normalize Model Name for User Keys
                 // User Requirement: Use EXACTLY what user typed. No mapping.
-                // STRICT MODE: If Own API is used, user MUST provide a model. No default fallback.
-                let modelToUse = pageConfig.chatmodel;
+                // FIX: Use defaultModel (calculated earlier) if pageConfig.chatmodel is missing
+                let modelToUse = pageConfig.chatmodel || defaultModel;
+                
                 if (!modelToUse) {
                      throw new Error("No model selected for Own API. Please select a model in your settings.");
                 }

@@ -1028,7 +1028,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 sender_id: pageId,
                 recipient_id: senderId,
                 message_id: `fail_${Date.now()}`,
-                text: `[AI Error - Silent] ${reason}${hasProviderError ? ` | ${aiResponse.error}` : ''}`,
+                text: `[AI Error - Silent] ${reason}${aiResponse.error ? ` | ${aiResponse.error}` : ''}`,
                 timestamp: Date.now(),
                 status: 'ai_ignored',
                 reply_by: 'bot'
