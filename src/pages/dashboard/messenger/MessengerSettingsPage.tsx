@@ -314,14 +314,7 @@ export default function MessengerSettingsPage() {
   };
 
   const boldProductsInPrompt = (text: string): string => {
-    if (!text || !productList.length) return text;
-    let result = text;
-    for (const p of productList) {
-      if (!p.name) continue;
-      const pattern = new RegExp(`(?<!\\*)\\b(${escapeRegex(p.name)})\\b(?!\\*)`, "gi");
-      result = result.replace(pattern, (match) => `**${match}**`);
-    }
-    return result;
+    return text;
   };
 
   const handleSavePrompt = async () => {

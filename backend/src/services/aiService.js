@@ -779,7 +779,15 @@ Response: Natural conversation. NO JSON (except for search tool).`;
                             
                             // Add context and retry
                             messages.push({ role: 'assistant', content: JSON.stringify(parsed) });
-                            messages.push({ role: 'system', content: `[System] Search Results: ${JSON.stringify(products)}. Now answer the user in Bengali. IMPORTANT: If a product has an 'image_url', you MUST include it in the 'images' array of your JSON response.` });
+                            
+                            const toolOutputContext = `[System] Search Results for "${parsed.query}": ${JSON.stringify(products)}. 
+INSTRUCTIONS:
+1. Use the search results above to answer the user's question in Bengali.
+2. If the product has an 'image_url', you MUST include it in the 'images' array of your JSON response.
+3. If no products were found, apologize and say you couldn't find it.
+4. Return ONLY a JSON object with 'reply' (string) and 'images' (array of strings).`;
+
+                            messages.push({ role: 'system', content: toolOutputContext });
                             
                             console.log(`[AI] Tool Result found. Re-generating answer with User Key...`);
                             
@@ -797,7 +805,30 @@ Response: Natural conversation. NO JSON (except for search tool).`;
                                 
                                 const parsed2 = extractJsonFromAiResponse(rawContent2);
                                 if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text;
-                                return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: modelToUse, foundProducts };
+
+                                // FALLBACK FOR EMPTY REPLY
+                                if (!parsed2.reply && products.length > 0) {
+                                     parsed2.reply = "আমি আপনার খোঁজা পণ্যগুলো পেয়েছি। নিচে দেখুন:"; 
+                                }
+
+                                // IMAGE INJECTION LOGIC
+                                if (parsed2.images && Array.isArray(parsed2.images)) {
+                                    // Validate images
+                                     const validImages = parsed2.images.filter(img => 
+                                        products.some(p => p.image_url === img)
+                                    );
+                                    parsed2.images = validImages;
+                                } else {
+                                    // Auto-inject if missing
+                                    const productImages = products
+                                        .filter(p => p.image_url)
+                                        .map(p => p.image_url);
+                                    if (productImages.length > 0) {
+                                        parsed2.images = productImages;
+                                    }
+                                }
+                                
+                                return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: modelToUse, foundProducts: products };
                             } catch (aiError) {
                                 console.error(`[AI] Phase 1 Tool Re-generation Failed: ${aiError.message}`);
                                 throw aiError;
@@ -944,6 +975,11 @@ INSTRUCTIONS:
                             const parsed2 = extractJsonFromAiResponse(rawContent2);
                             if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text;
 
+                            // FALLBACK FOR EMPTY REPLY
+                            if (!parsed2.reply && products.length > 0) {
+                                 parsed2.reply = "আমি আপনার খোঁজা পণ্যগুলো পেয়েছি। নিচে দেখুন:"; 
+                            }
+
                             // Ensure images are passed through if AI found them
                             if (parsed2.images && Array.isArray(parsed2.images)) {
                                 // Validate images are from search results (anti-hallucination)
@@ -1045,9 +1081,14 @@ INSTRUCTIONS:
                         keyService.recordKeyUsage(apiKey, tokenUsage2);
                         
                         const parsed2 = extractJsonFromAiResponse(rawContent2);
-                        if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text;
-                        
-                        // Ensure images are passed through if AI found them
+                            if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text;
+
+                            // FALLBACK FOR EMPTY REPLY
+                            if (!parsed2.reply && products.length > 0) {
+                                 parsed2.reply = "আমি আপনার খোঁজা পণ্যগুলো পেয়েছি। নিচে দেখুন:"; 
+                            }
+
+                            // Ensure images are passed through if AI found them
                         if (parsed2.images && Array.isArray(parsed2.images)) {
                             // Validate images are from search results (anti-hallucination)
                             const validImages = parsed2.images.filter(img => 
