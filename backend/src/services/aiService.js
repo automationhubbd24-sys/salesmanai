@@ -919,24 +919,50 @@ Response: Natural conversation. NO JSON (except for search tool).`;
                         console.log(`[AI] Tool Call: Searching products for "${parsed.query}"...`);
                         const products = await dbService.searchProducts(pageConfig.user_id, parsed.query, pageConfig.page_id);
                         
-                        // Phase 2: Re-generate answer using the SAME model
-                        messages.push({ role: 'assistant', content: JSON.stringify(parsed) });
-                        messages.push({ role: 'system', content: `[System] Search Results: ${JSON.stringify(products)}. Now answer the user in Bengali. IMPORTANT: If a product has an 'image_url', you MUST include it in the 'images' array of your JSON response.` });
-                        
-                        const completion2 = await openai.chat.completions.create({
-                            model: swarmModel,
-                            messages: messages,
-                            response_format: { type: "json_object" }
-                        });
-                        
-                        const rawContent2 = completion2.choices[0].message.content || '';
-                        let tokenUsage2 = completion2.usage ? completion2.usage.total_tokens : 0;
-                        keyService.recordKeyUsage(apiKey, tokenUsage2);
-                        
-                        const parsed2 = extractJsonFromAiResponse(rawContent2);
-                        if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text;
-                        return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: swarmModel, foundProducts: products };
-                }
+                            // Phase 2: Re-generate answer using the SAME model
+                            messages.push({ role: 'assistant', content: JSON.stringify(parsed) });
+                            
+                            const toolOutputContext = `[System] Search Results for "${parsed.query}": ${JSON.stringify(products)}. 
+INSTRUCTIONS:
+1. Use the search results above to answer the user's question in Bengali.
+2. If the product has an 'image_url', you MUST include it in the 'images' array of your JSON response.
+3. If no products were found, apologize and say you couldn't find it.
+4. Return ONLY a JSON object with 'reply' (string) and 'images' (array of strings).`;
+
+                            messages.push({ role: 'system', content: toolOutputContext });
+                            
+                            const completion2 = await openai.chat.completions.create({
+                                model: swarmModel,
+                                messages: messages,
+                                response_format: { type: "json_object" }
+                            });
+                            
+                            const rawContent2 = completion2.choices[0].message.content || '';
+                            let tokenUsage2 = completion2.usage ? completion2.usage.total_tokens : 0;
+                            keyService.recordKeyUsage(apiKey, tokenUsage2);
+                            
+                            const parsed2 = extractJsonFromAiResponse(rawContent2);
+                            if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text;
+
+                            // Ensure images are passed through if AI found them
+                            if (parsed2.images && Array.isArray(parsed2.images)) {
+                                // Validate images are from search results (anti-hallucination)
+                                const validImages = parsed2.images.filter(img => 
+                                    products.some(p => p.image_url === img)
+                                );
+                                parsed2.images = validImages;
+                            } else {
+                                // Auto-inject images if AI forgot but we have them
+                                const productImages = products
+                                    .filter(p => p.image_url)
+                                    .map(p => p.image_url);
+                                if (productImages.length > 0) {
+                                    parsed2.images = productImages;
+                                }
+                            }
+                            
+                            return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: swarmModel, foundProducts: products };
+                        }
 
                 if (!parsed.reply) parsed.reply = parsed.response || parsed.text;
                 return { ...parsed, model: swarmModel, token_usage: tokenUsage + totalTokenUsage, foundProducts };
@@ -994,8 +1020,17 @@ Response: Natural conversation. NO JSON (except for search tool).`;
                         const products = await dbService.searchProducts(pageConfig.user_id, parsed.query, pageConfig.page_id);
                         
                         // Phase 2: Re-generate answer using the SAME model
+                        // Format the tool output as a system message to guide the AI
                         messages.push({ role: 'assistant', content: JSON.stringify(parsed) });
-                        messages.push({ role: 'system', content: `[System] Search Results: ${JSON.stringify(products)}. Now answer the user in Bengali. IMPORTANT: If a product has an 'image_url', you MUST include it in the 'images' array of your JSON response.` });
+                        
+                        const toolOutputContext = `[System] Search Results for "${parsed.query}": ${JSON.stringify(products)}. 
+INSTRUCTIONS:
+1. Use the search results above to answer the user's question in Bengali.
+2. If the product has an 'image_url', you MUST include it in the 'images' array of your JSON response.
+3. If no products were found, apologize and say you couldn't find it.
+4. Return ONLY a JSON object with 'reply' (string) and 'images' (array of strings).`;
+
+                        messages.push({ role: 'system', content: toolOutputContext });
                         
                         console.log(`[AI] Tool Result found (Phase 2). Re-generating answer...`);
                         const completion2 = await openai.chat.completions.create({
@@ -1011,6 +1046,24 @@ Response: Natural conversation. NO JSON (except for search tool).`;
                         
                         const parsed2 = extractJsonFromAiResponse(rawContent2);
                         if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text;
+                        
+                        // Ensure images are passed through if AI found them
+                        if (parsed2.images && Array.isArray(parsed2.images)) {
+                            // Validate images are from search results (anti-hallucination)
+                            const validImages = parsed2.images.filter(img => 
+                                products.some(p => p.image_url === img)
+                            );
+                            parsed2.images = validImages;
+                        } else {
+                            // Auto-inject images if AI forgot but we have them
+                            const productImages = products
+                                .filter(p => p.image_url)
+                                .map(p => p.image_url);
+                            if (productImages.length > 0) {
+                                parsed2.images = productImages;
+                            }
+                        }
+
                         return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: swarmModel, foundProducts: products };
                     }
 
