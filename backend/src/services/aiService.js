@@ -652,9 +652,13 @@ ${productContext}
 
 Directives:
 1. DOMAIN: Answer ONLY about context/products.
-2. IMAGES: If you have valid image URLs from a tool result, ALWAYS append: "IMAGE: Title | URL".
-   - DO NOT hallucinate image URLs. Only use URLs provided by the 'search_products' tool.
-3. SEARCH: If you need to display a product, or if user asks for price/stock, return ONLY JSON: { "tool": "search_products", "query": "product name" }.
+2. IMAGES:
+   - ONLY use image URLs explicitly provided in the "Context" or "Search Results".
+   - DO NOT hallucinate or guess image URLs (e.g., do not use placeholder URLs like 'storage.googleapis.com/...').
+   - If you don't have an image URL, do not show one.
+3. SEARCH:
+   - If the user or system prompt mentions a product (e.g. ##PRODUCT "name") and you do not have its details (price, image) in the Context, you MUST return ONLY JSON: { "tool": "search_products", "query": "name" }.
+   - If user asks for price/stock/image, return ONLY JSON: { "tool": "search_products", "query": "product name" }.
 4. ACTIONS:
    - Support/Admin: Append "[ADD_LABEL: adminhandle]"
    - Order Confirmed: Append "[ADD_LABEL: ordertrack]"
