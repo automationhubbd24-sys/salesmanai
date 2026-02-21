@@ -1396,6 +1396,7 @@ module.exports = {
     updateProduct,
     deleteProduct,
     searchProducts,
+    getProductsByNames,
     checkProductFeatureAccess,
 
     // --- ADMIN TOOLS ---
@@ -1592,6 +1593,29 @@ async function deleteProduct(id, userId) {
     }
 
     return true;
+}
+
+// 30.5 Get Products by Exact Names (For System Prompt Injection)
+async function getProductsByNames(userId, productNames) {
+    if (!productNames || productNames.length === 0) return [];
+    
+    // Normalize names to lowercase for comparison if needed, 
+    // but ILIKE ANY handles case insensitivity.
+    
+    const sql = `
+        SELECT * FROM products 
+        WHERE user_id = $1 
+        AND is_active = true 
+        AND name ILIKE ANY($2)
+    `;
+    
+    try {
+        const result = await query(sql, [userId, productNames]);
+        return result.rows;
+    } catch (err) {
+        console.warn("[DB] Failed to fetch products by names:", err.message);
+        return [];
+    }
 }
 
 // 31. Search Products (For AI) - Enhanced with Smart Fallback

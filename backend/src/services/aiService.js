@@ -405,7 +405,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                      }
                      
                      // Row Format (Compact for AI)
-                     const priceDisplay = p.price ? `${p.price} ${p.currency || 'BDT'}` : 'N/A';
+                     // User Request: Remove Price, Use ##product "name" format
                      const stockDisplay = p.stock !== undefined ? p.stock : 'N/A';
                      const descDisplay = p.description ? p.description.replace(/\n/g, ' ').substring(0, 200) : 'N/A';
                      
@@ -423,7 +423,8 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
 
                      const keywordsDisplay = p.keywords ? p.keywords.replace(/\n/g, ' ').substring(0, 200) : 'N/A';
                      
-                     productContext += `Item ${i+1}: ${p.name} | Price: ${priceDisplay} | Stock: ${stockDisplay} | Image URL: ${imgDisplay} | Desc: ${descDisplay} | Keywords: ${keywordsDisplay}${variantInfo}\n`;
+                     // Format: ##product "name" | Stock: ... | Image: ...
+                     productContext += `##product "${p.name}" | Stock: ${stockDisplay} | Image: ${imgDisplay} | Desc: ${descDisplay} | Keywords: ${keywordsDisplay}${variantInfo}\n`;
                  });
                  productContext += "[End of Products]\n";
                  console.log(`[AI] Injected ${products.length} products into context.`);
@@ -552,6 +553,68 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
 
     } else {
         let basePrompt = pagePrompts?.text_prompt || "";
+
+        // --- DYNAMIC PRODUCT INJECTION FROM SYSTEM PROMPT ---
+        // User Request: If system prompt contains ##product "name", fetch that product and inject it.
+        try {
+            const productRefRegex = /##product\s*"([^"]+)"/gi;
+            let match;
+            const systemPromptProductNames = [];
+            
+            while ((match = productRefRegex.exec(basePrompt)) !== null) {
+                if (match[1]) {
+                    systemPromptProductNames.push(match[1]);
+                }
+            }
+
+            if (systemPromptProductNames.length > 0) {
+                console.log(`[AI] Found product references in System Prompt: ${systemPromptProductNames.join(', ')}`);
+                const systemProducts = await dbService.getProductsByNames(pageConfig.user_id, systemPromptProductNames);
+                
+                if (systemProducts && systemProducts.length > 0) {
+                     // Add to productContext if not already present
+                     if (!productContext) productContext = "\n[Available Products in Store]\n";
+                     
+                     systemProducts.forEach((p) => {
+                         // Check if already added by search
+                         if (!foundProducts.some(fp => fp.id === p.id)) {
+                             // Add it
+                             foundProducts.push(p);
+                             
+                             // Row Format (Compact for AI)
+                             // User Request: Remove Price, Use ##product "name" format
+                             const stockDisplay = p.stock !== undefined ? p.stock : 'N/A';
+                             const descDisplay = p.description ? p.description.replace(/\n/g, ' ').substring(0, 200) : 'N/A';
+                             
+                             let imgDisplay = 'N/A';
+                             if (p.image_url) {
+                                if (p.image_url.startsWith('http')) {
+                                    imgDisplay = p.image_url;
+                                } else {
+                                    // Convert relative path to absolute URL
+                                    const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
+                                    const cleanPath = p.image_url.startsWith('/') ? p.image_url : `/${p.image_url}`;
+                                    imgDisplay = `${baseUrl}${cleanPath}`;
+                                }
+                             }
+        
+                             const keywordsDisplay = p.keywords ? p.keywords.replace(/\n/g, ' ').substring(0, 200) : 'N/A';
+                             
+                             let variantInfo = "";
+                             if (Array.isArray(p.variants) && p.variants.length > 0) {
+                                variantInfo = " | Variants: " + p.variants.map(v => `${v.name}`).join(', ');
+                             }
+                             
+                             // Format: ##product "name" | Stock: ... | Image: ...
+                             productContext += `##product "${p.name}" | Stock: ${stockDisplay} | Image: ${imgDisplay} | Desc: ${descDisplay} | Keywords: ${keywordsDisplay}${variantInfo}\n`;
+                         }
+                     });
+                }
+            }
+        } catch (err) {
+            console.warn("[AI] Failed to inject system prompt products:", err.message);
+        }
+        // ----------------------------------------------------
 
         if (!basePrompt || !basePrompt.trim()) {
             basePrompt = "You are a helpful Bangla chatbot for this business. Answer politely and clearly about their products and services using the given context.";
