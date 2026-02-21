@@ -94,9 +94,7 @@ export default function MessengerSettingsPage() {
   // New State for Behavior Settings
   const [wait, setWait] = useState<number>(8);
   const [behaviorSaving, setBehaviorSaving] = useState(false);
-  const [memoryContextName, setMemoryContextName] = useState("");
   const [memoryLimit, setMemoryLimit] = useState<number>(20);
-  const [orderLockMinutes, setOrderLockMinutes] = useState<number>(1440);
   
   // New State for Optimization
   const [optimizing, setOptimizing] = useState(false);
@@ -207,9 +205,7 @@ export default function MessengerSettingsPage() {
       });
 
       setWait(dbRow.wait || 8);
-      setMemoryContextName(dbRow.memory_context_name || "");
       setMemoryLimit(dbRow.check_conversion || 20);
-      setOrderLockMinutes(dbRow.order_lock_minutes || 1440);
     } catch (error) {
       console.error("Error fetching config:", error);
       toast.error("Failed to load AI settings");
@@ -412,9 +408,7 @@ export default function MessengerSettingsPage() {
         },
         body: JSON.stringify({
           wait: wait,
-          memory_context_name: memoryContextName || null,
-          check_conversion: memoryLimit,
-          order_lock_minutes: orderLockMinutes
+          check_conversion: memoryLimit
         })
       });
 
@@ -1065,58 +1059,24 @@ export default function MessengerSettingsPage() {
                     </div>
 
                     <div className="flex flex-col space-y-2">
-                        <Label>Memory Context Name</Label>
-                        <Input 
-                            value={memoryContextName}
-                            onChange={(e) => setMemoryContextName(e.target.value)}
-                            placeholder="e.g. Short History, Long History"
-                        />
-                        <p className="text-sm text-muted-foreground">
-                            Optional label to remember this memory behaviour preset.
-                        </p>
-                    </div>
-
-                    <div className="flex flex-col space-y-2">
-                        <Label>Old Messages in Memory <span className="text-amber-600 dark:text-amber-400 font-normal ml-2">(10–50)</span></Label>
+                        <Label>Old Messages in Memory <span className="text-amber-600 dark:text-amber-400 font-normal ml-2">(1–50)</span></Label>
                         <div className="flex items-center space-x-4">
                             <Input 
                                 type="number" 
                                 value={memoryLimit} 
                                 onChange={(e) => {
-                                    const raw = Number(e.target.value) || 10;
-                                    const clamped = Math.max(10, Math.min(50, raw));
+                                    const raw = Number(e.target.value) || 1;
+                                    const clamped = Math.max(1, Math.min(50, raw));
                                     setMemoryLimit(clamped);
                                 }} 
-                                min={10} 
+                                min={1} 
                                 max={50}
                                 className="w-24 font-mono"
                             />
                             <span className="text-sm text-muted-foreground">messages</span>
                         </div>
                         <p className="text-sm text-muted-foreground">
-                            Controls how many recent messages (10–50) the AI uses as memory context.
-                        </p>
-                    </div>
-
-                    <div className="flex flex-col space-y-2">
-                        <Label>Order Lock Window <span className="text-amber-600 dark:text-amber-400 font-normal ml-2">(minutes)</span></Label>
-                        <div className="flex items-center space-x-4">
-                            <Input 
-                                type="number" 
-                                value={orderLockMinutes} 
-                                onChange={(e) => {
-                                    const raw = Number(e.target.value) || 0;
-                                    const clamped = Math.max(0, Math.min(1440, raw));
-                                    setOrderLockMinutes(clamped);
-                                }} 
-                                min={0} 
-                                max={1440}
-                                className="w-24 font-mono"
-                            />
-                            <span className="text-sm text-muted-foreground">minutes</span>
-                        </div>
-                        <p className="text-sm text-muted-foreground">
-                            Controls how long recent orders are treated as duplicates for the same customer.
+                            Controls how many recent messages (1–50) the AI uses as memory context.
                         </p>
                     </div>
 

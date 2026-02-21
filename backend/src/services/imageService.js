@@ -68,7 +68,10 @@ async function uploadProductImage(fileBuffer, mimeType, userId, baseUrl) {
         // 3. Upload to Supabase Storage (Preferred)
         if (supabase) {
             const bucketName = process.env.SUPABASE_BUCKET || 'product-images';
+            // Ensure folder structure matches user request: uid/timestamp.jpg
             const filePath = `${userFolder}/${fileName}`;
+
+            console.log(`[ImageService] Uploading to Supabase: ${bucketName}/${filePath}`);
 
             const { data, error } = await supabase.storage
                 .from(bucketName)
@@ -79,13 +82,14 @@ async function uploadProductImage(fileBuffer, mimeType, userId, baseUrl) {
 
             if (error) {
                 console.error("[ImageService] Supabase Upload Error:", error);
-                throw error; // Fallback or fail?
+                throw error; 
             }
 
             const { data: publicUrlData } = supabase.storage
                 .from(bucketName)
                 .getPublicUrl(filePath);
 
+            console.log(`[ImageService] Supabase URL: ${publicUrlData.publicUrl}`);
             return publicUrlData.publicUrl;
         } 
         // 4. Upload to S3 (if configured)
