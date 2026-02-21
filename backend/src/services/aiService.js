@@ -302,7 +302,12 @@ function extractJsonFromAiResponse(rawContent) {
         return JSON.parse(cleanContent);
     } catch (e) {
         console.warn("[AI] JSON Extraction Failed, attempting raw parse...");
-        return JSON.parse(rawContent); // Fallback to original
+        try {
+            return JSON.parse(rawContent); // Fallback to original
+        } catch (e2) {
+            console.warn("[AI] Raw JSON Parse Failed. Returning as reply text.");
+            return { reply: rawContent };
+        }
     }
 }
 
@@ -758,34 +763,48 @@ Response: Natural conversation. NO JSON (except for search tool).`;
                         // --- TOOL HANDLING (Product Search) ---
                         if (parsed.tool === 'search_products' && parsed.query) {
                             console.log(`[AI] Tool Call (Phase 1): Searching products for "${parsed.query}"...`);
-                            // Fix: Pass pageId to ensure visibility rules are respected
-                            const products = await dbService.searchProducts(pageConfig.user_id, parsed.query, pageConfig.page_id);
+                            
+                            let products = [];
+                            try {
+                                // Fix: Pass pageId to ensure visibility rules are respected
+                                products = await dbService.searchProducts(pageConfig.user_id, parsed.query, pageConfig.page_id);
+                            } catch (dbError) {
+                                console.error(`[AI] Phase 1 DB Search Failed: ${dbError.message}`);
+                                // Proceed with empty products to allow AI to handle it gracefully
+                            }
                             
                             // Add context and retry
                             messages.push({ role: 'assistant', content: JSON.stringify(parsed) });
                             messages.push({ role: 'system', content: `[System] Search Results: ${JSON.stringify(products)}. Now answer the user in Bengali. IMPORTANT: If a product has an 'image_url', you MUST include it in the 'images' array of your JSON response.` });
                             
                             console.log(`[AI] Tool Result found. Re-generating answer with User Key...`);
-                            const completion2 = await openai.chat.completions.create({
-                                model: modelToUse,
-                                messages: messages,
-                                response_format: { type: "json_object" }
-                            });
                             
-                            const rawContent2 = completion2.choices[0].message.content || '';
-                            let tokenUsage2 = completion2.usage ? completion2.usage.total_tokens : 0;
-                            tokenUsage2 = estimateTokenUsage(messages, rawContent2, tokenUsage2);
-                            try { keyService.recordKeyUsage(currentKey, tokenUsage2); } catch(e){}
-                            
-                            const parsed2 = extractJsonFromAiResponse(rawContent2);
-                            if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text;
-                            return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: modelToUse, foundProducts };
+                            try {
+                                const completion2 = await openai.chat.completions.create({
+                                    model: modelToUse,
+                                    messages: messages,
+                                    response_format: { type: "json_object" }
+                                });
+                                
+                                const rawContent2 = completion2.choices[0].message.content || '';
+                                let tokenUsage2 = completion2.usage ? completion2.usage.total_tokens : 0;
+                                tokenUsage2 = estimateTokenUsage(messages, rawContent2, tokenUsage2);
+                                try { keyService.recordKeyUsage(currentKey, tokenUsage2); } catch(e){}
+                                
+                                const parsed2 = extractJsonFromAiResponse(rawContent2);
+                                if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text;
+                                return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: modelToUse, foundProducts };
+                            } catch (aiError) {
+                                console.error(`[AI] Phase 1 Tool Re-generation Failed: ${aiError.message}`);
+                                throw aiError;
+                            }
                         }
                         // -------------------------------------
 
                         if (!parsed.reply) parsed.reply = parsed.response || parsed.text;
                         return { ...parsed, token_usage: tokenUsage + totalTokenUsage, model: modelToUse, foundProducts };
                     } catch (e) {
+                        console.error('[AI] Phase 1 Logic Failed:', e);
                         let cleanText = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
                         
                         // Attempt to extract images from text response
