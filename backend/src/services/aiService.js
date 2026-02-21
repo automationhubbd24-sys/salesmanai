@@ -53,7 +53,7 @@ async function updateBestFreeModels() {
         // We use Gemini 2.0 Flash to pick the best models from the list
         try {
             console.log(`[AI Optimizer] Asking Gemini to select best models from ${candidates.length} candidates...`);
-            const keyData = await keyService.getSmartKey('google', 'gemini-2.0-flash');
+            const keyData = await keyService.getSmartKey('google', 'gemini-2.5-flash');
             
             if (keyData && keyData.key) {
                 const prompt = `
@@ -659,11 +659,11 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                              foundProducts.push(p);
                              
                              // User Request: Optimized Context Injection (Token Saving)
-                             // Only inject name, price, stock, and image. Truncate description.
+                             // Only inject name, stock, and image. Truncate description. REMOVED PRICE.
                              let shortDesc = p.description ? p.description.substring(0, 100) + '...' : '';
                              
                              productContext += `Product: "${p.name}"\n`;
-                             if (p.price) productContext += `Price: ${p.price} BDT\n`;
+                             // Price removed per user request
                              if (p.stock_quantity) productContext += `Stock: ${p.stock_quantity}\n`;
                              if (shortDesc) productContext += `Desc: ${shortDesc}\n`;
                              if (p.image_url) productContext += `Image: ${p.image_url}\n`;
@@ -681,31 +681,25 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
            basePrompt = "You are a helpful Bangla chatbot for this business. Answer politely and clearly about their products and services using the given context.";
        }
 
-       const n8nSystemPrompt = `Role: Assistant for ${ownerName}. User: ${senderName}.
-Context: ${basePrompt}
+       const n8nSystemPrompt = `System: ${basePrompt}
+
+[Available Products]
 ${productContext}
 
-Directives:
-1. DOMAIN: Answer ONLY about context/products.
-2. IMAGES:
-   - ONLY use image URLs explicitly provided in the "Context" or "Search Results".
-   - DO NOT hallucinate or guess image URLs.
-   - If you don't have an image URL, do not show one.
-3. SEARCH:
-   - If the user asks about a product (price, stock, image) or mentions a product name, and you do not have the details in the "Context" above, you MUST search for it.
-   - You MUST output the search tool call in this EXACT JSON format:
-     { "tool": "search_products", "query": "product name" }
-4. ACTIONS:
-   - Support/Admin: Append "[ADD_LABEL: adminhandle]"
-   - Order Confirmed: Append "[ADD_LABEL: ordertrack]"
-5. ORDERS: Collect Name, Qty, Address. Then append: [SAVE_ORDER: {"product_name":"...","product_quantity":"...","location":"..."}]
+[System Rules]
+1. SEARCH: If user asks about a product not in [Available Products], use tool: { "tool": "search_products", "query": "name" }
+2. IMAGES: Use ONLY provided image URLs.
+3. SILENCE: If your instructions say "no reply" or to be silent, return { "reply": null }
+4. LABELS:
+   - Support: Append "[ADD_LABEL: adminhandle]" to reply.
+   - Order: Append "[ADD_LABEL: ordertrack]" to reply.
+   - Save Order: Append "[SAVE_ORDER: {...}]" to reply.
 
-Response Format:
-You MUST ALWAYS return a valid JSON object. Do not add any markdown formatting (like \`\`\`json).
-- If searching: { "tool": "search_products", "query": "..." }
-- If replying: { "reply": "Your Bengali response here" }
-- STRICTLY FORBIDDEN: Do not use keys like "answer", "message", "text", "response". USE ONLY "reply".
-- DO NOT return plain text. ALWAYS wrap in JSON.`;
+[Response Format]
+You must output valid JSON only.
+- Reply: { "reply": "text" }
+- Silence: { "reply": null }
+- Search: { "tool": "search_products", "query": "..." }`;
 
         const systemMessage = { role: 'system', content: n8nSystemPrompt };
     
