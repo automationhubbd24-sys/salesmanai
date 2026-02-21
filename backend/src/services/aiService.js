@@ -251,6 +251,37 @@ function estimateTokenUsage(messages, replyText, baseUsage) {
     return Math.ceil((inputChars + outputChars) / 4);
 }
 
+// Helper to extract images from text response (IMAGE: Title | URL)
+function extractImagesFromText(text) {
+    const images = [];
+    if (!text) return { text: "", images: [] };
+    
+    // Regex to find "IMAGE: Title | URL"
+    // Supports multiline, case insensitive "IMAGE:"
+    const imgRegex = /IMAGE:\s*(.+?)\s*\|\s*(http[s]?:\/\/[^\s]+)/gi;
+    
+    let match;
+    let cleanText = text;
+    
+    // We use a loop to find all matches and build the images array
+    while ((match = imgRegex.exec(text)) !== null) {
+        if (match[1] && match[2]) {
+            images.push({
+                title: match[1].trim(),
+                url: match[2].trim()
+            });
+        }
+    }
+
+    // Remove the IMAGE lines from the text
+    cleanText = text.replace(imgRegex, '').trim();
+
+    return {
+        text: cleanText,
+        images: images
+    };
+}
+
 // Helper to clean and extract JSON from AI response (handles <think> blocks and markdown)
 function extractJsonFromAiResponse(rawContent) {
     try {
@@ -776,8 +807,27 @@ Response: Natural conversation. NO JSON (except for search tool).`;
                         return { ...parsed, token_usage: tokenUsage + totalTokenUsage, model: modelToUse, foundProducts };
                     } catch (e) {
                         let cleanText = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+                        
+                        // Attempt to extract images from text response
+                        const extracted = extractImagesFromText(cleanText);
+                        cleanText = extracted.text;
+                        const extractedImages = extracted.images;
+
                         cleanText = extractReplyFromText(cleanText);
-                        return { reply: cleanText, sentiment: 'neutral', model: modelToUse, token_usage: tokenUsage + totalTokenUsage, foundProducts };
+                        
+                        // If reply is empty but we have images, provide a fallback text
+                        if (!cleanText && extractedImages.length > 0) {
+                            cleanText = "Here are the images you requested:";
+                        }
+
+                        return { 
+                            reply: cleanText, 
+                            sentiment: 'neutral', 
+                            model: modelToUse, 
+                            token_usage: tokenUsage + totalTokenUsage, 
+                            foundProducts,
+                            images: extractedImages 
+                        };
                     }
                 }
             } catch (error) {
@@ -898,8 +948,27 @@ Response: Natural conversation. NO JSON (except for search tool).`;
                     return { ...parsed, model: 'gemini-2.5-flash', token_usage: tokenUsage + totalTokenUsage, foundProducts };
                 } catch (e) {
                      let cleanText = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+                     
+                     // Attempt to extract images from text response
+                     const extracted = extractImagesFromText(cleanText);
+                     cleanText = extracted.text;
+                     const extractedImages = extracted.images;
+
                      cleanText = extractReplyFromText(cleanText);
-                     return { reply: cleanText, sentiment: 'neutral', model: 'gemini-2.5-flash', token_usage: tokenUsage + totalTokenUsage, foundProducts };
+
+                     // If reply is empty but we have images, provide a fallback text
+                     if (!cleanText && extractedImages.length > 0) {
+                         cleanText = "Here are the images you requested:";
+                     }
+
+                     return { 
+                         reply: cleanText, 
+                         sentiment: 'neutral', 
+                         model: 'gemini-2.5-flash', 
+                         token_usage: tokenUsage + totalTokenUsage, 
+                         foundProducts,
+                         images: extractedImages 
+                     };
                 }
 
             } catch (flashError) {
