@@ -10,6 +10,7 @@ on conflict (id) do nothing;
 alter table storage.objects enable row level security;
 
 -- 3. Policy: Allow Public Read Access (Anyone can view images)
+drop policy if exists "Public Access" on storage.objects;
 create policy "Public Access"
 on storage.objects for select
 using ( bucket_id = 'product-images' );
@@ -17,11 +18,13 @@ using ( bucket_id = 'product-images' );
 -- 4. Policy: Allow Uploads (Adjust as needed for security)
 -- For now, allowing anyone to insert to this bucket to ensure the backend can upload
 -- In production, you might want to restrict this to authenticated users only
+drop policy if exists "Allow Uploads" on storage.objects;
 create policy "Allow Uploads"
 on storage.objects for insert
 with check ( bucket_id = 'product-images' );
 
 -- 5. Policy: Allow Updates (If needed)
+drop policy if exists "Allow Updates" on storage.objects;
 create policy "Allow Updates"
 on storage.objects for update
 using ( bucket_id = 'product-images' );
