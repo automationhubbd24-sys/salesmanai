@@ -625,32 +625,8 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                              // Add it
                              foundProducts.push(p);
                              
-                             // Row Format (Compact for AI)
-                             // User Request: Remove Price, Use ##product "name" format
-                             const stockDisplay = p.stock !== undefined ? p.stock : 'N/A';
-                             const descDisplay = p.description ? p.description.replace(/\n/g, ' ').substring(0, 200) : 'N/A';
-                             
-                             let imgDisplay = 'N/A';
-                             if (p.image_url) {
-                                if (p.image_url.startsWith('http')) {
-                                    imgDisplay = p.image_url;
-                                } else {
-                                    // Convert relative path to absolute URL
-                                    const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
-                                    const cleanPath = p.image_url.startsWith('/') ? p.image_url : `/${p.image_url}`;
-                                    imgDisplay = `${baseUrl}${cleanPath}`;
-                                }
-                             }
-        
-                             const keywordsDisplay = p.keywords ? p.keywords.replace(/\n/g, ' ').substring(0, 200) : 'N/A';
-                             
-                             let variantInfo = "";
-                             if (Array.isArray(p.variants) && p.variants.length > 0) {
-                                variantInfo = " | Variants: " + p.variants.map(v => `${v.name}`).join(', ');
-                             }
-                             
-                             // Format: ##product "name" | Stock: ... | Image: ...
-                             productContext += `##product "${p.name}" | Stock: ${stockDisplay} | Image: ${imgDisplay} | Desc: ${descDisplay} | Keywords: ${keywordsDisplay}${variantInfo}\n`;
+                             // User Request: Only Title in Context. Details fetched via Tool Call.
+                             productContext += `##product "${p.name}"\n`;
                          }
                      });
                 }
@@ -876,15 +852,91 @@ Response: Natural conversation. NO JSON (except for search tool).`;
         };
     }
 
-    console.log(`[AI] Phase 2: Key-Centric Swarm (Gemini 2.5 Flash Only, Google Keys)...`);
+    console.log(`[AI] Phase 2: Key-Centric Swarm (Cheap/System Keys)...`);
 
-    // 1. GOOGLE SWARM LOOP (Try up to 3 different Gemini 2.5 Flash keys)
+    // Determine Model: Use dashboard setting if it's a Gemini model, otherwise default to Flash
+    let swarmModel = (pageConfig.chatmodel && pageConfig.chatmodel.includes('gemini')) ? pageConfig.chatmodel : 'gemini-2.5-flash';
+    let swarmProvider = 'google';
+
+    // Check if User wants OpenRouter in Phase 2 (Explicit Override via Dashboard)
+    if (pageConfig.chatmodel && (pageConfig.chatmodel.includes('/') || pageConfig.provider === 'openrouter')) {
+        swarmModel = pageConfig.chatmodel;
+        swarmProvider = 'openrouter';
+        console.log(`[AI] Phase 2: User requested OpenRouter model: ${swarmModel}`);
+    }
+
+    // --- STRATEGY A: OpenRouter (Single Attempt) ---
+    if (swarmProvider === 'openrouter') {
+        try {
+            const keyData = await keyService.getSmartKey('openrouter', swarmModel);
+            if (keyData && keyData.key) {
+                const apiKey = keyData.key;
+                const baseURL = 'https://openrouter.ai/api/v1';
+                
+                const openai = new OpenAI({ 
+                    apiKey: apiKey, 
+                    baseURL: baseURL,
+                    timeout: 25000
+                });
+
+                console.log(`[AI] OpenRouter (Phase 2): Testing ${swarmModel}...`);
+                const completion = await openai.chat.completions.create({
+                    model: swarmModel,
+                    messages: messages,
+                    response_format: { type: "json_object" } // Try JSON mode
+                });
+                
+                const rawContent = completion.choices[0].message.content || '';
+                let tokenUsage = completion.usage ? completion.usage.total_tokens : 0;
+                keyService.recordKeyUsage(apiKey, tokenUsage);
+                
+                const parsed = extractJsonFromAiResponse(rawContent);
+                if (parsed.tool === 'search_products' && parsed.query) {
+                        console.log(`[AI] Tool Call: Searching products for "${parsed.query}"...`);
+                        const products = await dbService.searchProducts(pageConfig.user_id, parsed.query, pageConfig.page_id);
+                        
+                        // Phase 2: Re-generate answer using the SAME model
+                        messages.push({ role: 'assistant', content: JSON.stringify(parsed) });
+                        messages.push({ role: 'system', content: `[System] Search Results: ${JSON.stringify(products)}. Now answer the user in Bengali. IMPORTANT: If a product has an 'image_url', you MUST include it in the 'images' array of your JSON response.` });
+                        
+                        const completion2 = await openai.chat.completions.create({
+                            model: swarmModel,
+                            messages: messages,
+                            response_format: { type: "json_object" }
+                        });
+                        
+                        const rawContent2 = completion2.choices[0].message.content || '';
+                        let tokenUsage2 = completion2.usage ? completion2.usage.total_tokens : 0;
+                        keyService.recordKeyUsage(apiKey, tokenUsage2);
+                        
+                        const parsed2 = extractJsonFromAiResponse(rawContent2);
+                        if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text;
+                        return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: swarmModel, foundProducts: products };
+                }
+
+                if (!parsed.reply) parsed.reply = parsed.response || parsed.text;
+                return { ...parsed, model: swarmModel, token_usage: tokenUsage + totalTokenUsage, foundProducts };
+
+            } else {
+                console.warn(`[AI] No OpenRouter keys found for ${swarmModel}. Falling back to Google Swarm.`);
+            }
+        } catch (e) {
+            console.warn(`[AI] OpenRouter Phase 2 Failed: ${e.message}. Falling back to Google Swarm.`);
+        }
+    }
+
+    // --- STRATEGY B: Google Swarm (Fallback / Default) ---
+    // If we fell back, reset model to Gemini Flash
+    swarmModel = (pageConfig.chatmodel && pageConfig.chatmodel.includes('gemini')) ? pageConfig.chatmodel : 'gemini-2.5-flash';
+    console.log(`[AI] Phase 2: Google Swarm (Model: ${swarmModel})...`);
+
+    // 1. GOOGLE SWARM LOOP (Try up to 3 different keys)
     for (let i = 0; i < 3; i++) {
         let keyData = null;
         try {
-            keyData = await keyService.getSmartKey('google', 'gemini-2.5-flash');
-            if (!keyData || !keyData.key || keyData.model !== 'gemini-2.5-flash') {
-                console.warn(`[AI] No valid Gemini 2.5 Flash keys available for Swarm Attempt ${i+1}. Skipping Google swarm.`);
+            keyData = await keyService.getSmartKey('google', swarmModel);
+            if (!keyData || !keyData.key) {
+                console.warn(`[AI] No valid ${swarmModel} keys available for Swarm Attempt ${i+1}. Skipping.`);
                 break;
             }
 
@@ -898,9 +950,9 @@ Response: Natural conversation. NO JSON (except for search tool).`;
             });
 
             try {
-                console.log(`[AI] Google Swarm (Key ${i+1}): Testing Flash on key ${apiKey.substring(0,6)}...`);
+                console.log(`[AI] Google Swarm (Key ${i+1}): Testing ${swarmModel} on key ${apiKey.substring(0,6)}...`);
                 const completion = await openai.chat.completions.create({
-                    model: 'gemini-2.5-flash',
+                    model: swarmModel,
                     messages: messages,
                     response_format: responseFormat
                 });
@@ -917,38 +969,29 @@ Response: Natural conversation. NO JSON (except for search tool).`;
                         console.log(`[AI] Tool Call: Searching products for "${parsed.query}"...`);
                         const products = await dbService.searchProducts(pageConfig.user_id, parsed.query, pageConfig.page_id);
                         
-                        if (products && products.length > 0) {
-                            const lines = products.map((p, idx) => {
-                                const name = p.name || 'Unnamed Product';
-                                const priceText = p.price ? `${p.price} ${p.currency || 'BDT'}` : 'দাম দেওয়া নেই';
-                                const descText = p.description ? p.description.replace(/\s+/g, ' ').substring(0, 120) : '';
-                                return `Item ${idx + 1}: ${name}. দাম: ${priceText}.${descText ? ` বিবরণ: ${descText}` : ''}`;
-                            });
-                            
-                            const images = products
-                                .filter(p => p.image_url && typeof p.image_url === 'string')
-                                .map(p => ({
-                                    url: p.image_url,
-                                    title: p.name || 'Product Image'
-                                }));
-                            
-                            const replyText = lines.join(' \n');
-                            
-                            return {
-                                reply: replyText,
-                                images: images,
-                                sentiment: 'pos',
-                                dm_message: null,
-                                bad_words: null,
-                                order_details: null,
-                                model: 'gemini-2.5-flash',
-                                token_usage: tokenUsage + totalTokenUsage
-                            };
-                        }
+                        // Phase 2: Re-generate answer using the SAME model
+                        messages.push({ role: 'assistant', content: JSON.stringify(parsed) });
+                        messages.push({ role: 'system', content: `[System] Search Results: ${JSON.stringify(products)}. Now answer the user in Bengali. IMPORTANT: If a product has an 'image_url', you MUST include it in the 'images' array of your JSON response.` });
+                        
+                        console.log(`[AI] Tool Result found (Phase 2). Re-generating answer...`);
+                        const completion2 = await openai.chat.completions.create({
+                            model: swarmModel,
+                            messages: messages,
+                            response_format: { type: "json_object" }
+                        });
+                        
+                        const rawContent2 = completion2.choices[0].message.content || '';
+                        let tokenUsage2 = completion2.usage ? completion2.usage.total_tokens : 0;
+                        tokenUsage2 = estimateTokenUsage(messages, rawContent2, tokenUsage2);
+                        keyService.recordKeyUsage(apiKey, tokenUsage2);
+                        
+                        const parsed2 = extractJsonFromAiResponse(rawContent2);
+                        if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text;
+                        return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: swarmModel, foundProducts: products };
                     }
 
                     if (!parsed.reply) parsed.reply = parsed.response || parsed.text;
-                    return { ...parsed, model: 'gemini-2.5-flash', token_usage: tokenUsage + totalTokenUsage, foundProducts };
+                    return { ...parsed, model: swarmModel, token_usage: tokenUsage + totalTokenUsage, foundProducts };
                 } catch (e) {
                      let cleanText = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
                      
@@ -967,7 +1010,7 @@ Response: Natural conversation. NO JSON (except for search tool).`;
                      return { 
                          reply: cleanText, 
                          sentiment: 'neutral', 
-                         model: 'gemini-2.5-flash', 
+                         model: swarmModel, 
                          token_usage: tokenUsage + totalTokenUsage, 
                          foundProducts,
                          images: extractedImages 
@@ -975,10 +1018,10 @@ Response: Natural conversation. NO JSON (except for search tool).`;
                 }
 
             } catch (flashError) {
-                console.warn(`[AI] Flash Failed on Key ${i+1} (${flashError.message}).`);
+                console.warn(`[AI] ${swarmModel} Failed on Key ${i+1} (${flashError.message}).`);
                 
                 const status = flashError.status || (flashError.response ? flashError.response.status : null);
-                handleAiError(flashError, apiKey, 'gemini-2.5-flash');
+                handleAiError(flashError, apiKey, swarmModel);
                 
                 if (status === 401 || status === 403) {
                     continue;
@@ -990,7 +1033,7 @@ Response: Natural conversation. NO JSON (except for search tool).`;
         }
     }
     
-    console.error("[AI] All Phase 2 attempts failed (No valid Gemini 2.5 Flash Google keys).");
+    console.error(`[AI] All Phase 2 attempts failed (No valid ${swarmModel} keys).`);
     return null;
 }
 
