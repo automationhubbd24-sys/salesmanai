@@ -1019,25 +1019,22 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         // If AI returns null/empty text and no images, send a safe fallback reply
         if (!replyText && (!aiResponse.images || aiResponse.images.length === 0)) {
             const reason = originalReply === null ? 'Strict Domain Control (Null Reply)' : 'Empty String Response';
-            console.log(`[AI] Empty reply detected. Reason: ${reason}. Using fallback message instead of staying silent.`);
-
-            const hasProviderError = aiResponse.error && typeof aiResponse.error === 'string';
-            const fallbackText = hasProviderError
-                ? 'দুঃখিত, এই মুহূর্তে AI সিস্টেমে সমস্যা হচ্ছে। কিছুক্ষণ পর আবার চেষ্টা করুন।'
-                : 'দুঃখিত, আমি আপনার বার্তাটা ঠিক বুঝিনি। আরেকবার একটু পরিষ্কার করে বলবেন?';
+            // User Requirement: Silent on Error. Do NOT send fallback text to user.
+            // We only log the error to DB for admin visibility.
+            console.log(`[AI] Empty reply detected. Reason: ${reason}. SILENT MODE: Ignoring.`);
 
             await dbService.saveFbChat({
                 page_id: pageId,
                 sender_id: pageId,
                 recipient_id: senderId,
                 message_id: `fail_${Date.now()}`,
-                text: `[AI Fallback] ${reason}${hasProviderError ? ` | ${aiResponse.error}` : ''}`,
+                text: `[AI Error - Silent] ${reason}${hasProviderError ? ` | ${aiResponse.error}` : ''}`,
                 timestamp: Date.now(),
                 status: 'ai_ignored',
                 reply_by: 'bot'
             });
 
-            replyText = fallbackText;
+            replyText = ''; // Ensure it stays empty so no message is sent
         }
 
         // --- SMART IMAGE EXTRACTION & CLEANING ---
