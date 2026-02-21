@@ -567,11 +567,14 @@ async function approveDepositTransaction(txn) {
         let userId = null;
         // Try exact match first in auth.users (Supabase Auth)
         try {
+            await client.query('SAVEPOINT auth_lookup');
             const userRes = await client.query('SELECT id FROM auth.users WHERE email = $1', [txn.user_email]);
             if (userRes.rows.length > 0) {
                 userId = userRes.rows[0].id;
             }
+            await client.query('RELEASE SAVEPOINT auth_lookup');
         } catch (e) {
+            await client.query('ROLLBACK TO SAVEPOINT auth_lookup');
             console.warn("[ApproveTxn] Failed to query auth.users (permission issue?), falling back to user_configs:", e.message);
         }
 
@@ -583,22 +586,30 @@ async function approveDepositTransaction(txn) {
             } else {
                 // Fallback 2: Try case-insensitive search in auth.users
                 try {
+                    await client.query('SAVEPOINT auth_lookup_case');
                     const userResCase = await client.query('SELECT id FROM auth.users WHERE LOWER(email) = LOWER($1)', [txn.user_email]);
                     if (userResCase.rows.length > 0) {
                         userId = userResCase.rows[0].id;
                     }
-                } catch (e) {}
+                    await client.query('RELEASE SAVEPOINT auth_lookup_case');
+                } catch (e) {
+                    await client.query('ROLLBACK TO SAVEPOINT auth_lookup_case');
+                }
             }
         }
 
         if (!userId) {
             // Last Resort: Check if public.users exists and try there
              try {
+                await client.query('SAVEPOINT public_lookup');
                 const publicUserRes = await client.query('SELECT id FROM public.users WHERE email = $1', [txn.user_email]);
                 if (publicUserRes.rows.length > 0) {
                     userId = publicUserRes.rows[0].id;
                 }
-            } catch (e) {}
+                await client.query('RELEASE SAVEPOINT public_lookup');
+            } catch (e) {
+                await client.query('ROLLBACK TO SAVEPOINT public_lookup');
+            }
         }
 
         if (!userId) {

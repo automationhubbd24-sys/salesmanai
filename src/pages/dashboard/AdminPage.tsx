@@ -891,7 +891,14 @@ export default function AdminPage() {
                             </div>
                           </TableCell>
                           <TableCell>
-                            <Badge variant={txn.status === 'completed' ? 'default' : txn.status === 'pending' ? 'secondary' : 'destructive'}>
+                            <Badge 
+                              variant="secondary"
+                              className={
+                                txn.status === 'completed' || txn.status === 'approved' ? 'bg-green-100 text-green-700 hover:bg-green-100' :
+                                txn.status === 'pending' ? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-100' :
+                                'bg-red-100 text-red-700 hover:bg-red-100'
+                              }
+                            >
                               {txn.status}
                             </Badge>
                           </TableCell>

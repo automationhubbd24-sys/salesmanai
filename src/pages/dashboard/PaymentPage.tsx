@@ -443,7 +443,7 @@ export default function PaymentPage() {
                                     <Badge 
                                         variant="secondary" 
                                         className={`text-[10px] h-5 capitalize ${
-                                            txn.status === 'completed' ? 'bg-green-100 text-green-700 hover:bg-green-100' :
+                                            txn.status === 'completed' || txn.status === 'approved' ? 'bg-green-100 text-green-700 hover:bg-green-100' :
                                             txn.status === 'pending' ? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-100' :
                                             'bg-red-100 text-red-700 hover:bg-red-100'
                                         }`}
