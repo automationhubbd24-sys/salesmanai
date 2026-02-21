@@ -2,6 +2,14 @@ const sharp = require('sharp');
 const fs = require('fs');
 const path = require('path');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { createClient } = require('@supabase/supabase-js');
+
+// Configure Supabase Client if env vars are present
+let supabase = null;
+if (process.env.SUPABASE_URL && process.env.SUPABASE_KEY) {
+    supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+    console.log("[ImageService] Supabase Client Initialized");
+}
 
 // Configure S3 Client if env vars are present
 let s3Client = null;
@@ -57,8 +65,31 @@ async function uploadProductImage(fileBuffer, mimeType, userId, baseUrl) {
         const userFolder = String(userId || 'anonymous');
         const fileName = `${timestamp}.${extension}`;
 
-        // 3. Upload to S3 (if configured) or Local Disk
-        if (s3Client && process.env.S3_BUCKET) {
+        // 3. Upload to Supabase Storage (Preferred)
+        if (supabase) {
+            const bucketName = process.env.SUPABASE_BUCKET || 'product-images';
+            const filePath = `${userFolder}/${fileName}`;
+
+            const { data, error } = await supabase.storage
+                .from(bucketName)
+                .upload(filePath, finalBuffer, {
+                    contentType: contentType,
+                    upsert: true
+                });
+
+            if (error) {
+                console.error("[ImageService] Supabase Upload Error:", error);
+                throw error; // Fallback or fail?
+            }
+
+            const { data: publicUrlData } = supabase.storage
+                .from(bucketName)
+                .getPublicUrl(filePath);
+
+            return publicUrlData.publicUrl;
+        } 
+        // 4. Upload to S3 (if configured)
+        else if (s3Client && process.env.S3_BUCKET) {
             const key = `product-images/${userFolder}/${fileName}`;
             const command = new PutObjectCommand({
                 Bucket: process.env.S3_BUCKET,
@@ -70,18 +101,15 @@ async function uploadProductImage(fileBuffer, mimeType, userId, baseUrl) {
             await s3Client.send(command);
 
             // Construct S3 URL
-            // If S3_PUBLIC_URL is defined, use it (for CDN/Custom Domain)
-            // Otherwise construct from endpoint
             if (process.env.S3_PUBLIC_URL) {
                 return `${process.env.S3_PUBLIC_URL}/${key}`;
             } else {
-                // Fallback to endpoint/bucket/key
                 const endpoint = process.env.S3_ENDPOINT.replace(/\/$/, '');
                 return `${endpoint}/${process.env.S3_BUCKET}/${key}`;
             }
 
         } else {
-            // Local Disk Fallback
+            // 5. Local Disk Fallback
             const dirPath = path.join(UPLOAD_ROOT, userFolder);
             const filePath = path.join(dirPath, fileName);
 

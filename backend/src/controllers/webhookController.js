@@ -1001,7 +1001,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         if (!aiResponse.images) aiResponse.images = [];
         
         // Start with existing images from AI Service (e.g. JSON response)
-        const extractedImages = [...aiResponse.images]; 
+        let extractedImages = [...aiResponse.images]; 
 
         const normalizedProductNames = Object.keys(promptProductMap || {});
 
@@ -1109,6 +1109,11 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         replyText = replyText.replace(/\[Image.*?\]/gi, '').trim();
         replyText = replyText.replace(/^Image:$/gm, '').trim();
 
+        // --- DEDUPLICATION LOGIC REMOVED (User Request) ---
+        // We now rely entirely on the System Prompt / AI to decide whether to send an image or not.
+        // If the AI outputs "IMAGE: ...", we send it.
+        // --------------------------------------------------
+
         // Update aiResponse.images with our new object array
         aiResponse.images = extractedImages;
 
@@ -1211,26 +1216,33 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
     
                 if (!sentViaCarousel) {
                     // Binary Upload Fallback
-                    console.log(`[Image Send] Sending ${images.length} images via Binary Upload (Parallel)...`);
+                    console.log(`[Image Send] Sending ${images.length} images...`);
                     
                     const uploadPromises = images.map(async (imgObj) => {
                          try {
-                             // Use Smart Downloader & Uploader
-                             // This handles downloading the image to a buffer and uploading it as multipart/form-data
-                             // This fixes issues where FB rejects direct URLs (like Google Drive or protected links)
-                             await facebookService.sendImageUpload(pageId, senderId, imgObj.url, pageConfig.page_access_token);
+                             // OPTIMIZATION: Try sending via URL first (Much faster)
+                             // This avoids downloading and re-uploading the image if possible.
+                             await facebookService.sendImageMessage(pageId, senderId, imgObj.url, pageConfig.page_access_token);
                              console.log(`[Image Sent] ${imgObj.url}`);
-                         } catch (imgError) {
-                             console.error(`[Image Fallback] Failed to send image ${imgObj.url}: ${imgError.message}`);
-                             
-                             // FINAL FALLBACK: If binary upload fails, send as a Link
-                             const fallbackText = `Link: ${imgObj.url}`;
-                             await facebookService.sendMessage(pageId, senderId, fallbackText, pageConfig.page_access_token);
+                         } catch (urlError) {
+                             console.warn(`[Image URL Send Failed] ${imgObj.url} - Falling back to Upload. Error: ${urlError.message}`);
+                             try {
+                                 // Fallback: Use Smart Downloader & Uploader
+                                 // This handles downloading the image to a buffer and uploading it as multipart/form-data
+                                 await facebookService.sendImageUpload(pageId, senderId, imgObj.url, pageConfig.page_access_token);
+                                 console.log(`[Image Uploaded] ${imgObj.url}`);
+                             } catch (imgError) {
+                                 console.error(`[Image Fallback] Failed to send image ${imgObj.url}: ${imgError.message}`);
+                                 
+                                 // FINAL FALLBACK: If binary upload fails, send as a Link
+                                 const fallbackText = `Link: ${imgObj.url}`;
+                                 await facebookService.sendMessage(pageId, senderId, fallbackText, pageConfig.page_access_token);
+                             }
                          }
                     });
                     
                     await Promise.all(uploadPromises);
-                    console.log(`[Image Group] All images sent.`);
+                    console.log(`[Image Group] All images processed.`);
                 }
             }
         }
