@@ -14,7 +14,18 @@ async function getPageConfig(pageId) {
 
     const data = result.rows[0];
 
-    if (data.user_id) {
+    // Fallback: If user_id is missing but email exists, find user_id from user_configs
+    if (!data.user_id && data.email) {
+      const userResult = await query(
+        'SELECT user_id, message_credit FROM user_configs WHERE email = $1 LIMIT 1',
+        [data.email]
+      );
+      if (userResult.rows.length > 0) {
+        data.user_id = userResult.rows[0].user_id;
+        data.message_credit = userResult.rows[0].message_credit || 0;
+        data.credit_source = 'shared_user_balance';
+      }
+    } else if (data.user_id) {
       const creditResult = await query(
         'SELECT message_credit FROM user_configs WHERE user_id = $1 LIMIT 1',
         [data.user_id]
@@ -1618,161 +1629,164 @@ async function getProductsByNames(userId, productNames) {
     }
 }
 
-// 31. Search Products (For AI) - Enhanced with Smart Fallback
+    // 31. Search Products (For AI) - Enhanced with Smart Fallback
 async function searchProducts(userId, queryText, pageId = null) {
-    if (!queryText) return [];
-
-    const cleanQuery = queryText.trim();
-    if (!cleanQuery) return [];
-
-    const normalize = (s) => (s || '').toString().toLowerCase().trim().replace(/\s+/g, ' ');
-
-    const computeRelevance = (product) => {
-        const qNorm = normalize(cleanQuery);
-        const nameNorm = normalize(product.name);
-        const descNorm = normalize(product.description);
-        const kwNorm = normalize(product.keywords);
-
-        let score = 0;
-
-        if (nameNorm === qNorm) score += 120;
-        if (kwNorm === qNorm) score += 110;
-
-        if (nameNorm.includes(qNorm)) score += 80;
-        if (kwNorm.includes(qNorm)) score += 70;
-        if (qNorm.includes(nameNorm) && nameNorm.length > 0) score += 60;
-
-        const tokens = qNorm.split(/\s+/).filter(Boolean);
-        tokens.forEach((t) => {
-            if (nameNorm.includes(t)) score += 12;
-            else if (kwNorm.includes(t)) score += 10;
-            else if (descNorm.includes(t)) score += 4;
-        });
-
-        const lenDiff = Math.abs((product.name || '').length - cleanQuery.length);
-        score -= Math.min(lenDiff, 10);
-
-        return score;
-    };
-
-    // Helper to get base query context (params and where clause)
-    const getBaseContext = () => {
-        const params = [userId];
-        let where = 'user_id = $1 AND is_active = true';
-
-        if (pageId) {
-            params.push(String(pageId));
-            // Fix: Handle allowed_page_ids as JSONB to avoid "op ANY/ALL" error
-            // Logic: Visible if NULL, Empty Array (JSON '[]'), or Page ID is in the list
-            where += ` AND (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb OR allowed_page_ids::jsonb @> jsonb_build_array($${params.length}::text))`;
+    console.log(`[DB] searchProducts called for User: ${userId}, Page: ${pageId}, Query: "${queryText}"`);
+    try {
+        if (!userId) {
+            console.warn("[DB] searchProducts aborted: No User ID provided.");
+            return [];
         }
-        return { where, params };
-    };
+        if (!queryText) return [];
 
-    // 1. Exact Match
-    const ctx1 = getBaseContext();
-    const pStart1 = ctx1.params.length;
-    const exactWhere = `${ctx1.where} AND (name ILIKE $${pStart1 + 1} OR description ILIKE $${pStart1 + 2} OR keywords ILIKE $${pStart1 + 3})`;
-    ctx1.params.push(`%${cleanQuery}%`, `%${cleanQuery}%`, `%${cleanQuery}%`);
+        const cleanQuery = queryText.trim();
+        if (!cleanQuery) return [];
 
-    const exactResult = await query(
-        `SELECT name, description, image_url, variants, is_active, price, currency, keywords
-         FROM products
-         WHERE ${exactWhere}
-         LIMIT 5`,
-        ctx1.params
-    );
+        const normalize = (s) => (s || '').toString().toLowerCase().trim().replace(/\s+/g, ' ');
 
-    const exactData = exactResult.rows || [];
+        const computeRelevance = (product) => {
+            const qNorm = normalize(cleanQuery);
+            const nameNorm = normalize(product.name);
+            const descNorm = normalize(product.description);
+            const kwNorm = normalize(product.keywords);
 
-    if (exactData.length > 0) {
-        return [...exactData].sort((a, b) => computeRelevance(b) - computeRelevance(a));
-    }
+            let score = 0;
 
-    const tokens = cleanQuery.split(/\s+/).filter(w => w.length > 2);
-    
-    if (tokens.length > 0) {
-        // 2. Fuzzy Token Match
-        const ctx2 = getBaseContext();
-        const conditions = [];
-        
-        tokens.forEach(token => {
-            const idx = ctx2.params.length + 1;
-            conditions.push(`name ILIKE $${idx}`);
-            ctx2.params.push(`%${token}%`);
-            
-            conditions.push(`description ILIKE $${idx + 1}`);
-            ctx2.params.push(`%${token}%`);
-            
-            conditions.push(`keywords ILIKE $${idx + 2}`);
-            ctx2.params.push(`%${token}%`);
-        });
+            if (nameNorm === qNorm) score += 120;
+            if (kwNorm === qNorm) score += 110;
 
-        const cond = conditions.join(' OR ');
-        const fuzzyWhere = `${ctx2.where} AND (${cond})`;
+            if (nameNorm.includes(qNorm)) score += 80;
+            if (kwNorm.includes(qNorm)) score += 70;
+            if (qNorm.includes(nameNorm) && nameNorm.length > 0) score += 60;
 
-        const fuzzyResult = await query(
-            `SELECT name, description, image_url, variants, is_active, price, currency, keywords
-             FROM products
-             WHERE ${fuzzyWhere}
-             LIMIT 5`,
-            ctx2.params
-        );
-
-        const fuzzyData = fuzzyResult.rows || [];
-
-        if (fuzzyData.length > 0) {
-            return [...fuzzyData].sort((a, b) => computeRelevance(b) - computeRelevance(a));
-        }
-
-        // 3. Stem Match
-        const stems = [];
-        tokens.forEach(token => {
-            const lower = token.toLowerCase();
-            if (lower.length > 4) {
-                const cut = Math.max(3, Math.min(6, Math.floor(lower.length * 0.6)));
-                const stem = lower.slice(0, cut);
-                if (!stems.includes(stem)) stems.push(stem);
-            }
-        });
-
-        if (stems.length > 0) {
-            const ctx3 = getBaseContext();
-            const stemConditions = [];
-            
-            stems.forEach(stem => {
-                const idx = ctx3.params.length + 1;
-                stemConditions.push(`name ILIKE $${idx}`);
-                ctx3.params.push(`%${stem}%`);
-                
-                stemConditions.push(`description ILIKE $${idx + 1}`);
-                ctx3.params.push(`%${stem}%`);
-                
-                stemConditions.push(`keywords ILIKE $${idx + 2}`);
-                ctx3.params.push(`%${stem}%`);
+            const tokens = qNorm.split(/\s+/).filter(Boolean);
+            tokens.forEach((t) => {
+                if (nameNorm.includes(t)) score += 12;
+                else if (kwNorm.includes(t)) score += 10;
+                else if (descNorm.includes(t)) score += 4;
             });
 
-            const stemCond = stemConditions.join(' OR ');
-            const stemWhere = `${ctx3.where} AND (${stemCond})`;
+            const lenDiff = Math.abs((product.name || '').length - cleanQuery.length);
+            score -= Math.min(lenDiff, 10);
 
-            const stemResult = await query(
+            return score;
+        };
+
+        // Helper to get base query context (params and where clause)
+        const getBaseContext = () => {
+            const params = [userId];
+            let where = 'user_id = $1 AND is_active = true';
+
+            if (pageId) {
+                params.push(String(pageId));
+                where += ` AND (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb OR allowed_page_ids::jsonb @> jsonb_build_array($${params.length}::text))`;
+            }
+            return { where, params };
+        };
+
+        // 1. Exact Match
+        const ctx1 = getBaseContext();
+        const pStart1 = ctx1.params.length;
+        const exactWhere = `${ctx1.where} AND (name ILIKE $${pStart1 + 1} OR description ILIKE $${pStart1 + 2} OR keywords ILIKE $${pStart1 + 3})`;
+        ctx1.params.push(`%${cleanQuery}%`, `%${cleanQuery}%`, `%${cleanQuery}%`);
+
+        const exactResult = await query(
+            `SELECT name, description, image_url, variants, is_active, price, currency, keywords
+             FROM products
+             WHERE ${exactWhere}
+             LIMIT 5`,
+            ctx1.params
+        );
+
+        const exactData = exactResult.rows || [];
+
+        if (exactData.length > 0) {
+            return [...exactData].sort((a, b) => computeRelevance(b) - computeRelevance(a));
+        }
+
+        const tokens = cleanQuery.split(/\s+/).filter(w => w.length > 2);
+        
+        if (tokens.length > 0) {
+            // 2. Fuzzy Token Match
+            const ctx2 = getBaseContext();
+            const conditions = [];
+            
+            tokens.forEach(token => {
+                const idx = ctx2.params.length + 1;
+                conditions.push(`name ILIKE $${idx}`);
+                ctx2.params.push(`%${token}%`);
+                
+                conditions.push(`description ILIKE $${idx + 1}`);
+                ctx2.params.push(`%${token}%`);
+                
+                conditions.push(`keywords ILIKE $${idx + 2}`);
+                ctx2.params.push(`%${token}%`);
+            });
+
+            const cond = conditions.join(' OR ');
+            const fuzzyWhere = `${ctx2.where} AND (${cond})`;
+
+            const fuzzyResult = await query(
                 `SELECT name, description, image_url, variants, is_active, price, currency, keywords
+                 FROM products
+                 WHERE ${fuzzyWhere}
+                 LIMIT 5`,
+                ctx2.params
+            );
+
+            const fuzzyData = fuzzyResult.rows || [];
+
+            if (fuzzyData.length > 0) {
+                return [...fuzzyData].sort((a, b) => computeRelevance(b) - computeRelevance(a));
+            }
+
+            // 3. Stem Match
+            const stems = [];
+            tokens.forEach(token => {
+                const lower = token.toLowerCase();
+                if (lower.length > 4) {
+                    const cut = Math.max(3, Math.min(6, Math.floor(lower.length * 0.6)));
+                    const stem = lower.slice(0, cut);
+                    if (!stems.includes(stem)) stems.push(stem);
+                }
+            });
+
+            if (stems.length > 0) {
+                const ctx3 = getBaseContext();
+                const stemConditions = [];
+                
+                stems.forEach(stem => {
+                    const idx = ctx3.params.length + 1;
+                    stemConditions.push(`name ILIKE $${idx}`);
+                    ctx3.params.push(`%${stem}%`);
+                    
+                    stemConditions.push(`description ILIKE $${idx + 1}`);
+                    ctx3.params.push(`%${stem}%`);
+                    
+                    stemConditions.push(`keywords ILIKE $${idx + 2}`);
+                    ctx3.params.push(`%${stem}%`);
+                });
+
+                const stemCond = stemConditions.join(' OR ');
+                const stemWhere = `${ctx3.where} AND (${stemCond})`;
+
+                const stemResult = await query(
+                    `SELECT name, description, image_url, variants, is_active, price, currency, keywords
                  FROM products
                  WHERE ${stemWhere}
                  LIMIT 5`,
-                ctx3.params
-            );
+                    ctx3.params
+                );
 
-            const stemData = stemResult.rows || [];
+                const stemData = stemResult.rows || [];
 
-            if (stemData.length > 0) {
-                return [...stemData].sort((a, b) => computeRelevance(b) - computeRelevance(a));
+                if (stemData.length > 0) {
+                    return [...stemData].sort((a, b) => computeRelevance(b) - computeRelevance(a));
+                }
             }
         }
-    }
 
-    // --- 4. Levenshtein Fallback (Super Fuzzy - Token Based) ---
-    try {
+        // --- 4. Levenshtein Fallback (Super Fuzzy - Token Based) ---
         const baseSql = getBaseContext();
         const scanResult = await query(
             `SELECT name, description, image_url, variants, is_active, price, currency, keywords
@@ -1850,8 +1864,10 @@ async function searchProducts(userId, queryText, pageId = null) {
             
             return bestMatches.slice(0, 5).map(s => s.product);
         }
-    } catch (e) {
-        console.error("[DB] Fuzzy Scan Error:", e);
+        
+    } catch (error) {
+        console.error("[DB] searchProducts Error:", error.message);
+        return [];
     }
     
     return [];

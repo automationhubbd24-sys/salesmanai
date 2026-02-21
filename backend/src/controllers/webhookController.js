@@ -628,18 +628,18 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                         if (perMsgText) {
                             combinedImageAnalysis += `\n${perMsgText}\n`;
                             try {
-                                const baseText = msg.text && msg.text.trim() ? `${msg.text.trim()}\n` : "";
-                                const finalText = `${baseText}[Image Analysis] ${perMsgText}`;
+                                const analysisText = `[Image Analysis] ${perMsgText}`;
                                 await dbService.saveFbChat({
                                     page_id: pageId,
                                     sender_id: senderId,
                                     recipient_id: pageId,
-                                    message_id: msg.id,
-                                    text: finalText,
+                                    message_id: `img_analysis_${Date.now()}_${messages.indexOf(msg)}`, // New ID for analysis text
+                                    text: analysisText,
                                     timestamp: Date.now(),
                                     status: 'received',
                                     reply_by: 'user'
                                 });
+                                console.log(`[FB] Saved image analysis as new text message for ${senderId}`);
                             } catch (e) {
                                 console.error(`[FB] Failed to save per-message analysis:`, e.message);
                             }
@@ -673,6 +673,24 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
 
             const combinedAudioTranscript = audioTranscripts.join('\n');
             combinedText += `\n\n[System: User sent ${allAudios.length} voice messages. Transcripts follow:]\n${combinedAudioTranscript}`;
+            
+            // Save Audio Transcripts to DB as User Messages
+            try {
+                const audioMsgText = `[Voice Transcript] ${combinedAudioTranscript}`;
+                await dbService.saveFbChat({
+                    page_id: pageId,
+                    sender_id: senderId,
+                    recipient_id: pageId,
+                    message_id: `audio_${Date.now()}`, // Generate a unique ID since we don't have one per audio file easily here without mapping
+                    text: audioMsgText,
+                    timestamp: Date.now(),
+                    status: 'received',
+                    reply_by: 'user'
+                });
+                console.log(`[FB] Saved audio transcript to DB for ${senderId}`);
+            } catch (e) {
+                console.error(`[FB] Failed to save audio transcript:`, e.message);
+            }
         }
         
         console.log(`[Batch] Final Context for AI:\n${combinedText}`);

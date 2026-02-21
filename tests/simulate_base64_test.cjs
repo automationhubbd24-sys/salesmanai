@@ -1,3 +1,4 @@
+const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
 
@@ -12,56 +13,66 @@ try {
     }
 }
 
-const { createClient } = require(path.join(__dirname, '../backend/node_modules/@supabase/supabase-js'));
-const axios = require(path.join(__dirname, '../backend/node_modules/axios'));
+// Import pgClient from backend
+const { query } = require('../backend/src/services/pgClient');
 
-
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const supabase = createClient(supabaseUrl, supabaseKey);
-
-const PORT = 3001; // Backend runs on 3001
+// Config
+const PORT = process.env.PORT || 3001;
 
 async function runTest() {
     console.log("1. Setting up Test Environment...");
     
-    // 1. Get a user ID
-    const { data: users, error: userError } = await supabase
-        .from('user_configs')
-        .select('user_id')
-        .limit(1);
-
-    if (userError || !users || users.length === 0) {
-        console.error("Error fetching user:", userError);
+    // 1. Get a valid user
+    let userId;
+    try {
+        const result = await query('SELECT user_id FROM user_configs LIMIT 1');
+        if (result.rows.length === 0) {
+            console.error("Failed to find a user in user_configs table.");
+            return;
+        }
+        userId = result.rows[0].user_id;
+        console.log(`   Using User ID: ${userId}`);
+    } catch (e) {
+        console.error("Database Error (Get User):", e.message);
         return;
     }
-    const userId = users[0].user_id;
-    console.log("   User ID:", userId);
 
-    // 2. Setup WhatsApp Session in DB
-            const sessionName = 'test_sim_base64_v3';
-            
-            // Ensure entry exists
-    const { error: upsertError } = await supabase
-        .from('whatsapp_message_database')
-        .upsert({ 
-            session_name: sessionName, 
-            user_id: userId,
-            active: true,
-            reply_message: true,
-            image_detection: true 
-        });
-
-    if (upsertError) {
-        console.error("Error setting up DB:", upsertError);
+    // 2. Create/Upsert Dummy WhatsApp Session
+    const sessionName = 'test_sim_base64_v3';
+    try {
+        const upsertQuery = `
+            INSERT INTO whatsapp_message_database 
+            (session_name, user_id, active, status, reply_message, text_prompt, image_detection)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (session_name) 
+            DO UPDATE SET 
+                user_id = EXCLUDED.user_id,
+                active = EXCLUDED.active,
+                status = EXCLUDED.status,
+                reply_message = EXCLUDED.reply_message,
+                text_prompt = EXCLUDED.text_prompt,
+                image_detection = EXCLUDED.image_detection
+        `;
+        
+        await query(upsertQuery, [
+            sessionName,
+            userId,
+            true,
+            'connected',
+            true,
+            "You are a helpful assistant.",
+            true
+        ]);
+        console.log(`   Session '${sessionName}' configured.`);
+    } catch (e) {
+        console.error("Database Error (Upsert Session):", e.message);
         return;
     }
-    console.log(`   Session '${sessionName}' ready.`);
 
     // 3. Simulate Webhook with jpegThumbnail (Base64)
     console.log("2. Sending Webhook with jpegThumbnail...");
     
-    // 1x1 Red Dot Base64 (without prefix, as WAHA usually sends raw base64 in jpegThumbnail)
+    // 1x1 Red Dot Base64
     const base64Raw = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
     const payload = {
@@ -86,7 +97,16 @@ async function runTest() {
         console.log("3. Check server logs to see if '[WA] Using jpegThumbnail...' and '[Vision] Processing Base64...' appeared.");
     } catch (e) {
         console.error("   Webhook Failed:", e.message);
+        if (e.code === 'ECONNREFUSED') {
+            console.error("   Make sure the backend server is running on port " + PORT);
+        }
     }
+    
+    // We don't process.exit() immediately to allow logs to flush if needed, but here it's fine.
+    // However, keeping the pool connection open might hang the script.
+    // pgClient usually keeps the pool open.
+    // We should probably explicitly exit.
+    setTimeout(() => process.exit(0), 1000);
 }
 
 runTest();

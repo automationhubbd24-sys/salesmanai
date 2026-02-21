@@ -566,9 +566,8 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
 
     // --- PROMPT & MESSAGE CONSTRUCTION ---
     let messages = [];
-    // User Update: Default to undefined (Text Mode) instead of JSON Object
-    // Enforcing JSON without explicit System Prompt instructions causes Gemini/OpenAI to return empty/error.
-    let responseFormat = undefined; 
+    // User Update: Default to JSON Object for reliability
+    let responseFormat = { type: "json_object" }; 
 
     if (pageConfig.is_external_api) {
         // --- EXTERNAL API MODE (Minimal & White Label) ---
@@ -661,17 +660,22 @@ Directives:
 1. DOMAIN: Answer ONLY about context/products.
 2. IMAGES:
    - ONLY use image URLs explicitly provided in the "Context" or "Search Results".
-   - DO NOT hallucinate or guess image URLs (e.g., do not use placeholder URLs like 'storage.googleapis.com/...').
+   - DO NOT hallucinate or guess image URLs.
    - If you don't have an image URL, do not show one.
 3. SEARCH:
-   - If the user or system prompt mentions a product (e.g. ##PRODUCT "name") and you do not have its details (price, image) in the Context, you MUST return ONLY JSON: { "tool": "search_products", "query": "name" }.
-   - If user asks for price/stock/image, return ONLY JSON: { "tool": "search_products", "query": "product name" }.
+   - If the user asks about a product (price, stock, image) or mentions a product name, and you do not have the details in the "Context" above, you MUST search for it.
+   - You MUST output the search tool call in this EXACT JSON format:
+     { "tool": "search_products", "query": "product name" }
 4. ACTIONS:
    - Support/Admin: Append "[ADD_LABEL: adminhandle]"
    - Order Confirmed: Append "[ADD_LABEL: ordertrack]"
 5. ORDERS: Collect Name, Qty, Address. Then append: [SAVE_ORDER: {"product_name":"...","product_quantity":"...","location":"..."}]
 
-Response: Natural conversation. NO JSON (except for search tool).`;
+Response Format:
+You MUST ALWAYS return a valid JSON object. Do not add any markdown formatting (like \`\`\`json).
+- If searching: { "tool": "search_products", "query": "..." }
+- If replying: { "reply": "Your Bengali response here" }
+- DO NOT return plain text. ALWAYS wrap in JSON.`;
 
         const systemMessage = { role: 'system', content: n8nSystemPrompt };
     
@@ -792,7 +796,8 @@ INSTRUCTIONS:
 1. Use the search results above to answer the user's question in Bengali.
 2. If the product has an 'image_url', you MUST include it in the 'images' array of your JSON response.
 3. If no products were found, apologize and say you couldn't find it.
-4. Return ONLY a JSON object with 'reply' (string) and 'images' (array of strings).`;
+4. Return ONLY a JSON object with 'reply' (string) and 'images' (array of strings).
+   Example: { "reply": "Here is the product...", "images": ["http://..."] }`;
 
                             messages.push({ role: 'system', content: toolOutputContext });
                             
@@ -802,10 +807,13 @@ INSTRUCTIONS:
                                 const completion2 = await openai.chat.completions.create({
                                     model: modelToUse,
                                     messages: messages,
-                                    response_format: { type: "json_object" }
+                                    // Remove strict JSON enforcement to avoid errors if model is chatty
+                                    // response_format: { type: "json_object" } 
                                 });
                                 
                                 const rawContent2 = completion2.choices[0].message.content || '';
+                                console.log(`[AI] Phase 1 Tool Re-generation Raw Output: ${rawContent2.substring(0, 100)}...`);
+
                                 let tokenUsage2 = completion2.usage ? completion2.usage.total_tokens : 0;
                                 tokenUsage2 = estimateTokenUsage(messages, rawContent2, tokenUsage2);
                                 try { keyService.recordKeyUsage(currentKey, tokenUsage2); } catch(e){}
@@ -1454,7 +1462,7 @@ async function transcribeAudio(audioUrl, config) {
         if (contentType.includes('opus') || contentType.includes('ogg')) mimeType = 'audio/ogg';
         else if (contentType.includes('mp3') || contentType.includes('mpeg')) mimeType = 'audio/mp3';
         else if (contentType.includes('wav')) mimeType = 'audio/wav';
-        else if (contentType.includes('aac')) mimeType = 'audio/aac';
+        else if (contentType.includes('aac') || contentType.includes('mp4') || contentType.includes('m4a')) mimeType = 'audio/mp4';
         else mimeType = 'audio/ogg'; // Default safe assumption
         
         logDebug(`[Audio] Downloaded. Size: ${audioBuffer.length}, Type: ${mimeType}`);
@@ -1464,24 +1472,67 @@ async function transcribeAudio(audioUrl, config) {
         return "[Audio Download Failed]";
     }
 
-    // 2. Priority Chain: Gemini 2.5 Flash -> Lite -> Groq (Faster)
-    const priorityChain = [
+    // 2. Priority Chain: Own API -> Gemini 2.5 Flash -> Lite -> Groq (Faster)
+    const priorityChain = [];
+
+    // PHASE 1: OWN API (If User Provided Key)
+    if (config && config.api_key && config.cheap_engine === false) {
+        const userKeys = config.api_key.split(',').map(k => k.trim()).filter(k => k);
+        const userKey = userKeys[0]; // Use first key for simplicity in audio
+
+        if (userKey.startsWith('sk-') && !userKey.startsWith('sk-or')) {
+            // OpenAI Key -> Use Whisper
+            priorityChain.push({ provider: 'openai', model: 'whisper-1', name: 'OpenAI Whisper (User Key)', key: userKey });
+        } else if (userKey.startsWith('gsk_')) {
+            // Groq Key -> Use Groq
+            priorityChain.push({ provider: 'groq', model: 'whisper-large-v3', name: 'Groq Whisper (User Key)', key: userKey });
+        } else if (userKey.startsWith('AIza')) {
+            // Gemini Key -> Use Gemini 1.5 Flash (Reliable for Audio)
+            // Note: 2.5/2.0 might not support audio via API yet or have different ID
+            priorityChain.push({ provider: 'google', model: 'gemini-1.5-flash', name: 'Gemini (User Key)', key: userKey });
+        }
+    }
+
+    // PHASE 2: SYSTEM KEYS (Cheap Engine / Fallback)
+    priorityChain.push(
         { provider: 'google', model: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
         { provider: 'groq', model: 'whisper-large-v3', name: 'Groq Whisper V3' }
-    ];
+    );
 
     for (const option of priorityChain) {
         try {
             console.log(`[Audio] Attempting Transcription with ${option.name}...`);
-            const keyData = await keyService.getSmartKey(option.provider, option.model);
             
-            if (!keyData || !keyData.key) {
-                 console.warn(`[Audio] No key found for ${option.name}`);
-                 continue;
+            let apiKey = option.key;
+            if (!apiKey) {
+                const keyData = await keyService.getSmartKey(option.provider, option.model);
+                if (!keyData || !keyData.key) {
+                     console.warn(`[Audio] No system key found for ${option.name}`);
+                     continue;
+                }
+                apiKey = keyData.key;
             }
             
-            const apiKey = keyData.key;
-            
+            // OPENAI WHISPER API (User Key)
+            if (option.provider === 'openai') {
+                const formData = new FormData();
+                formData.append('file', audioBuffer, { filename: `audio.${mimeType.split('/')[1]}`, contentType: mimeType });
+                formData.append('model', 'whisper-1');
+
+                const res = await axios.post('https://api.openai.com/v1/audio/transcriptions', formData, {
+                    headers: {
+                        ...formData.getHeaders(),
+                        'Authorization': `Bearer ${apiKey}`
+                    }
+                });
+
+                const text = res.data?.text;
+                if (text) {
+                    console.log(`[Audio] Success with ${option.name}: "${text.substring(0, 30)}..."`);
+                    return { text: text.trim(), usage: 0 }; // Usage tracking for audio is complex, skipping for now
+                }
+            }
+
             // GEMINI DIRECT API
             if (option.provider === 'google') {
                 const baseUrl = 'https://generativelanguage.googleapis.com/v1beta';
