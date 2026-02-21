@@ -626,29 +626,30 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                              foundProducts.push(p);
                              
                              // User Request: Only Title in Context. Details fetched via Tool Call.
-                             productContext += `##product "${p.name}"\n`;
-                         }
-                     });
-                }
-            }
-        } catch (err) {
-            console.warn("[AI] Failed to inject system prompt products:", err.message);
-        }
-        // ----------------------------------------------------
+                            // Explicitly tell AI to use the tool for this product
+                            productContext += `##product "${p.name}" (DETAILS HIDDEN - CALL SEARCH TOOL TO FETCH)\n`;
+                        }
+                    });
+               }
+           }
+       } catch (err) {
+           console.warn("[AI] Failed to inject system prompt products:", err.message);
+       }
+       // ----------------------------------------------------
 
-        if (!basePrompt || !basePrompt.trim()) {
-            basePrompt = "You are a helpful Bangla chatbot for this business. Answer politely and clearly about their products and services using the given context.";
-        }
+       if (!basePrompt || !basePrompt.trim()) {
+           basePrompt = "You are a helpful Bangla chatbot for this business. Answer politely and clearly about their products and services using the given context.";
+       }
 
-        const n8nSystemPrompt = `Role: Assistant for ${ownerName}. User: ${senderName}.
+       const n8nSystemPrompt = `Role: Assistant for ${ownerName}. User: ${senderName}.
 Context: ${basePrompt}
 ${productContext}
 
 Directives:
 1. DOMAIN: Answer ONLY about context/products.
-2. IMAGES: If context has image URLs for the product, ALWAYS append: "IMAGE: Title | URL" for each.
-   - REPETITION: Avoid sending the same image twice unless necessary or requested. Check conversation history.
-3. SEARCH: If user asks for product availability/price, return ONLY JSON: { "tool": "search_products", "query": "keywords" }.
+2. IMAGES: If you have valid image URLs from a tool result, ALWAYS append: "IMAGE: Title | URL".
+   - DO NOT hallucinate image URLs. Only use URLs provided by the 'search_products' tool.
+3. SEARCH: If you need to display a product, or if user asks for price/stock, return ONLY JSON: { "tool": "search_products", "query": "product name" }.
 4. ACTIONS:
    - Support/Admin: Append "[ADD_LABEL: adminhandle]"
    - Order Confirmed: Append "[ADD_LABEL: ordertrack]"
