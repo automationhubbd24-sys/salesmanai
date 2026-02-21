@@ -6,6 +6,11 @@ insert into storage.buckets (id, name, public)
 values ('product-images', 'product-images', true)
 on conflict (id) do nothing;
 
+-- Ensure it is public (in case it existed but was private)
+update storage.buckets
+set public = true
+where id = 'product-images';
+
 -- 2. Enable RLS (Row Level Security) - Good practice, though we might use Service Role key
 alter table storage.objects enable row level security;
 
