@@ -239,7 +239,7 @@ exports.testModel = async (req, res) => {
 
 exports.testGeminiPool = async (req, res) => {
     const { model, message } = req.body || {};
-    const testModel = model || 'gemini-1.5-flash-8b';
+    const testModel = model || 'gemini-2.0-flash-lite';
     const testMessage = message || 'hi from SalesmanChatbot key test';
 
     try {

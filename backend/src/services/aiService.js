@@ -50,11 +50,10 @@ async function updateBestFreeModels() {
         }));
 
         // --- GEMINI SELECTION LOGIC (Cheap Engine) ---
-        // We use Gemini 1.5 Flash to pick the best models from the list
+        // We use Gemini 2.0 Flash to pick the best models from the list
         try {
             console.log(`[AI Optimizer] Asking Gemini to select best models from ${candidates.length} candidates...`);
-            // Update: Use 'gemini-1.5-flash' key as requested by user (2.5 removed)
-            const keyData = await keyService.getSmartKey('google', 'gemini-1.5-flash');
+            const keyData = await keyService.getSmartKey('google', 'gemini-2.0-flash');
             
             if (keyData && keyData.key) {
                 const prompt = `
@@ -82,8 +81,8 @@ Return ONLY valid JSON:
                 });
 
                 const completion = await openai.chat.completions.create({
-                    // Use Gemini 1.5 Flash for the request
-                    model: 'gemini-1.5-flash', 
+                    // Use Gemini 2.0 Flash for the request
+                    model: 'gemini-2.0-flash', 
                     messages: [{ role: 'user', content: prompt }],
                     response_format: { type: "json_object" }
                 });
@@ -107,7 +106,7 @@ Return ONLY valid JSON:
              const reliableProviders = /gemini|llama-3|mistral|qwen/i;
              let bestText = freeModels.find(m => reliableProviders.test(m.id) && !m.id.includes('vision')) || freeModels[0];
              // Prioritize Gemini 2.5 equivalent for Vision
-             let bestVision = freeModels.find(m => m.id.includes('gemini-2.5') || m.id.includes('qwen-2.5')) || freeModels[0];
+             let bestVision = freeModels.find(m => m.id.includes('gemini-2.0') || m.id.includes('gemini-2.5') || m.id.includes('qwen-2.5')) || freeModels[0];
              let bestVoice = freeModels.find(m => m.id.includes('flash') && m.id.includes('gemini')) || bestText;
 
              bestFreeModels = { text: bestText.id, vision: bestVision.id, voice: bestVoice.id };
@@ -513,7 +512,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     // IF User did NOT specify a model (null), pick a smart default based on the Provider
     if (!defaultModel) {
         if (defaultProvider === 'gemini') {
-            defaultModel = 'gemini-1.5-flash'; // Safer default (User Request: Avoid 2.5 Flash)
+            defaultModel = 'gemini-2.0-flash'; // Safer default (User Request: Avoid 1.5 Flash)
         } else if (defaultProvider === 'openrouter') {
             defaultModel = useCheapEngine ? dynamicModel : 'arcee-ai/trinity-large-preview';
         } else if (defaultProvider === 'groq') {
@@ -521,7 +520,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         } else if (defaultProvider === 'salesmanchatbot') {
             defaultModel = 'salesmanchatbot-pro';
         } else {
-            defaultModel = useCheapEngine ? dynamicModel : 'gemini-1.5-flash'; 
+            defaultModel = useCheapEngine ? dynamicModel : 'gemini-2.0-flash'; 
         }
     }
 
@@ -537,15 +536,15 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     // "user jeta select korbe sei model found hole setai work korbe kono defult deoya jabe na"
     /*
     const MODEL_ALIASES = {
-        'gemini-2.0-flash': 'gemini-1.5-flash',
+        'gemini-2.0-flash': 'gemini-2.0-flash',
         'gemini-pro': 'gemini-1.5-pro',
-        'gemini2.5-flash': 'gemini-1.5-flash',
+        'gemini2.5-flash': 'gemini-2.0-flash',
         'groq-fast': 'llama-3.3-70b-versatile', 
         'groq-speed': 'llama-3.1-8b-instant', 
         'grok-4.1-fast': 'llama-3.3-70b-versatile',
-        'salesmanchatbot-pro': 'gemini-1.5-flash',
-        'salesmanchatbot-flash': 'gemini-1.5-flash',
-        'salesmanchatbot-lite': 'gemini-1.5-flash-8b',
+        'salesmanchatbot-pro': 'gemini-2.0-flash',
+        'salesmanchatbot-flash': 'gemini-2.0-flash',
+        'salesmanchatbot-lite': 'gemini-2.0-flash-lite',
     };
 
     if (MODEL_ALIASES[defaultModel]) {
@@ -563,8 +562,8 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         
         // This is handled in Phase 2 loop below if we set the sequence right.
         // We set 'defaultModel' to the Primary Choice.
-        defaultModel = 'gemini-1.5-flash';
-        dynamicModel = 'gemini-1.5-flash-8b';
+        defaultModel = 'gemini-2.0-flash';
+        dynamicModel = 'gemini-2.0-flash-lite';
         fallbackModel = bestFreeModels.text || 'meta-llama/llama-3.1-8b-instruct:free'; // Dynamic Fallback
     }
     // -------------------------------------------------
@@ -934,7 +933,7 @@ INSTRUCTIONS:
     console.log(`[AI] Phase 2: Key-Centric Swarm (Cheap/System Keys)...`);
 
     // Determine Model: Use dashboard setting if it's a Gemini model, otherwise default to Flash
-    let swarmModel = (pageConfig.chatmodel && pageConfig.chatmodel.includes('gemini')) ? pageConfig.chatmodel : 'gemini-1.5-flash';
+    let swarmModel = (pageConfig.chatmodel && pageConfig.chatmodel.includes('gemini')) ? pageConfig.chatmodel : 'gemini-2.0-flash';
     let swarmProvider = 'google';
 
     // Check if User wants OpenRouter in Phase 2 (Explicit Override via Dashboard)
@@ -1036,9 +1035,9 @@ INSTRUCTIONS:
     }
 
     // --- STRATEGY B: Google Swarm (Fallback / Default) ---
-    // If we fell back, reset model to User's Choice or Gemini 1.5 Flash (Safer Default)
-    // FIX: Respect user's chatmodel if it is a Google model, otherwise default to 1.5 Flash
-    swarmModel = (pageConfig.chatmodel && pageConfig.chatmodel.includes('gemini')) ? pageConfig.chatmodel : 'gemini-1.5-flash';
+    // If we fell back, reset model to User's Choice or Gemini 2.0 Flash (Safer Default)
+    // FIX: Respect user's chatmodel if it is a Google model, otherwise default to 2.0 Flash
+    swarmModel = (pageConfig.chatmodel && pageConfig.chatmodel.includes('gemini')) ? pageConfig.chatmodel : 'gemini-2.0-flash';
     console.log(`[AI] Phase 2: Google Swarm (Model: ${swarmModel})...`);
 
     // 1. GOOGLE SWARM LOOP (Try up to 3 different keys)
@@ -1297,17 +1296,17 @@ async function processImageWithVision(imageUrl, pageConfig = {}, customOptions =
     }
 
     // --- FALLBACK STRATEGY ---
-    // Priority 1: User Selected Model (if Gemini) or Gemini 1.5 Flash
-    // Priority 2: Gemini 1.5 Flash (Retry/Fallback)
+    // Priority 1: User Selected Model (if Gemini) or Gemini 2.0 Flash
+    // Priority 2: Gemini 2.0 Flash (Retry/Fallback)
     // Priority 3: OpenRouter Best Free Vision (Qwen 2.5 VL)
     
-    // ATTEMPT 1: User Model / Gemini 1.5 Flash
+    // ATTEMPT 1: User Model / Gemini 2.0 Flash
     try {
         const provider = 'google';
         // Respect User's Chat Model if it's a Gemini model
         let model = (pageConfig.chatmodel && pageConfig.chatmodel.includes('gemini')) 
             ? pageConfig.chatmodel 
-            : 'gemini-1.5-flash';
+            : 'gemini-2.0-flash';
 
         console.log(`[Vision] Attempt 1: ${model} (${provider})`);
         
@@ -1347,15 +1346,21 @@ async function processImageWithVision(imageUrl, pageConfig = {}, customOptions =
         console.warn(`[Vision] Attempt 1 Failed: ${errMsg}`);
         errors.push(`Gemini Attempt 1: ${errMsg}`);
         logDebug(`[Vision] Error 1: ${errMsg}`);
+
+        // STRICT OWN API LOCK (Vision)
+        if (pageConfig && pageConfig.api_key && pageConfig.cheap_engine === false) {
+             console.error(`[Vision] Strict Own API Failed. Blocking System Fallback.`);
+             throw new Error(`Vision Analysis Failed with your API Key: ${errMsg}`);
+        }
     }
 
-    // ATTEMPT 2: Gemini 1.5 Flash (Explicit Fallback)
+    // ATTEMPT 2: Gemini 2.0 Flash (Explicit Fallback)
     try {
         const provider = 'google';
-        const model = 'gemini-1.5-flash';
+        const model = 'gemini-2.0-flash';
         
-        // Skip if we just tried 1.5 Flash in Attempt 1
-        const attemptedModel = (pageConfig.chatmodel && pageConfig.chatmodel.includes('gemini')) ? pageConfig.chatmodel : 'gemini-1.5-flash';
+        // Skip if we just tried 2.0 Flash in Attempt 1
+        const attemptedModel = (pageConfig.chatmodel && pageConfig.chatmodel.includes('gemini')) ? pageConfig.chatmodel : 'gemini-2.0-flash';
         if (attemptedModel === model) {
              throw new Error("Already attempted in Step 1");
         }
@@ -1363,7 +1368,7 @@ async function processImageWithVision(imageUrl, pageConfig = {}, customOptions =
         console.log(`[Vision] Attempt 2: ${model} (${provider})`);
         
         const keyData = await keyService.getSmartKey(provider, model);
-        if (!keyData || !keyData.key) throw new Error("No Key found for Gemini 1.5 Flash");
+        if (!keyData || !keyData.key) throw new Error("No Key found for Gemini 2.0 Flash");
 
         const apiKey = keyData.key;
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
@@ -1393,8 +1398,8 @@ async function processImageWithVision(imageUrl, pageConfig = {}, customOptions =
     } catch (error) {
         const errMsg = error.response?.data?.error?.message || error.message;
         if (errMsg !== "Already attempted in Step 1") {
-            console.warn(`[Vision] Attempt 2 (${'gemini-1.5-flash'}) Failed: ${errMsg}`);
-            errors.push(`Gemini 1.5 Flash: ${errMsg}`);
+            console.warn(`[Vision] Attempt 2 (${'gemini-2.0-flash'}) Failed: ${errMsg}`);
+            errors.push(`Gemini 2.0 Flash: ${errMsg}`);
             logDebug(`[Vision] Error 2: ${errMsg}`);
         }
     }
@@ -1508,35 +1513,40 @@ async function transcribeAudio(audioUrl, config) {
 
     // 2. Priority Chain: Own API -> Gemini 2.5 Flash -> Lite -> Groq (Faster)
     const priorityChain = [];
+    let userKey = null;
 
     // PHASE 1: OWN API (If User Provided Key)
     if (config && config.api_key && config.cheap_engine === false) {
         const userKeys = config.api_key.split(',').map(k => k.trim()).filter(k => k);
-        const userKey = userKeys[0]; // Use first key for simplicity in audio
+        userKey = userKeys[0]; // Use first key for simplicity in audio
 
-        if (userKey.startsWith('sk-') && !userKey.startsWith('sk-or')) {
+        if (userKey && userKey.startsWith('sk-') && !userKey.startsWith('sk-or')) {
             // OpenAI Key -> Use Whisper
             priorityChain.push({ provider: 'openai', model: 'whisper-1', name: 'OpenAI Whisper (User Key)', key: userKey });
         } else if (userKey.startsWith('gsk_')) {
             // Groq Key -> Use Groq
             priorityChain.push({ provider: 'groq', model: 'whisper-large-v3', name: 'Groq Whisper (User Key)', key: userKey });
         } else if (userKey.startsWith('AIza')) {
-            // Gemini Key -> Use Gemini (Try User's Model first, else 1.5 Flash)
-            const userModel = (config.model && config.model.startsWith('gemini')) ? config.model : 'gemini-1.5-flash';
+            // Gemini Key -> Use Gemini (Try User's Model first, else 2.0 Flash)
+            const userModel = (config.model && config.model.startsWith('gemini')) ? config.model : 'gemini-2.0-flash';
             priorityChain.push({ provider: 'google', model: userModel, name: `Gemini (${userModel}) (User Key)`, key: userKey });
             
-            // If User's model is NOT 1.5 Flash, add 1.5 Flash as backup with User Key (it's reliable for audio)
-            if (userModel !== 'gemini-1.5-flash') {
-                 priorityChain.push({ provider: 'google', model: 'gemini-1.5-flash', name: 'Gemini (1.5 Flash) (User Key)', key: userKey });
+            // If User's model is NOT 2.0 Flash, add 2.0 Flash as backup with User Key (it's reliable for audio)
+            if (userModel !== 'gemini-2.0-flash') {
+                 priorityChain.push({ provider: 'google', model: 'gemini-2.0-flash', name: 'Gemini (2.0 Flash) (User Key)', key: userKey });
             }
         }
     }
 
     // PHASE 2: SYSTEM KEYS (Cheap Engine / Fallback)
-    priorityChain.push(
-        { provider: 'google', model: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash' }, // 1.5 is reliable for Audio
-        { provider: 'groq', model: 'whisper-large-v3', name: 'Groq Whisper V3' }
-    );
+    // ONLY add system keys if NO User Key was provided.
+    // User Requirement: "own api er modde defualt chatmodel defualt api asob kisui use kora jabe na"
+    if (!userKey) {
+        priorityChain.push(
+            { provider: 'google', model: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash' }, // 2.0 is reliable for Audio
+            { provider: 'groq', model: 'whisper-large-v3', name: 'Groq Whisper V3' }
+        );
+    }
 
     for (const option of priorityChain) {
         try {
