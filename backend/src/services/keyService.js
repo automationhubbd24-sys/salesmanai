@@ -34,8 +34,8 @@ setInterval(() => {
 // Based on typical Free Tier limits as of early 2025
 const DEFAULT_LIMITS = {
     // Gemini Limits (Based on User Info)
-    'gemini-2.5-flash': { rpm: 5, rpd: 20 }, // Low limit for safety
-    'gemini-2.5-flash-lite': { rpm: 10, rpd: 20 }, // Low limit for safety
+    'gemini-1.5-flash': { rpm: 15, rpd: 1500 }, 
+    'gemini-1.5-flash-8b': { rpm: 15, rpd: 1500 }, 
     
     // Groq Limits (Based on Official Docs)
     'llama-3.3-70b-versatile': { rpm: 30, rpd: 1000 }, // High Intelligence, Lower Daily Limit

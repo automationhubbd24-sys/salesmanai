@@ -317,7 +317,10 @@ async function queueMessage(event) {
         att.type === 'image'
     ).map(att => att.payload.url) || [];
     
-    const thisMsgAudios = event.message?.attachments?.filter(att => att.type === 'audio').map(att => att.payload.url) || [];
+    const thisMsgAudios = event.message?.attachments?.filter(att => 
+        att.type === 'audio' || 
+        (att.type === 'file' && att.payload?.url && /\.(mp3|wav|ogg|m4a|aac|mp4)(\?|$)/i.test(att.payload.url))
+    ).map(att => att.payload.url) || [];
 
     // Push Object
     sessionData.messages.push({
@@ -659,15 +662,18 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         // B. Process Audio (Voice)
         if (allAudios.length > 0) {
             console.log(`[Batch] Transcribing ${allAudios.length} voice messages...`);
+            allAudios.forEach((url, i) => console.log(`[Batch] Audio URL [${i}]: ${url}`));
+
             // Process in parallel
             const audioPromises = allAudios.map(url => aiService.transcribeAudio(url, pageConfig));
             const audioResultsRaw = await Promise.all(audioPromises);
             
             // Extract text and usage
-            const audioTranscripts = audioResultsRaw.map(res => {
+            const audioTranscripts = audioResultsRaw.map((res, i) => {
                 const text = typeof res === 'object' ? (res.text || '') : String(res || '');
                 const usage = typeof res === 'object' ? (res.usage || 0) : 0;
                 totalAudioTokens += usage;
+                console.log(`[Batch] Audio [${i}] Result: "${text.substring(0, 50)}..."`);
                 return text;
             });
 
@@ -1151,7 +1157,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             let aiModelLabel = aiResponse.model || null;
             const isCheapEngineForLog = pageConfig.cheap_engine !== false;
             if (isCheapEngineForLog && (!pageConfig.api_key || pageConfig.api_key === 'MANAGED_SECRET_KEY')) {
-                if (aiModelLabel === 'gemini-2.5-flash' || aiModelLabel === 'gemini-2.5-flash-lite') {
+                if (aiModelLabel === 'gemini-1.5-flash' || aiModelLabel === 'gemini-1.5-flash-8b') {
                     aiModelLabel = 'salesmanchatbot-pro';
                 }
             }
@@ -1182,20 +1188,9 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             const allowImageSend = pagePrompts?.image_reply !== false; // Strict check against false
             
             if (!allowImageSend) {
-                console.log(`[Image Send] Disabled by Config (image_reply=false). Sending links as text.`);
-                // Append links back to text since we stripped them
-                if (replyText.length > 0) replyText += "\n\n";
-                replyText += "Attached Links:\n" + images.map(img => img.url).join("\n");
-                
-                // If text was already sent (unlikely here as we haven't sent yet, but let's be safe), we just send a new message.
-                // But wait, the code above sends text FIRST. 
-                // Line 513 sends text. We are at line 532.
-                // Uh oh. The text sending happens at line 513 using 'replyText'.
-                // 'replyText' was modified by our cleaning logic.
-                // So the text sent at 513 DOES NOT contain the links.
-                // So here, we must send them as a new text message.
-                const linksText = "Attached Links:\n" + images.map(img => img.url).join("\n");
-                await facebookService.sendMessage(pageId, senderId, linksText, pageConfig.page_access_token);
+                console.log(`[Image Send] Disabled by Config (image_reply=false). STRICT MODE: Sending nothing.`);
+                // Do NOTHING. No links, no text fallback for images.
+                // The AI's text reply (sent above) is all the user gets.
                 
             } else {
                 // Image Send ENABLED
@@ -1281,18 +1276,35 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             
             // Priority: Use 'foundProducts' if available to be specific about WHICH product
             if (aiResponse.foundProducts && Array.isArray(aiResponse.foundProducts) && aiResponse.foundProducts.length > 0) {
-                 const productNames = aiResponse.foundProducts.map(p => p.name).join(', ');
-                 const summary = aiResponse.images.map(img => img.url).join(' ; ');
-                 memoryNote = `[IMAGE MEMORY] Sent product images for: [${productNames}]. Images: ${summary}`;
+                 const productDetails = aiResponse.foundProducts.map(p => 
+                    `${p.name} (Desc: ${p.description ? p.description.substring(0, 100) : 'N/A'})`
+                 ).join(' | ');
+                 const summary = aiResponse.images.map(img => typeof img === 'string' ? img : img.url).join(' ; ');
+                 memoryNote = `[IMAGE MEMORY] Sent product images for: [${productDetails}]. Images: ${summary}`;
             } else {
                  // Fallback: Just list titles/urls from images array
                  const summary = aiResponse.images
-                    .map(img => `${img.title || 'Image'} | ${img.url}`)
+                    .map(img => typeof img === 'string' ? img : `${img.title || 'Image'} | ${img.url}`)
                     .join(' ; ');
                  memoryNote = `[IMAGE MEMORY] Sent product images in this reply: ${summary}`;
             }
             
+            // 1. Save to backend_chat_histories (for AI Context)
             await dbService.saveChatMessage(sessionId, 'system', memoryNote);
+
+            // 2. Save to fb_chats (for Audit/Debugging & User Requirement)
+            // "iamge send er somoi iamge er titel description teke etka message fb chats e save korbe"
+            // "but ei message ta sender pabe na" -> reply_by = 'system'
+            await dbService.saveFbChat({
+                page_id: pageId,
+                sender_id: pageId, // System is sender
+                recipient_id: senderId, // User is recipient (context)
+                message_id: `mem_${Date.now()}`,
+                text: memoryNote,
+                timestamp: Date.now(),
+                status: 'ai_memory',
+                reply_by: 'system'
+            });
         }
 
         await dbService.saveLead({

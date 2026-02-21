@@ -1827,7 +1827,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
 
         // 7. Save Bot Reply to DB
         let modelLabel = aiResponse.model;
-        if (!hasOwnKey && (modelLabel === 'gemini-2.5-flash' || modelLabel === 'gemini-2.5-flash-lite')) {
+        if (!hasOwnKey && (modelLabel === 'gemini-1.5-flash' || modelLabel === 'gemini-1.5-flash-8b')) {
             modelLabel = 'salesmanchatbot-pro';
         }
         await dbService.saveWhatsAppChat({
