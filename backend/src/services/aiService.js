@@ -601,7 +601,8 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                 if (name) {
                     const cleanName = name.trim();
                     systemPromptProductNames.push(cleanName);
-                    return cleanName; // Replace ##PRODUCT tag with just the name
+                    // Ensure format is ##product "cleanName"
+                    return `##product "${cleanName}"`; 
                 }
                 return match;
             });
