@@ -1000,8 +1000,11 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         // --- SMART IMAGE EXTRACTION & CLEANING ---
         if (!aiResponse.images) aiResponse.images = [];
         
-        // Start with existing images from AI Service (e.g. JSON response)
-        let extractedImages = [...aiResponse.images]; 
+        // Start with existing images from AI Service (normalize strings to objects)
+        let extractedImages = aiResponse.images.map(img => {
+            if (typeof img === 'string') return { url: img, title: 'Product Image' };
+            return img;
+        }); 
 
         const normalizedProductNames = Object.keys(promptProductMap || {});
 

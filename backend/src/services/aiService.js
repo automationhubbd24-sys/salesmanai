@@ -630,9 +630,13 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                              // Add it
                              foundProducts.push(p);
                              
-                             // User Request: Only Title in Context. Details fetched via Tool Call.
-                            // Explicitly tell AI to use the tool for this product
-                            productContext += `##product "${p.name}" (DETAILS HIDDEN - CALL SEARCH TOOL TO FETCH)\n`;
+                             // User Request: Inject FULL details so AI doesn't need to call tool
+                             productContext += `Product: "${p.name}"\n`;
+                             if (p.price) productContext += `Price: ${p.price} BDT\n`;
+                             if (p.stock_quantity) productContext += `Stock: ${p.stock_quantity}\n`;
+                             if (p.description) productContext += `Description: ${p.description}\n`;
+                             if (p.image_url) productContext += `Image: ${p.image_url}\n`;
+                             productContext += `\n`;
                         }
                     });
                }
