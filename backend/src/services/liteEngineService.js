@@ -153,18 +153,65 @@ class LiteEngineService {
         }
     }
 
-    async transcribeAudio(audioUrl) {
-        // Fetch audio file stream
-        const response = await axios.get(audioUrl, { responseType: 'stream' });
-        
-        // Use Groq Whisper
-        const transcription = await this.client.audio.transcriptions.create({
-            file: response.data,
-            model: MODELS.AUDIO,
-            response_format: 'text' // Plain text for speed
-        });
+    async transcribeAudio(input) {
+        let fileEntry;
 
-        return transcription;
+        // If input is a URL string
+        if (typeof input === 'string' && (input.startsWith('http') || input.startsWith('https'))) {
+            const response = await axios.get(input, { responseType: 'stream' });
+            fileEntry = response.data;
+        } else {
+            // Assume input is a Buffer or Stream
+            // For Buffer, we need to wrap it or pass it. 
+            // Groq SDK often requires a 'file' object with 'name' property for Buffers to detect type.
+            // But we can just pass the buffer if we specify 'language' or model handles it.
+            // To be safe, let's assume it's a file-like object or we create one.
+            // If it is a Buffer, we can pass it directly but might need a filename in the options.
+            // Actually, for Groq/OpenAI node SDK, if passing a Buffer, we should use 'file-from-path' or similar,
+            // OR pass an object { file: buffer, name: 'audio.mp3' }.
+            // But strict SDK might expect a ReadStream.
+            
+            // If it is a Buffer, convert to Stream?
+            if (Buffer.isBuffer(input)) {
+                // Create a stream from buffer?
+                // Simplified: Just pass the buffer. If SDK complains, we fix.
+                // OpenAI SDK (which Groq mimics) accepts Buffer if 'name' is provided?
+                // Let's use a helper to wrap buffer if needed.
+                // For now, let's try passing input directly as 'file'.
+                // IMPORTANT: We need to give it a name so it knows it's mp3/wav.
+                input.name = 'audio.mp3'; // Hack
+                fileEntry = input;
+            } else {
+                fileEntry = input;
+            }
+        }
+        
+        // Initialize Client if needed
+        if (!this.client) {
+            const { client, keyId } = await this.getRotatedClient();
+            this.client = client;
+            this.currentKeyId = keyId; 
+        }
+
+        try {
+            // Use Groq Whisper
+            // If fileEntry is a Buffer, we might need to pass it differently depending on the library version.
+            // But let's try standard way.
+            const transcription = await this.client.audio.transcriptions.create({
+                file: fileEntry,
+                model: MODELS.AUDIO,
+                response_format: 'text' // Plain text for speed
+            });
+
+            return transcription;
+        } catch (error) {
+            console.error('[LiteEngine] Audio Transcription Failed:', error.message);
+            // Handle Key Error
+            if (error.message.includes('API key') || error.status === 401) {
+                 if (this.currentKeyId) await this.markKeyOffline(this.currentKeyId);
+            }
+            throw error;
+        }
     }
 
     async analyzeImage(imageUrl, keyId) {

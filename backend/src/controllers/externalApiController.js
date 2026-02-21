@@ -397,6 +397,52 @@ exports.listModels = async (req, res) => {
     }
 };
 
+exports.transcribeAudio = async (req, res) => {
+    try {
+        const { userConfig, error } = await validateApiKey(req);
+        if (error) return res.status(error.status).json({ error });
+
+        // Check Balance (Minimal)
+        if (userConfig.balance < 0.001) {
+            return res.status(402).json({ error: { message: `Insufficient balance. Minimum 0.001 BDT required.`, type: 'insufficient_quota', code: 'insufficient_balance' } });
+        }
+
+        const { url } = req.body;
+        if (!url) {
+            return res.status(400).json({ error: { message: 'Missing audio URL', type: 'invalid_request_error' } });
+        }
+
+        console.log(`[ExternalAPI] Transcribing Audio for User ${userConfig.user_id}...`);
+        
+        // Use LiteEngine (Groq Whisper)
+        // Since Groq Whisper is very cheap/free currently, we charge minimal or 0.
+        // Let's charge 0.01 BDT per minute? Or fixed per request?
+        // Let's charge 0.005 BDT per request for now.
+        const cost = 0.005;
+
+        let transcription = "";
+        try {
+            transcription = await liteEngineService.transcribeAudio(url);
+        } catch (e) {
+            console.error('[ExternalAPI] Transcription Failed:', e.message);
+            return res.status(500).json({ error: { message: 'Transcription Failed', details: e.message } });
+        }
+
+        // Deduct Balance
+        await dbService.deductUserBalance(userConfig.user_id, cost, `Audio Transcription`);
+        
+        // Log Usage
+        // We log "1" as token count for audio request tracking
+        await dbService.logApiUsage(userConfig.user_id, 'whisper-large-v3', 1, cost);
+
+        res.json({ text: transcription });
+
+    } catch (error) {
+        console.error('[ExternalAPI] Audio Error:', error);
+        res.status(500).json({ error: { message: 'Internal Server Error' } });
+    }
+};
+
 exports.getApiKey = async (req, res) => {
     try {
         const userId = req.user?.id; 

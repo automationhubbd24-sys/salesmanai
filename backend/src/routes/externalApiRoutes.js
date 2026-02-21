@@ -5,6 +5,7 @@ const authMiddleware = require('../middleware/authMiddleware');
 
 // Public API Endpoint (Protected by Bearer Token in Header)
 router.post('/v1/chat/completions', externalApiController.handleChatCompletion);
+router.post('/v1/audio/transcriptions', externalApiController.transcribeAudio);
 router.get('/v1/models', externalApiController.listModels);
 
 // Management Endpoints (Protected by User Auth)

@@ -1,5 +1,6 @@
 const keyService = require('./keyService');
 const dbService = require('./dbService'); // Added for Product Search Tool
+const liteEngineService = require('./liteEngineService'); // Added for Own API Voice
 const commandApiService = require('./commandApiService'); // Command API Table Strategy
 const axios = require('axios');
 const OpenAI = require('openai');
@@ -630,11 +631,14 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                              // Add it
                              foundProducts.push(p);
                              
-                             // User Request: Inject FULL details so AI doesn't need to call tool
+                             // User Request: Optimized Context Injection (Token Saving)
+                             // Only inject name, price, stock, and image. Truncate description.
+                             let shortDesc = p.description ? p.description.substring(0, 100) + '...' : '';
+                             
                              productContext += `Product: "${p.name}"\n`;
                              if (p.price) productContext += `Price: ${p.price} BDT\n`;
                              if (p.stock_quantity) productContext += `Stock: ${p.stock_quantity}\n`;
-                             if (p.description) productContext += `Description: ${p.description}\n`;
+                             if (shortDesc) productContext += `Desc: ${shortDesc}\n`;
                              if (p.image_url) productContext += `Image: ${p.image_url}\n`;
                              productContext += `\n`;
                         }
@@ -1444,6 +1448,35 @@ async function transcribeAudio(audioUrl, config) {
 
         const response = await axios.get(audioUrl, { responseType: 'arraybuffer', headers, validateStatus: s => s === 200 });
         audioBuffer = Buffer.from(response.data);
+
+        // OWN API CHECK (LiteEngine / SalesmanChatbot)
+        // If the user is using the "Own API" (cheap_engine=false or explicit provider)
+        // We do this AFTER download because LiteEngine needs Buffer/File, not just URL (due to headers)
+        if (config && config.api_key && config.cheap_engine === false) {
+             console.log(`[Audio] Using Own API (LiteEngine) for transcription...`);
+             try {
+                 // Attach name for Groq/OpenAI SDK compatibility
+                 audioBuffer.name = 'audio.mp3'; 
+                 
+                 const transcription = await liteEngineService.transcribeAudio(audioBuffer);
+                 
+                 // Deduct Balance (0.005 BDT per request)
+                 // Only if user_id is present (it should be for Own API users)
+                 if (config.user_id) {
+                     await dbService.deductUserBalance(config.user_id, 0.005, 'Audio Transcription (Own API)');
+                 }
+
+                 if (transcription && transcription.text) {
+                     console.log(`[Audio] Own API Success: "${transcription.text.substring(0,30)}..."`);
+                     return { text: transcription.text, usage: 1 };
+                 }
+             } catch (ownApiErr) {
+                 console.error(`[Audio] Own API Failed: ${ownApiErr.message}`);
+                 // Fallback to standard flow if Own API fails?
+                 // If they paid for Own API, we should probably fail or notify?
+                 // But let's try fallback to ensure service continuity.
+             }
+        }
         const contentType = response.headers['content-type'] || 'audio/ogg';
         
         // Map to Gemini-supported MIME types
@@ -1460,35 +1493,33 @@ async function transcribeAudio(audioUrl, config) {
         return "[Audio Download Failed]";
     }
 
-    // 2. Priority Chain: Gemini 2.5 Flash -> Lite -> OpenRouter -> Groq (Fallback)
+    // 2. Priority Chain: Gemini 2.5 Flash -> Lite -> Groq (Faster)
     const priorityChain = [
         { provider: 'google', model: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
-        { provider: 'google', model: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite' },
-        { provider: 'openrouter', model: bestFreeModels.voice, name: `OpenRouter Voice (${bestFreeModels.voice})` }
+        { provider: 'groq', model: 'whisper-large-v3', name: 'Groq Whisper V3' }
     ];
 
     for (const option of priorityChain) {
         try {
-            if (option.provider === 'openrouter' && !option.model.includes('gemini') && !option.model.includes('claude')) {
-                continue; 
-            }
-
             console.log(`[Audio] Attempting Transcription with ${option.name}...`);
             const keyData = await keyService.getSmartKey(option.provider, option.model);
-            if (!keyData || !keyData.key) continue;
+            
+            if (!keyData || !keyData.key) {
+                 console.warn(`[Audio] No key found for ${option.name}`);
+                 continue;
+            }
             
             const apiKey = keyData.key;
             
             // GEMINI DIRECT API
-            if (option.provider === 'google' || option.model.includes('google/gemini')) {
-                const baseUrl = option.provider === 'openrouter' ? 'https://openrouter.ai/api/v1' : 'https://generativelanguage.googleapis.com/v1beta';
-                if (option.provider === 'openrouter') continue; 
-
+            if (option.provider === 'google') {
+                const baseUrl = 'https://generativelanguage.googleapis.com/v1beta';
                 const url = `${baseUrl}/models/${option.model}:generateContent?key=${apiKey}`;
+                
                 const payload = {
                     contents: [{
                         parts: [
-                            { text: "Transcribe this audio in standard Bengali. If the audio is in Bengali script, output Bengali. If it's Banglish, output standard Bengali text. Do not translate English words, keep them in English script if spoken clearly. Output ONLY the raw transcription." },
+                            { text: "Transcribe this audio. If Bengali, write in Bengali script. If English, write in English. Do not translate. Output ONLY the transcription text." },
                             { inline_data: { mime_type: mimeType, data: audioBuffer.toString('base64') } }
                         ]
                     }]
@@ -1496,6 +1527,7 @@ async function transcribeAudio(audioUrl, config) {
                 
                 const res = await axios.post(url, payload);
                 const text = res.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+                // Gemini audio tokens are roughly 1 per second? Let's trust usageMetadata
                 const usage = res.data?.usageMetadata?.totalTokenCount || 0;
                 
                 if (text) {
@@ -1504,26 +1536,35 @@ async function transcribeAudio(audioUrl, config) {
                 }
             }
             
+            // GROQ WHISPER API (Fastest)
+            if (option.provider === 'groq') {
+                const formData = new FormData();
+                formData.append('file', audioBuffer, { filename: `audio.${mimeType.split('/')[1]}`, contentType: mimeType });
+                formData.append('model', 'whisper-large-v3');
+                // formData.append('language', 'bn'); // Let it auto-detect for Banglish support
+                formData.append('temperature', '0');
+
+                const res = await axios.post('https://api.groq.com/openai/v1/audio/transcriptions', formData, {
+                    headers: {
+                        ...formData.getHeaders(),
+                        'Authorization': `Bearer ${apiKey}`
+                    }
+                });
+
+                const text = res.data?.text;
+                if (text) {
+                    console.log(`[Audio] Success with ${option.name}: "${text.substring(0, 30)}..."`);
+                    return { text: text.trim(), usage: 0 }; // Whisper is cheap/free on Groq usually
+                }
+            }
+            
         } catch (e) {
              console.warn(`[Audio] ${option.name} Failed:`, e.message);
         }
     }
 
-    // 3. Fallback to Groq Whisper (Existing Reliable Method)
-    try {
-        console.log(`[Audio] Falling back to Groq Whisper...`);
-        const keyData = await keyService.getSmartKey('groq', 'whisper-large-v3');
-        if (!keyData || !keyData.key) return { text: "[Audio Message]", usage: 0 };
-        const apiKey = keyData.key;
-
-        const formData = new FormData();
-        formData.append('file', audioBuffer, { filename: `audio.${mimeType.split('/')[1]}`, contentType: mimeType });
-        formData.append('model', 'whisper-large-v3');
-        formData.append('language', 'bn'); 
-        formData.append('prompt', 'Transcribe exactly in standard Bengali.');
-        formData.append('temperature', '0');
-
-        const res = await axios.post('https://api.groq.com/openai/v1/audio/transcriptions', formData, {
+    return { text: "[Audio Transcription Failed]", usage: 0 };
+}
             headers: { ...formData.getHeaders(), 'Authorization': `Bearer ${apiKey}` },
             timeout: 10000
         });
