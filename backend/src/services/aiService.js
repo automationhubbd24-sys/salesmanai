@@ -715,6 +715,7 @@ ${productContext}
    - Support: Append "[ADD_LABEL: adminhandle]" to reply.
    - Order: Append "[ADD_LABEL: ordertrack]" to reply.
    - Save Order: Append "[SAVE_ORDER: {...}]" to reply.
+5. VISION RESULTS: If the user message contains "[Image Analysis Result]", prioritize this information. If the user has not asked a question, output the analysis result exactly as provided or a concise summary. Do NOT be conversational if the input is just an analysis result.
 
 [Response Format]
 You must output valid JSON only.
@@ -1367,64 +1368,104 @@ Rules:
     
     // ATTEMPT 1: User Model / Gemini 2.0 Flash (Requires Base64)
     try {
-        await ensureBase64(); // Load Base64 for Google
+        await ensureBase64(); // Load Base64 for Google/OpenRouter
 
-        const provider = 'google';
+        let provider = 'google';
         let model;
+        let apiKey;
+
         if (pageConfig.cheap_engine === false) {
              // Paid User: STRICTLY use configured model.
-             // If no model is configured, we MUST throw an error or use a safe fallback.
-             // But user asked to NOT use default if possible.
              if (pageConfig.chatmodel) {
                  model = pageConfig.chatmodel;
              } else {
-                 throw new Error("Own API Mode: No Chat Model selected in configuration.");
+                 return { text: "Error: No Chat Model selected in configuration for Own API.", usage: 0 };
              }
+
+             if (pageConfig.api_key) {
+                 const userKeys = pageConfig.api_key.split(',').map(k => k.trim()).filter(k => k);
+                 if (userKeys.length > 0) apiKey = userKeys[0];
+             }
+
+             // Detect Provider from Key
+             if (apiKey) {
+                 if (apiKey.startsWith('sk-or-v1')) provider = 'openrouter';
+                 else if (apiKey.startsWith('AIza')) provider = 'google';
+                 else if (apiKey.startsWith('gsk_')) provider = 'groq';
+             }
+
+             if (!apiKey) {
+                 return { text: "Error: Own API Mode enabled but no valid API Key found.", usage: 0 };
+             }
+
         } else {
-             // Free User: Default to 1.5-flash
+             // Free User: Default to 1.5-flash or configured Gemini
              model = (pageConfig.chatmodel && pageConfig.chatmodel.includes('gemini')) ? pageConfig.chatmodel : 'gemini-1.5-flash';
+             
+             // Use System Key for Google
+             const keyData = await keyService.getSmartKey(provider, model);
+             if (keyData && keyData.key) apiKey = keyData.key;
         }
 
         console.log(`[Vision] Attempt 1: ${model} (${provider})`);
-        
-        let apiKey;
-        // Prioritize User Key if "Own API" mode
-        if (pageConfig.cheap_engine === false && pageConfig.api_key) {
-             const userKeys = pageConfig.api_key.split(',').map(k => k.trim()).filter(k => k);
-             if (userKeys.length > 0) apiKey = userKeys[0];
-        }
 
-        if (!apiKey) {
-            // If Own API Mode but no key extracted, fail strictly
-            if (pageConfig.cheap_engine === false) {
-                 throw new Error("Own API Mode enabled but no valid API Key found in configuration.");
-            }
+        let result = null;
+        let usage = 0;
 
-            // Otherwise (Free Tier), use System Pool
-            const keyData = await keyService.getSmartKey(provider, model);
-            if (!keyData || !keyData.key) throw new Error(`No Key found for ${model}`);
-            apiKey = keyData.key;
-        }
+        if (provider === 'openrouter') {
+            // OpenRouter Vision Call
+            const imageContent = (!imageUrl.startsWith('data:')) 
+                ? { url: imageUrl }
+                : { url: `data:${mimeType};base64,${base64Image}` };
 
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-        
-        const payload = {
-            contents: [{
-                parts: [
-                    { text: systemPrompt },
-                    { inline_data: { mime_type: mimeType, data: base64Image } }
+            const payload = {
+                model: model,
+                messages: [
+                    { role: "system", content: systemPrompt },
+                    {
+                        role: "user",
+                        content: [{ type: "image_url", image_url: imageContent }]
+                    }
                 ]
-            }]
-        };
+            };
 
-        const visionResponse = await axios.post(url, payload, {
-            headers: { 'Content-Type': 'application/json' },
-            timeout: 20000
-        });
+            const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', payload, {
+                headers: { 
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json',
+                    'HTTP-Referer': 'https://orderly-conversations.com', 
+                    'X-Title': 'Orderly Conversations'
+                },
+                timeout: 30000
+            });
 
-        const result = visionResponse.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        const usage = visionResponse.data?.usageMetadata?.totalTokenCount || 0;
-        if (!result) throw new Error("Empty response from Gemini");
+            result = response.data?.choices?.[0]?.message?.content;
+            usage = response.data?.usage?.total_tokens || 0;
+
+        } else if (provider === 'google') {
+            // Google Vision Call
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+            const payload = {
+                contents: [{
+                    parts: [
+                        { text: systemPrompt },
+                        { inline_data: { mime_type: mimeType, data: base64Image } }
+                    ]
+                }]
+            };
+
+            const visionResponse = await axios.post(url, payload, {
+                headers: { 'Content-Type': 'application/json' },
+                timeout: 20000
+            });
+
+            result = visionResponse.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+            usage = visionResponse.data?.usageMetadata?.totalTokenCount || 0;
+        } else {
+             throw new Error(`Provider ${provider} not supported for Vision yet.`);
+        }
+
+        if (!result) throw new Error(`Empty response from ${provider}`);
         
         logDebug(`[Vision] Success with ${model}: ${result.substring(0, 30)}... Usage: ${usage}`);
         return { text: result, usage: usage };
@@ -1432,11 +1473,11 @@ Rules:
     } catch (error) {
         const errMsg = error.response?.data?.error?.message || error.message;
         console.warn(`[Vision] Attempt 1 Failed: ${errMsg}`);
-        errors.push(`Gemini Attempt 1: ${errMsg}`);
+        errors.push(`${pageConfig.cheap_engine === false ? 'Own API' : 'Gemini Attempt 1'}: ${errMsg}`);
         
-        // STOP if Own API (Paid User) - Do NOT fallback
+        // STOP if Own API (Paid User) - Return Error Text instead of Throwing so AI knows
         if (pageConfig && pageConfig.cheap_engine === false) {
-             throw new Error(`Vision Analysis Failed with your API Key: ${errMsg}`);
+             return { text: `[Vision Analysis Failed] Error: ${errMsg}`, usage: 0 };
         }
     }
 

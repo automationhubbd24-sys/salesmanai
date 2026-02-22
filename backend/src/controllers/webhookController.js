@@ -682,7 +682,8 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 }
             }
             if (combinedImageAnalysis) {
-                combinedText += `\n\n[System: User sent ${allImages.length} images. Analysis follows:]${combinedImageAnalysis}`;
+                // Wrap with [Image Analysis Result] tag to match System Prompt instructions
+                combinedText += `\n\n[Image Analysis Result]\n${combinedImageAnalysis}`;
             } else {
                 combinedText += `\n[User sent ${allImages.length} images: ${allImages.join(', ')}]`;
             }

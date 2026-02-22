@@ -1288,7 +1288,8 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
 
     if (imageAnalyzeText && imageAnalyzeText.trim() !== "") {
         if (finalOutput) finalOutput += "\n\n";
-        finalOutput += imageAnalyzeText;
+        // Wrap with [Image Analysis Result] tag to match System Prompt instructions
+        finalOutput += `[Image Analysis Result]\n${imageAnalyzeText}`;
     }
 
     // 3. Audio Transcripts (Critical for Voice Notes)
