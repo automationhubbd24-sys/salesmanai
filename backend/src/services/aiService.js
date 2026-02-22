@@ -321,12 +321,18 @@ function extractJsonFromAiResponse(rawContent) {
     // If 'reply' is missing, check if it is a tool call.
     // If not a tool call and not a reply, it is an INVALID response.
     if (!parsed.reply) {
+        // FLEXIBLE FALLBACK: Check common aliases before failing
+        if (parsed.response && typeof parsed.response === 'string') parsed.reply = parsed.response;
+        else if (parsed.message && typeof parsed.message === 'string') parsed.reply = parsed.message;
+        else if (parsed.answer && typeof parsed.answer === 'string') parsed.reply = parsed.answer;
+        else if (parsed.text && typeof parsed.text === 'string') parsed.reply = parsed.text;
+
         // Check for Tool Call
         const isTool = (parsed.tool && typeof parsed.tool === 'string') ||
                        (parsed.tools && Array.isArray(parsed.tools)) ||
                        (parsed.function && typeof parsed.function === 'string');
 
-        if (!isTool) {
+        if (!parsed.reply && !isTool) {
             console.warn("[AI] Strict Parse Warning: 'reply' field missing and NOT a tool call.", JSON.stringify(parsed));
             // FAIL SAFE: Return null to prevent sending garbage to user.
             // The user said: "user er kase kono ans jabe na but fb cahts e error show hobe"
@@ -346,8 +352,15 @@ function extractReplyFromText(text) {
             if (parsed.reply && typeof parsed.reply === 'string') {
                 return parsed.reply;
             }
+            // FLEXIBLE FALLBACK: Check aliases
+            if (parsed.response && typeof parsed.response === 'string') return parsed.response;
+            if (parsed.message && typeof parsed.message === 'string') return parsed.message;
+            if (parsed.answer && typeof parsed.answer === 'string') return parsed.answer;
+            if (parsed.text && typeof parsed.text === 'string') return parsed.text;
+
             // If reply is explicitly null, return empty string (don't return raw JSON)
-            if ('reply' in parsed && parsed.reply === null) {
+            if (('reply' in parsed && parsed.reply === null) || 
+                ('response' in parsed && parsed.response === null)) {
                 return "";
             }
 
@@ -366,7 +379,7 @@ function extractReplyFromText(text) {
         }
     } catch (e) {}
 
-    const match = text.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+    const match = text.match(/"(?:reply|response|message|answer)"\s*:\s*"((?:[^"\\]|\\.)*)"/);
     if (match && match[1]) {
         try {
             return JSON.parse(`"${match[1]}"`);
