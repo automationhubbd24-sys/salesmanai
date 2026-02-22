@@ -50,10 +50,11 @@ async function updateBestFreeModels() {
         }));
 
         // --- GEMINI SELECTION LOGIC (Cheap Engine) ---
-        // We use Gemini 2.0 Flash to pick the best models from the list
+        // We use the available Gemini model to pick the best models from the list
         try {
             console.log(`[AI Optimizer] Asking Gemini to select best models from ${candidates.length} candidates...`);
-            const keyData = await keyService.getSmartKey('google', 'gemini-2.5-flash');
+            // Dynamic Key Fetch: Get any available Gemini Flash model
+            const keyData = await keyService.getSmartKey('google', 'gemini-2.0-flash'); 
             
             if (keyData && keyData.key) {
                 const prompt = `
@@ -80,9 +81,12 @@ Return ONLY valid JSON:
                     baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/' 
                 });
 
+                // Use the model associated with the key (or fallback to user preferred default)
+                // User Request: No hardcoded defaults if possible.
+                const activeModel = keyData.model || 'gemini-2.0-flash';
+                
                 const completion = await openai.chat.completions.create({
-                    // Use Gemini 2.0 Flash for the request
-                    model: 'gemini-2.0-flash', 
+                    model: activeModel, 
                     messages: [{ role: 'user', content: prompt }],
                     response_format: { type: "json_object" }
                 });
@@ -1250,70 +1254,60 @@ const WAHA_API_KEY = process.env.WAHA_API_KEY || 'e9457ca133cc4d73854ee0d43cee3b
 
 // --- HELPER: Process Image (Vision) with Smart Fallback ---
 async function processImageWithVision(imageUrl, pageConfig = {}, customOptions = null) {
-    let base64Image;
-    let mimeType;
+    let base64Image = null;
+    let mimeType = null;
     let errors = [];
 
-    // 0. Pre-process Image (Download/Decode)
-    try {
-        if (imageUrl.startsWith('data:')) {
-            console.log(`[Vision] Processing Base64 Data URI...`);
-            // Safer parsing than strict regex
-            const parts = imageUrl.split(',');
-            if (parts.length >= 2) {
-                // Extract mime type from first part (data:image/jpeg;base64)
-                const mimeMatch = parts[0].match(/:(.*?);/);
-                mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
-                // Join rest as data (in case of extra commas, though unlikely in base64)
-                base64Image = parts.slice(1).join(',');
-                // Clean whitespace just in case
-                base64Image = base64Image.replace(/\s/g, '');
-            } else {
-                throw new Error("Invalid Data URI format (missing comma)");
-            }
-        } else {
-            console.log(`[Vision] Downloading image from URL: ${imageUrl.substring(0, 50)}...`);
-            
-            // WAHA Authentication Check
-            const headers = { 'User-Agent': 'Mozilla/5.0' };
-            if (imageUrl.includes(WAHA_BASE_URL) || imageUrl.includes('wahubbd.salesmanchatbot.online')) {
-                console.log('[Vision] Detected WAHA URL. Injecting X-Api-Key.');
-                headers['X-Api-Key'] = WAHA_API_KEY;
-            } else if (imageUrl.includes('graph.facebook.com') && pageConfig.page_access_token) {
-                console.log('[Vision] Detected Facebook Graph URL. Injecting Access Token.');
-                headers['Authorization'] = `Bearer ${pageConfig.page_access_token}`;
-            }
+    // Helper to ensure we have Base64 data (Lazy Loading)
+    const ensureBase64 = async () => {
+        if (base64Image) return; // Already loaded
 
-            const response = await axios.get(imageUrl, { 
-                responseType: 'arraybuffer',
-                headers: headers,
-                timeout: 10000 // 10s timeout
-            });
-            base64Image = Buffer.from(response.data).toString('base64');
-            mimeType = response.headers['content-type'] || 'image/jpeg';
-            logDebug(`[Vision] Image Downloaded. Mime: ${mimeType}, Size: ${base64Image.length}`);
+        try {
+            if (imageUrl.startsWith('data:')) {
+                console.log(`[Vision] Processing Base64 Data URI...`);
+                const parts = imageUrl.split(',');
+                if (parts.length >= 2) {
+                    const mimeMatch = parts[0].match(/:(.*?);/);
+                    mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+                    base64Image = parts.slice(1).join('').replace(/\s/g, '');
+                } else {
+                    throw new Error("Invalid Data URI format");
+                }
+            } else {
+                console.log(`[Vision] Downloading image from URL for Base64 fallback: ${imageUrl.substring(0, 50)}...`);
+                const headers = { 'User-Agent': 'Mozilla/5.0' };
+                if (imageUrl.includes(WAHA_BASE_URL) || imageUrl.includes('wahubbd.salesmanchatbot.online')) {
+                    headers['X-Api-Key'] = WAHA_API_KEY;
+                } else if (imageUrl.includes('graph.facebook.com') && pageConfig.page_access_token) {
+                    headers['Authorization'] = `Bearer ${pageConfig.page_access_token}`;
+                }
+
+                const response = await axios.get(imageUrl, { 
+                    responseType: 'arraybuffer',
+                    headers: headers,
+                    timeout: 10000 
+                });
+                base64Image = Buffer.from(response.data).toString('base64');
+                mimeType = response.headers['content-type'] || 'image/jpeg';
+                logDebug(`[Vision] Image Downloaded. Mime: ${mimeType}, Size: ${base64Image.length}`);
+            }
+        } catch (e) {
+            throw new Error(`Image Pre-processing Failed: ${e.message}`);
         }
-    } catch (e) {
-        const errorMsg = `[Vision] Pre-processing Failed: ${e.message}`;
-        console.error(errorMsg);
-        logDebug(errorMsg);
-        return `Image found but failed to download/decode. Reason: ${e.message}`;
-    }
+    };
 
     // Determine System Prompt
-    // Use only user-provided prompt; no backend default
-    // UPDATE: User requested advanced image analysis. We MUST provide a smart default if none exists.
     let systemPrompt = typeof customOptions?.prompt === 'string' && customOptions.prompt.trim() !== "" 
         ? customOptions.prompt 
-        : `Analyze this image in extreme detail and extract the following information:
-1. **Product Name**: The exact name of the product (e.g., 'L'Oreal Paris Total Repair 5 Shampoo').
-2. **Brand**: The brand name visible on the packaging (e.g., 'L'Oreal', 'Nivea', 'Samsung').
-3. **Type/Category**: What kind of product is it? (e.g., 'Shampoo', 'Lipstick', 'Smartphone').
-4. **Key Features/Variants**: Any specific details like color, flavor, or model number (e.g., 'Red', 'Aloe Vera', 'Galaxy S21').
-5. **Visible Text**: Read ALL text on the label, including small print, price tags (if any), and ingredients.
-
-If the image contains a product, describe it exactly as a customer would search for it in an online store.
-Example Output Format: "Product: [Name] | Brand: [Brand] | Type: [Type] | Details: [Color/Variant] | Text: [Visible Text]"`;
+        : `Extract the exact product name from this image.
+Rules:
+- Output must start with: Product:
+- Include brand + full product name.
+- Include size if visible.
+- Ignore price, offer, discount text.
+- Do not explain anything.
+- Do not add extra words.
+- Single line output only.`;
 
     // --- PRIORITY ATTEMPT (Custom Options) ---
     if (customOptions?.provider === 'openrouter' && customOptions?.model) {
@@ -1323,40 +1317,39 @@ Example Output Format: "Product: [Name] | Brand: [Brand] | Type: [Type] | Detail
             console.log(`[Vision] Priority Attempt: ${model} (${provider})`);
 
             let keyData = await keyService.getSmartKey(provider, model);
-            if (!keyData || !keyData.key) {
-                 keyData = await keyService.getSmartKey(provider, 'default');
-            }
-            
+            if (!keyData || !keyData.key) keyData = await keyService.getSmartKey(provider, 'default');
             if (!keyData || !keyData.key) throw new Error("No Key found for OpenRouter");
+
             const apiKey = keyData.key;
-            const url = 'https://openrouter.ai/api/v1/chat/completions';
             
+            // USE URL DIRECTLY IF POSSIBLE (User Preference)
+            const imageContent = imageUrl.startsWith('data:') 
+                ? { url: imageUrl } 
+                : { url: imageUrl }; // OpenRouter handles URLs directly
+
             const payload = {
                 model: model,
                 messages: [
                     { role: "system", content: systemPrompt },
                     {
                         role: "user",
-                        content: [
-                            { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Image}` } }
-                        ]
+                        content: [{ type: "image_url", image_url: imageContent }]
                     }
                 ]
             };
 
-            const response = await axios.post(url, payload, {
+            const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', payload, {
                 headers: { 
                     'Authorization': `Bearer ${apiKey}`,
                     'Content-Type': 'application/json',
                     'HTTP-Referer': 'https://orderly-conversations.com', 
                     'X-Title': 'Orderly Conversations'
                 },
-                timeout: 20000 // 20s Timeout
+                timeout: 25000
             });
 
             const result = response.data?.choices?.[0]?.message?.content;
             const usage = response.data?.usage?.total_tokens || 0;
-
             if (!result) throw new Error("Empty response from OpenRouter");
 
             logDebug(`[Vision] Success with Priority ${model}: ${result.substring(0, 30)}... Usage: ${usage}`);
@@ -1366,39 +1359,59 @@ Example Output Format: "Product: [Name] | Brand: [Brand] | Type: [Type] | Detail
             const errMsg = error.response?.data?.error?.message || error.message;
             console.warn(`[Vision] Priority Attempt (${customOptions.model}) Failed: ${errMsg}`);
             errors.push(`Priority OpenRouter: ${errMsg}`);
-            logDebug(`[Vision] Priority Error: ${errMsg}`);
             // Continue to fallbacks...
         }
     }
 
     // --- FALLBACK STRATEGY ---
-    // Priority 1: User Selected Model (if Gemini) or Gemini 2.0 Flash
-    // Priority 2: Gemini 2.0 Flash (Retry/Fallback)
-    // Priority 3: OpenRouter Best Free Vision (Qwen 2.5 VL)
     
-    // ATTEMPT 1: User Model / Gemini 2.0 Flash
+    // ATTEMPT 1: User Model / Gemini 2.0 Flash (Requires Base64)
     try {
+        await ensureBase64(); // Load Base64 for Google
+
         const provider = 'google';
-        // Respect User's Chat Model if it's a Gemini model
-        let model = (pageConfig.chatmodel && pageConfig.chatmodel.includes('gemini')) 
-            ? pageConfig.chatmodel 
-            : 'gemini-2.0-flash';
+        let model;
+        if (pageConfig.cheap_engine === false) {
+             // Paid User: STRICTLY use configured model.
+             // If no model is configured, we MUST throw an error or use a safe fallback.
+             // But user asked to NOT use default if possible.
+             if (pageConfig.chatmodel) {
+                 model = pageConfig.chatmodel;
+             } else {
+                 throw new Error("Own API Mode: No Chat Model selected in configuration.");
+             }
+        } else {
+             // Free User: Default to 1.5-flash
+             model = (pageConfig.chatmodel && pageConfig.chatmodel.includes('gemini')) ? pageConfig.chatmodel : 'gemini-1.5-flash';
+        }
 
         console.log(`[Vision] Attempt 1: ${model} (${provider})`);
         
-        const keyData = await keyService.getSmartKey(provider, model);
-        if (!keyData || !keyData.key) throw new Error(`No Key found for ${model}`);
+        let apiKey;
+        // Prioritize User Key if "Own API" mode
+        if (pageConfig.cheap_engine === false && pageConfig.api_key) {
+             const userKeys = pageConfig.api_key.split(',').map(k => k.trim()).filter(k => k);
+             if (userKeys.length > 0) apiKey = userKeys[0];
+        }
 
-        const apiKey = keyData.key;
+        if (!apiKey) {
+            // If Own API Mode but no key extracted, fail strictly
+            if (pageConfig.cheap_engine === false) {
+                 throw new Error("Own API Mode enabled but no valid API Key found in configuration.");
+            }
+
+            // Otherwise (Free Tier), use System Pool
+            const keyData = await keyService.getSmartKey(provider, model);
+            if (!keyData || !keyData.key) throw new Error(`No Key found for ${model}`);
+            apiKey = keyData.key;
+        }
+
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
         
-        // Gemini doesn't strictly separate system prompt in generateContent
-        const textPrompt = systemPrompt;
-
         const payload = {
             contents: [{
                 parts: [
-                    { text: textPrompt },
+                    { text: systemPrompt },
                     { inline_data: { mime_type: mimeType, data: base64Image } }
                 ]
             }]
@@ -1406,12 +1419,11 @@ Example Output Format: "Product: [Name] | Brand: [Brand] | Type: [Type] | Detail
 
         const visionResponse = await axios.post(url, payload, {
             headers: { 'Content-Type': 'application/json' },
-            timeout: 20000 // 20s Timeout
+            timeout: 20000
         });
 
         const result = visionResponse.data?.candidates?.[0]?.content?.parts?.[0]?.text;
         const usage = visionResponse.data?.usageMetadata?.totalTokenCount || 0;
-
         if (!result) throw new Error("Empty response from Gemini");
         
         logDebug(`[Vision] Success with ${model}: ${result.substring(0, 30)}... Usage: ${usage}`);
@@ -1421,120 +1433,113 @@ Example Output Format: "Product: [Name] | Brand: [Brand] | Type: [Type] | Detail
         const errMsg = error.response?.data?.error?.message || error.message;
         console.warn(`[Vision] Attempt 1 Failed: ${errMsg}`);
         errors.push(`Gemini Attempt 1: ${errMsg}`);
-        logDebug(`[Vision] Error 1: ${errMsg}`);
-
-        // STRICT OWN API LOCK (Vision)
-        if (pageConfig && pageConfig.api_key && pageConfig.cheap_engine === false) {
-             console.error(`[Vision] Strict Own API Failed. Blocking System Fallback.`);
+        
+        // STOP if Own API (Paid User) - Do NOT fallback
+        if (pageConfig && pageConfig.cheap_engine === false) {
              throw new Error(`Vision Analysis Failed with your API Key: ${errMsg}`);
         }
     }
 
     // ATTEMPT 2: Gemini 2.0 Flash (Explicit Fallback)
-    try {
-        const provider = 'google';
-        const model = 'gemini-2.0-flash';
-        
-        // Skip if we just tried 2.0 Flash in Attempt 1
-        const attemptedModel = (pageConfig.chatmodel && pageConfig.chatmodel.includes('gemini')) ? pageConfig.chatmodel : 'gemini-2.0-flash';
-        if (attemptedModel === model) {
-             throw new Error("Already attempted in Step 1");
-        }
+    // ONLY for Free Users
+    if (pageConfig.cheap_engine !== false) {
+        try {
+            await ensureBase64(); // Ensure loaded
+            
+            const provider = 'google';
+            const model = 'gemini-2.0-flash';
+            
+            const attemptedModel = (pageConfig.chatmodel && pageConfig.chatmodel.includes('gemini')) ? pageConfig.chatmodel : 'gemini-1.5-flash';
+            if (attemptedModel === model) throw new Error("Already attempted in Step 1");
 
-        console.log(`[Vision] Attempt 2: ${model} (${provider})`);
-        
-        const keyData = await keyService.getSmartKey(provider, model);
-        if (!keyData || !keyData.key) throw new Error("No Key found for Gemini 2.0 Flash");
+            console.log(`[Vision] Attempt 2: ${model} (${provider})`);
+            
+            const keyData = await keyService.getSmartKey(provider, model);
+            if (!keyData || !keyData.key) throw new Error("No Key found for Gemini 2.0 Flash");
 
-        const apiKey = keyData.key;
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-        
-        const textPrompt = systemPrompt; // Reuse prompt
-        const payload = {
-            contents: [{
-                parts: [
-                    { text: textPrompt },
-                    { inline_data: { mime_type: mimeType, data: base64Image } }
-                ]
-            }]
-        };
+            const apiKey = keyData.key;
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+            
+            const payload = {
+                contents: [{
+                    parts: [
+                        { text: systemPrompt },
+                        { inline_data: { mime_type: mimeType, data: base64Image } }
+                    ]
+                }]
+            };
 
-        const visionResponse = await axios.post(url, payload, {
-            headers: { 'Content-Type': 'application/json' }
-        });
+            const visionResponse = await axios.post(url, payload, {
+                headers: { 'Content-Type': 'application/json' }
+            });
 
-        const result = visionResponse.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        const usage = visionResponse.data?.usageMetadata?.totalTokenCount || 0;
+            const result = visionResponse.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+            const usage = visionResponse.data?.usageMetadata?.totalTokenCount || 0;
+            if (!result) throw new Error("Empty response from Gemini Flash");
 
-        if (!result) throw new Error("Empty response from Gemini Flash");
+            logDebug(`[Vision] Success with ${model}: ${result.substring(0, 30)}... Usage: ${usage}`);
+            return { text: result, usage: usage };
 
-        logDebug(`[Vision] Success with ${model}: ${result.substring(0, 30)}... Usage: ${usage}`);
-        return { text: result, usage: usage };
-
-    } catch (error) {
-        const errMsg = error.response?.data?.error?.message || error.message;
-        if (errMsg !== "Already attempted in Step 1") {
-            console.warn(`[Vision] Attempt 2 (${'gemini-2.0-flash'}) Failed: ${errMsg}`);
-            errors.push(`Gemini 2.0 Flash: ${errMsg}`);
-            logDebug(`[Vision] Error 2: ${errMsg}`);
+        } catch (error) {
+            const errMsg = error.response?.data?.error?.message || error.message;
+            if (errMsg !== "Already attempted in Step 1") {
+                console.warn(`[Vision] Attempt 2 (${'gemini-2.0-flash'}) Failed: ${errMsg}`);
+                errors.push(`Gemini 2.0 Flash: ${errMsg}`);
+            }
         }
     }
 
     // ATTEMPT 3: OpenRouter (Qwen 2.5 VL - Free)
-    try {
-        const provider = 'openrouter';
-        const model = 'qwen/qwen-2.5-vl-7b-instruct:free';
-        console.log(`[Vision] Attempt 3: ${model} (${provider})`);
+    // ONLY for Free Users
+    if (pageConfig.cheap_engine !== false) {
+        try {
+            const provider = 'openrouter';
+            const model = 'qwen/qwen-2.5-vl-7b-instruct:free';
+            console.log(`[Vision] Attempt 3: ${model} (${provider})`);
 
-        let keyData = await keyService.getSmartKey(provider, model);
-        if (!keyData || !keyData.key) {
-             // Try generic default
-             keyData = await keyService.getSmartKey(provider, 'default');
-        }
-        
-        if (!keyData || !keyData.key) throw new Error("No Key found for OpenRouter");
+            let keyData = await keyService.getSmartKey(provider, model);
+            if (!keyData || !keyData.key) keyData = await keyService.getSmartKey(provider, 'default');
+            if (!keyData || !keyData.key) throw new Error("No Key found for OpenRouter");
 
-        const apiKey = keyData.key;
-        const url = 'https://openrouter.ai/api/v1/chat/completions';
-        
-        const payload = {
-            model: model,
-            messages: [
-                {
-                    role: "system",
-                    content: systemPrompt
-                },
-                {
-                    role: "user",
-                    content: [
-                        { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Image}` } }
-                    ]
+            const apiKey = keyData.key;
+            
+            // Use URL if available (Prefer URL for OpenRouter)
+            const imageContent = (!imageUrl.startsWith('data:')) 
+                ? { url: imageUrl }
+                : { url: `data:${mimeType};base64,${base64Image}` }; // Use base64 if it was a data URI
+
+            const payload = {
+                model: model,
+                messages: [
+                    { role: "system", content: systemPrompt },
+                    {
+                        role: "user",
+                        content: [{ type: "image_url", image_url: imageContent }]
+                    }
+                ]
+            };
+
+            const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', payload, {
+                headers: { 
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json',
+                    'HTTP-Referer': 'https://orderly-conversations.com', 
+                    'X-Title': 'Orderly Conversations'
                 }
-            ]
-        };
+            });
 
-        const response = await axios.post(url, payload, {
-            headers: { 
-                'Authorization': `Bearer ${apiKey}`,
-                'Content-Type': 'application/json',
-                'HTTP-Referer': 'https://orderly-conversations.com', 
-                'X-Title': 'Orderly Conversations'
-            }
-        });
+            const result = response.data?.choices?.[0]?.message?.content;
+            const usage = response.data?.usage?.total_tokens || 0;
+            if (!result) throw new Error("Empty response from OpenRouter");
 
-        const result = response.data?.choices?.[0]?.message?.content;
-        const usage = response.data?.usage?.total_tokens || 0;
+            logDebug(`[Vision] Success with ${model}: ${result.substring(0, 30)}... Usage: ${usage}`);
+            return { text: result, usage: usage };
 
-        if (!result) throw new Error("Empty response from OpenRouter");
-
-        logDebug(`[Vision] Success with ${model}: ${result.substring(0, 30)}... Usage: ${usage}`);
-        return { text: result, usage: usage };
-
-    } catch (error) {
-        const errMsg = error.response?.data?.error?.message || error.message;
-        console.warn(`[Vision] Attempt 3 (${'qwen/qwen-2.5-vl-7b-instruct:free'}) Failed: ${errMsg}`);
-        errors.push(`OpenRouter Qwen: ${errMsg}`);
-        logDebug(`[Vision] Error 3: ${errMsg}`);
+        } catch (error) {
+            const errMsg = error.response?.data?.error?.message || error.message;
+            console.warn(`[Vision] Attempt 3 (${'qwen/qwen-2.5-vl-7b-instruct:free'}) Failed: ${errMsg}`);
+            errors.push(`OpenRouter Qwen: ${errMsg}`);
+        }
     }
 
     // FINAL FAILURE LOGGING

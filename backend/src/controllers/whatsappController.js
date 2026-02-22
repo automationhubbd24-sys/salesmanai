@@ -1000,32 +1000,28 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                 // await dbService.toggleWhatsAppLock(sessionName, senderId, true); 
                 return; // <--- STOP HERE
             } else {
-                // Label Removed -> Unlock immediately
+                // Label Removed -> Unlock MEMORY ONLY
                 // User Requirement: "admin remove korle kaj korbe"
-                // We must clear BOTH memory lock and DB lock to be safe.
-                let unlocked = false;
+                // We clear memory lock so AI can resume.
+                // CRITICAL FIX: Do NOT clear DB lock here. DB lock is for Emoji/Manual locks.
+                // If we clear DB lock here, it overrides the Emoji Lock system.
                 
                 if (handoverMap.has(chatKey)) {
                     console.log(`[WA] Blocking label removed (Early Check). Clearing Memory Lock for ${chatKey}.`);
                     handoverMap.delete(chatKey);
-                    unlocked = true;
+                    // We don't track if memory lock was from Label or Emoji, but usually Emoji sets DB lock too.
+                    // So if DB lock is active (checked later), it will still block.
                 }
 
-                // Also check/clear DB lock if it exists (Fix for Emoji Lock persistence)
-                // We do this asynchronously to not block flow too much, or await it? 
-                // Await is safer to ensure next lines don't hit "isLocked" check.
-                
-                // FIXED: Use getWhatsAppContact to check 'is_locked' status instead of checkWhatsAppLockStatus (which checks for failures)
+                // REMOVED: Automatic DB Unlock. 
+                // Reason: This was disabling Emoji Lock because every message without a label triggered an unlock.
+                /*
                 const contact = await dbService.getWhatsAppContact(sessionName, senderId);
                 if (contact && contact.is_locked) {
                      console.log(`[WA] Blocking label removed (Early Check). Clearing DB Lock for ${senderId}.`);
                      await dbService.toggleWhatsAppLock(sessionName, senderId, false);
-                     unlocked = true;
                 }
-                
-                if (unlocked) {
-                    console.log(`[WA] User ${senderId} fully unlocked via Label Check.`);
-                }
+                */
             }
         }
     } catch (e) {
@@ -1048,6 +1044,63 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
     if (handoverUntil && handoverUntil > Date.now()) {
         console.log(`[WA] Handover active (Memory - Late Check) for ${chatKey}. Skipping AI.`);
         return;
+    }
+
+    // --- ENHANCED LOCK SYSTEM (3-Layer Check) ---
+    // Config for Emojis
+    let LOCK_EMOJIS = ['🛑', '🔒', '⛔'];
+    let UNLOCK_EMOJIS = ['🟢', '🔓', '✅'];
+    if (pageConfig) {
+         // Fix: Robust Splitting for Space/Comma separated emojis
+         if (pageConfig.lock_emojis) {
+             const locks = pageConfig.lock_emojis.split(/[, ]+/).map(e => e.trim()).filter(e => e);
+             if (locks.length > 0) LOCK_EMOJIS = locks;
+         }
+         if (pageConfig.unlock_emojis) {
+             const unlocks = pageConfig.unlock_emojis.split(/[, ]+/).map(e => e.trim()).filter(e => e);
+             if (unlocks.length > 0) UNLOCK_EMOJIS = unlocks;
+         }
+    }
+
+    // Layer 3: Message History Scan (Self-Healing) - PRIORITY CHECK
+    // Checks last 20 messages for missed Emoji Commands. 
+    // This runs BEFORE DB check to catch "Zombie Locks" or "Missed Unlocks".
+    try {
+        const historyCheck = await dbService.checkWhatsAppEmojiLock(sessionName, senderId, LOCK_EMOJIS, UNLOCK_EMOJIS);
+        
+        if (historyCheck) {
+            if (historyCheck.locked) {
+                 console.log(`[WA Lock] Handover active (History Scan - Layer 3) for ${chatKey}. Found Lock Emoji at ${new Date(Number(historyCheck.timestamp)).toISOString()}`);
+                 // Sync DB & Memory
+                 await dbService.toggleWhatsAppLock(sessionName, senderId, true);
+                 handoverMap.set(chatKey, Date.now() + 24 * 60 * 60 * 1000);
+                 return; // STOP AI
+            } else {
+                 // Explicit Unlock Found in History
+                 console.log(`[WA Lock] Unlock detected (History Scan - Layer 3). Ensuring DB is Unlocked.`);
+                 // Self-Heal: If DB was locked, this fixes it.
+                 await dbService.toggleWhatsAppLock(sessionName, senderId, false);
+                 // Clear Memory Lock too
+                 handoverMap.delete(chatKey);
+                 // Continue to Layer 2 (which will now see Unlocked) or fall through
+            }
+        }
+    } catch (err) {
+        console.warn(`[WA] Failed to check history lock: ${err.message}`);
+    }
+
+    // Layer 2: Database Persistence Check
+    // If History was silent (null), we fallback to DB state.
+    try {
+        const contact = await dbService.getWhatsAppContact(sessionName, senderId);
+        if (contact && contact.is_locked) {
+            console.log(`[WA] Handover active (DB Lock - Layer 2) for ${chatKey}. Skipping AI.`);
+            // Sync Memory
+            handoverMap.set(chatKey, Date.now() + 24 * 60 * 60 * 1000);
+            return; // STOP AI
+        }
+    } catch (err) {
+        console.warn(`[WA] Failed to check DB lock: ${err.message}`);
     }
 
     for (const msg of messages) {

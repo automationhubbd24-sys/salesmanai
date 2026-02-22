@@ -875,10 +875,11 @@ async function toggleWhatsAppLock(sessionName, phoneNumber, isLocked) {
     }
 }
 
-// 27. Check WhatsApp Emoji Lock (History Scan)
+// 27. Check WhatsApp Emoji Lock (History Scan - Enhanced)
 async function checkWhatsAppEmojiLock(sessionName, phoneNumber, lockEmojis, unlockEmojis) {
     const { query } = require('./pgClient');
     try {
+        // Increase LIMIT to 20 for deeper history scan
         const result = await query(
             `SELECT text, reply_by, timestamp
              FROM whatsapp_chats
@@ -886,26 +887,37 @@ async function checkWhatsAppEmojiLock(sessionName, phoneNumber, lockEmojis, unlo
                AND recipient_id = $2
                AND reply_by IN ('admin','bot')
              ORDER BY timestamp DESC
-             LIMIT 10`,
+             LIMIT 20`,
             [sessionName, phoneNumber]
         );
 
         if (result.rows.length === 0) return null;
 
-        for (const msg of result.rows) {
-            const text = (msg.text || '').trim();
-            if (!text) continue;
+        // Helper to normalize emojis (remove VS16 \uFE0F and NFC)
+        const normalize = (str) => (str || '').replace(/\uFE0F/g, '').normalize('NFC');
 
-            for (const emoji of lockEmojis) {
-                if (text.includes(emoji)) {
-                    console.log(`[WA Lock] Found Lock Emoji '${emoji}' in message: "${text}"`);
+        // Pre-normalize config emojis
+        const normLock = lockEmojis.map(normalize);
+        const normUnlock = unlockEmojis.map(normalize);
+
+        for (const msg of result.rows) {
+            const rawText = (msg.text || '').trim();
+            if (!rawText) continue;
+
+            const normText = normalize(rawText);
+
+            // Check Lock Emojis
+            for (const emoji of normLock) {
+                if (normText.includes(emoji)) {
+                    console.log(`[WA Lock] Found Lock Emoji (Normalized) in message: "${rawText}"`);
                     return { locked: true, timestamp: msg.timestamp };
                 }
             }
 
-            for (const emoji of unlockEmojis) {
-                if (text.includes(emoji)) {
-                    console.log(`[WA Lock] Found Unlock Emoji '${emoji}' in message: "${text}"`);
+            // Check Unlock Emojis
+            for (const emoji of normUnlock) {
+                if (normText.includes(emoji)) {
+                    console.log(`[WA Lock] Found Unlock Emoji (Normalized) in message: "${rawText}"`);
                     return { locked: false, timestamp: msg.timestamp };
                 }
             }
