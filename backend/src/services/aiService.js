@@ -720,11 +720,33 @@ You must output valid JSON only.
 
         const systemMessage = { role: 'system', content: n8nSystemPrompt };
     
-        messages = [
-            systemMessage,
-            ...history,
-            { role: 'user', content: cleanUserMessage }
-        ];
+        // Deduplicate: If the last message in history is identical to the current user message, don't add it again.
+        // This prevents "User: Hello" -> "User: Hello" which confuses the AI.
+        const lastHistoryMsg = history.length > 0 ? history[history.length - 1] : null;
+        let isDuplicate = false;
+        
+        if (lastHistoryMsg && lastHistoryMsg.role === 'user') {
+            // Compare content (handle object content vs string content if needed, but usually string here)
+            const histContent = typeof lastHistoryMsg.content === 'string' ? lastHistoryMsg.content.trim() : JSON.stringify(lastHistoryMsg.content);
+            const currContent = cleanUserMessage.trim();
+            if (histContent === currContent) {
+                isDuplicate = true;
+            }
+        }
+
+        if (isDuplicate) {
+            console.log(`[AI] Deduplicated user message: "${cleanUserMessage}" already in history.`);
+            messages = [
+                systemMessage,
+                ...history
+            ];
+        } else {
+            messages = [
+                systemMessage,
+                ...history,
+                { role: 'user', content: cleanUserMessage }
+            ];
+        }
     }
 
     // --- UNIFIED AI REQUEST LOGIC ---

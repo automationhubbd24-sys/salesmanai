@@ -81,8 +81,8 @@ async function getCommandConfig(forceRefresh = false) {
     } catch (error) {
         console.error("[CommandAPI] Error fetching config:", error.message);
         return null;
-        lastCacheUpdate = now;
-
+    }
+    
     return configCache;
 }
 
@@ -90,5 +90,3 @@ module.exports = {
     getCommandConfig,
     getFreeOpenRouterModels
 };
-
-}
