@@ -346,6 +346,10 @@ function extractReplyFromText(text) {
             if (parsed.reply && typeof parsed.reply === 'string') {
                 return parsed.reply;
             }
+            // If reply is explicitly null, return empty string (don't return raw JSON)
+            if ('reply' in parsed && parsed.reply === null) {
+                return "";
+            }
 
             // Detect Tool Calls and block them from being shown as text
             const keys = Object.keys(parsed);
@@ -804,7 +808,7 @@ You must output valid JSON only.
                         const parsed = extractJsonFromAiResponse(rawContent);
                         
                         // --- TOOL HANDLING (Product Search) ---
-                        if (parsed.tool === 'search_products' && parsed.query) {
+                        if (parsed && parsed.tool === 'search_products' && parsed.query) {
                             console.log(`[AI] Tool Call (Phase 1): Searching products for "${parsed.query}"...`);
                             
                             let products = [];
