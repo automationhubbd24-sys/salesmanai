@@ -424,6 +424,9 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 status: 'received',
                 reply_by: 'user'
             });
+
+            // FIX: Also save to backend_chat_histories for AI Context (Short-Term Memory)
+            await dbService.saveChatMessage(sessionId, 'user', msgText);
         } catch (saveErr) {
             // Ignore duplicate key errors, log others
             if (!saveErr.message.includes('unique') && !saveErr.message.includes('duplicate')) {
