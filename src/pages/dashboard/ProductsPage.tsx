@@ -1068,6 +1068,10 @@ export default function ProductsPage() {
                                                     alt={product.name} 
                                                     className="w-full h-full object-cover"
                                                     loading="lazy"
+                                                    onError={(e) => {
+                                                        (e.target as HTMLImageElement).src = "https://placehold.co/100?text=No+Image";
+                                                        (e.target as HTMLImageElement).onerror = null; // Prevent infinite loop
+                                                    }}
                                                 />
                                             ) : (
                                                 <Package className="h-6 w-6 opacity-20" />

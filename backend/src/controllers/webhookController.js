@@ -582,33 +582,42 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         }
         // --------------------------
 
-        // --- OPTIMIZATION: PARALLEL DATA FETCHING ---
-        // We fetch Prompts, User Profile, Chat History, and FB Messages (for handover) in parallel
-        // This significantly reduces latency (User Feedback: "1s debounce but late reply")
-        
-        console.log("Fetching context data in parallel...");
-        
-        // Reduced history limit to save tokens (User Feedback: "System token besi kasse")
-        const historyLimit = 10; 
+        // --- OPTIMIZATION: PARALLEL DATA FETCHING (Modified for Dynamic History) ---
+        // 1. Fetch Page Prompts FIRST to get the 'check_conversion' (History Limit)
+        // This ensures we only fetch exactly what the user configured (Token Saving)
+        let pagePrompts = null;
+        try {
+            pagePrompts = await dbService.getPagePrompts(pageId);
+        } catch (e) {
+            console.warn(`[Webhook] Failed to fetch prompts for ${pageId}:`, e.message);
+        }
 
+        // Determine History Limit (User Setting or Default 10)
+        // "check_conversion" is the setting for Context Memory Limit (1-50)
+        // User Requirement: This limit applies to BOTH text and image memory.
+        let historyLimit = 10; // Default safe limit
+        if (pagePrompts && pagePrompts.check_conversion) {
+            historyLimit = parseInt(pagePrompts.check_conversion, 10);
+            if (isNaN(historyLimit) || historyLimit < 1) historyLimit = 10;
+        }
+        console.log(`[Context] Dynamic History Limit: ${historyLimit} (Source: ${pagePrompts ? 'DB' : 'Default'})`);
+
+        console.log("Fetching remaining context data in parallel...");
+        
+        // 2. Fetch the rest in parallel using the dynamic limit
         // --- MARK SEEN FIRST ---
-        // Ensure 'mark_seen' is sent BEFORE 'typing_on' to avoid cancelling the typing bubble.
-        // We await this to ensure order, and add a small delay.
         try {
             await facebookService.sendTypingAction(senderId, pageConfig.page_access_token, 'mark_seen');
         } catch (e) {}
-        
-        await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay
-        
+
         const typingStartTime = Date.now();
-        // -----------------------
-        
-        const [pagePrompts, userProfile, fbMessages, history, typingResult] = await Promise.all([
-            dbService.getPagePrompts(pageId),
+
+        // 2. Fetch the rest in parallel using the dynamic limit
+        const [userProfile, fbMessages, history, typingResult] = await Promise.all([
             facebookService.getUserProfile(senderId, pageConfig.page_access_token),
             facebookService.getConversationMessages(pageId, senderId, pageConfig.page_access_token, 10), // For Handover Check
             dbService.getChatHistory(sessionId, historyLimit),
-            facebookService.sendTypingAction(senderId, pageConfig.page_access_token, 'typing_on') // Fire and forget (awaited in parallel)
+            facebookService.sendTypingAction(senderId, pageConfig.page_access_token, 'typing_on') 
         ]);
 
         const senderName = userProfile.name || 'Customer';
@@ -816,12 +825,19 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         // If we really need strict limit, we can slice the array locally.
         
         let effectiveHistory = history;
-        if (pagePrompts?.check_conversion) {
-             const limit = Number(pagePrompts.check_conversion);
-             if (limit > 0 && limit < 50) {
-                 effectiveHistory = history.slice(0, limit);
-             }
+        // User Setting: check_conversion (1-50)
+        // If not set, default to 10 to save tokens as per previous feedback.
+        const userHistoryLimit = pagePrompts?.check_conversion ? Number(pagePrompts.check_conversion) : 10;
+        
+        if (effectiveHistory.length > userHistoryLimit) {
+            // Keep only the last N messages
+            // history is already reversed (oldest first? No, dbService reverses it: rows.map().reverse())
+            // Wait, dbService: ORDER BY id DESC LIMIT $2 -> returns [newest, ..., oldest]
+            // .reverse() -> returns [oldest, ..., newest]
+            // So we want the LAST N messages from this array.
+            effectiveHistory = effectiveHistory.slice(effectiveHistory.length - userHistoryLimit);
         }
+        console.log(`[Context] Using last ${effectiveHistory.length} messages (Limit: ${userHistoryLimit})`);
 
         // --- STOP EMOJI CHECK (Dynamic Logic via Graph API) ---
         const blockEmoji = pagePrompts?.block_emoji;

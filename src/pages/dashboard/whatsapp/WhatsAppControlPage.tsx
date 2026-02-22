@@ -23,8 +23,6 @@ interface WhatsAppConfig {
   unlock_emojis: string;
   check_conversion: number; // Added check_conversion
   image_prompt: string;
-  memory_context_name?: string;
-  order_lock_minutes?: number;
   [key: string]: boolean | string | number | undefined; // Allow index access for updates
 }
 
@@ -129,9 +127,7 @@ export default function WhatsAppControlPage() {
         lock_emojis: row.lock_emojis ?? "",
         unlock_emojis: row.unlock_emojis ?? "",
         check_conversion: row.check_conversion ?? 20,
-        image_prompt: row.image_prompt ?? "",
-        memory_context_name: row.memory_context_name ?? "",
-        order_lock_minutes: row.order_lock_minutes ?? 1440
+        image_prompt: row.image_prompt ?? ""
       });
 
       if (row.session_name) {
@@ -210,8 +206,7 @@ export default function WhatsAppControlPage() {
       const validColumns = [
         'reply_message', 'swipe_reply', 'image_detection', 'image_send', 
         'order_tracking', 'audio_detection', 'file_upload', 'group_reply',
-        'lock_emojis', 'unlock_emojis', 'check_conversion', 'memory_context_name',
-        'order_lock_minutes'
+        'lock_emojis', 'unlock_emojis', 'check_conversion'
       ];
 
       const updates: any = {};
@@ -599,7 +594,7 @@ export default function WhatsAppControlPage() {
                 <div className="space-y-2">
                     <Label className="flex items-center gap-2">
                         <MessageSquare className="w-4 h-4 text-blue-500" />
-                        {t("Memory Context Limit", "মেমরি কনটেক্সট লিমিট")}
+                        {t("Check Conversion Limit", "চেক কনভার্সন লিমিট")}
                     </Label>
                     <Input 
                         type="number" 
@@ -614,42 +609,6 @@ export default function WhatsAppControlPage() {
                     />
                     <p className="text-xs text-muted-foreground">
                         {t("How many recent messages (10–50) will be used as AI memory.", "সর্বশেষ কতগুলো মেসেজ (১০–৫০) এআই মেমরি হিসেবে ব্যবহার করবে।")}
-                    </p>
-                </div>
-
-                <div className="space-y-2">
-                    <Label className="flex items-center gap-2">
-                        <MessageSquare className="w-4 h-4 text-emerald-500" />
-                        {t("Memory Context Name", "মেমরি কনটেক্সট নাম")}
-                    </Label>
-                    <Input 
-                        placeholder={t("e.g. Short-10, Medium-20, Long-50", "যেমন: Short-10, Medium-20, Long-50")}
-                        value={(config.memory_context_name as string) || ""}
-                        onChange={(e) => setConfig({...config, memory_context_name: e.target.value})}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                        {t("Optional label to remember this memory preset.", "এই মেমরি সেটিং এর জন্য ইচ্ছামতো একটি নাম দিন।")}
-                    </p>
-                </div>
-
-                <div className="space-y-2">
-                    <Label className="flex items-center gap-2">
-                        <PackageSearch className="w-4 h-4 text-orange-500" />
-                        {t("Order Lock Window", "অর্ডার লক সময়")}
-                    </Label>
-                    <Input 
-                        type="number" 
-                        min={0}
-                        max={1440}
-                        value={(config.order_lock_minutes as number) ?? 1440}
-                        onChange={(e) => {
-                            const raw = parseInt(e.target.value || "0", 10);
-                            const clamped = Math.max(0, Math.min(1440, isNaN(raw) ? 0 : raw));
-                            setConfig({...config, order_lock_minutes: clamped});
-                        }}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                        {t("Minutes to treat repeat orders from the same number as updates (0 = off).", "একই নাম্বার থেকে এই সময়ের মধ্যে আসা অর্ডারগুলোকে ডুপ্লিকেট হিসেবে ধরবে (০ দিলে বন্ধ থাকবে)।")}
                     </p>
                 </div>
 

@@ -2,6 +2,7 @@ const sharp = require('sharp');
 const fs = require('fs');
 const path = require('path');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { createClient } = require('@supabase/supabase-js');
 
 // Configure S3 Client if env vars are present
 let s3Client = null;
@@ -15,6 +16,12 @@ if (process.env.S3_ENDPOINT && process.env.S3_ACCESS_KEY && process.env.S3_SECRE
         },
         forcePathStyle: true // Required for MinIO/Coolify usually
     });
+}
+
+// Configure Supabase Client (if S3 is not available but Supabase is)
+let supabase = null;
+if (!s3Client && process.env.SUPABASE_URL && process.env.SUPABASE_KEY) {
+    supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 }
 
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
@@ -76,6 +83,27 @@ async function uploadProductImage(fileBuffer, mimeType, userId, baseUrl) {
                 const endpoint = process.env.S3_ENDPOINT.replace(/\/$/, '');
                 return `${endpoint}/${process.env.S3_BUCKET}/${key}`;
             }
+
+        } else if (supabase && process.env.SUPABASE_BUCKET) {
+            // 4. Upload to Supabase Storage (Directly)
+            const key = `${userFolder}/${fileName}`;
+            const { data, error } = await supabase.storage
+                .from(process.env.SUPABASE_BUCKET)
+                .upload(key, finalBuffer, {
+                    contentType: contentType,
+                    upsert: true
+                });
+
+            if (error) {
+                console.error("Supabase Storage Upload Error:", error);
+                throw error;
+            }
+
+            const { data: publicUrlData } = supabase.storage
+                .from(process.env.SUPABASE_BUCKET)
+                .getPublicUrl(key);
+
+            return publicUrlData.publicUrl;
 
         } else {
             // 5. Local Disk Fallback

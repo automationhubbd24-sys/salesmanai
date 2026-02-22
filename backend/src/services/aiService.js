@@ -474,7 +474,29 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     if (pageConfig.user_id) {
         try {
             // Search for relevant products based on user message (which now includes image descriptions)
-            const products = await dbService.searchProducts(pageConfig.user_id, cleanUserMessage, pageConfig.page_id);
+            let searchQuery = cleanUserMessage;
+            
+            // CONTEXT AWARENESS: If query is short (e.g. "price?", "details?"), look back in history for product context.
+            if (cleanUserMessage.length < 50 && history.length > 0) {
+                 // Look for last AI response or User message with Image Analysis
+                 for (let i = history.length - 1; i >= 0; i--) {
+                     const msg = history[i];
+                     const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+                     
+                     // Check for Image Analysis Result
+                     if (content.includes('[Image Analysis Result]')) {
+                         // Extract meaningful keywords (e.g. first 100 chars of analysis)
+                         const analysisMatch = content.match(/\[Image Analysis Result\]\s*([\s\S]{1,100})/);
+                         if (analysisMatch && analysisMatch[1]) {
+                             searchQuery += " " + analysisMatch[1];
+                             console.log(`[AI] Enhanced search query with history context: "${searchQuery}"`);
+                             break; // Found recent context, stop
+                         }
+                     }
+                 }
+            }
+
+            const products = await dbService.searchProducts(pageConfig.user_id, searchQuery, pageConfig.page_id);
             
             if (products && products.length > 0) {
                  foundProducts = products; // Store for return
@@ -489,9 +511,9 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                      }
                      
                      // Row Format (Compact for AI)
-                     // User Request: Remove Price, Use ##product "name" format
                      const stockDisplay = p.stock !== undefined ? p.stock : 'N/A';
                      const descDisplay = p.description ? p.description.replace(/\n/g, ' ').substring(0, 200) : 'N/A';
+                     const priceDisplay = p.price ? `${p.price} ${p.currency || 'BDT'}` : 'Ask for Price';
                      
                      let imgDisplay = 'N/A';
                      if (p.image_url) {
@@ -507,8 +529,9 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
 
                      const keywordsDisplay = p.keywords ? p.keywords.replace(/\n/g, ' ').substring(0, 200) : 'N/A';
                      
-                     // Format: ##product "name" | Stock: ... | Image: ...
-                     productContext += `##product "${p.name}" | Stock: ${stockDisplay} | Image: ${imgDisplay} | Desc: ${descDisplay} | Keywords: ${keywordsDisplay}${variantInfo}\n`;
+                     // Format: ##product "name" | Price: ... | Stock: ... | Image: ...
+                     // Re-added Price per user feedback about "irrelevant prices" (AI needs to know the REAL price to answer correctly)
+                     productContext += `##product "${p.name}" | Price: ${priceDisplay} | Stock: ${stockDisplay} | Image: ${imgDisplay} | Desc: ${descDisplay} | Keywords: ${keywordsDisplay}${variantInfo}\n`;
                  });
                  productContext += "[End of Products]\n";
                  console.log(`[AI] Injected ${products.length} products into context.`);
@@ -704,18 +727,19 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
 
        const n8nSystemPrompt = `System: ${basePrompt}
 
-[Available Products]
+[Context: Available Products (STRICTLY USE THESE)]
 ${productContext}
 
 [System Rules]
-1. SEARCH: If user asks about a product not in [Available Products], use tool: { "tool": "search_products", "query": "name" }
-2. IMAGES: Use ONLY provided image URLs.
-3. SILENCE: If your instructions say "no reply" or to be silent, return { "reply": null }
-4. LABELS:
+1. STRICT PRODUCT DATA: You are a salesperson. You MUST ONLY talk about products listed in [Context: Available Products]. If the user asks about a product not listed there, use the tool { "tool": "search_products", "query": "product name" } to find it first.
+2. NO HALLUCINATIONS: Do NOT invent prices, stock, or features. If a price is "Ask for Price", say exactly that.
+3. IMAGES: Use ONLY provided image URLs from the product list.
+4. SILENCE: If your instructions say "no reply" or to be silent, return { "reply": null }
+5. LABELS:
    - Support: Append "[ADD_LABEL: adminhandle]" to reply.
    - Order: Append "[ADD_LABEL: ordertrack]" to reply.
    - Save Order: Append "[SAVE_ORDER: {...}]" to reply.
-5. VISION RESULTS: If the user message contains "[Image Analysis Result]", prioritize this information. If the user has not asked a question, output the analysis result exactly as provided or a concise summary. Do NOT be conversational if the input is just an analysis result.
+6. VISION RESULTS: If the user message contains "[Image Analysis Result]", prioritize this information to identify the product.
 
 [Response Format]
 You must output valid JSON only.
