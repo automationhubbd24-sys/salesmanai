@@ -1,6 +1,7 @@
 const dbService = require('../services/dbService');
 const aiService = require('../services/aiService');
 const facebookService = require('../services/facebookService');
+const { runMessengerWorkflow } = require('../services/messenger_workflow');
 const fs = require('fs');
 const path = require('path');
 
@@ -94,6 +95,7 @@ function schedulePageTask(pageId, task) {
 // Step 1: Webhook Trigger
 const handleWebhook = async (req, res) => {
     const body = req.body;
+    console.log(`[Webhook] Incoming POST Request. Object: ${body.object}`); 
     // console.log('Webhook Body Received:', JSON.stringify(body, null, 2)); // Too verbose for production
 
     if (body.object === 'page') {
@@ -172,7 +174,8 @@ const handleWebhook = async (req, res) => {
 };
 
 const verifyWebhook = (req, res) => {
-    const VERIFY_TOKEN = process.env.FACEBOOK_VERIFY_TOKEN || '123456'; 
+    const VERIFY_TOKEN = process.env.FACEBOOK_VERIFY_TOKEN || process.env.VERIFY_TOKEN || '123456'; 
+    console.log(`[Webhook] Verification Request: Mode=${req.query['hub.mode']}, Token=${req.query['hub.verify_token']}`);
 
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
@@ -372,29 +375,15 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
     let allImages = [];
     let allAudios = [];
     let hasPostback = false;
-    let adContext = ""; // To store referral info
+    let adContext = "";
 
-    for (const msg of messages) {
-        if (typeof msg === 'string') {
-            combinedText += msg + "\n";
-        } else {
-            if (msg.text) combinedText += msg.text + "\n";
-            if (msg.reply_to) replyToId = msg.reply_to; 
-            if (msg.images && msg.images.length > 0) allImages.push(...msg.images);
-            if (msg.audios && msg.audios.length > 0) allAudios.push(...msg.audios);
-            if (msg.isPostback) hasPostback = true;
-            
-            // Extract Referral/Ad Info
-            if (msg.referral) {
-                const ref = msg.referral.ref || 'N/A';
-                const source = msg.referral.source || 'Ad';
-                const adId = msg.referral.ad_id || 'N/A';
-                adContext = `\n[System Note: User clicked on an AD. Source: ${source}, Ref: "${ref}", Ad ID: ${adId}. Use this context to identify the product they are interested in.]`;
-            }
-        }
-    }
-    combinedText = combinedText.trim();
-    if (adContext) combinedText += adContext;
+    const workflowResult = runMessengerWorkflow(messages);
+    combinedText = workflowResult.combinedText || "";
+    replyToId = workflowResult.replyToId || null;
+    allImages = workflowResult.allImages || [];
+    allAudios = workflowResult.allAudios || [];
+    hasPostback = workflowResult.hasPostback || false;
+    adContext = workflowResult.adContext || "";
     
     // --- SAVE USER MESSAGES TO DB (fb_chats) ---
     // Fix: Ensure user messages are saved before any processing/blocking
