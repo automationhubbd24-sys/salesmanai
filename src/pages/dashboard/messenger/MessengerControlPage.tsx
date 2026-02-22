@@ -383,8 +383,8 @@ export default function MessengerControlPage() {
           </CardContent>
         </Card>
 
-        {/* Audio Detection - REMOVED */}
-        {/* <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
+        {/* Audio Detection */}
+        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
           <CardContent className="p-6 flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="p-3 rounded-full border border-[#00ff88]/40 bg-[#00ff88]/10 text-[#00ff88] shadow-[0_0_25px_rgba(0,255,136,0.25)]">
@@ -400,7 +400,7 @@ export default function MessengerControlPage() {
               onCheckedChange={(c) => setConfig({...config, audio_detection: c})}
             />
           </CardContent>
-        </Card> */}
+        </Card>
 
       </div>
 

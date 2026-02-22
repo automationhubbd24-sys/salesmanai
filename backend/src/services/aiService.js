@@ -917,6 +917,7 @@ INSTRUCTIONS:
                                 return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: modelToUse, foundProducts: products };
                             } catch (aiError) {
                                 console.error(`[AI] Phase 1 Tool Re-generation Failed: ${aiError.message}`);
+                                dbService.logError(aiError, 'AI Service - Tool Re-generation', { model: modelToUse, messages: messages.length });
                                 throw aiError;
                             }
                         }
@@ -926,6 +927,7 @@ INSTRUCTIONS:
                         return { ...parsed, token_usage: tokenUsage + totalTokenUsage, model: modelToUse, foundProducts };
                     } catch (e) {
                         console.error('[AI] Phase 1 Logic Failed:', e);
+                        dbService.logError(e, 'AI Service - Logic Failed', { model: modelToUse, rawContent_preview: rawContent.substring(0, 200) });
                         let cleanText = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
                         
                         // Attempt to extract images from text response

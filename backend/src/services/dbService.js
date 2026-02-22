@@ -184,6 +184,55 @@ async function saveChatMessage(sessionId, role, content) {
     }
 }
 
+// 8. Centralized Error Logging
+async function logError(error, context = 'Unknown', metadata = {}) {
+    try {
+        // Always log to console first for immediate visibility
+        console.error(`[ERROR] [${context}]`, error.message);
+        if (error.stack) console.error(error.stack);
+
+        const errorMessage = error.message || String(error);
+        const stackTrace = error.stack || null;
+        const metaJson = JSON.stringify(metadata);
+
+        // Save to DB
+        await query(
+            `INSERT INTO error_logs (error_message, stack_trace, context, metadata)
+             VALUES ($1, $2, $3, $4)`,
+            [errorMessage, stackTrace, context, metaJson]
+        );
+    } catch (dbError) {
+        // Fallback: If DB logging fails, just console log it.
+        // We don't want the error logger to cause another crash.
+        console.error("[CRITICAL] Failed to save error log to DB:", dbError);
+    }
+}
+
+// 9. Initialize Error Table (Run on Startup)
+async function initErrorTable() {
+    try {
+        await query(`
+            CREATE TABLE IF NOT EXISTS error_logs (
+                id SERIAL PRIMARY KEY,
+                error_message TEXT,
+                stack_trace TEXT,
+                context TEXT,
+                metadata JSONB DEFAULT '{}',
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                resolved BOOLEAN DEFAULT FALSE
+            );
+            CREATE INDEX IF NOT EXISTS idx_error_logs_created_at ON error_logs(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_error_logs_resolved ON error_logs(resolved);
+        `);
+        console.log("[DB] 'error_logs' table checked/initialized.");
+    } catch (error) {
+        console.error("[DB] Failed to init 'error_logs' table:", error);
+    }
+}
+
+// Run init immediately (or export and run in app.js)
+initErrorTable();
+
 // --- ADMIN TOOLS ---
 async function addBalanceByEmail(email, amount) {
     // 1. Find User ID by Email
@@ -1446,7 +1495,8 @@ module.exports = {
 
     // --- ADMIN TOOLS ---
     addBalanceByEmail,
-    approveDepositTransaction
+    approveDepositTransaction,
+    logError
 };
 
 // --- PRODUCT MANAGEMENT IMPLEMENTATION ---

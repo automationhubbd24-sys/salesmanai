@@ -388,6 +388,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             adContext = workflowResult.adContext || "";
         } catch (wfError) {
             console.error(`[Workflow Error] Failed to run messenger workflow: ${wfError.message}`);
+            dbService.logError(wfError, 'Webhook Controller - Workflow Execution', { pageId, senderId, messages: messages.length });
             // Fallback: Simple concatenation
             combinedText = messages.map(m => m.text).filter(Boolean).join("\n");
             allImages = messages.flatMap(m => m.images || []);
@@ -607,7 +608,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             console.log(`[Batch] Per-message analysis for ${allImages.length} images...`);
             let combinedImageAnalysis = "";
 
-            let productAnalysisPrompt = "";
+            let productAnalysisPrompt = "Analyze this image for a salesperson. If it shows a PRODUCT, extract: 1. Product Name (Exact Name from packaging) 2. Brand Name 3. Model Number 4. Price 5. Key Features. If it shows a PROBLEM (e.g. skin condition, hair issue), describe the condition details. Be specific.";
             if (pagePrompts && (pagePrompts.image_prompt || pagePrompts.vision_prompt)) {
                 productAnalysisPrompt = pagePrompts.image_prompt || pagePrompts.vision_prompt;
             }
@@ -1344,6 +1345,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
 
     } catch (error) {
         console.error("Error processing event:", error);
+        dbService.logError(error, 'Webhook Controller - Message Processing', { pageId, senderId, sessionId });
         
         // Log Critical Error to DB for Admin Visibility
         try {
@@ -1450,6 +1452,8 @@ async function processCommentEvent(changeValue) {
 
     } catch (error) {
         console.error("Error processing comment:", error);
+        const safeMeta = changeValue ? { commentId: changeValue.comment_id, senderId: changeValue.from?.id } : { raw: 'Invalid changeValue' };
+        dbService.logError(error, 'Webhook Controller - Comment Processing', safeMeta);
     }
 }
 
