@@ -1281,9 +1281,12 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         // 7. Save History & Lead
         // Save User Message (Combined with Context)
         await dbService.saveChatMessage(sessionId, 'user', finalUserMessage);
-        // Save Assistant Reply (Text only)
-        await dbService.saveChatMessage(sessionId, 'assistant', replyText);
-        // Save Image Memory (system note) so AI can see previously sent product images
+
+        // Prepare Assistant History Content
+        // MERGE MEMORY INTO ASSISTANT MESSAGE to preserve context flow
+        // Fix: Don't save separate 'system' message for images, as it confuses the AI flow.
+        let historyReplyText = replyText;
+        
         if (aiResponse.images && Array.isArray(aiResponse.images) && aiResponse.images.length > 0) {
             let memoryNote = "";
             
@@ -1302,12 +1305,10 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                  memoryNote = `[IMAGE MEMORY] Sent product images in this reply: ${summary}`;
             }
             
-            // 1. Save to backend_chat_histories (for AI Context)
-            await dbService.saveChatMessage(sessionId, 'system', memoryNote);
+            // Append to history text for AI Context
+            historyReplyText += `\n\n${memoryNote}`;
 
-            // 2. Save to fb_chats (for Audit/Debugging & User Requirement)
-            // "iamge send er somoi iamge er titel description teke etka message fb chats e save korbe"
-            // "but ei message ta sender pabe na" -> reply_by = 'system'
+            // Save to fb_chats (for Audit/Debugging & User Requirement)
             await dbService.saveFbChat({
                 page_id: pageId,
                 sender_id: pageId, // System is sender
@@ -1319,6 +1320,9 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 reply_by: 'system'
             });
         }
+
+        // Save Assistant Reply (Text + Memory) to AI Context
+        await dbService.saveChatMessage(sessionId, 'assistant', historyReplyText);
 
         await dbService.saveLead({
             page_id: pageId,
