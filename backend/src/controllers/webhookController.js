@@ -369,23 +369,32 @@ async function queueMessage(event) {
 
 // Core Logic Function (Debounced)
 async function processBufferedMessages(sessionId, pageId, senderId, messages) {
-    // Reconstruct Combined Message & Extract Metadata
-    let combinedText = "";
-    let replyToId = null;
-    let allImages = [];
-    let allAudios = [];
-    let hasPostback = false;
-    let adContext = "";
+    try {
+        // Reconstruct Combined Message & Extract Metadata
+        let combinedText = "";
+        let replyToId = null;
+        let allImages = [];
+        let allAudios = [];
+        let hasPostback = false;
+        let adContext = "";
 
-    const workflowResult = runMessengerWorkflow(messages);
-    combinedText = workflowResult.combinedText || "";
-    replyToId = workflowResult.replyToId || null;
-    allImages = workflowResult.allImages || [];
-    allAudios = workflowResult.allAudios || [];
-    hasPostback = workflowResult.hasPostback || false;
-    adContext = workflowResult.adContext || "";
-    
-    // --- SAVE USER MESSAGES TO DB (fb_chats) ---
+        try {
+            const workflowResult = runMessengerWorkflow(messages);
+            combinedText = workflowResult.combinedText || "";
+            replyToId = workflowResult.replyToId || null;
+            allImages = workflowResult.allImages || [];
+            allAudios = workflowResult.allAudios || [];
+            hasPostback = workflowResult.hasPostback || false;
+            adContext = workflowResult.adContext || "";
+        } catch (wfError) {
+            console.error(`[Workflow Error] Failed to run messenger workflow: ${wfError.message}`);
+            // Fallback: Simple concatenation
+            combinedText = messages.map(m => m.text).filter(Boolean).join("\n");
+            allImages = messages.flatMap(m => m.images || []);
+            allAudios = messages.flatMap(m => m.audios || []);
+        }
+        
+        // --- SAVE USER MESSAGES TO DB (fb_chats) ---
     // Fix: Ensure user messages are saved before any processing/blocking
     for (const msg of messages) {
         try {
@@ -441,7 +450,6 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
 
     console.log(`Processing buffered messages for ${sessionId}. Text: ${combinedText.substring(0,50)}... Images: ${allImages.length}, Audios: ${allAudios.length}`);
 
-    try {
         // 1. Fetch Config
         const pageConfig = await dbService.getPageConfig(pageId);
         
@@ -1329,6 +1337,24 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
 
     } catch (error) {
         console.error("Error processing event:", error);
+        
+        // Log Critical Error to DB for Admin Visibility
+        try {
+            if (pageId && senderId) {
+                await dbService.saveFbChat({
+                    page_id: pageId,
+                    sender_id: pageId,
+                    recipient_id: senderId,
+                    message_id: `err_${Date.now()}`,
+                    text: `[CRITICAL SYSTEM ERROR] ${error.message}`,
+                    timestamp: Date.now(),
+                    status: 'system_critical',
+                    reply_by: 'system'
+                });
+            }
+        } catch (dbErr) {
+            console.error("Failed to log critical error to DB:", dbErr);
+        }
     }
 }
 
