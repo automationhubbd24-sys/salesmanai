@@ -5,8 +5,25 @@ const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { createClient } = require('@supabase/supabase-js');
 
 // Configure S3 Client if env vars are present
+console.log("[ImageService] Checking Storage Configuration...");
+console.log("S3 Config:", {
+    endpoint: process.env.S3_ENDPOINT ? 'Set' : 'Not Set',
+    bucket: process.env.S3_BUCKET,
+    accessKey: process.env.S3_ACCESS_KEY ? 'Set' : 'Not Set'
+});
+console.log("Supabase Config:", {
+    url: process.env.SUPABASE_URL ? 'Set' : 'Not Set',
+    bucket: process.env.SUPABASE_BUCKET,
+    key: process.env.SUPABASE_KEY ? 'Set' : 'Not Set'
+});
+
 let s3Client = null;
-if (process.env.S3_ENDPOINT && process.env.S3_ACCESS_KEY && process.env.S3_SECRET_KEY) {
+// Only enable S3 if Supabase is NOT the intended primary, or if we want S3 specifically.
+// For now, if Supabase Bucket is set, we PREFER Supabase to fix the user's issue.
+const PREFER_SUPABASE = process.env.SUPABASE_BUCKET && process.env.SUPABASE_URL;
+
+if (!PREFER_SUPABASE && process.env.S3_ENDPOINT && process.env.S3_ACCESS_KEY && process.env.S3_SECRET_KEY) {
+    console.log("[ImageService] Initializing S3 Client...");
     s3Client = new S3Client({
         region: process.env.S3_REGION || 'us-east-1',
         endpoint: process.env.S3_ENDPOINT,
@@ -18,9 +35,10 @@ if (process.env.S3_ENDPOINT && process.env.S3_ACCESS_KEY && process.env.S3_SECRE
     });
 }
 
-// Configure Supabase Client (if S3 is not available but Supabase is)
+// Configure Supabase Client (if S3 is not available or Supabase is preferred)
 let supabase = null;
-if (!s3Client && process.env.SUPABASE_URL && process.env.SUPABASE_KEY) {
+if ((!s3Client || PREFER_SUPABASE) && process.env.SUPABASE_URL && process.env.SUPABASE_KEY) {
+    console.log("[ImageService] Initializing Supabase Client...");
     supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 }
 
@@ -64,8 +82,8 @@ async function uploadProductImage(fileBuffer, mimeType, userId, baseUrl) {
         const userFolder = String(userId || 'anonymous');
         const fileName = `${timestamp}.${extension}`;
 
-        // 3. Upload to S3 (if configured)
-        if (s3Client && process.env.S3_BUCKET) {
+        // 3. Upload to S3 (if configured and NOT preferring Supabase)
+        if (s3Client && process.env.S3_BUCKET && !process.env.SUPABASE_BUCKET) {
             const key = `product-images/${userFolder}/${fileName}`;
             const command = new PutObjectCommand({
                 Bucket: process.env.S3_BUCKET,
@@ -86,6 +104,7 @@ async function uploadProductImage(fileBuffer, mimeType, userId, baseUrl) {
 
         } else if (supabase && process.env.SUPABASE_BUCKET) {
             // 4. Upload to Supabase Storage (Directly)
+            console.log("[ImageService] Uploading to Supabase Storage...");
             const key = `${userFolder}/${fileName}`;
             const { data, error } = await supabase.storage
                 .from(process.env.SUPABASE_BUCKET)
@@ -95,7 +114,7 @@ async function uploadProductImage(fileBuffer, mimeType, userId, baseUrl) {
                 });
 
             if (error) {
-                console.error("Supabase Storage Upload Error:", error);
+                console.error("[ImageService] Supabase Upload Error:", error);
                 throw error;
             }
 
@@ -103,6 +122,7 @@ async function uploadProductImage(fileBuffer, mimeType, userId, baseUrl) {
                 .from(process.env.SUPABASE_BUCKET)
                 .getPublicUrl(key);
 
+            console.log("[ImageService] Supabase Public URL:", publicUrlData.publicUrl);
             return publicUrlData.publicUrl;
 
         } else {

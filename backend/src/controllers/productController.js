@@ -178,7 +178,9 @@ exports.createProduct = async (req, res) => {
 
         // 1. Handle Image Upload
         let imageUrl = null;
+        console.log("[ProductCreate] Checking for file upload...");
         if (req.file) {
+            console.log("[ProductCreate] File found:", req.file.originalname, req.file.mimetype, req.file.size);
             try {
                 // VPS FIX: Prefer PUBLIC_BASE_URL from env, then BACKEND_URL, then construct from request
                 // We pass 'undefined' to let imageService use its robust fallback logic which includes PUBLIC_BASE_URL
@@ -187,9 +189,13 @@ exports.createProduct = async (req, res) => {
                 const baseUrl = envBaseUrl || reqBaseUrl;
                 
                 imageUrl = await imageService.uploadProductImage(req.file.buffer, req.file.mimetype, userId, baseUrl);
+                console.log("[ProductCreate] Image uploaded successfully. URL:", imageUrl);
             } catch (imgError) {
+                console.error("[ProductCreate] Image upload failed:", imgError);
                 return res.status(500).json({ error: "Image upload failed: " + imgError.message });
             }
+        } else {
+            console.log("[ProductCreate] No file attached in request.");
         }
 
         // 2. Parse Body
