@@ -1376,8 +1376,10 @@ Rules:
 
         if (pageConfig.cheap_engine === false) {
              // Paid User: STRICTLY use configured model.
-             if (pageConfig.chatmodel) {
-                 model = pageConfig.chatmodel;
+             const userModel = pageConfig.chat_model || pageConfig.chatmodel;
+             
+             if (userModel) {
+                 model = userModel;
              } else {
                  return { text: "Error: No Chat Model selected in configuration for Own API.", usage: 0 };
              }
@@ -1400,7 +1402,8 @@ Rules:
 
         } else {
              // Free User: Default to 1.5-flash or configured Gemini
-             model = (pageConfig.chatmodel && pageConfig.chatmodel.includes('gemini')) ? pageConfig.chatmodel : 'gemini-1.5-flash';
+             const userModel = pageConfig.chat_model || pageConfig.chatmodel;
+             model = (userModel && userModel.includes('gemini')) ? userModel : 'gemini-1.5-flash';
              
              // Use System Key for Google
              const keyData = await keyService.getSmartKey(provider, model);
@@ -1414,9 +1417,8 @@ Rules:
 
         if (provider === 'openrouter') {
             // OpenRouter Vision Call
-            const imageContent = (!imageUrl.startsWith('data:')) 
-                ? { url: imageUrl }
-                : { url: `data:${mimeType};base64,${base64Image}` };
+            // Use Base64 Data URI to avoid access issues with external URLs (like FB private URLs)
+            const imageContent = { url: `data:${mimeType};base64,${base64Image}` };
 
             const payload = {
                 model: model,
@@ -1641,21 +1643,20 @@ async function transcribeAudio(audioUrl, config) {
     if (config && config.api_key && config.cheap_engine === false) {
         const userKeys = config.api_key.split(',').map(k => k.trim()).filter(k => k);
         userKey = userKeys[0]; // Use first key for simplicity in audio
+        
+        // Strict Model Selection
+        const userModel = config.chat_model || config.chatmodel || 'gemini-2.0-flash';
 
-        if (userKey && userKey.startsWith('sk-') && !userKey.startsWith('sk-or')) {
-            // OpenAI Key -> Use Whisper
-            priorityChain.push({ provider: 'openai', model: 'whisper-1', name: 'OpenAI Whisper (User Key)', key: userKey });
-        } else if (userKey.startsWith('gsk_')) {
-            // Groq Key -> Use Groq
-            priorityChain.push({ provider: 'groq', model: 'whisper-large-v3', name: 'Groq Whisper (User Key)', key: userKey });
-        } else if (userKey.startsWith('AIza')) {
-            // Gemini Key -> Use Gemini (Try User's Model first, else 2.0 Flash)
-            const userModel = (config.model && config.model.startsWith('gemini')) ? config.model : 'gemini-2.0-flash';
-            priorityChain.push({ provider: 'google', model: userModel, name: `Gemini (${userModel}) (User Key)`, key: userKey });
-            
-            // If User's model is NOT 2.0 Flash, add 2.0 Flash as backup with User Key (it's reliable for audio)
-            if (userModel !== 'gemini-2.0-flash') {
-                 priorityChain.push({ provider: 'google', model: 'gemini-2.0-flash', name: 'Gemini (2.0 Flash) (User Key)', key: userKey });
+        if (userKey) {
+            if (userKey.startsWith('sk-') && !userKey.startsWith('sk-or')) {
+                // OpenAI Key -> Use Whisper (Standard for OpenAI Audio)
+                priorityChain.push({ provider: 'openai', model: 'whisper-1', name: 'OpenAI Whisper (User Key)', key: userKey });
+            } else if (userKey.startsWith('gsk_')) {
+                // Groq Key -> Use Groq Whisper
+                priorityChain.push({ provider: 'groq', model: 'whisper-large-v3', name: 'Groq Whisper (User Key)', key: userKey });
+            } else if (userKey.startsWith('AIza')) {
+                // Gemini Key -> STRICTLY Use User's Selected Model
+                priorityChain.push({ provider: 'google', model: userModel, name: `Gemini (${userModel}) (User Key)`, key: userKey });
             }
         }
     }
