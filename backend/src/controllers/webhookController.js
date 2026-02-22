@@ -196,6 +196,35 @@ const verifyWebhook = (req, res) => {
 
 // Queue Message for Debounce
 async function queueMessage(event) {
+    // --- ECHO HANDLING (Admin Replies & Bot Confirmations) ---
+    if (event.message && event.message.is_echo) {
+        const pageId = event.sender.id; // Sender is Page
+        const recipientId = event.recipient.id; // Recipient is User
+        const messageId = event.message.mid;
+        const text = event.message.text || '';
+        
+        // Save to fb_chats (Upsert handles duplicates)
+        // This ensures Admin replies from Inbox are saved.
+        await dbService.saveFbChat({
+            page_id: pageId,
+            sender_id: pageId,
+            recipient_id: recipientId,
+            message_id: messageId,
+            text: text,
+            timestamp: Date.now(),
+            status: 'sent', // Mark as sent by page
+            reply_by: 'page'
+        });
+
+        // Save to Context History (Deduplicated by messageId in dbService)
+        // This ensures the AI remembers what the Page (Admin/Bot) said.
+        const sessionId = `${pageId}_${recipientId}`;
+        await dbService.saveChatMessage(sessionId, 'assistant', text, messageId);
+
+        return; // STOP Processing (Don't trigger AI for echoes)
+    }
+    // ---------------------------------------------------------
+
     const senderId = event.sender.id;
     const pageId = event.recipient.id;
     console.log(`[Webhook DEBUG] Event for Page: ${pageId} | Sender: ${senderId}`);
@@ -858,6 +887,11 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
 
             if (originalText) {
                 // DETECT IMAGE ANALYSIS CONTEXT
+                // Fix: Handle object return from facebookService
+                if (typeof originalText === 'object') {
+                    originalText = originalText.message || "";
+                }
+
                 // If the user is replying to a message that contains "Based on the image",
                 // we must explicitly tell the AI that this text IS the image content.
                 if (originalText.includes("Based on the image") || originalText.includes("[User sent images:")) {

@@ -1302,7 +1302,18 @@ async function processImageWithVision(imageUrl, pageConfig = {}, customOptions =
 
     // Determine System Prompt
     // Use only user-provided prompt; no backend default
-    const systemPrompt = typeof customOptions?.prompt === 'string' ? customOptions.prompt : "";
+    // UPDATE: User requested advanced image analysis. We MUST provide a smart default if none exists.
+    let systemPrompt = typeof customOptions?.prompt === 'string' && customOptions.prompt.trim() !== "" 
+        ? customOptions.prompt 
+        : `Analyze this image in extreme detail and extract the following information:
+1. **Product Name**: The exact name of the product (e.g., 'L'Oreal Paris Total Repair 5 Shampoo').
+2. **Brand**: The brand name visible on the packaging (e.g., 'L'Oreal', 'Nivea', 'Samsung').
+3. **Type/Category**: What kind of product is it? (e.g., 'Shampoo', 'Lipstick', 'Smartphone').
+4. **Key Features/Variants**: Any specific details like color, flavor, or model number (e.g., 'Red', 'Aloe Vera', 'Galaxy S21').
+5. **Visible Text**: Read ALL text on the label, including small print, price tags (if any), and ingredients.
+
+If the image contains a product, describe it exactly as a customer would search for it in an online store.
+Example Output Format: "Product: [Name] | Brand: [Brand] | Type: [Type] | Details: [Color/Variant] | Text: [Visible Text]"`;
 
     // --- PRIORITY ATTEMPT (Custom Options) ---
     if (customOptions?.provider === 'openrouter' && customOptions?.model) {

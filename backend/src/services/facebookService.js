@@ -159,21 +159,9 @@ async function sendTypingAction(recipientId, accessToken, action = 'typing_on') 
     }
 }
 
-// Get Single Message (Fallback for Swipe Reply)
-async function getMessageById(messageId, accessToken) {
-    if (accessToken === 'TEST_TOKEN') return null;
-    try {
-        const url = `https://graph.facebook.com/v19.0/${messageId}?fields=message,from&access_token=${accessToken}`;
-        const response = await axios.get(url);
-        if (response.data && response.data.message) {
-            return response.data.message;
-        }
-        return null;
-    } catch (error) {
-        console.error(`[Facebook] Failed to fetch message ${messageId}:`, error.message);
-        return null;
-    }
-}
+// Get Single Message (Fallback for Swipe Reply) - REMOVED DUPLICATE
+// See function at bottom of file
+
 
 // Check Last Message for Human Handover
 async function getConversationMessages(pageId, userId, accessToken, limit = 5) {
@@ -343,9 +331,9 @@ async function getUserProfile(userId, accessToken) {
 // Fetch Single Message by ID (Fallback for Old Messages)
 async function getMessageById(messageId, accessToken) {
     try {
-        const url = `https://graph.facebook.com/v19.0/${messageId}?fields=message,from,created_time&access_token=${accessToken}`;
+        const url = `https://graph.facebook.com/v19.0/${messageId}?fields=message&access_token=${accessToken}`;
         const response = await axios.get(url);
-        return response.data;
+        return response.data.message || "";
     } catch (error) {
         console.error(`Error fetching message ${messageId}:`, error.response ? error.response.data : error.message);
         return null;

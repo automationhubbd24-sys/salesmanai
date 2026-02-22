@@ -171,14 +171,33 @@ async function getChatHistory(sessionId, limit = 10) {
 }
 
 // 7. Save Chat Message
-async function saveChatMessage(sessionId, role, content) {
+async function saveChatMessage(sessionId, role, content, messageId = null) {
     console.log(`[DB] Saving chat for ${sessionId}: [${role}] ${content.substring(0, 50)}...`);
     try {
-        await query(
-            `INSERT INTO backend_chat_histories (session_id, message)
-             VALUES ($1,$2)`,
-            [sessionId, { role, content }]
-        );
+        if (messageId) {
+             // Check if exists to prevent duplicates (e.g. from Echo events)
+             const check = await query(
+                 `SELECT id FROM backend_chat_histories WHERE message_id = $1 LIMIT 1`,
+                 [messageId]
+             );
+             if (check.rows.length > 0) {
+                 // console.log(`[DB] Chat message ${messageId} already exists in history. Skipping.`);
+                 return;
+             }
+             
+             await query(
+                `INSERT INTO backend_chat_histories (session_id, message, message_id, role, text)
+                 VALUES ($1, $2, $3, $4, $5)`,
+                [sessionId, { role, content }, messageId, role, content]
+            );
+        } else {
+            // Fallback for calls without messageId
+            await query(
+                `INSERT INTO backend_chat_histories (session_id, message, role, text)
+                 VALUES ($1, $2, $3, $4)`,
+                [sessionId, { role, content }, role, content]
+            );
+        }
     } catch (error) {
         console.error("Error saving chat message:", error);
     }
@@ -1713,7 +1732,7 @@ async function getProductsByNames(userId, productNames) {
     }
 }
 
-    // 31. Search Products (For AI) - Enhanced with Smart Fallback
+    // 31. Search Products (For AI) - Enhanced with Smart Fallback & Visual Search
 async function searchProducts(userId, queryText, pageId = null) {
     console.log(`[DB] searchProducts called for User: ${userId}, Page: ${pageId}, Query: "${queryText}"`);
     try {
@@ -1733,6 +1752,7 @@ async function searchProducts(userId, queryText, pageId = null) {
             const nameNorm = normalize(product.name);
             const descNorm = normalize(product.description);
             const kwNorm = normalize(product.keywords);
+            const visualNorm = normalize(product.visual_tags); // Include visual tags
 
             let score = 0;
 
@@ -1742,12 +1762,14 @@ async function searchProducts(userId, queryText, pageId = null) {
             if (nameNorm.includes(qNorm)) score += 80;
             if (kwNorm.includes(qNorm)) score += 70;
             if (qNorm.includes(nameNorm) && nameNorm.length > 0) score += 60;
+            if (visualNorm.includes(qNorm)) score += 50; // Visual match
 
             const tokens = qNorm.split(/\s+/).filter(Boolean);
             tokens.forEach((t) => {
                 if (nameNorm.includes(t)) score += 12;
                 else if (kwNorm.includes(t)) score += 10;
                 else if (descNorm.includes(t)) score += 4;
+                else if (visualNorm.includes(t)) score += 8; // Visual token match
             });
 
             const lenDiff = Math.abs((product.name || '').length - cleanQuery.length);
@@ -1768,14 +1790,14 @@ async function searchProducts(userId, queryText, pageId = null) {
             return { where, params };
         };
 
-        // 1. Exact Match
+        // 1. Exact Match (Now includes visual_tags)
         const ctx1 = getBaseContext();
         const pStart1 = ctx1.params.length;
-        const exactWhere = `${ctx1.where} AND (name ILIKE $${pStart1 + 1} OR description ILIKE $${pStart1 + 2} OR keywords ILIKE $${pStart1 + 3})`;
-        ctx1.params.push(`%${cleanQuery}%`, `%${cleanQuery}%`, `%${cleanQuery}%`);
+        const exactWhere = `${ctx1.where} AND (name ILIKE $${pStart1 + 1} OR description ILIKE $${pStart1 + 2} OR keywords ILIKE $${pStart1 + 3} OR visual_tags ILIKE $${pStart1 + 4})`;
+        ctx1.params.push(`%${cleanQuery}%`, `%${cleanQuery}%`, `%${cleanQuery}%`, `%${cleanQuery}%`);
 
         const exactResult = await query(
-            `SELECT name, description, image_url, variants, is_active, price, currency, keywords
+            `SELECT name, description, image_url, variants, is_active, price, currency, keywords, visual_tags
              FROM products
              WHERE ${exactWhere}
              LIMIT 5`,
@@ -1805,13 +1827,16 @@ async function searchProducts(userId, queryText, pageId = null) {
                 
                 conditions.push(`keywords ILIKE $${idx + 2}`);
                 ctx2.params.push(`%${token}%`);
+                
+                conditions.push(`visual_tags ILIKE $${idx + 3}`);
+                ctx2.params.push(`%${token}%`);
             });
 
             const cond = conditions.join(' OR ');
             const fuzzyWhere = `${ctx2.where} AND (${cond})`;
 
             const fuzzyResult = await query(
-                `SELECT name, description, image_url, variants, is_active, price, currency, keywords
+                `SELECT name, description, image_url, variants, is_active, price, currency, keywords, visual_tags
                  FROM products
                  WHERE ${fuzzyWhere}
                  LIMIT 5`,
@@ -1849,13 +1874,16 @@ async function searchProducts(userId, queryText, pageId = null) {
                     
                     stemConditions.push(`keywords ILIKE $${idx + 2}`);
                     ctx3.params.push(`%${stem}%`);
+                    
+                    stemConditions.push(`visual_tags ILIKE $${idx + 3}`);
+                    ctx3.params.push(`%${stem}%`);
                 });
 
                 const stemCond = stemConditions.join(' OR ');
                 const stemWhere = `${ctx3.where} AND (${stemCond})`;
 
                 const stemResult = await query(
-                    `SELECT name, description, image_url, variants, is_active, price, currency, keywords
+                    `SELECT name, description, image_url, variants, is_active, price, currency, keywords, visual_tags
                  FROM products
                  WHERE ${stemWhere}
                  LIMIT 5`,
@@ -1873,7 +1901,7 @@ async function searchProducts(userId, queryText, pageId = null) {
         // --- 4. Levenshtein Fallback (Super Fuzzy - Token Based) ---
         const baseSql = getBaseContext();
         const scanResult = await query(
-            `SELECT name, description, image_url, variants, is_active, price, currency, keywords
+            `SELECT name, description, image_url, variants, is_active, price, currency, keywords, visual_tags
              FROM products
              WHERE ${baseSql.where}
              ORDER BY id DESC
