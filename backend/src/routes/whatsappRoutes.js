@@ -164,6 +164,11 @@ router.get('/config/:id', async (req, res) => {
         const userId = payload.sub;
         const userEmail = payload.email;
 
+        res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.set('Pragma', 'no-cache');
+        res.set('Expires', '0');
+        res.set('Surrogate-Control', 'no-store');
+
         const configResult = await pgClient.query(
             `SELECT w.*, u.message_credit 
              FROM whatsapp_message_database w

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -26,6 +26,15 @@ export default function SettingsPage() {
   const [dbId, setDbId] = useState<string | null>(null);
   const [verified, setVerified] = useState(true);
   
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+  
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -36,16 +45,46 @@ export default function SettingsPage() {
     },
   });
 
+  const fetchConfig = useCallback(async (id: string) => {
+    try {
+      const token = localStorage.getItem("auth_token");
+      const res = await fetch(`${BACKEND_URL}/whatsapp/config/${id}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        cache: 'no-store'
+      });
+
+      if (!res.ok) throw new Error("Failed to load config");
+
+      const row: any = await res.json();
+
+      if (isMountedRef.current) {
+          setVerified(row.verified !== false);
+          // Use reset to update form values. 
+          // IMPORTANT: This must happen BEFORE loading is set to false to avoid flicker
+          form.reset({
+            provider: row.ai_provider || row.provider || "openrouter",
+            api_key: row.api_key || "",
+            chatmodel: row.chat_model || row.chatmodel || "gemini-2.5-flash",
+            text_prompt: row.text_prompt || "",
+          });
+      }
+    } catch (error) {
+      console.error("Error fetching config:", error);
+      toast.error("Failed to load AI settings");
+    } finally {
+      if (isMountedRef.current) setLoading(false);
+    }
+  }, [form]);
+
   useEffect(() => {
-    let isMounted = true;
     const checkConnection = () => {
       const storedDbId = localStorage.getItem("active_wp_db_id");
       if (storedDbId) {
         setDbId(storedDbId);
-        fetchConfig(storedDbId, isMounted);
+        fetchConfig(storedDbId);
       } else {
         setDbId(null);
-        if (isMounted) setLoading(false);
+        if (isMountedRef.current) setLoading(false);
       }
     };
 
@@ -56,48 +95,17 @@ export default function SettingsPage() {
     window.addEventListener("db-connection-changed", handleStorageChange);
 
     return () => {
-      isMounted = false;
       window.removeEventListener("storage", handleStorageChange);
       window.removeEventListener("db-connection-changed", handleStorageChange);
     };
-  }, []); // Empty dependency array to prevent re-runs on form change
-
-  const fetchConfig = async (id: string, isMounted: boolean) => {
-    try {
-      const token = localStorage.getItem("auth_token");
-      const res = await fetch(`${BACKEND_URL}/whatsapp/db/${id}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-
-      if (!res.ok) throw new Error("Failed to load config");
-
-      const row: any = await res.json();
-
-      if (isMounted) {
-          setVerified(row.verified !== false);
-          // Use reset to update form values. 
-          // IMPORTANT: This must happen BEFORE loading is set to false to avoid flicker
-          form.reset({
-            provider: row.provider || "openrouter",
-            api_key: row.api_key || "",
-            chatmodel: row.chatmodel || "gemini-2.5-flash",
-            text_prompt: row.text_prompt || "",
-          });
-      }
-    } catch (error) {
-      console.error("Error fetching config:", error);
-      toast.error("Failed to load AI settings");
-    } finally {
-      if (isMounted) setLoading(false);
-    }
-  };
+  }, [fetchConfig]);
 
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
     if (!dbId) return;
     setLoading(true);
     try {
       const token = localStorage.getItem("auth_token");
-      const res = await fetch(`${BACKEND_URL}/whatsapp/db/${dbId}`, {
+      const res = await fetch(`${BACKEND_URL}/whatsapp/config/${dbId}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",

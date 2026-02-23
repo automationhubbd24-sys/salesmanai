@@ -107,6 +107,15 @@ export default function MessengerSettingsPage() {
   const imagePromptRef = useRef<HTMLTextAreaElement | null>(null);
 
   const [productSearch, setProductSearch] = useState("");
+  
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const handleApplyCoupon = () => {
     // Simple validation for demo - in production this would verify with backend
@@ -129,17 +138,18 @@ export default function MessengerSettingsPage() {
       },
   });
 
-  const fetchConfig = useCallback(async (id: string, pId: string, isMounted: boolean) => {
+  const fetchConfig = useCallback(async (id: string, pId: string) => {
     try {
       const token = localStorage.getItem("auth_token");
       if (!token) {
-        if (isMounted) setLoading(false);
+        if (isMountedRef.current) setLoading(false);
         toast.error("Please login again");
         return;
       }
 
       const resConfig = await fetch(`${BACKEND_URL}/api/messenger/config/${id}`, {
                 headers: { Authorization: `Bearer ${token}` },
+                cache: 'no-store'
             });
 
       if (!resConfig.ok) {
@@ -151,6 +161,7 @@ export default function MessengerSettingsPage() {
 
       const resPage = await fetch(`${BACKEND_URL}/api/messenger/pages`, {
                 headers: { Authorization: `Bearer ${token}` },
+                cache: 'no-store'
             });
 
       if (!resPage.ok) {
@@ -164,11 +175,11 @@ export default function MessengerSettingsPage() {
         : null;
 
       if (!dbRow || !pageRow) {
-        if (isMounted) setLoading(false);
+        if (isMountedRef.current) setLoading(false);
         return;
       }
 
-      if (isMounted) {
+      if (isMountedRef.current) {
           setVerified(dbRow.verified !== false);
           setInitialTextPrompt(dbRow.text_prompt || "");
           setInitialImagePrompt(dbRow.image_prompt || "");
@@ -213,12 +224,11 @@ export default function MessengerSettingsPage() {
       console.error("Error fetching config:", error);
       toast.error("Failed to load AI settings");
     } finally {
-      if (isMounted) setLoading(false);
+      if (isMountedRef.current) setLoading(false);
     }
   }, [form]);
 
   useEffect(() => {
-    let isMounted = true;
     const checkConnection = () => {
       const storedDbId = localStorage.getItem("active_fb_db_id");
       const storedPageId = localStorage.getItem("active_fb_page_id");
@@ -226,11 +236,11 @@ export default function MessengerSettingsPage() {
       if (storedDbId && storedPageId) {
         setDbId(storedDbId);
         setPageId(storedPageId);
-        fetchConfig(storedDbId, storedPageId, isMounted);
+        fetchConfig(storedDbId, storedPageId);
       } else {
         setDbId(null);
         setPageId(null);
-        if (isMounted) setLoading(false);
+        if (isMountedRef.current) setLoading(false);
       }
     };
 
@@ -241,11 +251,10 @@ export default function MessengerSettingsPage() {
     window.addEventListener("db-connection-changed", handleStorageChange);
     
     return () => {
-      isMounted = false;
       window.removeEventListener("storage", handleStorageChange);
       window.removeEventListener("db-connection-changed", handleStorageChange);
     };
-  }, []); // Empty dependency array to prevent re-runs
+  }, [fetchConfig]);
 
   const fetchProductsForPrompt = async () => {
     if (!pageId) return;

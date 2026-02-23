@@ -29,6 +29,12 @@ router.get('/pages', async (req, res) => {
             [userEmail]
         );
 
+        res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.set('Pragma', 'no-cache');
+        res.set('Expires', '0');
+        res.set('Surrogate-Control', 'no-store');
+
+
         // 3. Fetch Shared Pages (Team Members)
         let sharedPageIds = [];
         if (userEmail) {
@@ -172,6 +178,11 @@ router.get('/config/:id', async (req, res) => {
         const payload = jwt.verify(token, secret);
 
         const userEmail = payload.email;
+
+        res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.set('Pragma', 'no-cache');
+        res.set('Expires', '0');
+        res.set('Surrogate-Control', 'no-store');
 
         console.log(`[GET /config/:id] Request ID: ${id}, User: ${userEmail}`);
 
@@ -454,7 +465,8 @@ router.put('/config/:id', async (req, res) => {
                 WHERE page_id = $${tIdx}
             `;
             try {
-                await pgClient.query(tokenQuery, tokenValues);
+                const tokenRes = await pgClient.query(tokenQuery, tokenValues);
+                console.log(`[PUT /config/:id] Updated token table for Page ${pageId}. Rows: ${tokenRes.rowCount}. Updates:`, tokenUpdates);
             } catch (err) {
                 console.error("Failed to update page_access_token_message:", err);
             }
