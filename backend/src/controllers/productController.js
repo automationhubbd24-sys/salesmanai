@@ -108,7 +108,6 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
         if (requestedTeamOwner) {
              console.log(`[AuthDebug] Requested Team Owner: ${requestedTeamOwner}`);
 
-        if (requestedTeamOwner) {
              const teamResult = await pgClient.query(
                 'SELECT owner_email FROM team_members WHERE LOWER(member_email) = LOWER($1) AND LOWER(owner_email) = LOWER($2) AND status = $3',
                 [normalizedEmail, requestedTeamOwner, 'active']
