@@ -581,7 +581,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             return;
         }
         // --------------------------
-ekta 
+        
         // --- OPTIMIZATION: PARALLEL DATA FETCHING (Modified for Dynamic History) ---
         // 1. Fetch Page Prompts FIRST to get the 'check_conversion' (History Limit)
         // This ensures we only fetch exactly what the user configured (Token Saving)
