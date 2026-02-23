@@ -83,7 +83,7 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
 
         if (requestedTeamOwner) {
              const teamResult = await pgClient.query(
-                'SELECT owner_email FROM team_members WHERE member_email = $1 AND owner_email = $2 AND status = $3',
+                'SELECT owner_email FROM team_members WHERE LOWER(member_email) = LOWER($1) AND LOWER(owner_email) = LOWER($2) AND status = $3',
                 [normalizedEmail, requestedTeamOwner, 'active']
             );
 
@@ -128,7 +128,7 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
                          
                          // Check if I am a member of this Page Owner's team
                          const teamCheck = await pgClient.query(
-                             'SELECT 1 FROM team_members WHERE member_email = $1 AND owner_email = $2 AND status = $3',
+                             'SELECT 1 FROM team_members WHERE LOWER(member_email) = LOWER($1) AND LOWER(owner_email) = LOWER($2) AND status = $3',
                              [normalizedEmail, pageOwnerEmail, 'active']
                          );
                          
@@ -202,7 +202,7 @@ async function resolveProductOwnerUserId(req, baseUserId, pageId) {
                         // owner_email = pageOwnerEmail (Owner)
                         // member_email = currentUserEmail (Me)
                         const teamCheck = await pgClient.query(
-                            'SELECT 1 FROM team_members WHERE owner_email = $1 AND member_email = $2 AND status = $3',
+                            'SELECT 1 FROM team_members WHERE LOWER(owner_email) = LOWER($1) AND LOWER(member_email) = LOWER($2) AND status = $3',
                             [pageOwnerEmail, currentUserEmail, 'active']
                         );
                         if (teamCheck.rows.length > 0) {
@@ -215,7 +215,7 @@ async function resolveProductOwnerUserId(req, baseUserId, pageId) {
                         // owner_email = currentUserEmail (Me)
                         // member_email = pageOwnerEmail (Member)
                         const reverseTeamCheck = await pgClient.query(
-                            'SELECT 1 FROM team_members WHERE owner_email = $1 AND member_email = $2 AND status = $3',
+                            'SELECT 1 FROM team_members WHERE LOWER(owner_email) = LOWER($1) AND LOWER(member_email) = LOWER($2) AND status = $3',
                             [currentUserEmail, pageOwnerEmail, 'active']
                         );
                         if (reverseTeamCheck.rows.length > 0) {
@@ -253,7 +253,7 @@ async function resolveProductOwnerUserId(req, baseUserId, pageId) {
                          if (waFullRes.rows.length > 0) {
                              const waOwnerEmail = waFullRes.rows[0].email;
                              const teamCheck = await pgClient.query(
-                                 'SELECT 1 FROM team_members WHERE owner_email = $1 AND member_email = $2',
+                                 'SELECT 1 FROM team_members WHERE LOWER(owner_email) = LOWER($1) AND LOWER(member_email) = LOWER($2)',
                                  [currentUserEmail, waOwnerEmail]
                              );
                              if (teamCheck.rows.length > 0) {
@@ -439,7 +439,7 @@ exports.getProducts = async (req, res) => {
                         if (userRes.rows.length > 0) {
                             const currentUserEmail = userRes.rows[0].email;
                             const teamCheck = await pgClient.query(
-                                'SELECT 1 FROM team_members WHERE owner_email = $1 AND member_email = $2',
+                                'SELECT 1 FROM team_members WHERE LOWER(owner_email) = LOWER($1) AND LOWER(member_email) = LOWER($2)',
                                 [currentUserEmail, pageOwnerEmail]
                             );
                             if (teamCheck.rows.length > 0) {
