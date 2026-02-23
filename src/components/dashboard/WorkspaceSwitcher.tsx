@@ -107,6 +107,8 @@ function SwitcherUI({ context }: { context: any }) {
                     onSelect={() => {
                     switchViewMode("personal");
                     setOpen(false);
+                    // Soft reload to ensure clean state transition without browser refresh
+                    window.dispatchEvent(new CustomEvent('dashboard:reload'));
                     }}
                     className="text-sm cursor-pointer"
                 >
@@ -128,6 +130,8 @@ function SwitcherUI({ context }: { context: any }) {
                         switchViewMode("team");
                         if (setActiveTeam) setActiveTeam(team);
                         setOpen(false);
+                        // Soft reload to ensure clean state transition without browser refresh
+                        window.dispatchEvent(new CustomEvent('dashboard:reload'));
                         }}
                         className="text-sm cursor-pointer"
                     >

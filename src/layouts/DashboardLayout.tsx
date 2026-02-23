@@ -30,6 +30,19 @@ export function DashboardLayout() {
   const location = useLocation();
   const [loading, setLoading] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  // Add reloadKey to force re-render on workspace switch
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    const handleReload = () => {
+      setReloadKey(prev => prev + 1);
+    };
+    
+    window.addEventListener('dashboard:reload', handleReload as any);
+    return () => {
+      window.removeEventListener('dashboard:reload', handleReload as any);
+    };
+  }, []);
 
   const pathParts = location.pathname.split('/');
   const platform = ['whatsapp', 'messenger', 'instagram'].includes(pathParts[2]) ? pathParts[2] : null;
@@ -108,7 +121,7 @@ export function DashboardLayout() {
   if (!currentTitle) currentTitle = "Dashboard";
 
   const LayoutContent = (
-    <TooltipProvider>
+    <TooltipProvider key={reloadKey}>
       <div className="min-h-screen bg-background flex w-full dashboard-theme">
         {/* Desktop Sidebar */}
         <div className="hidden lg:block">
@@ -138,7 +151,7 @@ export function DashboardLayout() {
 
   if (platform === 'whatsapp') {
     return (
-      <WhatsAppProvider>
+      <WhatsAppProvider key={reloadKey}>
         {LayoutContent}
       </WhatsAppProvider>
     );
@@ -146,7 +159,7 @@ export function DashboardLayout() {
 
   if (platform === 'messenger') {
     return (
-      <MessengerProvider>
+      <MessengerProvider key={reloadKey}>
         {LayoutContent}
       </MessengerProvider>
     );
