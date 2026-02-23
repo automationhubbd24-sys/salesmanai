@@ -3,9 +3,28 @@ const router = express.Router();
 const pgClient = require('../services/pgClient');
 const authMiddleware = require('../middleware/authMiddleware');
 
+// Helper: Determine the effective owner email
+// If the user is a member of a team, they act on behalf of the team owner.
+// If the user is not a member, they are the owner.
+async function getEffectiveOwnerEmail(userEmail) {
+    // Check if this user is a member of an active team
+    const memberRes = await pgClient.query(
+        'SELECT owner_email FROM team_members WHERE member_email = $1 AND status = $2',
+        [userEmail, 'active']
+    );
+
+    if (memberRes.rows.length > 0) {
+        return memberRes.rows[0].owner_email;
+    }
+    
+    return userEmail;
+}
+
 router.get('/members', authMiddleware, async (req, res) => {
     try {
-        const ownerEmail = req.user.email;
+        const userEmail = req.user.email;
+        const ownerEmail = await getEffectiveOwnerEmail(userEmail);
+
         const result = await pgClient.query(
             'SELECT id, member_email, status, permissions, created_at FROM team_members WHERE owner_email = $1 ORDER BY created_at DESC',
             [ownerEmail]
@@ -34,11 +53,23 @@ router.get('/me', authMiddleware, async (req, res) => {
 
 router.post('/members', authMiddleware, async (req, res) => {
     try {
-        const ownerEmail = req.user.email;
+        const userEmail = req.user.email;
+        const ownerEmail = await getEffectiveOwnerEmail(userEmail);
+        
         const { member_email, permissions } = req.body;
 
         if (!member_email) {
             return res.status(400).json({ error: 'member_email is required' });
+        }
+
+        // Prevent adding the owner themselves as a member
+        if (member_email.toLowerCase() === ownerEmail.toLowerCase()) {
+             return res.status(400).json({ error: 'Cannot add the owner as a member' });
+        }
+        
+        // Prevent adding yourself (if you are a member adding another member)
+        if (member_email.toLowerCase() === userEmail.toLowerCase()) {
+             return res.status(400).json({ error: 'Cannot add yourself' });
         }
 
         const result = await pgClient.query(
@@ -59,7 +90,9 @@ router.post('/members', authMiddleware, async (req, res) => {
 
 router.put('/members/:id', authMiddleware, async (req, res) => {
     try {
-        const ownerEmail = req.user.email;
+        const userEmail = req.user.email;
+        const ownerEmail = await getEffectiveOwnerEmail(userEmail);
+        
         const { id } = req.params;
         const { permissions } = req.body;
 
@@ -86,7 +119,9 @@ router.put('/members/:id', authMiddleware, async (req, res) => {
 
 router.delete('/members/:id', authMiddleware, async (req, res) => {
     try {
-        const ownerEmail = req.user.email;
+        const userEmail = req.user.email;
+        const ownerEmail = await getEffectiveOwnerEmail(userEmail);
+        
         const { id } = req.params;
 
         const result = await pgClient.query(
