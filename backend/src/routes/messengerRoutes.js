@@ -505,9 +505,14 @@ router.put('/config/:id', async (req, res) => {
                         chat_model: updatedTokenRow.chat_model,
                         cheap_engine: updatedTokenRow.cheap_engine
                      };
+                } else {
+                    console.warn(`[PUT /config/:id] Failed to update token table for Page ${pageId}. Row not found?`);
                 }
             } catch (err) {
                 console.error("Failed to update page_access_token_message:", err);
+                // Should we throw error here? Or proceed?
+                // If token update fails, the AI settings are NOT saved. We should probably return error.
+                throw err;
             }
         }
 

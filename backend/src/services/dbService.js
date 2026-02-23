@@ -1615,12 +1615,20 @@ async function createProduct(productData) {
 async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pageId = null, allowedPageIds = null) {
     const offset = (page - 1) * limit;
 
-    const params = [userId];
-    let whereClause = 'user_id = $1';
+    let params = [];
+    let whereClause = '';
+
+    if (Array.isArray(userId)) {
+        params.push(userId); // $1 is the array
+        whereClause = 'user_id = ANY($1)';
+    } else {
+        params.push(userId);
+        whereClause = 'user_id = $1';
+    }
 
     if (searchQuery) {
         params.push(`%${searchQuery}%`, `%${searchQuery}%`);
-        whereClause += ` AND (name ILIKE $2 OR description ILIKE $3)`;
+        whereClause += ` AND (name ILIKE $${params.length - 1} OR description ILIKE $${params.length})`;
     }
 
     // Filter by Specific Page (e.g. user selected "Page A" in dropdown)

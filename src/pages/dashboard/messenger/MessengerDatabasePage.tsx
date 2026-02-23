@@ -94,10 +94,17 @@ export default function MessengerDatabasePage() {
       const token = localStorage.getItem("auth_token");
       if (!token) return;
 
-      const res = await fetch(`${BACKEND_URL}/messenger/pages`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+      const teamOwner = localStorage.getItem("active_team_owner");
+      const headers: Record<string, string> = { 
+        Authorization: `Bearer ${token}` 
+      };
+      
+      if (teamOwner) {
+        headers['x-team-owner'] = teamOwner;
+      }
+
+      const res = await fetch(`${BACKEND_URL}/api/messenger/pages`, {
+        headers: headers,
       });
 
       if (!res.ok) return;

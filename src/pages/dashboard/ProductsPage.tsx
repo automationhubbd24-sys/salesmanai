@@ -213,12 +213,17 @@ export default function ProductsPage() {
             const token = localStorage.getItem("auth_token");
             if (!token) return;
 
-            const headers = { Authorization: `Bearer ${token}` };
+            const teamOwner = localStorage.getItem("active_team_owner");
+            const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+            
+            if (teamOwner) {
+                headers['x-team-owner'] = teamOwner;
+            }
 
-            const resMsg = await fetch(`${BACKEND_URL}/messenger/pages`, { headers });
+            const resMsg = await fetch(`${BACKEND_URL}/api/messenger/pages`, { headers });
             const dataMsg = await resMsg.json();
             
-            const resWa = await fetch(`${BACKEND_URL}/whatsapp/sessions`, { headers });
+            const resWa = await fetch(`${BACKEND_URL}/api/whatsapp/sessions`, { headers });
             const dataWa = await resWa.json();
 
             let combinedPages: any[] = [];

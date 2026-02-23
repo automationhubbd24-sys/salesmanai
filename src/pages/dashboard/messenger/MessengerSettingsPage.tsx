@@ -147,8 +147,17 @@ export default function MessengerSettingsPage() {
         return;
       }
 
+      const teamOwner = localStorage.getItem("active_team_owner");
+      const headers: Record<string, string> = { 
+        Authorization: `Bearer ${token}` 
+      };
+      
+      if (teamOwner) {
+        headers['x-team-owner'] = teamOwner;
+      }
+
       const resConfig = await fetch(`${BACKEND_URL}/api/messenger/config/${id}`, {
-                headers: { Authorization: `Bearer ${token}` },
+                headers: headers,
                 cache: 'no-store'
             });
 
@@ -160,7 +169,7 @@ export default function MessengerSettingsPage() {
       const dbRow: any = await resConfig.json();
 
       const resPage = await fetch(`${BACKEND_URL}/api/messenger/pages`, {
-                headers: { Authorization: `Bearer ${token}` },
+                headers: headers,
                 cache: 'no-store'
             });
 
@@ -505,6 +514,16 @@ export default function MessengerSettingsPage() {
         throw new Error("Please login again");
       }
 
+      const teamOwner = localStorage.getItem("active_team_owner");
+      const headers: Record<string, string> = { 
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}` 
+      };
+      
+      if (teamOwner) {
+        headers['x-team-owner'] = teamOwner;
+      }
+
       const payload: any = {
         text_prompt: values.text_prompt,
         ai: values.provider,
@@ -513,12 +532,11 @@ export default function MessengerSettingsPage() {
         cheap_engine: mode === "managed" 
       };
 
-      const resUpdate = await fetch(`${BACKEND_URL}/messenger/config/${dbId}`, {
+      console.log("Saving AI settings:", payload);
+
+      const resUpdate = await fetch(`${BACKEND_URL}/api/messenger/config/${dbId}`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
-        },
+        headers: headers,
         body: JSON.stringify(payload)
       });
 

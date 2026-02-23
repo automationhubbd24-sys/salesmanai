@@ -58,7 +58,7 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
     }
 
     if (!userId && !baseUserId) {
-        return { effectiveUserId: null, isTeamMember: false, viewerEmail };
+        return { effectiveUserId: null, isTeamMember: false, viewerEmail, teamOwnerEmail: null };
     }
 
     let effectiveUserId = userId || baseUserId;
@@ -73,7 +73,7 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
             const cached = teamUserCache.get(normalizedEmail);
             if (Date.now() - cached.timestamp < CACHE_TTL) {
                 // console.log(`[AuthDebug] Cache Hit for ${normalizedEmail} -> ${cached.userId}`);
-                return { effectiveUserId: cached.userId, isTeamMember: cached.isTeamMember, viewerEmail: normalizedEmail };
+                return { effectiveUserId: cached.userId, isTeamMember: cached.isTeamMember, viewerEmail: normalizedEmail, teamOwnerEmail: cached.teamOwnerEmail };
             }
         }
 
@@ -100,33 +100,135 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
                     effectiveUserId = userResult.rows[0].id;
                     isTeamMember = true;
                     // Cache the result
-                    teamUserCache.set(normalizedEmail, { userId: effectiveUserId, isTeamMember: true, timestamp: Date.now() });
-                    return { effectiveUserId, isTeamMember, viewerEmail: normalizedEmail };
+                    teamUserCache.set(normalizedEmail, { userId: effectiveUserId, isTeamMember: true, teamOwnerEmail: ownerEmail, timestamp: Date.now() });
+                    return { effectiveUserId, isTeamMember, viewerEmail: normalizedEmail, teamOwnerEmail: ownerEmail };
                 }
             }
         }
 
-        // 3. Fallback: Personal Workspace
-        // We DO NOT blindly upgrade to team member anymore.
-        // If no team_owner is specified, we assume Personal Workspace.
-        return { effectiveUserId: userId || baseUserId, isTeamMember: false, viewerEmail: normalizedEmail };
+        // 3. Fallback: Personal Workspace OR Auto-Detect via Page Context
+        if (!requestedTeamOwner) {
+             const pgClient = require('../services/pgClient');
+             
+             // DYNAMIC CONTEXT: Check Page Owner
+             // If a specific page is requested, we check if that page belongs to a Team Owner
+             // If so, we automatically switch to that Team Owner's context.
+             const pageId = req.query.page_id || req.body.page_id;
+             
+             if (pageId) {
+                 try {
+                     const pageRes = await pgClient.query(
+                        'SELECT user_id, email FROM page_access_token_message WHERE page_id = $1 AND user_id IS NOT NULL',
+                        [String(pageId)]
+                     );
+                     
+                     if (pageRes.rows.length > 0) {
+                         const pageOwnerId = pageRes.rows[0].user_id;
+                         const pageOwnerEmail = pageRes.rows[0].email;
+                         
+                         // Check if I am a member of this Page Owner's team
+                         const teamCheck = await pgClient.query(
+                             'SELECT 1 FROM team_members WHERE member_email = $1 AND owner_email = $2 AND status = $3',
+                             [normalizedEmail, pageOwnerEmail, 'active']
+                         );
+                         
+                         if (teamCheck.rows.length > 0) {
+                             console.log(`[AuthDebug] Auto-detected Team Context via Page ${pageId}: ${pageOwnerEmail}`);
+                             effectiveUserId = pageOwnerId;
+                             isTeamMember = true;
+                             // Cache this decision? Maybe safer not to cache page-specific decisions globally 
+                             // unless we key it by page, but teamUserCache is keyed by email.
+                             // We should probably NOT cache this as "global" team context for the user, 
+                             // or if we do, we might stick them to this team for requests without page_id.
+                             // Safer to return it directly without polluting the global email-based cache 
+                             // which might be used for "All Products" later.
+                             // Actually, for consistency, let's just return it.
+                             return { effectiveUserId, isTeamMember, viewerEmail: normalizedEmail, teamOwnerEmail: pageOwnerEmail };
+                         }
+                     }
+                 } catch (e) {
+                     console.error("[AuthDebug] Failed to resolve page context:", e);
+                 }
+             }
+        }
+
+        return { effectiveUserId: userId || baseUserId, isTeamMember: false, viewerEmail: normalizedEmail, teamOwnerEmail: null };
     }
 
-    return { effectiveUserId, isTeamMember: false, viewerEmail };
+    return { effectiveUserId, isTeamMember: false, viewerEmail, teamOwnerEmail: null };
 }
 
 async function resolveProductOwnerUserId(req, baseUserId, pageId) {
+    // 1. Resolve Effective User (Handles Team Context)
+    // We prioritize Team Context: If user is acting as Team Member, products belong to Team Owner.
+    const { effectiveUserId, isTeamMember } = await getEffectiveUserIdFromRequest(req, baseUserId);
+    
+    // If we are in a Team Context, return the Team Owner's ID immediately.
+    // This prevents products from being attached to the "Page Owner" (which might be the member)
+    // when they should belong to the Team Owner.
+    if (isTeamMember) {
+        console.log(`[ProductOwner] Team Context Active. Assigning to Team Owner: ${effectiveUserId}`);
+        return effectiveUserId;
+    }
+
+    // 2. Fallback: Check Page Owner (Legacy / Personal Context)
+    // If NOT in a Team Context, and a page is selected, we assign to that Page's Owner.
     if (pageId) {
         const pid = String(pageId);
         const pgClient = require('../services/pgClient');
 
         const pageRes = await pgClient.query(
-            'SELECT user_id FROM page_access_token_message WHERE page_id = $1 AND user_id IS NOT NULL LIMIT 1',
+            'SELECT user_id, email FROM page_access_token_message WHERE page_id = $1 AND user_id IS NOT NULL LIMIT 1',
             [pid]
         );
 
         if (pageRes.rows.length > 0 && pageRes.rows[0].user_id) {
-            return pageRes.rows[0].user_id;
+            const pageOwnerId = pageRes.rows[0].user_id;
+            const pageOwnerEmail = pageRes.rows[0].email;
+
+            // FIX: If Page Owner is a MEMBER of the current effective user (who is the Team Owner),
+            // then we should still assign the product to the Team Owner (Me).
+            // This handles the case where an Owner creates a product for a page connected by a Member.
+            if (pageOwnerId !== effectiveUserId) {
+                try {
+                    // Get Current User Email
+                    const userRes = await pgClient.query('SELECT email FROM users WHERE id = $1', [effectiveUserId]);
+                    if (userRes.rows.length > 0) {
+                        const currentUserEmail = userRes.rows[0].email;
+                        
+                        // Check 1: Is Current User a MEMBER of Page Owner's Team? (Member adding to Owner's Page)
+                        // Here currentUserEmail is the "Me" (the one making the request)
+                        // If "Me" is a member, and Page Owner is the "Owner", then we check:
+                        // owner_email = pageOwnerEmail (Owner)
+                        // member_email = currentUserEmail (Me)
+                        const teamCheck = await pgClient.query(
+                            'SELECT 1 FROM team_members WHERE owner_email = $1 AND member_email = $2 AND status = $3',
+                            [pageOwnerEmail, currentUserEmail, 'active']
+                        );
+                        if (teamCheck.rows.length > 0) {
+                            console.log(`[ProductOwner] Page ${pid} belongs to My Team Owner ${pageOwnerEmail}. Assigning to Page Owner: ${pageOwnerId}`);
+                            return pageOwnerId;
+                        }
+
+                        // Check 2: Is Page Owner a MEMBER of Current User's Team? (Owner adding to Member's Page)
+                        // Here "Me" is the Owner. Page Owner is the Member.
+                        // owner_email = currentUserEmail (Me)
+                        // member_email = pageOwnerEmail (Member)
+                        const reverseTeamCheck = await pgClient.query(
+                            'SELECT 1 FROM team_members WHERE owner_email = $1 AND member_email = $2 AND status = $3',
+                            [currentUserEmail, pageOwnerEmail, 'active']
+                        );
+                        if (reverseTeamCheck.rows.length > 0) {
+                            console.log(`[ProductOwner] Page ${pid} is owned by my Team Member ${pageOwnerEmail}. Assigning to Me (Team Owner): ${effectiveUserId}`);
+                            return effectiveUserId;
+                        }
+                    }
+                } catch (err) {
+                    console.error("[ProductOwner] Team check failed:", err);
+                }
+            }
+
+            return pageOwnerId;
         }
 
         const waRes = await pgClient.query(
@@ -135,11 +237,38 @@ async function resolveProductOwnerUserId(req, baseUserId, pageId) {
         );
 
         if (waRes.rows.length > 0 && waRes.rows[0].user_id) {
-            return waRes.rows[0].user_id;
+            // Same check for WhatsApp? Assuming WhatsApp session ownership follows similar rules.
+            // For now, let's just return user_id, but ideally we should apply the same logic.
+            // But since WA sessions are less likely to be "personal" in this context, we'll stick to basic return for now
+            // or apply the same fix if needed. Let's apply it for consistency.
+            const waOwnerId = waRes.rows[0].user_id;
+             if (waOwnerId !== effectiveUserId) {
+                try {
+                     const userRes = await pgClient.query('SELECT email FROM users WHERE id = $1', [effectiveUserId]);
+                     if (userRes.rows.length > 0) {
+                         const currentUserEmail = userRes.rows[0].email;
+                         // Need email for WA owner. whatsapp_message_database has 'email' column? Yes.
+                         // But we didn't select it.
+                         const waFullRes = await pgClient.query('SELECT email FROM whatsapp_message_database WHERE session_name = $1', [pid]);
+                         if (waFullRes.rows.length > 0) {
+                             const waOwnerEmail = waFullRes.rows[0].email;
+                             const teamCheck = await pgClient.query(
+                                 'SELECT 1 FROM team_members WHERE owner_email = $1 AND member_email = $2',
+                                 [currentUserEmail, waOwnerEmail]
+                             );
+                             if (teamCheck.rows.length > 0) {
+                                  console.log(`[ProductOwner] WA Session ${pid} belongs to team member. Assigning to Team Owner (Me): ${effectiveUserId}`);
+                                 return effectiveUserId;
+                             }
+                         }
+                     }
+                } catch (err) { console.error(err); }
+             }
+            return waOwnerId;
         }
     }
 
-    const { effectiveUserId } = await getEffectiveUserIdFromRequest(req, baseUserId);
+    // 3. Fallback to Effective User (Personal)
     return effectiveUserId;
 }
 
@@ -176,6 +305,7 @@ exports.createProduct = async (req, res) => {
         
         // Use resolveProductOwnerUserId to ensure products are always attached to the OWNER
         const userId = await resolveProductOwnerUserId(req, baseUserId, pageId);
+        console.log(`[ProductCreate] Resolved Owner ID: ${userId} for Request User: ${baseUserId} (Page: ${pageId})`);
         
         if (!userId) return res.status(400).json({ error: "user_id is required" });
 
@@ -273,27 +403,62 @@ exports.createProduct = async (req, res) => {
 exports.getProducts = async (req, res) => {
     try {
         const pageId = req.query.page_id || null;
-        let targetUserId = null;
+        const baseUserId = req.query.user_id || null;
         
-        // 1. Determine Target User (Owner)
-        if (pageId) {
+        // 1. Resolve Effective User (Handles Team Context)
+        // Moved UP to ensure we know who is asking before determining target
+        const { effectiveUserId, isTeamMember, viewerEmail, teamOwnerEmail } = await getEffectiveUserIdFromRequest(req, baseUserId);
+        
+        let targetUserId = effectiveUserId;
+
+        // 2. Determine Target User (Owner vs Page Owner)
+        // Logic: 
+        // - If Team Member, always use Team Owner (effectiveUserId).
+        // - If Page is owned by Team Owner, use Team Owner.
+        // - If Page is owned by a Member of the Team Owner, use Team Owner (Single Owner Policy).
+        // - Only switch to Page Owner if it's a legacy shared page unrelated to the team.
+        
+        if (pageId && !isTeamMember) {
             const pgClient = require('../services/pgClient');
             const pageRes = await pgClient.query(
-                'SELECT user_id FROM page_access_token_message WHERE page_id = $1 AND user_id IS NOT NULL LIMIT 1',
+                'SELECT user_id, email FROM page_access_token_message WHERE page_id = $1 AND user_id IS NOT NULL LIMIT 1',
                 [pageId]
             );
 
-            if (pageRes.rows.length > 0 && pageRes.rows[0].user_id) {
-                targetUserId = pageRes.rows[0].user_id;
-            }
-        }
+            if (pageRes.rows.length > 0) {
+                const pageOwnerId = pageRes.rows[0].user_id;
+                const pageOwnerEmail = pageRes.rows[0].email;
 
-        const baseUserId = req.query.user_id || null;
-        // Check effective user AND if they are a team member
-        const { effectiveUserId, isTeamMember, viewerEmail } = await getEffectiveUserIdFromRequest(req, baseUserId);
-        
-        if (!targetUserId) {
-            targetUserId = effectiveUserId;
+                // If Page Owner is DIFFERENT from Current User
+                if (pageOwnerId !== effectiveUserId) {
+                    // Check if Page Owner is a MEMBER of Current User (Team Owner)
+                    let isMyMember = false;
+                    try {
+                        // Get Current User Email
+                        const userRes = await pgClient.query('SELECT email FROM users WHERE id = $1', [effectiveUserId]);
+                        if (userRes.rows.length > 0) {
+                            const currentUserEmail = userRes.rows[0].email;
+                            const teamCheck = await pgClient.query(
+                                'SELECT 1 FROM team_members WHERE owner_email = $1 AND member_email = $2',
+                                [currentUserEmail, pageOwnerEmail]
+                            );
+                            if (teamCheck.rows.length > 0) {
+                                isMyMember = true;
+                            }
+                        }
+                    } catch (err) {
+                        console.error("[ProductFetch] Team check failed:", err);
+                    }
+
+                    if (isMyMember) {
+                        console.log(`[ProductFetch] Page ${pageId} belongs to team member ${pageOwnerEmail}. Keeping Owner Context: ${effectiveUserId}`);
+                        targetUserId = effectiveUserId;
+                    } else {
+                        console.log(`[ProductFetch] Page ${pageId} belongs to external user ${pageOwnerEmail}. Switching context.`);
+                        targetUserId = pageOwnerId;
+                    }
+                }
+            }
         }
 
         if (!targetUserId) {
@@ -308,7 +473,7 @@ exports.getProducts = async (req, res) => {
         let allowedPageIds = null; // null means "all pages" (for Owner)
         
         if (isTeamMember && viewerEmail) {
-            const requestedTeamOwner = req.query.team_owner || req.headers['x-team-owner'];
+            const requestedTeamOwner = req.query.team_owner || req.headers['x-team-owner'] || teamOwnerEmail;
             
             if (requestedTeamOwner) {
                 const pgClient = require('../services/pgClient');
@@ -319,26 +484,40 @@ exports.getProducts = async (req, res) => {
                     [viewerEmail, requestedTeamOwner, 'active']
                 );
 
+                let teamPages = [];
                 if (teamRes.rows.length > 0) {
-                    let allFbPages = [];
-                    let allWaSessions = [];
-
                     teamRes.rows.forEach(row => {
                         const perms = row.permissions || {};
                         if (Array.isArray(perms.fb_pages)) {
-                            allFbPages.push(...perms.fb_pages);
+                            teamPages.push(...perms.fb_pages);
                         }
                         if (Array.isArray(perms.wa_sessions)) {
-                            allWaSessions.push(...perms.wa_sessions);
+                            teamPages.push(...perms.wa_sessions);
                         }
                     });
-                    
-                    // Combine all allowed resource IDs
-                    allowedPageIds = [...new Set([...allFbPages, ...allWaSessions])];
-                    
-                    // Ensure we filter by string IDs for consistency
-                    allowedPageIds = allowedPageIds.map(String);
                 }
+                
+                // ALSO Fetch Personal Pages owned by the member themselves
+                // This ensures they can always access products for their own pages, even in Team Context
+                let personalPages = [];
+                try {
+                     const userRes = await pgClient.query('SELECT id FROM users WHERE email = $1', [viewerEmail]);
+                     if (userRes.rows.length > 0) {
+                         const viewerUserId = userRes.rows[0].id;
+                         const personalPagesRes = await pgClient.query('SELECT page_id FROM page_access_token_message WHERE user_id = $1', [viewerUserId]);
+                         personalPages = personalPagesRes.rows.map(r => r.page_id);
+                     }
+                } catch (err) {
+                    console.error("[ProductFetch] Failed to fetch personal pages:", err);
+                }
+
+                // Combine all allowed resource IDs
+                allowedPageIds = [...new Set([...teamPages, ...personalPages])];
+                
+                // Ensure we filter by string IDs for consistency
+                allowedPageIds = allowedPageIds.map(String);
+                
+                console.log(`[ProductFetch] Allowed Pages for ${viewerEmail}: ${allowedPageIds.length} (Team: ${teamPages.length}, Personal: ${personalPages.length})`);
             }
         }
 
