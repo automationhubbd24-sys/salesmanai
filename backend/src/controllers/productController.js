@@ -58,10 +58,11 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
     }
 
     if (!userId && !baseUserId) {
-        return { effectiveUserId: null };
+        return { effectiveUserId: null, isTeamMember: false, viewerEmail };
     }
 
     let effectiveUserId = userId || baseUserId;
+    let isTeamMember = false;
 
     if (viewerEmail) {
         // Ensure email is lowercase and trimmed for matching
@@ -72,7 +73,7 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
             const cached = teamUserCache.get(normalizedEmail);
             if (Date.now() - cached.timestamp < CACHE_TTL) {
                 // console.log(`[AuthDebug] Cache Hit for ${normalizedEmail} -> ${cached.userId}`);
-                return { effectiveUserId: cached.userId };
+                return { effectiveUserId: cached.userId, isTeamMember: cached.isTeamMember, viewerEmail: normalizedEmail };
             }
         }
 
@@ -95,6 +96,7 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
 
             if (userResult.rows.length > 0) {
                 effectiveUserId = userResult.rows[0].id;
+                isTeamMember = true;
                 console.log(`[AuthDebug] Effective User ID (Owner): ${effectiveUserId}`);
             } else {
                 console.log(`[AuthDebug] Owner email not found in users table: ${ownerEmail}`);
@@ -104,10 +106,11 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
         }
 
         // 2. Set Cache
-        teamUserCache.set(normalizedEmail, { userId: effectiveUserId, timestamp: Date.now() });
+        teamUserCache.set(normalizedEmail, { userId: effectiveUserId, isTeamMember, timestamp: Date.now() });
+        return { effectiveUserId, isTeamMember, viewerEmail: normalizedEmail };
     }
 
-    return { effectiveUserId };
+    return { effectiveUserId, isTeamMember: false, viewerEmail };
 }
 
 async function resolveProductOwnerUserId(req, baseUserId, pageId) {
@@ -168,7 +171,10 @@ exports.createProduct = async (req, res) => {
     try {
         const baseUserId = req.body.user_id || null;
         const pageId = req.body.page_id || null;
+        
+        // Use resolveProductOwnerUserId to ensure products are always attached to the OWNER
         const userId = await resolveProductOwnerUserId(req, baseUserId, pageId);
+        
         if (!userId) return res.status(400).json({ error: "user_id is required" });
 
         const hasAccess = await dbService.checkProductFeatureAccess(userId);
@@ -262,7 +268,8 @@ exports.getProducts = async (req, res) => {
     try {
         const pageId = req.query.page_id || null;
         let targetUserId = null;
-
+        
+        // 1. Determine Target User (Owner)
         if (pageId) {
             const pgClient = require('../services/pgClient');
             const pageRes = await pgClient.query(
@@ -275,9 +282,11 @@ exports.getProducts = async (req, res) => {
             }
         }
 
+        const baseUserId = req.query.user_id || null;
+        // Check effective user AND if they are a team member
+        const { effectiveUserId, isTeamMember, viewerEmail } = await getEffectiveUserIdFromRequest(req, baseUserId);
+        
         if (!targetUserId) {
-            const baseUserId = req.query.user_id || null;
-            const { effectiveUserId } = await getEffectiveUserIdFromRequest(req, baseUserId);
             targetUserId = effectiveUserId;
         }
 
@@ -289,12 +298,39 @@ exports.getProducts = async (req, res) => {
         const limit = parseInt(req.query.limit) || 20;
         const search = req.query.search || null;
 
-        const result = await dbService.getProducts(targetUserId, page, limit, search, pageId);
+        // 2. Permission Check for Team Members
+        let allowedPageIds = null; // null means "all pages" (for Owner)
+        
+        if (isTeamMember && viewerEmail) {
+            const pgClient = require('../services/pgClient');
+            // Fetch permissions for this member
+            const teamRes = await pgClient.query(
+                'SELECT permissions FROM team_members WHERE member_email = $1 AND status = $2',
+                [viewerEmail, 'active']
+            );
+
+            if (teamRes.rows.length > 0) {
+                const perms = teamRes.rows[0].permissions || {};
+                const fbPages = Array.isArray(perms.fb_pages) ? perms.fb_pages : [];
+                const waSessions = Array.isArray(perms.wa_sessions) ? perms.wa_sessions : [];
+                
+                // Combine all allowed resource IDs
+                allowedPageIds = [...fbPages, ...waSessions];
+                
+                // If the user has NO allowed pages, they should see NO products? 
+                // Or should they see global products (where allowed_page_ids is null)?
+                // Let's assume they can see global products + products for their pages.
+            }
+        }
+
+        // 3. Fetch Products (Pass allowedPageIds to filter)
+        const result = await dbService.getProducts(targetUserId, page, limit, search, pageId, allowedPageIds);
         res.json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 };
+
 
 exports.updateProduct = async (req, res) => {
     try {

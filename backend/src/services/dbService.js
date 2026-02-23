@@ -1612,7 +1612,7 @@ async function createProduct(productData) {
     return result.rows[0];
 }
 
-async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pageId = null) {
+async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pageId = null, allowedPageIds = null) {
     const offset = (page - 1) * limit;
 
     const params = [userId];
@@ -1621,6 +1621,23 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
     if (searchQuery) {
         params.push(`%${searchQuery}%`, `%${searchQuery}%`);
         whereClause += ` AND (name ILIKE $2 OR description ILIKE $3)`;
+    }
+
+    // Filter by Specific Page (e.g. user selected "Page A" in dropdown)
+    if (pageId) {
+        params.push(String(pageId));
+        // Global OR Restricted to this page
+        whereClause += ` AND (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb OR allowed_page_ids::jsonb @> jsonb_build_array($${params.length}::text))`;
+    }
+
+    // Filter by User Permissions (allowedPageIds)
+    if (allowedPageIds !== null) {
+        // Global OR Overlap with allowedPageIds
+        // Normalize allowedPageIds to strings
+        const perms = allowedPageIds.map(String);
+        params.push(perms);
+        // Use ?| operator to check if any of the keys/elements in perms exist in allowed_page_ids
+        whereClause += ` AND (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb OR allowed_page_ids::jsonb ?| $${params.length}::text[])`;
     }
 
     const countResult = await query(
@@ -1643,18 +1660,7 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
 
     const data = dataResult.rows || [];
 
-    if (!pageId) {
-        return { data, count: totalCount };
-    }
-
-    const pid = String(pageId);
-    const filtered = data.filter((p) => {
-        const arr = Array.isArray(p.allowed_page_ids) ? p.allowed_page_ids.map((v) => String(v)) : null;
-        if (!arr || arr.length === 0) return true;
-        return arr.includes(pid);
-    });
-
-    return { data: filtered, count: filtered.length };
+    return { data, count: totalCount };
 }
 
 // 28. Get Product By ID
