@@ -77,37 +77,39 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
             }
         }
 
-        // FORCE CHECK: Even if effectiveUserId is set (Personal Workspace), check if they are a team member.
-        // This enforces the "Single Owner" rule for everyone.
-        const teamResult = await pgClient.query(
-            'SELECT owner_email FROM team_members WHERE member_email = $1 AND status = $2',
-            [normalizedEmail, 'active']
-        );
+        // 2. EXPLICIT TEAM CONTEXT (Professional Workspace)
+        // Check if the request explicitly asks for a specific team context
+        const requestedTeamOwner = req.query.team_owner || req.headers['x-team-owner'];
 
-        if (teamResult.rows.length > 0 && teamResult.rows[0].owner_email) {
-            const ownerEmail = teamResult.rows[0].owner_email;
-            console.log(`[AuthDebug] Found Team Owner Email: ${ownerEmail} for member ${normalizedEmail}`);
-            
-            // Look up the owner's user_id directly from the users table
-            const userResult = await pgClient.query(
-                'SELECT id FROM users WHERE email = $1',
-                [ownerEmail]
+        if (requestedTeamOwner) {
+             const teamResult = await pgClient.query(
+                'SELECT owner_email FROM team_members WHERE member_email = $1 AND owner_email = $2 AND status = $3',
+                [normalizedEmail, requestedTeamOwner, 'active']
             );
 
-            if (userResult.rows.length > 0) {
-                effectiveUserId = userResult.rows[0].id;
-                isTeamMember = true;
-                console.log(`[AuthDebug] Effective User ID (Owner): ${effectiveUserId}`);
-            } else {
-                console.log(`[AuthDebug] Owner email not found in users table: ${ownerEmail}`);
+            if (teamResult.rows.length > 0) {
+                const ownerEmail = teamResult.rows[0].owner_email;
+                console.log(`[AuthDebug] Explicit Team Context: ${ownerEmail} for member ${normalizedEmail}`);
+                
+                const userResult = await pgClient.query(
+                    'SELECT id FROM users WHERE email = $1',
+                    [ownerEmail]
+                );
+
+                if (userResult.rows.length > 0) {
+                    effectiveUserId = userResult.rows[0].id;
+                    isTeamMember = true;
+                    // Cache the result
+                    teamUserCache.set(normalizedEmail, { userId: effectiveUserId, isTeamMember: true, timestamp: Date.now() });
+                    return { effectiveUserId, isTeamMember, viewerEmail: normalizedEmail };
+                }
             }
-        } else {
-             console.log(`[AuthDebug] No active team membership found for: ${normalizedEmail}`);
         }
 
-        // 2. Set Cache
-        teamUserCache.set(normalizedEmail, { userId: effectiveUserId, isTeamMember, timestamp: Date.now() });
-        return { effectiveUserId, isTeamMember, viewerEmail: normalizedEmail };
+        // 3. Fallback: Personal Workspace
+        // We DO NOT blindly upgrade to team member anymore.
+        // If no team_owner is specified, we assume Personal Workspace.
+        return { effectiveUserId: userId || baseUserId, isTeamMember: false, viewerEmail: normalizedEmail };
     }
 
     return { effectiveUserId, isTeamMember: false, viewerEmail };
@@ -232,7 +234,11 @@ exports.createProduct = async (req, res) => {
         let allowedPages = null;
         if (req.body.allowed_page_ids) {
             try {
-                allowedPages = JSON.parse(req.body.allowed_page_ids);
+                const parsed = JSON.parse(req.body.allowed_page_ids);
+                if (Array.isArray(parsed)) {
+                    // Force all IDs to be strings for consistent JSONB querying
+                    allowedPages = parsed.map(String);
+                }
             } catch (e) {
                 console.error("Invalid allowed_page_ids format", e);
             }
@@ -302,24 +308,37 @@ exports.getProducts = async (req, res) => {
         let allowedPageIds = null; // null means "all pages" (for Owner)
         
         if (isTeamMember && viewerEmail) {
-            const pgClient = require('../services/pgClient');
-            // Fetch permissions for this member
-            const teamRes = await pgClient.query(
-                'SELECT permissions FROM team_members WHERE member_email = $1 AND status = $2',
-                [viewerEmail, 'active']
-            );
+            const requestedTeamOwner = req.query.team_owner || req.headers['x-team-owner'];
+            
+            if (requestedTeamOwner) {
+                const pgClient = require('../services/pgClient');
+                // Fetch permissions for this member SPECIFIC to the requested team
+                // AGGREGATE permissions from all rows if the member is added multiple times for the same owner
+                const teamRes = await pgClient.query(
+                    'SELECT permissions FROM team_members WHERE member_email = $1 AND owner_email = $2 AND status = $3',
+                    [viewerEmail, requestedTeamOwner, 'active']
+                );
 
-            if (teamRes.rows.length > 0) {
-                const perms = teamRes.rows[0].permissions || {};
-                const fbPages = Array.isArray(perms.fb_pages) ? perms.fb_pages : [];
-                const waSessions = Array.isArray(perms.wa_sessions) ? perms.wa_sessions : [];
-                
-                // Combine all allowed resource IDs
-                allowedPageIds = [...fbPages, ...waSessions];
-                
-                // If the user has NO allowed pages, they should see NO products? 
-                // Or should they see global products (where allowed_page_ids is null)?
-                // Let's assume they can see global products + products for their pages.
+                if (teamRes.rows.length > 0) {
+                    let allFbPages = [];
+                    let allWaSessions = [];
+
+                    teamRes.rows.forEach(row => {
+                        const perms = row.permissions || {};
+                        if (Array.isArray(perms.fb_pages)) {
+                            allFbPages.push(...perms.fb_pages);
+                        }
+                        if (Array.isArray(perms.wa_sessions)) {
+                            allWaSessions.push(...perms.wa_sessions);
+                        }
+                    });
+                    
+                    // Combine all allowed resource IDs
+                    allowedPageIds = [...new Set([...allFbPages, ...allWaSessions])];
+                    
+                    // Ensure we filter by string IDs for consistency
+                    allowedPageIds = allowedPageIds.map(String);
+                }
             }
         }
 
@@ -386,7 +405,13 @@ exports.updateProduct = async (req, res) => {
             try {
                 // Parse to validate, then re-stringify for DB
                 const parsedAllowed = JSON.parse(req.body.allowed_page_ids);
-                updates.allowed_page_ids = JSON.stringify(parsedAllowed);
+                if (Array.isArray(parsedAllowed)) {
+                    // Force all IDs to be strings for consistent JSONB querying
+                    const stringAllowed = parsedAllowed.map(String);
+                    updates.allowed_page_ids = JSON.stringify(stringAllowed);
+                } else {
+                    updates.allowed_page_ids = '[]';
+                }
             } catch (e) {
                 return res.status(400).json({ error: "Invalid allowed_page_ids JSON format" });
             }

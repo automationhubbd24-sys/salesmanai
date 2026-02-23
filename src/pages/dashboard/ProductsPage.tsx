@@ -173,6 +173,12 @@ export default function ProductsPage() {
                 } else if (platform === "whatsapp") {
                     pageId = localStorage.getItem("active_wa_session_id");
                 }
+                
+                // Add Team Context
+                const teamOwner = localStorage.getItem("active_team_owner");
+                if (teamOwner) {
+                    params.set("team_owner", teamOwner);
+                }
             }
 
             if (pageId) {
@@ -406,9 +412,12 @@ export default function ProductsPage() {
                 formData.append("image", productImage);
             }
 
+            const teamOwner = localStorage.getItem("active_team_owner");
+            const query = teamOwner ? `?team_owner=${teamOwner}` : "";
+
             const url = editProductId 
-                ? `${BACKEND_URL}/api/products/${editProductId}`
-                : `${BACKEND_URL}/api/products`;
+                ? `${BACKEND_URL}/api/products/${editProductId}${query}`
+                : `${BACKEND_URL}/api/products${query}`;
 
             let token: string | null = null;
             if (typeof window !== "undefined") {
@@ -463,7 +472,10 @@ export default function ProductsPage() {
                 headers.Authorization = `Bearer ${token}`;
             }
 
-            const res = await fetch(`${BACKEND_URL}/api/products/import-woocommerce`, {
+            const teamOwner = localStorage.getItem("active_team_owner");
+            const query = teamOwner ? `?team_owner=${teamOwner}` : "";
+            
+            const res = await fetch(`${BACKEND_URL}/api/products/import-woocommerce${query}`, {
                 method: "POST",
                 headers,
                 body: JSON.stringify({ userId, url: wcUrl, consumerKey: wcKey, consumerSecret: wcSecret })
@@ -493,6 +505,13 @@ export default function ProductsPage() {
 
             const params = new URLSearchParams();
             params.set("user_id", userId);
+
+            if (typeof window !== "undefined") {
+                const teamOwner = localStorage.getItem("active_team_owner");
+                if (teamOwner) {
+                    params.set("team_owner", teamOwner);
+                }
+            }
 
             let pageId: string | null = null;
             if (typeof window !== "undefined") {
@@ -835,29 +854,30 @@ export default function ProductsPage() {
                                 
                                 <div className="space-y-2 pt-2">
                                     <div className="flex items-center justify-between">
-                                        <Label>Visible on Pages (Required)</Label>
+                                        <div>
+                                            <Label>Visible on Pages (Optional)</Label>
+                                            <p className="text-[10px] text-muted-foreground mt-1">
+                                                If no pages are selected, this product will be visible on <strong>ALL</strong> pages.
+                                            </p>
+                                        </div>
                                         <div className="flex gap-2">
                                         <Button 
                                             type="button" 
-                                            variant="default" 
-                                            className="h-7 px-3 text-xs bg-[#00ff88] text-black rounded-md hover:bg-[#00f07f]"
+                                            variant="outline" 
+                                            size="sm"
+                                            className="h-7 text-xs border-white/10 hover:bg-white/5"
                                             onClick={handleSelectAllPages}
                                         >
                                             Select All
-                                            <span className="ml-1 inline-flex">
-                                                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 fill-black" viewBox="0 0 24 24"><path d="M9 16.17l-3.59-3.58L4 14l5 5 12-12-1.41-1.41z"/></svg>
-                                            </span>
                                         </Button>
                                         <Button 
                                             type="button" 
-                                            variant="default" 
-                                            className="h-7 px-3 text-xs bg-[#ff5470] text-black rounded-md hover:bg-[#ff3657]"
+                                            variant="outline" 
+                                            size="sm"
+                                            className="h-7 text-xs border-white/10 hover:bg-white/5 text-red-400 hover:text-red-300"
                                             onClick={handleDeselectAllPages}
                                         >
                                             Clear
-                                            <span className="ml-1 inline-flex">
-                                                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 fill-black" viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-                                            </span>
                                         </Button>
                                         </div>
                                     </div>

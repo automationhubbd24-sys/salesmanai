@@ -21,7 +21,6 @@ export interface WhatsAppContextType {
   setActiveTeam: (team: { id: number; owner_email: string; permissions: any } | null) => void;
   viewMode: 'personal' | 'team';
   switchViewMode: (mode: 'personal' | 'team') => void;
-  teamOwnerEmail: string | null;
 }
 
 const WhatsAppContext = createContext<WhatsAppContextType | undefined>(undefined);
@@ -36,7 +35,6 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
   const [isTeamMember, setIsTeamMember] = useState(false);
   const [teams, setTeams] = useState<{ id: number; owner_email: string; permissions: any }[]>([]);
   const [activeTeam, setActiveTeam] = useState<{ id: number; owner_email: string; permissions: any } | null>(null);
-  const [teamOwnerEmail, setTeamOwnerEmail] = useState<string | null>(null);
 
   const [viewMode, setViewMode] = useState<'personal' | 'team'>(() => {
     return (localStorage.getItem('whatsapp_view_mode') as 'personal' | 'team') || 'personal';
@@ -45,6 +43,13 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
   const switchViewMode = (mode: 'personal' | 'team') => {
     setViewMode(mode);
     localStorage.setItem('whatsapp_view_mode', mode);
+    if (mode === 'personal') {
+        localStorage.removeItem('active_team_owner');
+    } else {
+        if (activeTeam) {
+            localStorage.setItem('active_team_owner', activeTeam.owner_email);
+        }
+    }
   };
 
   useEffect(() => {
@@ -60,38 +65,76 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
         setIsTeamMember(false);
         setTeams([]);
         setActiveTeam(null);
-        setTeamOwnerEmail(null);
         return;
       }
 
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/sessions`, {
+      // Fetch user's teams
+      try {
+        const teamRes = await fetch(`${BACKEND_URL}/api/teams/me`, {
+           headers: { Authorization: `Bearer ${token}` }
+        });
+        if (teamRes.ok) {
+            const myTeams = await teamRes.json();
+                if (Array.isArray(myTeams)) {
+                    // Filter teams that have relevant permissions
+                    const relevantTeams = myTeams.filter((t: any) => 
+                        t.permissions && 
+                        Array.isArray(t.permissions.wa_sessions) && 
+                        t.permissions.wa_sessions.length > 0
+                    );
+
+                    // Deduplicate teams by owner_email
+                    const uniqueTeamsMap = new Map();
+                    relevantTeams.forEach((t: any) => {
+                        if (!uniqueTeamsMap.has(t.owner_email)) {
+                            uniqueTeamsMap.set(t.owner_email, t);
+                        }
+                    });
+                    const uniqueTeams = Array.from(uniqueTeamsMap.values());
+
+                    setTeams(uniqueTeams);
+                    setIsTeamMember(uniqueTeams.length > 0);
+                    
+                    // Restore active team from local storage
+                    const storedOwner = localStorage.getItem('active_team_owner');
+                    if (storedOwner && !activeTeam) {
+                        const found = uniqueTeams.find((t: any) => t.owner_email === storedOwner);
+                        if (found) setActiveTeam(found);
+                    }
+
+                    // If activeTeam is set but not in uniqueTeams anymore, clear it
+                    if (activeTeam) {
+                        const stillMember = uniqueTeams.find((t: any) => t.owner_email === activeTeam.owner_email);
+                        if (!stillMember) setActiveTeam(null);
+                        // Update activeTeam reference to the one in uniqueTeams to ensure consistency
+                        else if (stillMember.id !== activeTeam.id) setActiveTeam(stillMember);
+                    }
+                }
+        }
+      } catch (err) {
+        console.error("Failed to fetch teams", err);
+      }
+
+      let url = `${BACKEND_URL}/api/whatsapp/sessions`;
+      if (viewMode === 'team' && activeTeam) {
+          url += `?team_owner=${encodeURIComponent(activeTeam.owner_email)}`;
+      }
+
+      const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const wahaSessions = await res.json();
       const allSessions: WahaSession[] = Array.isArray(wahaSessions) ? wahaSessions : [];
 
-      let formattedSessions: WahaSession[] = [];
-
-      if (viewMode === 'team' && isTeamMember) {
-          let shared = allSessions.filter((s: any) => s.is_shared);
-          if (activeTeam && Array.isArray(activeTeam.permissions?.wa_sessions) && activeTeam.permissions.wa_sessions.length > 0) {
-              const allowedNames = activeTeam.permissions.wa_sessions.map((name: any) => String(name));
-              shared = shared.filter((s: any) => allowedNames.includes(String(s.session_name)));
-          }
-          formattedSessions = shared;
-      } else {
-          formattedSessions = allSessions.filter((s: any) => !s.is_shared);
-      }
-      
-      setSessions(formattedSessions);
+      setSessions(allSessions);
       
       // Auto-select first if none selected
       const current = currentSessionRef.current;
-      if (!current && formattedSessions.length > 0) {
-        setCurrentSession(formattedSessions[0]);
+      if (!current && allSessions.length > 0) {
+        setCurrentSession(allSessions[0]);
       } else if (current) {
         // Update current session object with latest data
-        const updated = formattedSessions.find((s) => s.name === current.name);
+        const updated = allSessions.find((s) => s.name === current.name);
         if (updated) setCurrentSession(updated);
         else setCurrentSession(null);
       }
@@ -101,7 +144,7 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, [viewMode, activeTeam, isTeamMember]);
+  }, [viewMode, activeTeam]);
 
   useEffect(() => {
     refreshSessions();
@@ -117,10 +160,16 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
         isTeamMember,
         teams,
         activeTeam,
-        setActiveTeam,
+        setActiveTeam: (team) => {
+            setActiveTeam(team);
+            if (team) {
+                localStorage.setItem('active_team_owner', team.owner_email);
+            } else {
+                localStorage.removeItem('active_team_owner');
+            }
+        },
         viewMode,
-        switchViewMode,
-        teamOwnerEmail
+        switchViewMode
     }}>
       {children}
     </WhatsAppContext.Provider>

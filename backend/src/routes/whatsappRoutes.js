@@ -80,17 +80,24 @@ router.get('/sessions', async (req, res) => {
             return res.json([]);
         }
 
-        const { rows: mySessions } = await pgClient.query(
-            'SELECT id, session_name, expires_at, plan_days, status, subscription_status, user_id, email FROM whatsapp_message_database WHERE user_id = $1 OR email = $2',
-            [userId, userEmail]
-        );
+        const requestedOwner = req.query.team_owner || req.headers['x-team-owner'];
+
+        // 2. Fetch Personal Sessions
+        let mySessions = [];
+        if (!requestedOwner || requestedOwner === userEmail) {
+            const { rows } = await pgClient.query(
+                'SELECT id, session_name, expires_at, plan_days, status, subscription_status, user_id, email FROM whatsapp_message_database WHERE user_id = $1 OR email = $2',
+                [userId, userEmail]
+            );
+            mySessions = rows;
+        }
 
         // 3. Fetch Shared Sessions (Team Members)
         let sharedSessionNames = [];
-        if (userEmail) {
+        if (userEmail && requestedOwner && requestedOwner !== userEmail) {
             const { rows: teamData } = await pgClient.query(
-                'SELECT permissions FROM team_members WHERE member_email = $1 AND status = $2',
-                [userEmail, 'active']
+                'SELECT permissions FROM team_members WHERE member_email = $1 AND owner_email = $2 AND status = $3',
+                [userEmail, requestedOwner, 'active']
             );
 
             teamData.forEach(row => {

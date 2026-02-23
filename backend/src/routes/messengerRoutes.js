@@ -24,10 +24,18 @@ router.get('/pages', async (req, res) => {
             return res.status(401).json({ error: 'Unauthorized' });
         }
 
-        const { rows: myPages } = await pgClient.query(
-            'SELECT * FROM page_access_token_message WHERE email = $1',
-            [userEmail]
-        );
+        const requestedOwner = req.query.team_owner || req.headers['x-team-owner'];
+
+        // 2. Fetch Personal Pages
+        // Only if Personal Context (no requestedOwner or requestedOwner is self)
+        let myPages = [];
+        if (!requestedOwner || requestedOwner === userEmail) {
+            const { rows } = await pgClient.query(
+                'SELECT * FROM page_access_token_message WHERE email = $1',
+                [userEmail]
+            );
+            myPages = rows;
+        }
 
         res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
         res.set('Pragma', 'no-cache');
@@ -37,10 +45,10 @@ router.get('/pages', async (req, res) => {
 
         // 3. Fetch Shared Pages (Team Members)
         let sharedPageIds = [];
-        if (userEmail) {
+        if (userEmail && requestedOwner && requestedOwner !== userEmail) {
             const { rows: teamData } = await pgClient.query(
-                'SELECT permissions, owner_email FROM team_members WHERE member_email = $1 AND status = $2',
-                [userEmail, 'active']
+                'SELECT permissions FROM team_members WHERE member_email = $1 AND owner_email = $2 AND status = $3',
+                [userEmail, requestedOwner, 'active']
             );
 
             teamData.forEach(row => {

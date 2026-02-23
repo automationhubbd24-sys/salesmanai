@@ -45,6 +45,13 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
   const switchViewMode = (mode: 'personal' | 'team') => {
     setViewMode(mode);
     localStorage.setItem('messenger_view_mode', mode);
+    if (mode === 'personal') {
+        localStorage.removeItem('active_team_owner');
+    } else {
+        if (activeTeam) {
+            localStorage.setItem('active_team_owner', activeTeam.owner_email);
+        }
+    }
   };
 
   const refreshPages = React.useCallback(async () => {
@@ -66,29 +73,52 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
         });
         if (teamRes.ok) {
             const myTeams = await teamRes.json();
-             if (Array.isArray(myTeams)) {
-                 setTeams(myTeams);
-                 setIsTeamMember(myTeams.length > 0);
-                 
-                 // Restore active team from local storage
-                 const storedOwner = localStorage.getItem('active_team_owner');
-                 if (storedOwner && !activeTeam) {
-                     const found = myTeams.find((t: any) => t.owner_email === storedOwner);
-                     if (found) setActiveTeam(found);
-                 }
+                if (Array.isArray(myTeams)) {
+                    // Filter teams that have relevant permissions
+                    const relevantTeams = myTeams.filter((t: any) => 
+                        t.permissions && 
+                        Array.isArray(t.permissions.fb_pages) && 
+                        t.permissions.fb_pages.length > 0
+                    );
 
-                 // If activeTeam is set but not in myTeams anymore, clear it
-                 if (activeTeam) {
-                     const stillMember = myTeams.find((t: any) => t.id === activeTeam.id);
-                     if (!stillMember) setActiveTeam(null);
-                 }
-             }
+                    // Deduplicate teams by owner_email
+                    const uniqueTeamsMap = new Map();
+                    relevantTeams.forEach((t: any) => {
+                        if (!uniqueTeamsMap.has(t.owner_email)) {
+                            uniqueTeamsMap.set(t.owner_email, t);
+                        }
+                    });
+                    const uniqueTeams = Array.from(uniqueTeamsMap.values());
+
+                    setTeams(uniqueTeams);
+                    setIsTeamMember(uniqueTeams.length > 0);
+                    
+                    // Restore active team from local storage
+                    const storedOwner = localStorage.getItem('active_team_owner');
+                    if (storedOwner && !activeTeam) {
+                        const found = uniqueTeams.find((t: any) => t.owner_email === storedOwner);
+                        if (found) setActiveTeam(found);
+                    }
+
+                    // If activeTeam is set but not in uniqueTeams anymore, clear it
+                    if (activeTeam) {
+                        const stillMember = uniqueTeams.find((t: any) => t.owner_email === activeTeam.owner_email);
+                        if (!stillMember) setActiveTeam(null);
+                        // Update activeTeam reference to the one in uniqueTeams to ensure consistency
+                        else if (stillMember.id !== activeTeam.id) setActiveTeam(stillMember);
+                    }
+                }
         }
       } catch (err) {
         console.error("Failed to fetch teams", err);
       }
 
-      const res = await fetch(`${BACKEND_URL}/api/messenger/pages`, {
+      let url = `${BACKEND_URL}/api/messenger/pages`;
+      if (viewMode === 'team' && activeTeam) {
+          url += `?team_owner=${encodeURIComponent(activeTeam.owner_email)}`;
+      }
+
+      const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` }
       });
 
@@ -101,34 +131,18 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
 
       let mergedPages: MessengerPage[] = [];
 
-      if (viewMode === 'team' && activeTeam && apiPages.length > 0) {
-          let teamPages = apiPages.filter((p) => p.is_shared);
-
-          const allowedIds = activeTeam.permissions?.fb_pages;
-          if (Array.isArray(allowedIds) && allowedIds.length > 0) {
-              const allowedStrings = allowedIds.map((id: any) => String(id));
-              teamPages = teamPages.filter((p) => allowedStrings.includes(String(p.page_id)));
-          }
-
-          mergedPages = teamPages.map((p) => ({
-              page_id: p.page_id,
-              name: p.name,
-              page_access_token: p.page_access_token,
-              db_id: p.id,
-              email: p.email,
-              created_at: p.created_at,
-          }));
-      } else if (apiPages.length > 0) {
-          const personalPages = apiPages.filter((p) => !p.is_shared);
-          mergedPages = personalPages.map((p) => ({
-              page_id: p.page_id,
-              name: p.name,
-              page_access_token: p.page_access_token,
-              db_id: p.id,
-              email: p.email,
-              created_at: p.created_at,
-          }));
-      }
+      // Backend now filters by team_owner if provided, so apiPages should contain what we need.
+      // However, we still need to map to MessengerPage structure.
+      
+      mergedPages = apiPages.map((p) => ({
+          page_id: p.page_id,
+          name: p.name,
+          page_access_token: p.page_access_token,
+          db_id: p.id || p.db_id, // Handle different field names if any
+          email: p.email,
+          created_at: p.created_at,
+          is_shared: p.is_shared
+      }));
 
       setPages(mergedPages);
       

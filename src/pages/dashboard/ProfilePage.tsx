@@ -38,6 +38,7 @@ export default function ProfilePage() {
   const [selectedFbPages, setSelectedFbPages] = useState<string[]>([]);
   const [selectedWaSessions, setSelectedWaSessions] = useState<string[]>([]);
   const [resourceLoading, setResourceLoading] = useState(false);
+  const [isOwner, setIsOwner] = useState(true);
 
   useEffect(() => {
     try {
@@ -60,6 +61,14 @@ export default function ProfilePage() {
       }
       if (!id) {
         id = localStorage.getItem("auth_user_id");
+      }
+
+      // Check ownership status
+      const activeTeamOwner = localStorage.getItem("active_team_owner");
+      if (activeTeamOwner && email && activeTeamOwner.toLowerCase() !== email.toLowerCase()) {
+          setIsOwner(false);
+      } else {
+          setIsOwner(true);
       }
 
       if (email || id || full_name || phone) {
@@ -89,7 +98,10 @@ export default function ProfilePage() {
       const token = localStorage.getItem("auth_token");
       if (!token) return;
 
-      const res = await fetch(`${BACKEND_URL}/api/teams/members`, {
+      const teamOwner = localStorage.getItem("active_team_owner");
+      const query = teamOwner ? `?team_owner=${teamOwner}` : "";
+
+      const res = await fetch(`${BACKEND_URL}/api/teams/members${query}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -113,11 +125,14 @@ export default function ProfilePage() {
       const token = localStorage.getItem("auth_token");
       if (!token) return;
 
+      const teamOwner = localStorage.getItem("active_team_owner");
+      const query = teamOwner ? `?team_owner=${teamOwner}` : "";
+
       const [fbRes, waRes] = await Promise.all([
-        fetch(`${BACKEND_URL}/api/messenger/pages`, {
+        fetch(`${BACKEND_URL}/api/messenger/pages${query}`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
-        fetch(`${BACKEND_URL}/api/whatsapp/sessions`, {
+        fetch(`${BACKEND_URL}/api/whatsapp/sessions${query}`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
       ]);
@@ -187,8 +202,11 @@ export default function ProfilePage() {
         toast.error("Please login again");
         return;
       }
+      
+      const teamOwner = localStorage.getItem("active_team_owner");
+      const query = teamOwner ? `?team_owner=${teamOwner}` : "";
 
-      const res = await fetch(`${BACKEND_URL}/api/teams/members`, {
+      const res = await fetch(`${BACKEND_URL}/api/teams/members${query}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -233,8 +251,11 @@ export default function ProfilePage() {
         toast.error("Please login again");
         return;
       }
+      
+      const teamOwner = localStorage.getItem("active_team_owner");
+      const query = teamOwner ? `?team_owner=${teamOwner}` : "";
 
-      const res = await fetch(`${BACKEND_URL}/teams/members/${editingMemberId}`, {
+      const res = await fetch(`${BACKEND_URL}/api/teams/members/${editingMemberId}${query}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -267,8 +288,11 @@ export default function ProfilePage() {
         toast.error("Please login again");
         return;
       }
+      
+      const teamOwner = localStorage.getItem("active_team_owner");
+      const query = teamOwner ? `?team_owner=${teamOwner}` : "";
 
-      const res = await fetch(`${BACKEND_URL}/api/teams/members/${id}`, {
+      const res = await fetch(`${BACKEND_URL}/api/teams/members/${id}${query}`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -393,6 +417,7 @@ export default function ProfilePage() {
           <CardContent className="space-y-6">
             
             {/* Add Member Form */}
+            {isOwner && (
             <div className="flex justify-end">
               <Button 
                 onClick={openAddModal} 
@@ -403,6 +428,7 @@ export default function ProfilePage() {
                 Add New Member
               </Button>
             </div>
+            )}
 
             <Dialog open={isAddModalOpen} onOpenChange={setIsAddModalOpen}>
               <DialogContent className="max-w-md bg-[#0f0f0f]/95 border border-white/10 backdrop-blur-md">
@@ -545,6 +571,7 @@ export default function ProfilePage() {
                            </div>
                         </TableCell>
                         <TableCell className="text-right">
+                          {isOwner && (
                           <div className="flex justify-end gap-1">
                             <Button
                                 variant="ghost"
@@ -563,6 +590,7 @@ export default function ProfilePage() {
                                 <Trash2 className="h-4 w-4" />
                             </Button>
                           </div>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))

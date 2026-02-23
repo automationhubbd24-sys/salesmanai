@@ -1636,8 +1636,18 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
         // Normalize allowedPageIds to strings
         const perms = allowedPageIds.map(String);
         params.push(perms);
-        // Use ?| operator to check if any of the keys/elements in perms exist in allowed_page_ids
-        whereClause += ` AND (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb OR allowed_page_ids::jsonb ?| $${params.length}::text[])`;
+        
+        // Use EXISTS with jsonb_array_elements_text to handle both numbers and strings in the JSON array
+        // This ensures that [123] (number) matches "123" (string) in permissions
+        whereClause += ` AND (
+            allowed_page_ids IS NULL 
+            OR allowed_page_ids::jsonb = '[]'::jsonb 
+            OR EXISTS (
+                SELECT 1 
+                FROM jsonb_array_elements_text(allowed_page_ids) AS elem 
+                WHERE elem = ANY($${params.length}::text[])
+            )
+        )`;
     }
 
     const countResult = await query(

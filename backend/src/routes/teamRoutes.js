@@ -6,24 +6,36 @@ const authMiddleware = require('../middleware/authMiddleware');
 // Helper: Determine the effective owner email
 // If the user is a member of a team, they act on behalf of the team owner.
 // If the user is not a member, they are the owner.
-async function getEffectiveOwnerEmail(userEmail) {
-    // Check if this user is a member of an active team
-    const memberRes = await pgClient.query(
-        'SELECT owner_email FROM team_members WHERE member_email = $1 AND status = $2',
-        [userEmail, 'active']
-    );
+async function getEffectiveOwnerEmail(req, userEmail) {
+    const requestedOwner = req.query.team_owner || req.headers['x-team-owner'];
 
-    if (memberRes.rows.length > 0) {
-        return memberRes.rows[0].owner_email;
+    if (requestedOwner) {
+        // Verify membership
+        const memberRes = await pgClient.query(
+            'SELECT owner_email FROM team_members WHERE member_email = $1 AND owner_email = $2 AND status = $3',
+            [userEmail, requestedOwner, 'active']
+        );
+        if (memberRes.rows.length > 0) {
+            return memberRes.rows[0].owner_email;
+        }
+        // If not a member, maybe they ARE the owner?
+        if (userEmail === requestedOwner) {
+            return userEmail;
+        }
+        // Fallback or error? For now, if verification fails, fallback to personal.
+        // Or should we throw error?
+        // Let's fallback to personal to avoid hard crash, but maybe log it.
+        console.warn(`Unauthorized team context request: ${userEmail} for ${requestedOwner}`);
     }
-    
+
+    // Default to Personal Workspace (Disable implicit lookup)
     return userEmail;
 }
 
 router.get('/members', authMiddleware, async (req, res) => {
     try {
         const userEmail = req.user.email;
-        const ownerEmail = await getEffectiveOwnerEmail(userEmail);
+        const ownerEmail = await getEffectiveOwnerEmail(req, userEmail);
 
         const result = await pgClient.query(
             'SELECT id, member_email, status, permissions, created_at FROM team_members WHERE owner_email = $1 ORDER BY created_at DESC',
@@ -40,8 +52,10 @@ router.get('/members', authMiddleware, async (req, res) => {
 router.get('/me', authMiddleware, async (req, res) => {
     try {
         const userEmail = req.user.email;
+        // Exclude teams where I am the owner (handled by Personal Workspace)
+        // Use DISTINCT ON to avoid duplicates if added multiple times
         const result = await pgClient.query(
-            'SELECT id, owner_email, status, permissions, created_at FROM team_members WHERE member_email = $1 AND status = $2',
+            'SELECT DISTINCT ON (owner_email) id, owner_email, status, permissions, created_at FROM team_members WHERE member_email = $1 AND status = $2 AND owner_email != $1',
             [userEmail, 'active']
         );
         res.json(result.rows);
@@ -54,8 +68,13 @@ router.get('/me', authMiddleware, async (req, res) => {
 router.post('/members', authMiddleware, async (req, res) => {
     try {
         const userEmail = req.user.email;
-        const ownerEmail = await getEffectiveOwnerEmail(userEmail);
+        const ownerEmail = await getEffectiveOwnerEmail(req, userEmail);
         
+        // Strict Check: Only the actual Owner can add members
+        if (ownerEmail.toLowerCase() !== userEmail.toLowerCase()) {
+            return res.status(403).json({ error: 'Only the Team Owner can manage members' });
+        }
+
         const { member_email, permissions } = req.body;
 
         if (!member_email) {
@@ -70,6 +89,26 @@ router.post('/members', authMiddleware, async (req, res) => {
         // Prevent adding yourself (if you are a member adding another member)
         if (member_email.toLowerCase() === userEmail.toLowerCase()) {
              return res.status(400).json({ error: 'Cannot add yourself' });
+        }
+
+        // Check if member already exists
+        const existingMember = await pgClient.query(
+            'SELECT id FROM team_members WHERE owner_email = $1 AND member_email = $2',
+            [ownerEmail, member_email.toLowerCase()]
+        );
+
+        if (existingMember.rows.length > 0) {
+            // Update existing member permissions
+            const result = await pgClient.query(
+                `
+                UPDATE team_members
+                SET permissions = $1, status = 'active'
+                WHERE owner_email = $2 AND member_email = $3
+                RETURNING id, member_email, status, permissions, created_at
+                `,
+                [permissions || {}, ownerEmail, member_email.toLowerCase()]
+            );
+            return res.json(result.rows[0]);
         }
 
         const result = await pgClient.query(
@@ -91,8 +130,13 @@ router.post('/members', authMiddleware, async (req, res) => {
 router.put('/members/:id', authMiddleware, async (req, res) => {
     try {
         const userEmail = req.user.email;
-        const ownerEmail = await getEffectiveOwnerEmail(userEmail);
+        const ownerEmail = await getEffectiveOwnerEmail(req, userEmail);
         
+        // Strict Check
+        if (ownerEmail.toLowerCase() !== userEmail.toLowerCase()) {
+            return res.status(403).json({ error: 'Only the Team Owner can manage members' });
+        }
+
         const { id } = req.params;
         const { permissions } = req.body;
 
@@ -120,8 +164,13 @@ router.put('/members/:id', authMiddleware, async (req, res) => {
 router.delete('/members/:id', authMiddleware, async (req, res) => {
     try {
         const userEmail = req.user.email;
-        const ownerEmail = await getEffectiveOwnerEmail(userEmail);
+        const ownerEmail = await getEffectiveOwnerEmail(req, userEmail);
         
+        // Strict Check
+        if (ownerEmail.toLowerCase() !== userEmail.toLowerCase()) {
+            return res.status(403).json({ error: 'Only the Team Owner can manage members' });
+        }
+
         const { id } = req.params;
 
         const result = await pgClient.query(

@@ -211,7 +211,17 @@ export default function WhatsAppSettingsPage() {
         toast.error("Please login again");
         return;
       }
-      const url = `${BACKEND_URL}/api/products?limit=50`;
+      
+      const params = new URLSearchParams();
+      params.set("limit", "50");
+
+      const teamOwner = localStorage.getItem("active_team_owner");
+      if (teamOwner) {
+        params.set("team_owner", teamOwner);
+      }
+
+      const url = `${BACKEND_URL}/api/products?${params.toString()}`;
+      
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` },
       });

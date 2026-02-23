@@ -270,6 +270,11 @@ export default function MessengerSettingsPage() {
       params.set("page_id", pageId);
       params.set("limit", "50");
 
+      const teamOwner = localStorage.getItem("active_team_owner");
+      if (teamOwner) {
+        params.set("team_owner", teamOwner);
+      }
+
       const url = `${BACKEND_URL}/api/products?${params.toString()}`;
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` },

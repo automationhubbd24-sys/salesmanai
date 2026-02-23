@@ -43,7 +43,6 @@ function WhatsAppSwitcher() {
 function SwitcherUI({ context }: { context: any }) {
   const { 
     isTeamMember, 
-    teamOwnerEmail, // WhatsApp (Legacy/Single)
     teams,          // Messenger (Multi)
     activeTeam,     // Messenger (Multi)
     setActiveTeam,  // Messenger (Multi)
@@ -53,10 +52,6 @@ function SwitcherUI({ context }: { context: any }) {
   
   const [open, setOpen] = useState(false);
 
-  // If user is not a team member, they don't need a switcher
-  // Removed early return here to allow later check against availableTeams
-  // if (!isTeamMember) return null; 
-
   // Determine current workspace label
   let currentLabel = "My Workspace";
   let CurrentIcon = User;
@@ -65,9 +60,8 @@ function SwitcherUI({ context }: { context: any }) {
       CurrentIcon = Users;
       if (activeTeam) {
            currentLabel = `Team (${activeTeam.owner_email.split('@')[0]})`;
-      } else if (teamOwnerEmail) {
-           currentLabel = `Team (${teamOwnerEmail.split('@')[0]})`;
       } else {
+           // Fallback if viewMode is team but no activeTeam selected (shouldn't happen often)
            currentLabel = "Team Workspace";
       }
   }
@@ -76,8 +70,6 @@ function SwitcherUI({ context }: { context: any }) {
   let availableTeams: any[] = [];
   if (teams && Array.isArray(teams)) {
       availableTeams = teams;
-  } else if (teamOwnerEmail) {
-      availableTeams = [{ owner_email: teamOwnerEmail }];
   }
 
   // Debug: If teams exist but isTeamMember is false, something is wrong with sync
@@ -143,7 +135,7 @@ function SwitcherUI({ context }: { context: any }) {
                             <Users className="h-4 w-4 text-orange-600" />
                         </div>
                         Team ({team.owner_email.split('@')[0]})
-                        {viewMode === "team" && (activeTeam ? activeTeam.owner_email === team.owner_email : teamOwnerEmail === team.owner_email) && (
+                        {viewMode === "team" && activeTeam && activeTeam.owner_email === team.owner_email && (
                         <Check className="ml-auto h-4 w-4 opacity-100" />
                         )}
                     </CommandItem>
