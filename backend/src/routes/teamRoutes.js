@@ -41,7 +41,35 @@ router.get('/members', authMiddleware, async (req, res) => {
             'SELECT id, member_email, status, permissions, created_at FROM team_members WHERE owner_email = $1 ORDER BY created_at DESC',
             [ownerEmail]
         );
-        res.json(result.rows);
+
+        // Aggregate permissions by member_email to handle legacy duplicates
+        // This ensures the UI shows the TRUE total permissions a member has
+        const memberMap = new Map();
+        
+        result.rows.forEach(row => {
+            const email = row.member_email.toLowerCase();
+            const currentPerms = row.permissions || {};
+            const currentFb = Array.isArray(currentPerms.fb_pages) ? currentPerms.fb_pages : [];
+            const currentWa = Array.isArray(currentPerms.wa_sessions) ? currentPerms.wa_sessions : [];
+
+            if (!memberMap.has(email)) {
+                // Initialize with first row found
+                memberMap.set(email, {
+                    ...row,
+                    permissions: { 
+                        fb_pages: currentFb, 
+                        wa_sessions: currentWa 
+                    }
+                });
+            } else {
+                // Merge permissions into existing entry
+                const merged = memberMap.get(email);
+                merged.permissions.fb_pages = [...new Set([...merged.permissions.fb_pages, ...currentFb])];
+                merged.permissions.wa_sessions = [...new Set([...merged.permissions.wa_sessions, ...currentWa])];
+            }
+        });
+        
+        res.json(Array.from(memberMap.values()));
     } catch (err) {
         console.error('Get team members error:', err);
         res.status(500).json({ error: 'Failed to fetch team members' });
@@ -173,19 +201,31 @@ router.delete('/members/:id', authMiddleware, async (req, res) => {
 
         const { id } = req.params;
 
-        const result = await pgClient.query(
-            `
-            DELETE FROM team_members
-            WHERE id = $1 AND owner_email = $2
-            `,
+        // 1. First, find the member_email associated with this ID
+        const memberCheck = await pgClient.query(
+            'SELECT member_email FROM team_members WHERE id = $1 AND owner_email = $2',
             [id, ownerEmail]
         );
 
-        if (result.rowCount === 0) {
+        if (memberCheck.rows.length === 0) {
             return res.status(404).json({ error: 'Member not found' });
         }
 
-        res.json({ success: true });
+        const memberEmail = memberCheck.rows[0].member_email;
+
+        // 2. Delete ALL entries for this member under this owner
+        // This cleans up legacy duplicates where the same member was added multiple times
+        const result = await pgClient.query(
+            `
+            DELETE FROM team_members
+            WHERE owner_email = $1 AND member_email = $2
+            `,
+            [ownerEmail, memberEmail]
+        );
+
+        console.log(`[Team] Deleted ${result.rowCount} rows for member ${memberEmail} from owner ${ownerEmail}`);
+
+        res.json({ success: true, deletedCount: result.rowCount });
     } catch (err) {
         console.error('Delete team member error:', err);
         res.status(500).json({ error: err.message });
