@@ -1325,9 +1325,24 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                         // Limit to 10 elements (FB limit)
                         const carouselElements = elements.slice(0, 10);
                         
-                        await facebookService.sendCarouselMessage(pageId, senderId, carouselElements, pageConfig.page_access_token);
+                        const carouselResult = await facebookService.sendCarouselMessage(pageId, senderId, carouselElements, pageConfig.page_access_token);
                         sentViaCarousel = true;
                         console.log(`[Image Group] Sent ${images.length} images via Carousel.`);
+
+                        // FIX: Save Carousel Message ID with Product Context for Reply-To Logic
+                        if (carouselResult && carouselResult.message_id) {
+                            const productContext = images.map(img => `${img.title || 'Product'} (${img.url})`).join(', ');
+                            await dbService.saveFbChat({
+                                page_id: pageId,
+                                sender_id: pageId,
+                                recipient_id: senderId,
+                                message_id: carouselResult.message_id, // REAL FB MESSAGE ID
+                                text: `[System Memory: User is viewing Carousel with: ${productContext}]`,
+                                timestamp: Date.now(),
+                                status: 'bot_carousel',
+                                reply_by: 'bot'
+                            });
+                        }
                     } catch (carouselError) {
                         console.error(`[Image Group] Carousel failed. Falling back to Binary Upload. Error: ${carouselError.message}`);
                         sentViaCarousel = false;
@@ -1342,15 +1357,43 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                          try {
                              // OPTIMIZATION: Try sending via URL first (Much faster)
                              // This avoids downloading and re-uploading the image if possible.
-                             await facebookService.sendImageMessage(pageId, senderId, imgObj.url, pageConfig.page_access_token);
+                             const imgResult = await facebookService.sendImageMessage(pageId, senderId, imgObj.url, pageConfig.page_access_token);
                              console.log(`[Image Sent] ${imgObj.url}`);
+
+                             // FIX: Save Image Message ID with Product Context for Reply-To Logic
+                             if (imgResult && imgResult.message_id) {
+                                await dbService.saveFbChat({
+                                    page_id: pageId,
+                                    sender_id: pageId,
+                                    recipient_id: senderId,
+                                    message_id: imgResult.message_id, // REAL FB MESSAGE ID
+                                    text: `[System Memory: User is viewing Image of ${imgObj.title || 'Product'}: ${imgObj.url}]`,
+                                    timestamp: Date.now(),
+                                    status: 'bot_image',
+                                    reply_by: 'bot'
+                                });
+                             }
                          } catch (urlError) {
                              console.warn(`[Image URL Send Failed] ${imgObj.url} - Falling back to Upload. Error: ${urlError.message}`);
                              try {
                                  // Fallback: Use Smart Downloader & Uploader
                                  // This handles downloading the image to a buffer and uploading it as multipart/form-data
-                                 await facebookService.sendImageUpload(pageId, senderId, imgObj.url, pageConfig.page_access_token);
+                                 const uploadResult = await facebookService.sendImageUpload(pageId, senderId, imgObj.url, pageConfig.page_access_token);
                                  console.log(`[Image Uploaded] ${imgObj.url}`);
+
+                                 // FIX: Save Uploaded Image Message ID
+                                 if (uploadResult && uploadResult.message_id) {
+                                    await dbService.saveFbChat({
+                                        page_id: pageId,
+                                        sender_id: pageId,
+                                        recipient_id: senderId,
+                                        message_id: uploadResult.message_id, // REAL FB MESSAGE ID
+                                        text: `[System Memory: User is viewing Image of ${imgObj.title || 'Product'}: ${imgObj.url}]`,
+                                        timestamp: Date.now(),
+                                        status: 'bot_image',
+                                        reply_by: 'bot'
+                                    });
+                                 }
                              } catch (imgError) {
                                  console.error(`[Image Fallback] Failed to send image ${imgObj.url}: ${imgError.message}`);
                                  
