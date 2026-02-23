@@ -1425,14 +1425,21 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             let memoryNote = "";
             
             // Priority: Use 'foundProducts' if available to be specific about WHICH product
+            // FIX: Only include products that correspond to the images actually sent!
+            let relevantProducts = [];
             if (aiResponse.foundProducts && Array.isArray(aiResponse.foundProducts) && aiResponse.foundProducts.length > 0) {
-                 const productDetails = aiResponse.foundProducts.map(p => 
+                 const sentImages = aiResponse.images.map(img => typeof img === 'string' ? img : img.url);
+                 relevantProducts = aiResponse.foundProducts.filter(p => sentImages.includes(p.image_url));
+            }
+
+            if (relevantProducts.length > 0) {
+                 const productDetails = relevantProducts.map(p => 
                     `${p.name} (Desc: ${p.description ? p.description.substring(0, 100) : 'N/A'})`
                  ).join(' | ');
                  const summary = aiResponse.images.map(img => typeof img === 'string' ? img : img.url).join(' ; ');
                  memoryNote = `[IMAGE MEMORY] Sent product images for: [${productDetails}]. Images: ${summary}`;
             } else {
-                 // Fallback: Just list titles/urls from images array
+                 // Fallback: Just list titles/urls from images array (No unrelated product descriptions)
                  const summary = aiResponse.images
                     .map(img => typeof img === 'string' ? img : `${img.title || 'Image'} | ${img.url}`)
                     .join(' ; ');
