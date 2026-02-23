@@ -197,8 +197,34 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
 async function resolveProductOwnerUserId(req, baseUserId, pageId) {
     // 1. Resolve Effective User (Handles Team Context)
     // We prioritize Team Context: If user is acting as Team Member, products belong to Team Owner.
-    const { effectiveUserId, isTeamMember } = await getEffectiveUserIdFromRequest(req, baseUserId);
+    const { effectiveUserId, isTeamMember, viewerEmail } = await getEffectiveUserIdFromRequest(req, baseUserId);
     
+    // EXTRA SAFETY FIX: If I am the Page Owner, I MUST OWN my own products.
+    // Even if getEffectiveUserIdFromRequest decided I'm a "Team Member" (e.g. because of active_team_owner or automatic team detection),
+    // we override it here for product creation to ensure I own what I create on MY page.
+    if (pageId && viewerEmail) {
+         try {
+             const pgClient = require('../services/pgClient');
+             const pageRes = await pgClient.query(
+                'SELECT email, user_id FROM page_access_token_message WHERE page_id = $1 AND email IS NOT NULL',
+                [String(pageId)]
+             );
+             if (pageRes.rows.length > 0) {
+                 const pageOwnerEmail = pageRes.rows[0].email;
+                 if (pageOwnerEmail.trim().toLowerCase() === viewerEmail.trim().toLowerCase()) {
+                     console.log(`[ProductCreate] Page ${pageId} is owned by ME (${viewerEmail}). Forcing Personal Context for Creation.`);
+                     // Return the ID associated with my email (Personal ID)
+                     const userRes = await pgClient.query('SELECT id FROM users WHERE email = $1', [viewerEmail]);
+                     if (userRes.rows.length > 0) {
+                         return userRes.rows[0].id;
+                     }
+                 }
+             }
+         } catch (e) {
+             console.error("[ProductCreate] Page Owner Check Failed:", e);
+         }
+    }
+
     // If we are in a Team Context, return the Team Owner's ID immediately.
     // This prevents products from being attached to the "Page Owner" (which might be the member)
     // when they should belong to the Team Owner.
@@ -710,3 +736,4 @@ exports.importWooCommerce = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+}
