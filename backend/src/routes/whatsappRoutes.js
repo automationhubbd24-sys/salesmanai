@@ -525,7 +525,8 @@ router.put('/config/:id', async (req, res) => {
             'emoji_check_count',
             'ai_provider',
             'api_key',
-            'chat_model'
+            'chat_model',
+            'cheap_engine'
         ];
 
         const updates = {};

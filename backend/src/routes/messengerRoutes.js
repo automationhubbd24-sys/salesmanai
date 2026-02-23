@@ -26,6 +26,8 @@ router.get('/pages', async (req, res) => {
 
         const requestedOwner = req.query.team_owner || req.headers['x-team-owner'];
 
+        console.log(`[GET /pages] User: ${userEmail}, RequestedOwner: ${requestedOwner}`);
+
         // 2. Fetch Personal Pages
         // Only if Personal Context (no requestedOwner or requestedOwner is self)
         let myPages = [];
@@ -35,6 +37,7 @@ router.get('/pages', async (req, res) => {
                 [userEmail]
             );
             myPages = rows;
+            console.log(`[GET /pages] Personal Pages found: ${myPages.length}`);
         }
 
         res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
@@ -46,10 +49,12 @@ router.get('/pages', async (req, res) => {
         // 3. Fetch Shared Pages (Team Members)
         let sharedPageIds = [];
         if (userEmail && requestedOwner && requestedOwner !== userEmail) {
+            console.log(`[GET /pages] Checking team permissions for ${userEmail} in ${requestedOwner}`);
             const { rows: teamData } = await pgClient.query(
                 'SELECT permissions FROM team_members WHERE member_email = $1 AND owner_email = $2 AND status = $3',
                 [userEmail, requestedOwner, 'active']
             );
+            console.log(`[GET /pages] Team rows found: ${teamData.length}`);
 
             teamData.forEach(row => {
                 if (row.permissions && row.permissions.fb_pages) {
@@ -259,7 +264,7 @@ router.get('/config/:id', async (req, res) => {
         const pageId = configRow.page_id;
 
         const pageResult = await pgClient.query(
-            'SELECT page_id, email FROM page_access_token_message WHERE page_id = $1',
+            'SELECT page_id, email, page_access_token, api_key, ai, chat_model, cheap_engine FROM page_access_token_message WHERE page_id = $1',
             [pageId]
         );
 
@@ -292,6 +297,17 @@ router.get('/config/:id', async (req, res) => {
         if (!allowed) {
             console.warn(`[GET /config/:id] Forbidden. Page Owner: ${pageRow?.email}, User: ${userEmail}`);
             return res.status(403).json({ error: 'Forbidden' });
+        }
+
+        // Merge credentials from page_access_token_message into configRow
+        if (pageRow) {
+            configRow = {
+                ...configRow,
+                api_key: pageRow.api_key || configRow.api_key,
+                ai_provider: pageRow.ai || configRow.ai_provider,
+                chat_model: pageRow.chat_model || configRow.chat_model,
+                cheap_engine: pageRow.cheap_engine !== undefined ? pageRow.cheap_engine : configRow.cheap_engine
+            };
         }
 
         res.json(configRow);
@@ -439,6 +455,8 @@ router.put('/config/:id', async (req, res) => {
         const pageAccessToken = req.body.page_access_token_message || req.body.page_access_token;
         const cheapEngine = req.body.cheap_engine;
 
+        console.log(`[PUT /config/:id] Token Updates - API Key: ${apiKey ? 'Provided' : 'Missing'}, Provider: ${aiProvider}, Model: ${chatModel}`);
+
         if (aiProvider !== undefined) {
             tokenUpdates.push(`ai = $${tIdx}`);
             tokenValues.push(aiProvider);
@@ -471,10 +489,23 @@ router.put('/config/:id', async (req, res) => {
                 UPDATE page_access_token_message
                 SET ${tokenUpdates.join(', ')}
                 WHERE page_id = $${tIdx}
+                RETURNING *
             `;
             try {
                 const tokenRes = await pgClient.query(tokenQuery, tokenValues);
                 console.log(`[PUT /config/:id] Updated token table for Page ${pageId}. Rows: ${tokenRes.rowCount}. Updates:`, tokenUpdates);
+                
+                // If updated, merge into response
+                if (tokenRes.rowCount > 0) {
+                     const updatedTokenRow = tokenRes.rows[0];
+                     updatedConfig = {
+                        ...updatedConfig,
+                        api_key: updatedTokenRow.api_key,
+                        ai_provider: updatedTokenRow.ai,
+                        chat_model: updatedTokenRow.chat_model,
+                        cheap_engine: updatedTokenRow.cheap_engine
+                     };
+                }
             } catch (err) {
                 console.error("Failed to update page_access_token_message:", err);
             }

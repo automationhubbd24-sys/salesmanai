@@ -34,6 +34,11 @@ async function getEffectiveOwnerEmail(req, userEmail) {
 
 router.get('/members', authMiddleware, async (req, res) => {
     try {
+        res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.set('Pragma', 'no-cache');
+        res.set('Expires', '0');
+        res.set('Surrogate-Control', 'no-store');
+
         const userEmail = req.user.email;
         const ownerEmail = await getEffectiveOwnerEmail(req, userEmail);
 
@@ -79,6 +84,11 @@ router.get('/members', authMiddleware, async (req, res) => {
 // Get teams I belong to
 router.get('/me', authMiddleware, async (req, res) => {
     try {
+        res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.set('Pragma', 'no-cache');
+        res.set('Expires', '0');
+        res.set('Surrogate-Control', 'no-store');
+
         const userEmail = req.user.email;
         // Exclude teams where I am the owner (handled by Personal Workspace)
         // Use DISTINCT ON to avoid duplicates if added multiple times

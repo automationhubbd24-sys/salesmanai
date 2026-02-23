@@ -79,7 +79,7 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
 
         // 2. EXPLICIT TEAM CONTEXT (Professional Workspace)
         // Check if the request explicitly asks for a specific team context
-        const requestedTeamOwner = req.query.team_owner || req.headers['x-team-owner'];
+        const requestedTeamOwner = req.query.team_owner || req.headers['x-team-owner'] || req.body.team_owner;
 
         if (requestedTeamOwner) {
              const teamResult = await pgClient.query(
