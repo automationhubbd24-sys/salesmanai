@@ -1618,33 +1618,46 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
     let params = [];
     let whereClause = '';
 
-    if (Array.isArray(userId)) {
-        params.push(userId); // $1 is the array
-        whereClause = 'user_id = ANY($1)';
+    // 1. Base Filter: User & Page Context
+    if (pageId) {
+        params.push(userId); // $1
+        params.push(String(pageId)); // $2
+        
+        // Complex Logic for Page View:
+        // Show (User's General Products) OR (ANY Product linked to this Page)
+        const userIdParam = Array.isArray(userId) ? 'ANY($1)' : '$1';
+        
+        whereClause = `(
+            (user_id = ${userIdParam} AND (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb))
+            OR
+            (allowed_page_ids::jsonb @> jsonb_build_array($2::text))
+        )`;
     } else {
-        params.push(userId);
-        whereClause = 'user_id = $1';
+        // Standard "All Products" View
+        if (Array.isArray(userId)) {
+            params.push(userId); // $1
+            whereClause = 'user_id = ANY($1)';
+        } else {
+            params.push(userId); // $1
+            whereClause = 'user_id = $1';
+        }
     }
 
+    // 2. Search Filter
     if (searchQuery) {
         params.push(`%${searchQuery}%`, `%${searchQuery}%`);
-        whereClause += ` AND (name ILIKE $${params.length - 1} OR description ILIKE $${params.length})`;
+        // params length changes dynamically based on previous pushes
+        const idx1 = params.length - 1;
+        const idx2 = params.length;
+        whereClause += ` AND (name ILIKE $${idx1} OR description ILIKE $${idx2})`;
     }
 
-    // Filter by Specific Page (e.g. user selected "Page A" in dropdown)
-    if (pageId) {
-        params.push(String(pageId));
-        // Global OR Restricted to this page
-        whereClause += ` AND (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb OR allowed_page_ids::jsonb @> jsonb_build_array($${params.length}::text))`;
-    }
-
-        // Filter by User Permissions (allowedPageIds)
+    // 3. Permission Filter (for Team Members)
     if (allowedPageIds !== null) {
         // Hybrid Filtering:
-        // 1. General Products (No specific page assigned) -> Visible to Team Members (Shared Resources)
-        // 2. Page-Specific Products -> Only visible if Member has access to that page
+        // 1. General Products -> Visible
+        // 2. Page-Specific Products -> Only visible if in allowedPageIds
         
-        // Normalize allowedPageIds to strings
         const perms = allowedPageIds.map(String);
         params.push(perms);
         
