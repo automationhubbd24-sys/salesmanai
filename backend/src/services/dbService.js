@@ -1672,6 +1672,8 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
         )`;
     }
 
+    console.log(`[DBDebug] getProducts Query: WHERE ${whereClause} | Params: ${JSON.stringify(params)}`);
+
     const countResult = await query(
         `SELECT COUNT(*)::int AS cnt
          FROM products

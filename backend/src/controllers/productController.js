@@ -85,13 +85,17 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
                     const pageOwnerId = pageRes.rows[0].user_id;
                     
                     if (pageOwnerId === userId) {
-                        console.log(`[AuthDebug] Page ${pageId} is owned by ME (${viewerEmail}). Forcing Personal Context.`);
+                        console.log(`[AuthDebug] Page ${pageId} is owned by ME (${viewerEmail}). Forcing Personal Context. EffectiveUser: ${userId}`);
                         return { effectiveUserId: userId, isTeamMember: false, viewerEmail: normalizedEmail, teamOwnerEmail: null };
+                    } else {
+                        console.log(`[AuthDebug] Page ${pageId} owned by ${pageOwnerId}, but I am ${userId}. Continuing to team check...`);
                     }
                 }
             } catch (e) {
                 console.error("[AuthDebug] Failed to check page ownership:", e);
             }
+        } else {
+             console.log(`[AuthDebug] No page_id provided. Using Global Context logic.`);
         }
 
         // 1. Check Cache (DISABLED to prevent stale context issues)
@@ -100,6 +104,9 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
         // 2. EXPLICIT TEAM CONTEXT (Professional Workspace)
         // Check if the request explicitly asks for a specific team context
         const requestedTeamOwner = req.query.team_owner || req.headers['x-team-owner'] || req.body.team_owner;
+        
+        if (requestedTeamOwner) {
+             console.log(`[AuthDebug] Requested Team Owner: ${requestedTeamOwner}`);
 
         if (requestedTeamOwner) {
              const teamResult = await pgClient.query(
