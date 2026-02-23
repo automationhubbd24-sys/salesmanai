@@ -1640,18 +1640,18 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
 
         // Filter by User Permissions (allowedPageIds)
     if (allowedPageIds !== null) {
-        // Strict Filtering: Only show products that match the allowedPageIds.
-        // General products (allowed_page_ids IS NULL or []) are HIDDEN from restricted users.
+        // Hybrid Filtering:
+        // 1. General Products (No specific page assigned) -> Visible to Team Members (Shared Resources)
+        // 2. Page-Specific Products -> Only visible if Member has access to that page
         
         // Normalize allowedPageIds to strings
         const perms = allowedPageIds.map(String);
         params.push(perms);
         
-        // Use EXISTS with jsonb_array_elements_text to handle both numbers and strings in the JSON array
         whereClause += ` AND (
-            allowed_page_ids IS NOT NULL 
-            AND allowed_page_ids::jsonb != '[]'::jsonb 
-            AND EXISTS (
+            (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb)
+            OR 
+            EXISTS (
                 SELECT 1 
                 FROM jsonb_array_elements_text(allowed_page_ids) AS elem 
                 WHERE elem = ANY($${params.length}::text[])
