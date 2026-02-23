@@ -443,7 +443,38 @@ exports.getProducts = async (req, res) => {
         
         // 1. Resolve Effective User (Handles Team Context)
         // Moved UP to ensure we know who is asking before determining target
-        const { effectiveUserId, isTeamMember, viewerEmail, teamOwnerEmail } = await getEffectiveUserIdFromRequest(req, baseUserId);
+        let { effectiveUserId, isTeamMember, viewerEmail, teamOwnerEmail } = await getEffectiveUserIdFromRequest(req, baseUserId);
+
+        // EXTRA SAFETY FIX: If I am the Page Owner, I MUST see my own products.
+        // Even if getEffectiveUserIdFromRequest decided I'm a "Team Member" (e.g. because of active_team_owner),
+        // we override it here for the "Get Products" view to ensure I see my inventory.
+        if (pageId && viewerEmail) {
+             try {
+                 const pgClient = require('../services/pgClient');
+                 const pageRes = await pgClient.query(
+                    'SELECT email FROM page_access_token_message WHERE page_id = $1 AND email IS NOT NULL',
+                    [String(pageId)]
+                 );
+                 if (pageRes.rows.length > 0) {
+                     const pageOwnerEmail = pageRes.rows[0].email;
+                     if (pageOwnerEmail.trim().toLowerCase() === viewerEmail.trim().toLowerCase()) {
+                         console.log(`[ProductGet] Page ${pageId} is owned by ME (${viewerEmail}). Forcing Personal Context override.`);
+                         
+                         // If we are currently in Team Mode, we need to switch back to Personal Mode (My ID)
+                         // We resolve the ID from the email since effectiveUserId currently points to the Team Owner
+                         if (isTeamMember) {
+                             const userRes = await pgClient.query('SELECT id FROM users WHERE email = $1', [viewerEmail]);
+                             if (userRes.rows.length > 0) {
+                                 effectiveUserId = userRes.rows[0].id;
+                                 isTeamMember = false;
+                             }
+                         }
+                     }
+                 }
+             } catch (e) {
+                 console.error("[ProductGet] Page Owner Check Failed:", e);
+             }
+        }
         
         let targetUserId = effectiveUserId;
 
