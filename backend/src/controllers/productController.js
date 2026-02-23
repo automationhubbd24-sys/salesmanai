@@ -187,9 +187,15 @@ exports.createProduct = async (req, res) => {
                 // VPS FIX: Prefer PUBLIC_BASE_URL from env, then BACKEND_URL, then construct from request
                 // We pass 'undefined' to let imageService use its robust fallback logic which includes PUBLIC_BASE_URL
                 const envBaseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL;
-                const reqBaseUrl = `${req.protocol}://${req.get('host')}`;
+                
+                // Construct reliable request-based URL (handling proxies)
+                const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+                const host = req.get('host');
+                const reqBaseUrl = `${protocol}://${host}`;
+                
                 const baseUrl = envBaseUrl || reqBaseUrl;
                 
+                console.log(`[ProductCreate] Uploading for Effective User (Owner): ${userId}`);
                 imageUrl = await imageService.uploadProductImage(req.file.buffer, req.file.mimetype, userId, baseUrl);
                 console.log("[ProductCreate] Image uploaded successfully. URL:", imageUrl);
             } catch (imgError) {
@@ -302,11 +308,17 @@ exports.updateProduct = async (req, res) => {
         let imageUrl = undefined; // undefined means no change
         if (req.file) {
             try {
-                // VPS FIX: Prefer PUBLIC_BASE_URL from env
+                // VPS FIX: Prefer PUBLIC_BASE_URL from env, then BACKEND_URL, then construct from request
                 const envBaseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL;
-                const reqBaseUrl = `${req.protocol}://${req.get('host')}`;
+                
+                // Construct reliable request-based URL (handling proxies)
+                const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+                const host = req.get('host');
+                const reqBaseUrl = `${protocol}://${host}`;
+                
                 const baseUrl = envBaseUrl || reqBaseUrl;
                 
+                console.log(`[ProductUpdate] Uploading for Effective User (Owner): ${userId}`);
                 imageUrl = await imageService.uploadProductImage(req.file.buffer, req.file.mimetype, userId, baseUrl);
             } catch (imgError) {
                 return res.status(500).json({ error: "Image upload failed: " + imgError.message });
