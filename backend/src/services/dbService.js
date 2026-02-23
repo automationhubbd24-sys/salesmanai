@@ -1624,14 +1624,33 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
         params.push(String(pageId)); // $2
         
         // Complex Logic for Page View:
-        // Show (User's General Products) OR (ANY Product linked to this Page)
-        const userIdParam = Array.isArray(userId) ? 'ANY($1)' : '$1';
+        // 1. If User is Owner (allowedPageIds is null/undefined): Show ALL products owned by them (regardless of page restrictions)
+        // 2. If User is Team Member (allowedPageIds has values): Show products linked to their allowed pages
         
-        whereClause = `(
-            (user_id = ${userIdParam} AND (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb))
-            OR
-            (allowed_page_ids::jsonb @> jsonb_build_array($2::text))
-        )`;
+        if (!allowedPageIds) {
+             // OWNER VIEW: Show everything owned by this user
+             // We ignore the specific page restriction in the DB query because the Owner should see EVERYTHING.
+             // If they want to filter by page in the UI, we can add that logic, but for now, if they own it, they see it.
+             // However, to respect the "Page View" in UI, we should still filter by pageId IF it's provided.
+             
+             // LOGIC: Show product IF (Owned by User) AND ( (Linked to this Page) OR (Global Product) )
+             whereClause = `(
+                user_id = ${userIdParam} 
+                AND 
+                (
+                    allowed_page_ids IS NULL 
+                    OR allowed_page_ids::jsonb = '[]'::jsonb 
+                    OR allowed_page_ids::jsonb @> jsonb_build_array($2::text)
+                )
+            )`;
+        } else {
+            // TEAM MEMBER VIEW: Restricted by allowed_page_ids
+             whereClause = `(
+                (user_id = ${userIdParam} AND (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb))
+                OR
+                (allowed_page_ids::jsonb @> jsonb_build_array($2::text) AND allowed_page_ids::jsonb ?| array[${allowedPageIds.map(id => `'${id}'`).join(',')}] )
+            )`;
+        }
     } else {
         // Standard "All Products" View
         if (Array.isArray(userId)) {
