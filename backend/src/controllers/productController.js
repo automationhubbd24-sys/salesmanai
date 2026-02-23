@@ -68,14 +68,34 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
         // Ensure email is lowercase and trimmed for matching
         const normalizedEmail = viewerEmail.trim().toLowerCase();
 
-        // 1. Check Cache
-        if (teamUserCache.has(normalizedEmail)) {
-            const cached = teamUserCache.get(normalizedEmail);
-            if (Date.now() - cached.timestamp < CACHE_TTL) {
-                // console.log(`[AuthDebug] Cache Hit for ${normalizedEmail} -> ${cached.userId}`);
-                return { effectiveUserId: cached.userId, isTeamMember: cached.isTeamMember, viewerEmail: normalizedEmail, teamOwnerEmail: cached.teamOwnerEmail };
+        const pgClient = require('../services/pgClient');
+
+        // 0. CRITICAL PRIORITY: Check Page Ownership First!
+        // If I am interacting with a page I OWN, I must stay in my Personal Context.
+        // This overrides any cached Team Context or Explicit Team Request.
+        const pageId = req.query.page_id || req.body.page_id;
+        if (pageId) {
+            try {
+                const pageRes = await pgClient.query(
+                   'SELECT user_id, email FROM page_access_token_message WHERE page_id = $1 AND user_id IS NOT NULL',
+                   [String(pageId)]
+                );
+                
+                if (pageRes.rows.length > 0) {
+                    const pageOwnerId = pageRes.rows[0].user_id;
+                    
+                    if (pageOwnerId === userId) {
+                        console.log(`[AuthDebug] Page ${pageId} is owned by ME (${viewerEmail}). Forcing Personal Context.`);
+                        return { effectiveUserId: userId, isTeamMember: false, viewerEmail: normalizedEmail, teamOwnerEmail: null };
+                    }
+                }
+            } catch (e) {
+                console.error("[AuthDebug] Failed to check page ownership:", e);
             }
         }
+
+        // 1. Check Cache (DISABLED to prevent stale context issues)
+        // if (teamUserCache.has(normalizedEmail)) { ... }
 
         // 2. EXPLICIT TEAM CONTEXT (Professional Workspace)
         // Check if the request explicitly asks for a specific team context
