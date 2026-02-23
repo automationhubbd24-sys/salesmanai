@@ -126,6 +126,15 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
                          const pageOwnerId = pageRes.rows[0].user_id;
                          const pageOwnerEmail = pageRes.rows[0].email;
                          
+                         // CRITICAL FIX: If I am the Page Owner, I must stay in my OWN context!
+                         // Do not switch to a Team Context even if I happen to be a member of someone else's team elsewhere.
+                         // This solves the issue where an Owner (who is also a Member of another team) 
+                         // gets forced into the other team's context when working on their OWN page.
+                         if (pageOwnerId === userId) {
+                             console.log(`[AuthDebug] Page ${pageId} is owned by ME (${viewerEmail}). Staying in Personal Context.`);
+                             return { effectiveUserId: userId, isTeamMember: false, viewerEmail: normalizedEmail, teamOwnerEmail: null };
+                         }
+
                          // Check if I am a member of this Page Owner's team
                          const teamCheck = await pgClient.query(
                              'SELECT 1 FROM team_members WHERE LOWER(member_email) = LOWER($1) AND LOWER(owner_email) = LOWER($2) AND status = $3',
