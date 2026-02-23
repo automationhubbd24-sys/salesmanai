@@ -302,11 +302,15 @@ async function queueMessage(event) {
     if (!messageText && !event.message?.attachments) return; // Ignore if empty and no attachments
 
     // Check Duplicate immediately to avoid processing same message twice
+    // NOTE: Disabled for Facebook Messenger as it handles real-time delivery well.
+    // Kept commented out in case needed for debugging later.
+    /*
     const isDuplicate = await dbService.checkDuplicate(messageId);
     if (isDuplicate) {
         console.log(`Duplicate message ${messageId} ignored.`);
         return;
     }
+    */
 
     const replyToId = event.message?.reply_to?.mid || null;
 
