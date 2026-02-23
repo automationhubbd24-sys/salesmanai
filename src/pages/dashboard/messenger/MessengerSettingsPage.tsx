@@ -129,11 +129,11 @@ export default function MessengerSettingsPage() {
       },
   });
 
-  const fetchConfig = useCallback(async (id: string, pId: string) => {
+  const fetchConfig = useCallback(async (id: string, pId: string, isMounted: boolean) => {
     try {
       const token = localStorage.getItem("auth_token");
       if (!token) {
-        setLoading(false);
+        if (isMounted) setLoading(false);
         toast.error("Please login again");
         return;
       }
@@ -164,58 +164,61 @@ export default function MessengerSettingsPage() {
         : null;
 
       if (!dbRow || !pageRow) {
-        setLoading(false);
+        if (isMounted) setLoading(false);
         return;
       }
 
-      setVerified(dbRow.verified !== false);
-      setInitialTextPrompt(dbRow.text_prompt || "");
-      setInitialImagePrompt(dbRow.image_prompt || "");
+      if (isMounted) {
+          setVerified(dbRow.verified !== false);
+          setInitialTextPrompt(dbRow.text_prompt || "");
+          setInitialImagePrompt(dbRow.image_prompt || "");
 
-      setIsOwner(!dbRow.is_shared);
+          setIsOwner(!dbRow.is_shared);
 
-      const apiKey = pageRow.api_key || "";
+          const apiKey = pageRow.api_key || "";
 
-      const currentCredit = Number(pageRow.message_credit || 0);
+          const currentCredit = Number(pageRow.message_credit || 0);
 
-      const isActive =
-        pageRow.subscription_status === "active" || currentCredit > 0;
-      setPlanActive(isActive);
-      setMessageCredit(currentCredit);
+          const isActive =
+            pageRow.subscription_status === "active" || currentCredit > 0;
+          setPlanActive(isActive);
+          setMessageCredit(currentCredit);
 
-      let isManaged = false;
-      if (pageRow.cheap_engine === false) {
-        isManaged = false;
-      } else if (pageRow.cheap_engine === true) {
-        isManaged = true;
-      } else {
-        isManaged = apiKey === MANAGED_SECRET_KEY || (isActive && !apiKey);
+          let isManaged = false;
+          if (pageRow.cheap_engine === false) {
+            isManaged = false;
+          } else if (pageRow.cheap_engine === true) {
+            isManaged = true;
+          } else {
+            isManaged = apiKey === MANAGED_SECRET_KEY || (isActive && !apiKey);
+          }
+
+          setMode(isManaged ? "managed" : "own");
+          setActiveMode(isManaged ? "managed" : "own");
+
+          const rawModel = pageRow.chat_model || "openrouter/auto";
+          const displayModel = rawModel.replace(":free", "");
+
+          form.reset({
+            provider: pageRow.ai || "openrouter",
+            api_key: isManaged ? "" : apiKey,
+            chatmodel: displayModel,
+            text_prompt: dbRow.text_prompt || "",
+          });
+
+          setWait(dbRow.wait || 8);
+          setMemoryLimit(dbRow.check_conversion || 20);
       }
-
-      setMode(isManaged ? "managed" : "own");
-      setActiveMode(isManaged ? "managed" : "own");
-
-      const rawModel = pageRow.chat_model || "openrouter/auto";
-      const displayModel = rawModel.replace(":free", "");
-
-      form.reset({
-        provider: pageRow.ai || "openrouter",
-        api_key: isManaged ? "" : apiKey,
-        chatmodel: displayModel,
-        text_prompt: dbRow.text_prompt || "",
-      });
-
-      setWait(dbRow.wait || 8);
-      setMemoryLimit(dbRow.check_conversion || 20);
     } catch (error) {
       console.error("Error fetching config:", error);
       toast.error("Failed to load AI settings");
     } finally {
-      setLoading(false);
+      if (isMounted) setLoading(false);
     }
   }, [form]);
 
   useEffect(() => {
+    let isMounted = true;
     const checkConnection = () => {
       const storedDbId = localStorage.getItem("active_fb_db_id");
       const storedPageId = localStorage.getItem("active_fb_page_id");
@@ -223,24 +226,26 @@ export default function MessengerSettingsPage() {
       if (storedDbId && storedPageId) {
         setDbId(storedDbId);
         setPageId(storedPageId);
-        fetchConfig(storedDbId, storedPageId);
+        fetchConfig(storedDbId, storedPageId, isMounted);
       } else {
         setDbId(null);
         setPageId(null);
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     };
 
     checkConnection();
 
-    window.addEventListener("storage", checkConnection);
-    window.addEventListener("db-connection-changed", checkConnection);
+    const handleStorageChange = () => checkConnection();
+    window.addEventListener("storage", handleStorageChange);
+    window.addEventListener("db-connection-changed", handleStorageChange);
     
     return () => {
-      window.removeEventListener("storage", checkConnection);
-      window.removeEventListener("db-connection-changed", checkConnection);
+      isMounted = false;
+      window.removeEventListener("storage", handleStorageChange);
+      window.removeEventListener("db-connection-changed", handleStorageChange);
     };
-  }, [fetchConfig]);
+  }, []); // Empty dependency array to prevent re-runs
 
   const fetchProductsForPrompt = async () => {
     if (!pageId) return;

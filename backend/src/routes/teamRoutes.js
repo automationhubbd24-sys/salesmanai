@@ -70,7 +70,7 @@ router.put('/members/:id', authMiddleware, async (req, res) => {
             WHERE id = $2 AND owner_email = $3
             RETURNING id, member_email, status, permissions, created_at
             `,
-            [permissions || {}, parseInt(id, 10), ownerEmail]
+            [permissions || {}, id, ownerEmail]
         );
 
         if (result.rowCount === 0) {
@@ -94,7 +94,7 @@ router.delete('/members/:id', authMiddleware, async (req, res) => {
             DELETE FROM team_members
             WHERE id = $1 AND owner_email = $2
             `,
-            [parseInt(id, 10), ownerEmail]
+            [id, ownerEmail]
         );
 
         if (result.rowCount === 0) {

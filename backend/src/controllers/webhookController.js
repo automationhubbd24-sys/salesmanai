@@ -581,7 +581,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             return;
         }
         // --------------------------
-
+ekta 
         // --- OPTIMIZATION: PARALLEL DATA FETCHING (Modified for Dynamic History) ---
         // 1. Fetch Page Prompts FIRST to get the 'check_conversion' (History Limit)
         // This ensures we only fetch exactly what the user configured (Token Saving)
@@ -1098,6 +1098,19 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             return img;
         }); 
 
+        // VALIDATION: Filter out hallucinated external URLs (e.g. ibb.co) that are not in our system
+        // We only allow:
+        // 1. URLs from our own domain (local storage)
+        // 2. URLs that exactly match a product's image_url from the promptProductMap
+        // 3. URLs that are FB CDN (from user attachments) - though usually we don't send those back as products
+        
+        const validProductUrls = new Set();
+        if (promptProductMap) {
+            Object.values(promptProductMap).forEach(p => {
+                if (p.image_url) validProductUrls.add(p.image_url);
+            });
+        }
+
         const normalizedProductNames = Object.keys(promptProductMap || {});
 
         if (normalizedProductNames.length > 0 && replyText) {
@@ -1148,12 +1161,24 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
 
             // Allow any image URL (local or remote)
             const isImage = /\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(url);
+            
+            // STRICT VALIDATION: Check if this URL is known
+            // If it's a hallucinated URL (not in our product map and not our domain), block it.
+            const isKnownProduct = validProductUrls.has(url);
+            const isLocal = url.includes(process.env.PUBLIC_BASE_URL || 'localhost');
+            const isFbCdn = url.includes('fbcdn.net') || url.includes('cdn.fbsbx.com'); // Allow user images if echoed
+            
+            // If it's an external link (like ibb.co) and NOT in our product list, it's likely a hallucination.
+            const isSuspicious = !isKnownProduct && !isLocal && !isFbCdn;
 
-            if (isImage) {
+            if (isImage && !isSuspicious) {
                 if (!extractedImages.some(img => img.url === url)) {
                     extractedImages.push({ url: url, title: title });
                 }
                 replyText = replyText.replace(fullMatch, '').trim();
+            } else if (isSuspicious) {
+                 console.log(`[Image Extraction] Blocked hallucinated/suspicious URL: ${url}`);
+                 replyText = replyText.replace(fullMatch, '').trim(); // Remove the hallucination from text too
             } else {
                 // Non-Image URLs stay as normal text
                 console.log(`[Image Extraction] Keeping non-Image URL as text: ${url}`);
@@ -1173,9 +1198,20 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
 
             // Accept any valid image URL (Local or Remote)
             // Previously restricted to Supabase, now open for local storage migration
-            if (!extractedImages.some(img => img.url === url)) {
+            
+            // STRICT VALIDATION (Same as above)
+            const isKnownProduct = validProductUrls.has(url);
+            const isLocal = url.includes(process.env.PUBLIC_BASE_URL || 'localhost');
+            const isFbCdn = url.includes('fbcdn.net') || url.includes('cdn.fbsbx.com');
+            const isSuspicious = !isKnownProduct && !isLocal && !isFbCdn;
+
+            if (!extractedImages.some(img => img.url === url) && !isSuspicious) {
                 extractedImages.push({ url: url, title: 'View Image' });
             }
+            if (isSuspicious) {
+                console.log(`[Image Extraction] Blocked hallucinated/suspicious URL in fallback regex: ${url}`);
+            }
+            
             replyText = replyText.replace(fullMatch, '').trim();
         }
 

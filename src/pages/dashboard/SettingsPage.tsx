@@ -37,29 +37,32 @@ export default function SettingsPage() {
   });
 
   useEffect(() => {
+    let isMounted = true;
     const checkConnection = () => {
       const storedDbId = localStorage.getItem("active_wp_db_id");
       if (storedDbId) {
         setDbId(storedDbId);
-        fetchConfig(storedDbId);
+        fetchConfig(storedDbId, isMounted);
       } else {
         setDbId(null);
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     };
 
     checkConnection();
 
-    window.addEventListener("storage", checkConnection);
-    window.addEventListener("db-connection-changed", checkConnection);
+    const handleStorageChange = () => checkConnection();
+    window.addEventListener("storage", handleStorageChange);
+    window.addEventListener("db-connection-changed", handleStorageChange);
 
     return () => {
-      window.removeEventListener("storage", checkConnection);
-      window.removeEventListener("db-connection-changed", checkConnection);
+      isMounted = false;
+      window.removeEventListener("storage", handleStorageChange);
+      window.removeEventListener("db-connection-changed", handleStorageChange);
     };
-  }, [form]);
+  }, []); // Empty dependency array to prevent re-runs on form change
 
-  const fetchConfig = async (id: string) => {
+  const fetchConfig = async (id: string, isMounted: boolean) => {
     try {
       const token = localStorage.getItem("auth_token");
       const res = await fetch(`${BACKEND_URL}/whatsapp/db/${id}`, {
@@ -70,18 +73,22 @@ export default function SettingsPage() {
 
       const row: any = await res.json();
 
-      setVerified(row.verified !== false);
-      form.reset({
-        provider: row.provider || "openrouter",
-        api_key: row.api_key || "",
-        chatmodel: row.chatmodel || "gemini-2.5-flash",
-        text_prompt: row.text_prompt || "",
-      });
+      if (isMounted) {
+          setVerified(row.verified !== false);
+          // Use reset to update form values. 
+          // IMPORTANT: This must happen BEFORE loading is set to false to avoid flicker
+          form.reset({
+            provider: row.provider || "openrouter",
+            api_key: row.api_key || "",
+            chatmodel: row.chatmodel || "gemini-2.5-flash",
+            text_prompt: row.text_prompt || "",
+          });
+      }
     } catch (error) {
       console.error("Error fetching config:", error);
       toast.error("Failed to load AI settings");
     } finally {
-      setLoading(false);
+      if (isMounted) setLoading(false);
     }
   };
 

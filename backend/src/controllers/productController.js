@@ -76,6 +76,8 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
             }
         }
 
+        // FORCE CHECK: Even if effectiveUserId is set (Personal Workspace), check if they are a team member.
+        // This enforces the "Single Owner" rule for everyone.
         const teamResult = await pgClient.query(
             'SELECT owner_email FROM team_members WHERE member_email = $1 AND status = $2',
             [normalizedEmail, 'active']
@@ -83,7 +85,7 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
 
         if (teamResult.rows.length > 0 && teamResult.rows[0].owner_email) {
             const ownerEmail = teamResult.rows[0].owner_email;
-            console.log(`[AuthDebug] Found Team Owner Email: ${ownerEmail}`);
+            console.log(`[AuthDebug] Found Team Owner Email: ${ownerEmail} for member ${normalizedEmail}`);
             
             // Look up the owner's user_id directly from the users table
             const userResult = await pgClient.query(
