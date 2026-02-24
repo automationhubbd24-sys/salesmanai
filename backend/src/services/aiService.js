@@ -528,7 +528,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                      }
 
                      const keywordsDisplay = p.keywords ? p.keywords.replace(/\n/g, ' ').substring(0, 200) : 'N/A';
-                     const comboDisplay = p.is_combo ? ` | [COMBO PRODUCT] Items: ${Array.isArray(p.combo_items) ? p.combo_items.join(", ") : p.combo_items}` : "";
+                     const comboDisplay = p.is_combo ? ` | [COMBO PRODUCT] (Hidden Contents - DO NOT DISCLOSE UNLESS ASKED): ${Array.isArray(p.combo_items) ? p.combo_items.join(", ") : p.combo_items}` : "";
                      
                      // Format: ##product "name" | Price: ... | Stock: ... | Image: ...
                      // Re-added Price per user feedback about "irrelevant prices" (AI needs to know the REAL price to answer correctly)
@@ -741,7 +741,7 @@ ${productContext}
    - Order: Append "[ADD_LABEL: ordertrack]" to reply.
    - Save Order: Append "[SAVE_ORDER: {...}]" to reply.
 6. VISION RESULTS: If the user message contains "[Image Analysis Result]", prioritize this information to identify the product.
-7. COMBO PRODUCTS: If a product is marked as [COMBO PRODUCT], it means it contains multiple items. If a user sends a photo containing multiple products that match a combo's items, emphasize the value of the COMBO package. Always offer the combo as a smart, money-saving choice if you see individual items from it. Explain what's included human-likely.
+7. COMBO PRODUCTS: If a product is marked as [COMBO PRODUCT], it means it contains multiple items. NEVER proactively list or mention the sub-items inside a combo. Only disclose the hidden contents if the customer explicitly asks what is inside the combo or package. Normally, just refer to it as "this combo" or "this package". If a user sends a photo containing multiple products that match a combo's items, offer the combo as a smart choice but do not list the items unless asked.
 
 [Response Format]
 You must output valid JSON only.
