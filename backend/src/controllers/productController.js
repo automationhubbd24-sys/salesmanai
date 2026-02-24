@@ -466,6 +466,8 @@ exports.getProducts = async (req, res) => {
         const pageId = req.query.page_id || null;
         const baseUserId = req.query.user_id || null;
         
+        console.log(`[ProductGet] Incoming Request: Page=${pageId}, User=${baseUserId}, TeamOwner=${req.query.team_owner}`);
+        
         // 1. Resolve Effective User (Handles Team Context)
         // Moved UP to ensure we know who is asking before determining target
         let { effectiveUserId, isTeamMember, viewerEmail, teamOwnerEmail } = await getEffectiveUserIdFromRequest(req, baseUserId);
@@ -477,17 +479,29 @@ exports.getProducts = async (req, res) => {
              try {
                  const pgClient = require('../services/pgClient');
                  const pageRes = await pgClient.query(
-                    'SELECT email FROM page_access_token_message WHERE page_id = $1 AND email IS NOT NULL',
+                    'SELECT user_id, email FROM page_access_token_message WHERE page_id = $1',
                     [String(pageId)]
                  );
                  if (pageRes.rows.length > 0) {
                      const pageOwnerEmail = pageRes.rows[0].email;
-                     if (pageOwnerEmail.trim().toLowerCase() === viewerEmail.trim().toLowerCase()) {
+                     const pageOwnerId = pageRes.rows[0].user_id;
+                     
+                     let isOwner = false;
+                     if (pageOwnerEmail && viewerEmail && pageOwnerEmail.trim().toLowerCase() === viewerEmail.trim().toLowerCase()) {
+                         isOwner = true;
+                     }
+                     
+                     if (isOwner) {
                          console.log(`[ProductGet] Page ${pageId} is owned by ME (${viewerEmail}). Forcing Personal Context override.`);
                          
                          // If we are currently in Team Mode, we need to switch back to Personal Mode (My ID)
                          // We resolve the ID from the email since effectiveUserId currently points to the Team Owner
-                         if (isTeamMember) {
+                         // OR we can just use pageOwnerId if it's reliable
+                         if (pageOwnerId) {
+                             effectiveUserId = pageOwnerId;
+                             isTeamMember = false;
+                         } else {
+                             // Fallback to lookup
                              const userRes = await pgClient.query('SELECT id FROM users WHERE email = $1', [viewerEmail]);
                              if (userRes.rows.length > 0) {
                                  effectiveUserId = userRes.rows[0].id;
