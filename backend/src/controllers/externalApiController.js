@@ -247,16 +247,14 @@ exports.handleChatCompletion = async (req, res) => {
         else billingLabel = "Pro Engine API Call";
 
         // 5. Calculate Cost & Deduct Balance
-        const costPerToken = getCostPerToken(responseModelName);
-        const cost = totalTokens * costPerToken;
-        const finalCost = Math.max(cost, 0.00001); 
+        // Cost calculation moved to centralized dbService
+        const finalCost = dbService.calculateCost(responseModelName, totalTokens);
 
         if (!freeTierActive) {
             await dbService.deductUserBalance(userConfig.user_id, finalCost, `${billingLabel} (${totalTokens} tokens)`);
         }
 
-        // 5.5 Log API Usage
-        await dbService.logApiUsage(userConfig.user_id, responseModelName, totalTokens, freeTierActive ? 0 : finalCost);
+        // Usage is now logged inside aiService.js to unify all consumption tracking.
 
         // 6. Return Response
         const responseId = `chatcmpl-${Date.now()}`;

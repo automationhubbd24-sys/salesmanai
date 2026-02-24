@@ -830,7 +830,7 @@ You must output valid JSON only.
             const aiText = data?.choices?.[0]?.message?.content || null;
             const tokenUsage = data?.usage?.total_tokens || 0;
             if (aiText) {
-                return { reply: aiText, sentiment: 'neutral', token_usage: tokenUsage + totalTokenUsage, model: modelToUse, foundProducts };
+                return finalize({ reply: aiText, sentiment: 'neutral', token_usage: tokenUsage + totalTokenUsage, model: modelToUse, foundProducts });
             }
         } catch (error) {
             console.warn(`[AI] SalesmanChatbot Own API Error:`, error.message);
@@ -987,7 +987,7 @@ INSTRUCTIONS:
                         // -------------------------------------
 
                         if (!parsed.reply) parsed.reply = parsed.response || parsed.text;
-                        return { ...parsed, token_usage: tokenUsage + totalTokenUsage, model: modelToUse, foundProducts };
+                        return finalize({ ...parsed, token_usage: tokenUsage + totalTokenUsage, model: modelToUse, foundProducts });
                     } catch (e) {
                         console.error('[AI] Phase 1 Logic Failed:', e);
                         dbService.logError(e, 'AI Service - Logic Failed', { model: modelToUse, rawContent_preview: rawContent.substring(0, 200) });
@@ -1005,14 +1005,14 @@ INSTRUCTIONS:
                             cleanText = "Here are the images you requested:";
                         }
 
-                        return { 
+                        return finalize({ 
                             reply: cleanText, 
                             sentiment: 'neutral', 
                             model: modelToUse, 
                             token_usage: tokenUsage + totalTokenUsage, 
                             foundProducts,
                             images: extractedImages 
-                        };
+                        });
                     }
                 }
             } catch (error) {
@@ -1021,12 +1021,12 @@ INSTRUCTIONS:
                 // STRICT OWN API LOCK: If we are here, it means the User provided their own API key.
                 // If it fails (invalid key, quota exceeded, etc.), we MUST NOT fallback to our Cloud API.
                 console.error(`[AI] Strict Own API Failed. Blocking Cloud API fallback for security & isolation.`);
-                return { 
+                return finalize({ 
                     reply: null, // Returning null ensures the controller knows the request failed strictly.
                     error: `AI Provider Error: ${error.message}. Please check your API settings in the dashboard.`,
                     token_usage: 0,
                     model: pageConfig.chatmodel || defaultModel // FIX: Use pageConfig value directly if modelToUse is not in scope or undefined
-                };
+                });
             }
         }
     }
@@ -1050,12 +1050,12 @@ INSTRUCTIONS:
     // --- PHASE 2: SALESMANCHATBOT ENGINE (SMART ROUTING) ---
     if (userKeyAttempted) {
         console.warn(`[AI] Phase 1 was attempted but failed or was invalid. Strict Isolation Active: Blocking Cloud API fallback.`);
-        return { 
+        return finalize({ 
             reply: null, 
             error: "Your API Provider settings are incorrect or the key has expired. Please check your dashboard.",
             token_usage: 0,
             model: defaultModel
-        };
+        });
     }
 
     console.log(`[AI] Phase 2: SalesmanChatbot Engine Smart Routing...`);
@@ -1120,6 +1120,20 @@ INSTRUCTIONS:
     // We only try the selected model. If it fails, we return an error.
     const modelsToTry = [finalModel];
     
+    // 5. Unified Logger Helper
+    const finalize = async (result) => {
+        if (!result) return null;
+        
+        // Log to API Usage Stats for Dashboard (O(1) in Background)
+        if (pageConfig.user_id && result.token_usage > 0) {
+            const cost = dbService.calculateCost(result.model, result.token_usage);
+            // Fire and forget (don't await to keep response fast)
+            dbService.logApiUsage(pageConfig.user_id, result.model, result.token_usage, cost);
+        }
+        
+        return result;
+    };
+
     for (let modelIndex = 0; modelIndex < modelsToTry.length; modelIndex++) {
         const currentModel = modelsToTry[modelIndex];
         
@@ -1132,12 +1146,12 @@ INSTRUCTIONS:
                     
                     // If this was the last attempt and no keys found, return service drop error
                     if (i === 2) {
-                        return { 
+                        return finalize({ 
                             reply: "দুঃখিত, বর্তমানে এই সার্ভিসে কোনো অ্যাক্টিভ কী নেই। দয়া করে এডমিন প্যানেল থেকে এপিআই কী চেক করুন।", 
                             error: `No active keys for ${finalProvider}/${currentModel}`,
                             token_usage: 0,
                             model: currentModel
-                        };
+                        });
                     }
                     continue;
                 }
@@ -1232,24 +1246,24 @@ INSTRUCTIONS:
                             // 3. Final Image List
                             parsed2.images = mentionedImages;
                             
-                            return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: targetProvider, foundProducts: products };
+                            return finalize({ ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: currentModel, foundProducts: products });
                         }
 
                         if (!parsed.reply) parsed.reply = parsed.response || parsed.text;
-                        return { ...parsed, model: targetProvider, token_usage: tokenUsage + totalTokenUsage, foundProducts };
+                        return finalize({ ...parsed, model: currentModel, token_usage: tokenUsage + totalTokenUsage, foundProducts });
                     } catch (e) {
                         console.error('[AI] Logic/Tool Failed:', e);
                         let cleanText = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
                         const extracted = extractImagesFromText(cleanText);
                         cleanText = extractReplyFromText(extracted.text);
-                        return { 
+                        return finalize({ 
                             reply: cleanText, 
                             sentiment: 'neutral', 
-                            model: targetProvider, 
+                            model: currentModel, 
                             token_usage: tokenUsage + totalTokenUsage, 
                             foundProducts,
                             images: extracted.images 
-                        };
+                        });
                     }
 
                 } catch (error) {
@@ -1263,7 +1277,7 @@ INSTRUCTIONS:
     }
     
     console.error(`[AI] All SalesmanChatbot Engine attempts failed.`);
-    return null;
+    return finalize(null);
 }
 
 const WAHA_BASE_URL = process.env.WAHA_BASE_URL || 'https://wahubbd.salesmanchatbot.online';

@@ -227,9 +227,10 @@ async function logError(error, context = 'Unknown', metadata = {}) {
     }
 }
 
-// 9. Initialize Error Table (Run on Startup)
-async function initErrorTable() {
+// 9. Initialize Tables (Run on Startup)
+async function initTables() {
     try {
+        // Error Logs Table
         await query(`
             CREATE TABLE IF NOT EXISTS error_logs (
                 id SERIAL PRIMARY KEY,
@@ -244,13 +245,40 @@ async function initErrorTable() {
             CREATE INDEX IF NOT EXISTS idx_error_logs_resolved ON error_logs(resolved);
         `);
         console.log("[DB] 'error_logs' table checked/initialized.");
+
+        // API Usage Stats Table (CRITICAL for Dashboard)
+        // Note: user_id references 'users(id)' to match postgres_schema.sql
+        await query(`
+            CREATE TABLE IF NOT EXISTS api_usage_stats (
+                id BIGSERIAL PRIMARY KEY,
+                user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+                model TEXT NOT NULL,
+                tokens INTEGER DEFAULT 0,
+                cost NUMERIC DEFAULT 0,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_api_usage_stats_user_id ON api_usage_stats(user_id);
+            CREATE INDEX IF NOT EXISTS idx_api_usage_stats_created_at ON api_usage_stats(created_at DESC);
+        `);
+
+        // Ensure 'cost' column exists (for backward compatibility if table was already there)
+        await query(`
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='api_usage_stats' AND column_name='cost') THEN
+                    ALTER TABLE api_usage_stats ADD COLUMN cost NUMERIC DEFAULT 0;
+                END IF;
+            END $$;
+        `);
+        console.log("[DB] 'api_usage_stats' table checked/initialized.");
+
     } catch (error) {
-        console.error("[DB] Failed to init 'error_logs' table:", error);
+        console.error("[DB] Failed to init tables:", error);
     }
 }
 
-// Run init immediately (or export and run in app.js)
-initErrorTable();
+// Run init immediately
+initTables();
 
 // --- ADMIN TOOLS ---
 async function addBalanceByEmail(email, amount) {
@@ -1458,15 +1486,24 @@ async function getActiveWhatsAppSessions() {
 
 // 25. Log API Usage (Unified API)
 async function logApiUsage(userId, model, tokens, cost = 0) {
+    if (!userId) return;
+
     try {
+        // Ensure tokens is integer
+        const t = Math.round(Number(tokens) || 0);
+        const c = Number(cost) || 0;
+
         await query(
             `INSERT INTO api_usage_stats
                 (user_id, model, tokens, cost, created_at)
-             VALUES ($1,$2,$3,$4,now())`,
-            [userId, model, tokens, cost]
+             VALUES ($1, $2, $3, $4, NOW())`,
+            [userId, model, t, c]
         );
+        // console.log(`[DB] Logged Usage: ${userId.substring(0,8)}... | ${model} | ${t} tokens | ${c} BDT`);
     } catch (error) {
         console.warn("[DB] Failed to log API usage:", error.message);
+        // Fallback: If FK fails (user not in users table yet), we might want to log it to error_logs
+        logError(error, 'logApiUsage', { userId, model, tokens, cost });
     }
 }
 
@@ -1481,9 +1518,32 @@ async function getAllKeys() {
     }
 }
 
+// 26. Calculate Cost for Usage Stats
+function calculateCost(model, tokens) {
+    if (!tokens || tokens <= 0) return 0;
+    
+    // Pricing per 1 Million Tokens (in BDT)
+    // Same as externalApiController.js for consistency
+    const PRICING = {
+        PRO: 250,
+        FLASH: 100,
+        LITE: 40
+    };
+
+    let rate = PRICING.PRO;
+    const modelLower = (model || '').toLowerCase();
+    
+    if (modelLower.includes('flash')) rate = PRICING.FLASH;
+    else if (modelLower.includes('lite')) rate = PRICING.LITE;
+    
+    const costPerToken = rate / 1000000;
+    return tokens * costPerToken;
+}
+
 module.exports = {
     getAllKeys,
     logApiUsage,
+    calculateCost,
     getPageConfig,
     getPagePrompts,
     saveLead,
