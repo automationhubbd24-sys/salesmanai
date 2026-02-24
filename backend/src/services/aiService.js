@@ -471,10 +471,6 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     // MOVED: Now runs AFTER media processing so we can search for products based on image/audio content!
     let productContext = "";
     let foundProducts = [];
-    
-    // USER REQUEST: Detect greeting to prevent irrelevant image leaks, but allow AI to 'know' products for later flow.
-    const isGreeting = cleanUserMessage.length < 10 && /^(hi|hello|hey|সালাম|আসসালামু|জ্বি|হ্যালো)/i.test(cleanUserMessage);
-
     if (pageConfig.user_id) {
         try {
             // Search for relevant products based on user message (which now includes image descriptions)
@@ -968,8 +964,8 @@ INSTRUCTIONS:
                         // 3. Clean the Reply (Remove ##PRODUCT tags before sending to user)
                         parsed2.reply = replyText.replace(tagRegex, '').trim();
 
-                        // 4. Final Lock: No images on greeting even if mentioned (Safety)
-                        parsed2.images = isGreeting ? [] : mentionedImages;
+                        // 4. Final Lock: Images will ONLY be sent if the AI explicitly mentions the product name or tag in its reply.
+                        parsed2.images = mentionedImages;
                         
                         return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: modelToUse, foundProducts: products };
                             } catch (aiError) {
@@ -1200,8 +1196,8 @@ INSTRUCTIONS:
                         // 3. Clean the Reply (Remove ##PRODUCT tags before sending to user)
                         parsed2.reply = replyText.replace(tagRegex, '').trim();
 
-                        // 4. Final Lock: No images on greeting even if mentioned (Safety)
-                        parsed2.images = isGreeting ? [] : mentionedImages;
+                        // 4. Final Lock: Images will ONLY be sent if the AI explicitly mentions the product name or tag in its reply.
+                        parsed2.images = mentionedImages;
                         
                         return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: engineName, foundProducts: products };
                     }
