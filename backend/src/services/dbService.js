@@ -1624,10 +1624,10 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
         params.push(String(pageId)); // $2
         
         // Complex Logic for Page View:
-        // 1. If User is Owner (allowedPageIds is null/undefined): Show ALL products owned by them (regardless of page restrictions)
+        // 1. If User is Owner (allowedPageIds is null/undefined OR empty array): Show ALL products owned by them
         // 2. If User is Team Member (allowedPageIds has values): Show products linked to their allowed pages
         
-        if (!allowedPageIds) {
+        if (!allowedPageIds || (Array.isArray(allowedPageIds) && allowedPageIds.length === 0)) {
              // OWNER VIEW: Show everything owned by this user
              // We ignore the specific page restriction in the DB query because the Owner should see EVERYTHING.
              // If they want to filter by page in the UI, we can add that logic, but for now, if they own it, they see it.
