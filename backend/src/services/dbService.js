@@ -1635,8 +1635,8 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
     }
 
     if (pageId) {
-        params.push(userId); // $1
-        params.push(String(pageId)); // $2
+        // params.push(userId); // REMOVED: Pushed conditionally below
+        // params.push(String(pageId)); // REMOVED: Pushed conditionally below
         
         // Complex Logic for Page View:
         // 1. If User is Owner (allowedPageIds is null/undefined OR empty array OR Explicit Owner Check): Show ALL products owned by them
@@ -1644,9 +1644,12 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
         
         if (isPageOwner || !allowedPageIds || (Array.isArray(allowedPageIds) && allowedPageIds.length === 0)) {
              // OWNER VIEW: Show everything owned by this user
+             params.push(userId); // $1
              whereClause = `user_id = $1`;
         } else {
             // TEAM MEMBER VIEW: Restricted by allowed_page_ids
+            params.push(userId); // $1
+            params.push(String(pageId)); // $2
             const perms = allowedPageIds.map(String);
             params.push(perms); // $3
             
