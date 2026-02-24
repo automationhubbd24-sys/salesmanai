@@ -936,11 +936,12 @@ INSTRUCTIONS:
                                      parsed2.reply = null; // SILENT MODE: Return null instead of error message
                                 }
 
-                        // IMAGE INJECTION LOGIC (STRICT MENTION-BASED)
+                        // IMAGE INJECTION LOGIC (STRICT TAG-BASED ONLY)
                         const mentionedImages = [];
                         let replyText = parsed2.reply || "";
                         
                         // 1. Tag-Based Extraction (##PRODUCT "Name")
+                        // This is the ONLY way to trigger an image.
                         const tagRegex = /##PRODUCT\s*["'](.+?)["']/gi;
                         let tagMatch;
                         while ((tagMatch = tagRegex.exec(replyText)) !== null) {
@@ -951,20 +952,10 @@ INSTRUCTIONS:
                             }
                         }
 
-                        // 2. Name-Based Fallback (if no tags but name is mentioned)
-                        const replyLower = replyText.toLowerCase();
-                        products.forEach(p => {
-                            if (replyLower.includes(p.name.toLowerCase())) {
-                                if (p.image_url && !mentionedImages.includes(p.image_url)) {
-                                    mentionedImages.push(p.image_url);
-                                }
-                            }
-                        });
-
-                        // 3. Clean the Reply (Remove ##PRODUCT tags before sending to user)
+                        // 2. Clean the Reply (Remove ##PRODUCT tags before sending to user)
                         parsed2.reply = replyText.replace(tagRegex, '').trim();
 
-                        // 4. Final Lock: Images will ONLY be sent if the AI explicitly mentions the product name or tag in its reply.
+                        // 3. Final Image List
                         parsed2.images = mentionedImages;
                         
                         return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: modelToUse, foundProducts: products };
@@ -1168,11 +1159,12 @@ INSTRUCTIONS:
                              parsed2.reply = "আমি আপনার খোঁজা পণ্যগুলো পেয়েছি। নিচে দেখুন:"; 
                         }
 
-                        // IMAGE INJECTION LOGIC (STRICT MENTION-BASED)
+                        // IMAGE INJECTION LOGIC (STRICT TAG-BASED ONLY)
                         const mentionedImages = [];
                         let replyText = parsed2.reply || "";
                         
                         // 1. Tag-Based Extraction (##PRODUCT "Name")
+                        // This is the ONLY way to trigger an image.
                         const tagRegex = /##PRODUCT\s*["'](.+?)["']/gi;
                         let tagMatch;
                         while ((tagMatch = tagRegex.exec(replyText)) !== null) {
@@ -1183,20 +1175,10 @@ INSTRUCTIONS:
                             }
                         }
 
-                        // 2. Name-Based Fallback (if no tags but name is mentioned)
-                        const replyLower = replyText.toLowerCase();
-                        products.forEach(p => {
-                            if (replyLower.includes(p.name.toLowerCase())) {
-                                if (p.image_url && !mentionedImages.includes(p.image_url)) {
-                                    mentionedImages.push(p.image_url);
-                                }
-                            }
-                        });
-
-                        // 3. Clean the Reply (Remove ##PRODUCT tags before sending to user)
+                        // 2. Clean the Reply (Remove ##PRODUCT tags before sending to user)
                         parsed2.reply = replyText.replace(tagRegex, '').trim();
 
-                        // 4. Final Lock: Images will ONLY be sent if the AI explicitly mentions the product name or tag in its reply.
+                        // 3. Final Image List
                         parsed2.images = mentionedImages;
                         
                         return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: engineName, foundProducts: products };
