@@ -646,6 +646,9 @@ router.get('/chats', authMiddleware, async (req, res) => {
         const pageId = String(req.query.page_id || '').trim();
         const from = req.query.from ? String(req.query.from) : null;
         const to = req.query.to ? String(req.query.to) : null;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 50;
+        const offset = (page - 1) * limit;
 
         if (!pageId) {
             return res.status(400).json({ error: 'page_id is required' });
@@ -655,19 +658,73 @@ router.get('/chats', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'from and to are required ISO date strings' });
         }
 
-        const result = await pgClient.query(
+        // 1. Fetch Paginated Data
+        const dataResult = await pgClient.query(
             `
-            SELECT id, page_id, created_at, reply_by, token, ai_model, text, sender_id, timestamp
+            SELECT id, page_id, created_at, reply_by, token, ai_model, text, sender_id, timestamp, status
             FROM fb_chats
             WHERE page_id = $1
               AND created_at >= $2::timestamptz
               AND created_at <= $3::timestamptz
             ORDER BY created_at DESC
+            LIMIT $4 OFFSET $5
+            `,
+            [pageId, from, to, limit, offset]
+        );
+
+        // 2. Fetch Total Count for Pagination
+        const countResult = await pgClient.query(
+            `
+            SELECT COUNT(*) AS total
+            FROM fb_chats
+            WHERE page_id = $1
+              AND created_at >= $2::timestamptz
+              AND created_at <= $3::timestamptz
             `,
             [pageId, from, to]
         );
 
-        res.json(result.rows);
+        // 3. Fetch Filtered Stats (Total for the selected range)
+        const statsResult = await pgClient.query(
+            `
+            SELECT 
+                COUNT(*) FILTER (WHERE reply_by = 'bot') AS bot_replies,
+                COALESCE(SUM(token), 0)::int AS total_tokens
+            FROM fb_chats
+            WHERE page_id = $1
+              AND created_at >= $2::timestamptz
+              AND created_at <= $3::timestamptz
+            `,
+            [pageId, from, to]
+        );
+
+        // 4. Fetch Token Breakdown for the range
+        const breakdownResult = await pgClient.query(
+            `
+            SELECT ai_model, SUM(token)::int AS total_tokens
+            FROM fb_chats
+            WHERE page_id = $1
+              AND created_at >= $2::timestamptz
+              AND created_at <= $3::timestamptz
+              AND reply_by = 'bot'
+              AND token > 0
+            GROUP BY ai_model
+            `,
+            [pageId, from, to]
+        );
+
+        const tokenBreakdown = {};
+        breakdownResult.rows.forEach(row => {
+            tokenBreakdown[row.ai_model || 'Unknown'] = row.total_tokens;
+        });
+
+        res.json({
+            data: dataResult.rows,
+            total: parseInt(countResult.rows[0].total),
+            filteredBotReplyCount: parseInt(statsResult.rows[0].bot_replies),
+            filteredTokenCount: parseInt(statsResult.rows[0].total_tokens),
+            tokenBreakdown: tokenBreakdown
+        });
     } catch (err) {
         console.error('Messenger chats error:', err);
         res.status(500).json({ error: err.message });

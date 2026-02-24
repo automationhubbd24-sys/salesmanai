@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { MessageSquare, RefreshCw, AlertCircle, Calendar as CalendarIcon, Zap } from "lucide-react";
+import { MessageSquare, RefreshCw, AlertCircle, Calendar as CalendarIcon, Zap, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Link } from "react-router-dom";
@@ -39,6 +39,9 @@ export default function MessengerConversionPage() {
   const [allTimeTokenCount, setAllTimeTokenCount] = useState(0);
   const [tokenBreakdown, setTokenBreakdown] = useState<Record<string, number>>({});
   const [activePageId, setActivePageId] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalMessages, setTotalMessages] = useState(0);
+  const LIMIT = 50;
   
   // Date Filter State
   const [date, setDate] = useState<DateRange | undefined>({
@@ -56,11 +59,16 @@ export default function MessengerConversionPage() {
   }, []); // Fetch stats once on mount
 
   useEffect(() => {
-    // Fetch messages whenever date or pageId changes
+    // Fetch messages whenever date, pageId, or currentPage changes
     if (activePageId && date?.from && date?.to) {
-        fetchMessages(activePageId, date.from, date.to);
+        fetchMessages(activePageId, date.from, date.to, currentPage);
     }
-  }, [activePageId, date]);
+  }, [activePageId, date, currentPage]);
+
+  // Reset page when date changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [date]);
 
   // Separate function for All Time Stats (Optimized)
   const fetchStats = async (pageId: string) => {
@@ -87,7 +95,7 @@ export default function MessengerConversionPage() {
     }
   };
 
-  const fetchMessages = async (pageId: string, from: Date, to: Date) => {
+  const fetchMessages = async (pageId: string, from: Date, to: Date, page: number = 1) => {
     setLoading(true);
     try {
       const token = localStorage.getItem("auth_token");
@@ -96,6 +104,7 @@ export default function MessengerConversionPage() {
         setFilteredBotReplyCount(0);
         setFilteredTokenCount(0);
         setTokenBreakdown({});
+        setTotalMessages(0);
         return;
       }
 
@@ -103,6 +112,8 @@ export default function MessengerConversionPage() {
       params.set("page_id", pageId);
       params.set("from", from.toISOString());
       params.set("to", to.toISOString());
+      params.set("page", String(page));
+      params.set("limit", String(LIMIT));
 
       const res = await fetch(`${BACKEND_URL}/api/messenger/chats?${params.toString()}`, {
         headers: {
@@ -114,25 +125,14 @@ export default function MessengerConversionPage() {
         throw new Error("Failed to fetch messages");
       }
 
-      const data = await res.json();
-      const fetchedMessages = Array.isArray(data) ? data : [];
+      const result = await res.json();
+      const fetchedMessages = Array.isArray(result.data) ? result.data : [];
       setMessages(fetchedMessages);
-      
-      const botReplies = fetchedMessages.filter((msg: any) => msg.reply_by === 'bot').length;
-      setFilteredBotReplyCount(botReplies);
+      setTotalMessages(result.total || 0);
+      setFilteredBotReplyCount(result.filteredBotReplyCount || 0);
+      setFilteredTokenCount(result.filteredTokenCount || 0);
+      setTokenBreakdown(result.tokenBreakdown || {});
 
-      const filteredTokens = fetchedMessages.reduce((acc: number, msg: any) => acc + (Number(msg.token) || 0), 0);
-      setFilteredTokenCount(filteredTokens);
-
-      const breakdown: Record<string, number> = {};
-      fetchedMessages.forEach((msg: any) => {
-        const tokenVal = Number(msg.token) || 0;
-        if (msg.reply_by === 'bot' && tokenVal > 0) {
-          const model = msg.ai_model || 'Unknown';
-          breakdown[model] = (breakdown[model] || 0) + tokenVal;
-        }
-      });
-      setTokenBreakdown(breakdown);
     } catch (error) {
       console.error("Error fetching messages:", error);
       toast.error("Failed to fetch messages");
@@ -160,10 +160,10 @@ export default function MessengerConversionPage() {
     const storedPageId = localStorage.getItem("active_fb_page_id");
     if (storedPageId) {
         if (date?.from && date?.to) {
-             fetchMessages(storedPageId, date.from, date.to);
+             fetchMessages(storedPageId, date.from, date.to, currentPage);
              fetchStats(storedPageId); // Also refresh stats
         } else {
-             fetchMessages(storedPageId, startOfDay(new Date()), endOfDay(new Date()));
+             fetchMessages(storedPageId, startOfDay(new Date()), endOfDay(new Date()), 1);
              fetchStats(storedPageId);
         }
     } else {
@@ -409,6 +409,37 @@ export default function MessengerConversionPage() {
               )}
             </TableBody>
           </Table>
+          
+          {totalMessages > LIMIT && (
+            <div className="flex items-center justify-between mt-4 px-2">
+              <div className="text-sm text-muted-foreground">
+                Showing {((currentPage - 1) * LIMIT) + 1} to {Math.min(currentPage * LIMIT, totalMessages)} of {totalMessages} messages
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                  disabled={currentPage === 1 || loading}
+                >
+                  <ChevronLeft className="h-4 w-4 mr-1" />
+                  Previous
+                </Button>
+                <div className="text-sm font-medium">
+                  Page {currentPage} of {Math.ceil(totalMessages / LIMIT)}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(prev => prev + 1)}
+                  disabled={currentPage >= Math.ceil(totalMessages / LIMIT) || loading}
+                >
+                  Next
+                  <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
