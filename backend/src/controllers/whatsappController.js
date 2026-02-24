@@ -1249,7 +1249,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                                 sender_id: senderId,
                                 recipient_id: pageId || sessionName,
                                 message_id: msg.id,
-                                text: `[Image Analysis] ${perMsgText}`,
+                                text: `[Image Analysis Result] ${perMsgText}`,
                                 timestamp: Date.now(),
                                 status: 'received',
                                 reply_by: 'user',

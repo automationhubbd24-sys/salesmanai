@@ -446,7 +446,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             return res; // Fallback string
         });
 
-        mediaContext += "\n[System Note: User sent images. Analysis below:]\n" + imageDescriptions.map((desc, i) => `Image ${i+1}: ${desc}`).join("\n");
+        mediaContext += "\n[Image Analysis Result]\n" + imageDescriptions.map((desc, i) => `Image ${i+1}: ${desc}`).join("\n");
     }
 
     if (audioUrls && audioUrls.length > 0) {
@@ -479,6 +479,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             // CONTEXT AWARENESS: If query is short (e.g. "price?", "details?"), look back in history for product context.
             if (cleanUserMessage.length < 50 && history.length > 0) {
                  // Look for last AI response or User message with Image Analysis
+                 let analysisKeywords = "";
                  for (let i = history.length - 1; i >= 0; i--) {
                      const msg = history[i];
                      const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
@@ -488,11 +489,13 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                          // Extract meaningful keywords (e.g. first 100 chars of analysis)
                          const analysisMatch = content.match(/\[Image Analysis Result\]\s*([\s\S]{1,100})/);
                          if (analysisMatch && analysisMatch[1]) {
-                             searchQuery += " " + analysisMatch[1];
-                             console.log(`[AI] Enhanced search query with history context: "${searchQuery}"`);
-                             break; // Found recent context, stop
+                             analysisKeywords += " " + analysisMatch[1];
                          }
                      }
+                 }
+                 if (analysisKeywords) {
+                    searchQuery += " " + analysisKeywords.trim();
+                    console.log(`[AI] Enhanced search query with multi-image context: "${searchQuery}"`);
                  }
             }
 
@@ -742,12 +745,14 @@ ${productContext}
    - Save Order: Append "[SAVE_ORDER: {...}]" to reply.
 6. VISION RESULTS: If the user message contains "[Image Analysis Result]", prioritize this information to identify the product.
 7. COMBO PRODUCTS: If a product is marked as [COMBO PRODUCT], it means it contains multiple items. NEVER proactively list or mention the sub-items inside a combo. Only disclose the hidden contents if the customer explicitly asks what is inside the combo or package. Normally, just refer to it as "this combo" or "this package". If a user sends a photo containing multiple products that match a combo's items, offer the combo as a smart choice but do not list the items unless asked.
+8. ORDER TRACKING: If a user provides order details (Product Name, Phone Number, and Address), you MUST include an "order_details" object in your JSON response. Explain that you have saved their order human-likely in the "reply" field.
 
 [Response Format]
 You must output valid JSON only.
 - Reply: { "reply": "text" }
 - Silence: { "reply": null }
-- Search: { "tool": "search_products", "query": "..." }`;
+- Search: { "tool": "search_products", "query": "..." }
+- Order: { "reply": "...", "order_details": { "product_name": "...", "phone": "...", "address": "...", "quantity": "...", "price": "..." } }`;
 
         const systemMessage = { role: 'system', content: n8nSystemPrompt };
     

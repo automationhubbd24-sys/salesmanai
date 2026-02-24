@@ -673,7 +673,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                         if (perMsgText) {
                             combinedImageAnalysis += `\n${perMsgText}\n`;
                             try {
-                                const analysisText = `[Image Analysis] ${perMsgText}`;
+                                const analysisText = `[Image Analysis Result] ${perMsgText}`;
                                 await dbService.saveFbChat({
                                     page_id: pageId,
                                     sender_id: senderId,
@@ -1024,27 +1024,20 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
              const order = aiResponse.order_details;
              console.log(`[Order] AI detected potential order: ${JSON.stringify(order)}`);
              
-             // Normalize Data for DB
-             // number: bigint (phone or sender_id)
-             // We prioritize phone if AI found it, else use sender_id (must be numeric for bigint, but FB IDs are strings...
-             // Wait, user schema says 'number bigint'. FB IDs are huge strings often, might fit in bigint?
-             // Safest is to try parsing phone, if null, try senderId if it looks numeric.
-             
              let customerNumber = order.phone ? order.phone.replace(/\D/g, '') : null;
              if (!customerNumber && /^\d+$/.test(senderId)) {
                  customerNumber = senderId;
              }
              
-             // Only save if we have at least a product name and some user identifier
              if (customerNumber) {
                  await dbService.saveOrderTracking({
-                     page_id: pageId, // Passed for duplicate check logic (though table might not have column, logic handles it)
-                     sender_id: senderId, // For logging
+                     page_id: pageId,
+                     sender_id: senderId,
                      product_name: order.product_name,
                      number: customerNumber, 
-                     location: order.address,
-                     product_quantity: order.quantity,
-                     price: order.price
+                     location: order.address || order.location || '',
+                     product_quantity: order.quantity || '1',
+                     price: order.price || null
                  });
              }
         }
