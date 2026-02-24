@@ -1587,7 +1587,9 @@ async function createProduct(productData) {
         'currency',
         'stock',
         'allowed_page_ids',
-        'keywords'
+        'keywords',
+        'is_combo',
+        'combo_items'
     ];
 
     const values = [];
@@ -1596,7 +1598,7 @@ async function createProduct(productData) {
     fields.forEach((field, index) => {
         placeholders.push(`$${index + 1}`);
         values.push(
-            field === 'variants' || field === 'allowed_page_ids'
+            field === 'variants' || field === 'allowed_page_ids' || field === 'combo_items'
                 ? (productData[field] || null)
                 : (productData[field] ?? null)
         );
@@ -1837,24 +1839,29 @@ async function searchProducts(userId, queryText, pageId = null) {
             const nameNorm = normalize(product.name);
             const descNorm = normalize(product.description);
             const kwNorm = normalize(product.keywords);
-            const visualNorm = normalize(product.visual_tags); // Include visual tags
+            const visualNorm = normalize(product.visual_tags);
+            const comboNorm = product.is_combo && Array.isArray(product.combo_items) 
+                ? normalize(product.combo_items.join(' ')) 
+                : '';
 
             let score = 0;
 
             if (nameNorm === qNorm) score += 120;
             if (kwNorm === qNorm) score += 110;
+            if (comboNorm && comboNorm.includes(qNorm)) score += 105; // High score for combo item match
 
             if (nameNorm.includes(qNorm)) score += 80;
             if (kwNorm.includes(qNorm)) score += 70;
             if (qNorm.includes(nameNorm) && nameNorm.length > 0) score += 60;
-            if (visualNorm.includes(qNorm)) score += 50; // Visual match
+            if (visualNorm.includes(qNorm)) score += 50;
 
             const tokens = qNorm.split(/\s+/).filter(Boolean);
             tokens.forEach((t) => {
                 if (nameNorm.includes(t)) score += 12;
                 else if (kwNorm.includes(t)) score += 10;
+                else if (comboNorm && comboNorm.includes(t)) score += 15; // Combo token match is valuable
                 else if (descNorm.includes(t)) score += 4;
-                else if (visualNorm.includes(t)) score += 8; // Visual token match
+                else if (visualNorm.includes(t)) score += 8;
             });
 
             const lenDiff = Math.abs((product.name || '').length - cleanQuery.length);
@@ -1875,14 +1882,14 @@ async function searchProducts(userId, queryText, pageId = null) {
             return { where, params };
         };
 
-        // 1. Exact Match (Now includes visual_tags)
+        // 1. Exact Match (Now includes visual_tags and combo_items)
         const ctx1 = getBaseContext();
         const pStart1 = ctx1.params.length;
-        const exactWhere = `${ctx1.where} AND (name ILIKE $${pStart1 + 1} OR description ILIKE $${pStart1 + 2} OR keywords ILIKE $${pStart1 + 3} OR visual_tags ILIKE $${pStart1 + 4})`;
-        ctx1.params.push(`%${cleanQuery}%`, `%${cleanQuery}%`, `%${cleanQuery}%`, `%${cleanQuery}%`);
+        const exactWhere = `${ctx1.where} AND (name ILIKE $${pStart1 + 1} OR description ILIKE $${pStart1 + 2} OR keywords ILIKE $${pStart1 + 3} OR visual_tags ILIKE $${pStart1 + 4} OR combo_items::text ILIKE $${pStart1 + 5})`;
+        ctx1.params.push(`%${cleanQuery}%`, `%${cleanQuery}%`, `%${cleanQuery}%`, `%${cleanQuery}%`, `%${cleanQuery}%`);
 
         const exactResult = await query(
-            `SELECT name, description, image_url, variants, is_active, price, currency, keywords, visual_tags
+            `SELECT name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items
              FROM products
              WHERE ${exactWhere}
              LIMIT 5`,
@@ -1915,13 +1922,16 @@ async function searchProducts(userId, queryText, pageId = null) {
                 
                 conditions.push(`visual_tags ILIKE $${idx + 3}`);
                 ctx2.params.push(`%${token}%`);
+
+                conditions.push(`combo_items::text ILIKE $${idx + 4}`);
+                ctx2.params.push(`%${token}%`);
             });
 
             const cond = conditions.join(' OR ');
             const fuzzyWhere = `${ctx2.where} AND (${cond})`;
 
             const fuzzyResult = await query(
-                `SELECT name, description, image_url, variants, is_active, price, currency, keywords, visual_tags
+                `SELECT name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items
                  FROM products
                  WHERE ${fuzzyWhere}
                  LIMIT 5`,
@@ -1962,13 +1972,16 @@ async function searchProducts(userId, queryText, pageId = null) {
                     
                     stemConditions.push(`visual_tags ILIKE $${idx + 3}`);
                     ctx3.params.push(`%${stem}%`);
+
+                    stemConditions.push(`combo_items::text ILIKE $${idx + 4}`);
+                    ctx3.params.push(`%${stem}%`);
                 });
 
                 const stemCond = stemConditions.join(' OR ');
                 const stemWhere = `${ctx3.where} AND (${stemCond})`;
 
                 const stemResult = await query(
-                    `SELECT name, description, image_url, variants, is_active, price, currency, keywords, visual_tags
+                    `SELECT name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items
                  FROM products
                  WHERE ${stemWhere}
                  LIMIT 5`,
@@ -1986,7 +1999,7 @@ async function searchProducts(userId, queryText, pageId = null) {
         // --- 4. Levenshtein Fallback (Super Fuzzy - Token Based) ---
         const baseSql = getBaseContext();
         const scanResult = await query(
-            `SELECT name, description, image_url, variants, is_active, price, currency, keywords, visual_tags
+            `SELECT name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items
              FROM products
              WHERE ${baseSql.where}
              ORDER BY id DESC
@@ -2031,7 +2044,8 @@ async function searchProducts(userId, queryText, pageId = null) {
             };
 
             const scored = allProducts.map(p => {
-                const productTokens = (p.name + " " + (p.keywords || "")).toLowerCase().split(/[\s,]+/).filter(Boolean);
+                const comboItemsStr = (p.is_combo && Array.isArray(p.combo_items)) ? p.combo_items.join(" ") : "";
+                const productTokens = (p.name + " " + (p.keywords || "") + " " + comboItemsStr).toLowerCase().split(/[\s,]+/).filter(Boolean);
                 
                 // Find the best match for ANY query token in the product tokens
                 let matchCount = 0;

@@ -105,6 +105,10 @@ export default function ProductsPage() {
     };
     const [allowedPages, setAllowedPages] = useState<string[]>([]);
 
+    const [isCombo, setIsCombo] = useState(false);
+    const [comboItems, setComboItems] = useState<string[]>([]);
+    const [comboItemInput, setComboItemInput] = useState("");
+
     const [variants, setVariants] = useState<Variant[]>([
         { name: "Default", price: "0", currency: "BDT", available: true }
     ]);
@@ -412,6 +416,9 @@ export default function ProductsPage() {
         setImagePreviews(product.image_url ? [product.image_url] : []);
         setProductImages([]);
         setAllowedPages(product.allowed_page_ids || []);
+        setIsCombo(!!product.is_combo);
+        setComboItems(Array.isArray(product.combo_items) ? product.combo_items : []);
+        setComboItemInput("");
         
         if (product.variants && product.variants.length > 0) {
             setVariants(product.variants);
@@ -442,6 +449,8 @@ export default function ProductsPage() {
             formData.append("stock", productStock);
             formData.append("is_active", "true");
             formData.append("allowed_page_ids", JSON.stringify(allowedPages));
+            formData.append("is_combo", String(isCombo));
+            formData.append("combo_items", JSON.stringify(comboItems));
 
             let pageId: string | null = null;
             if (typeof window !== "undefined") {
@@ -613,6 +622,9 @@ export default function ProductsPage() {
         setProductImages([]);
         setImagePreviews([]);
         setAllowedPages([]);
+        setIsCombo(false);
+        setComboItems([]);
+        setComboItemInput("");
         setVariants([{ name: "Default", price: "0", currency: "USD", available: true }]);
         setShowVariants(false);
     };
@@ -815,6 +827,75 @@ export default function ProductsPage() {
                                     <span className="text-[10px] text-muted-foreground">
                                         Product er gaye ja brand/line lekha thake segula choto choto keyword hisebe add koro.
                                     </span>
+                                </div>
+
+                                <div className="space-y-4 rounded-xl border border-white/5 bg-white/[0.02] p-4">
+                                    <div className="flex items-center justify-between">
+                                        <div className="space-y-0.5">
+                                            <Label className="text-sm font-medium">Is this a Combo?</Label>
+                                            <p className="text-[10px] text-muted-foreground">Enable this to add multiple items to this product package.</p>
+                                        </div>
+                                        <Switch 
+                                            checked={isCombo} 
+                                            onCheckedChange={setIsCombo}
+                                            className="data-[state=checked]:bg-[#00ff88]"
+                                        />
+                                    </div>
+
+                                    {isCombo && (
+                                        <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                                            <div className="grid gap-2">
+                                                <Label htmlFor="combo-items" className="text-xs">Combo Sub-Items</Label>
+                                                <div className="flex gap-2">
+                                                    <Input 
+                                                        id="combo-items"
+                                                        placeholder="e.g. Rice Cleanser" 
+                                                        value={comboItemInput}
+                                                        onChange={(e) => setComboItemInput(e.target.value)}
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter') {
+                                                                e.preventDefault();
+                                                                if (comboItemInput.trim()) {
+                                                                    setComboItems([...comboItems, comboItemInput.trim()]);
+                                                                    setComboItemInput("");
+                                                                }
+                                                            }
+                                                        }}
+                                                        className="bg-[#101010]/80 border-white/10 focus:border-[#00ff88]/40 h-9 text-sm"
+                                                    />
+                                                    <Button 
+                                                        type="button"
+                                                        size="sm"
+                                                        onClick={() => {
+                                                            if (comboItemInput.trim()) {
+                                                                setComboItems([...comboItems, comboItemInput.trim()]);
+                                                                setComboItemInput("");
+                                                            }
+                                                        }}
+                                                        className="bg-[#00ff88] text-black h-9"
+                                                    >
+                                                        Add
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                            
+                                            {comboItems.length > 0 && (
+                                                <div className="flex flex-wrap gap-2 pt-1">
+                                                    {comboItems.map((item, idx) => (
+                                                        <div key={idx} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white group">
+                                                            <span>{item}</span>
+                                                            <button 
+                                                                onClick={() => setComboItems(comboItems.filter((_, i) => i !== idx))}
+                                                                className="text-muted-foreground hover:text-red-400 transition-colors"
+                                                            >
+                                                                <X className="w-3 h-3" />
+                                                            </button>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
 
                                 <div className="flex gap-4">
