@@ -295,6 +295,69 @@ export default function ApiManagementPage() {
                         </div>
                     </div>
 
+                    {/* Global Configuration Card */}
+                    <div className="bg-white/5 p-6 rounded-xl border border-white/10 space-y-6">
+                        <div className="flex items-center justify-between border-b border-white/5 pb-4">
+                            <div>
+                                <h3 className="text-lg font-bold text-[#00ff88]">Global Provider Models Configuration</h3>
+                                <p className="text-xs text-muted-foreground">Define 3 models per provider. These will apply to ALL keys for that provider.</p>
+                            </div>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 items-end">
+                            <div className="space-y-2">
+                                <Label className="text-xs uppercase text-muted-foreground">Target Provider</Label>
+                                <Select value={selectedConfigProvider} onValueChange={handleProviderChange}>
+                                    <SelectTrigger className="bg-black/40 border-white/10">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="google">Google Gemini</SelectItem>
+                                        <SelectItem value="openai">OpenAI</SelectItem>
+                                        <SelectItem value="openrouter">OpenRouter</SelectItem>
+                                        <SelectItem value="groq">Groq</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label className="text-xs uppercase text-muted-foreground">Text Model</Label>
+                                <Input 
+                                    className="bg-black/40 border-white/10 text-xs"
+                                    value={configValues.text_model}
+                                    onChange={(e) => setConfigValues({...configValues, text_model: e.target.value})}
+                                    placeholder="e.g. gemini-2.0-flash"
+                                />
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label className="text-xs uppercase text-muted-foreground">Vision Model</Label>
+                                <Input 
+                                    className="bg-black/40 border-white/10 text-xs"
+                                    value={configValues.vision_model}
+                                    onChange={(e) => setConfigValues({...configValues, vision_model: e.target.value})}
+                                    placeholder="e.g. gemini-2.0-flash"
+                                />
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label className="text-xs uppercase text-muted-foreground">Voice Model</Label>
+                                <Input 
+                                    className="bg-black/40 border-white/10 text-xs"
+                                    value={configValues.voice_model}
+                                    onChange={(e) => setConfigValues({...configValues, voice_model: e.target.value})}
+                                    placeholder="e.g. gemini-2.0-flash-lite"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end pt-2">
+                            <Button onClick={saveGlobalConfig} className="bg-[#00ff88]/10 hover:bg-[#00ff88]/20 text-[#00ff88] border border-[#00ff88]/30 font-bold px-10">
+                                <Check className="mr-2 h-4 w-4" /> Save Configuration
+                            </Button>
+                        </div>
+                    </div>
+
                     <div className="rounded-md border">
                         <Table>
                             <TableHeader className="bg-white/5">
