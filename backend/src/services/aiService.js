@@ -528,10 +528,11 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                      }
 
                      const keywordsDisplay = p.keywords ? p.keywords.replace(/\n/g, ' ').substring(0, 200) : 'N/A';
+                     const comboDisplay = p.is_combo ? ` | [COMBO PRODUCT] Items: ${Array.isArray(p.combo_items) ? p.combo_items.join(", ") : p.combo_items}` : "";
                      
                      // Format: ##product "name" | Price: ... | Stock: ... | Image: ...
                      // Re-added Price per user feedback about "irrelevant prices" (AI needs to know the REAL price to answer correctly)
-                     productContext += `##product "${p.name}" | Price: ${priceDisplay} | Stock: ${stockDisplay} | Image: ${imgDisplay} | Desc: ${descDisplay} | Keywords: ${keywordsDisplay}${variantInfo}\n`;
+                     productContext += `##product "${p.name}" | Price: ${priceDisplay} | Stock: ${stockDisplay} | Image: ${imgDisplay} | Desc: ${descDisplay} | Keywords: ${keywordsDisplay}${variantInfo}${comboDisplay}\n`;
                  });
                  productContext += "[End of Products]\n";
                  console.log(`[AI] Injected ${products.length} products into context.`);
@@ -740,6 +741,7 @@ ${productContext}
    - Order: Append "[ADD_LABEL: ordertrack]" to reply.
    - Save Order: Append "[SAVE_ORDER: {...}]" to reply.
 6. VISION RESULTS: If the user message contains "[Image Analysis Result]", prioritize this information to identify the product.
+7. COMBO PRODUCTS: If a product is marked as [COMBO PRODUCT], it means it contains multiple items. If a user sends a photo containing multiple products that match a combo's items, emphasize the value of the COMBO package. Always offer the combo as a smart, money-saving choice if you see individual items from it. Explain what's included human-likely.
 
 [Response Format]
 You must output valid JSON only.
