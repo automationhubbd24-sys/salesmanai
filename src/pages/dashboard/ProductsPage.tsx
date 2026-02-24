@@ -113,16 +113,22 @@ export default function ProductsPage() {
 
     const getTeamOwnerForContext = () => {
         if (typeof window === "undefined") return null;
+        const teamOwner = localStorage.getItem("active_team_owner");
+
         if (platform === "messenger") {
             const mode = localStorage.getItem("messenger_view_mode");
-            if (mode === "team") return localStorage.getItem("active_team_owner");
+            if (mode === "team") return teamOwner;
             return null;
         }
         if (platform === "whatsapp") {
             const mode = localStorage.getItem("whatsapp_view_mode");
-            if (mode === "team") return localStorage.getItem("active_team_owner");
+            if (mode === "team") return teamOwner;
             return null;
         }
+        
+        // Global View: If team owner is set, use it
+        if (teamOwner) return teamOwner;
+        
         return null;
     };
 
