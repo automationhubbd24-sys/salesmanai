@@ -957,20 +957,9 @@ INSTRUCTIONS:
                             }
                         });
 
-                        // 2. Fallback: If no specific product name mentioned but products were found, 
-                        // use the first product's images (Original behavior but with multi-image support)
-                        if (mentionedImages.length === 0 && products.length > 0) {
-                            const firstP = products[0];
-                            if (firstP.image_url) mentionedImages.push(firstP.image_url);
-                            if (firstP.additional_images && Array.isArray(firstP.additional_images)) {
-                                firstP.additional_images.forEach(img => {
-                                    if (img && !mentionedImages.includes(img)) {
-                                        mentionedImages.push(img);
-                                    }
-                                });
-                            }
-                        }
-
+                        // 2. Fallback: Removed to prevent auto-injection of images from System Prompt context.
+                        // Images will ONLY be sent if the AI explicitly mentions the product name in its reply.
+                        
                         parsed2.images = mentionedImages;
                         
                         return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: modelToUse, foundProducts: products };
