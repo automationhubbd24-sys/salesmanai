@@ -1120,15 +1120,11 @@ INSTRUCTIONS:
 
     console.log(`[AI] Engine Resolved: ${finalProvider}/${finalModel} (Audio: ${isAudio}, Vision: ${isVision})`);
 
-    // 4. Execution Loop (Rotation Pool with Smart Fallbacks)
+    // 4. Execution Loop (Rotation Pool - NO AUTO FALLBACK)
+    // User Request: "service droop hobe karon jara pro nibe oder to pro tai lagbe"
+    // We only try the selected model. If it fails, we return an error.
     const modelsToTry = [finalModel];
     
-    // Add dynamic fallbacks if it's a "system" or "salesmanchatbot" request without a specific user model
-    if (!userModel && (defaultProvider === 'system' || defaultProvider === 'salesmanchatbot')) {
-        if (dynamicModel && dynamicModel !== finalModel) modelsToTry.push(dynamicModel);
-        if (fallbackModel && fallbackModel !== finalModel && fallbackModel !== dynamicModel) modelsToTry.push(fallbackModel);
-    }
-
     for (let modelIndex = 0; modelIndex < modelsToTry.length; modelIndex++) {
         const currentModel = modelsToTry[modelIndex];
         
@@ -1138,8 +1134,17 @@ INSTRUCTIONS:
                 keyData = await keyService.getSmartKey(finalProvider, currentModel);
                 if (!keyData || !keyData.key) {
                     console.warn(`[AI] No valid ${currentModel} keys for ${finalProvider} Attempt ${i+1}.`);
-                    // If no keys for this model, try next model in the chain
-                    break;
+                    
+                    // If this was the last attempt and no keys found, return service drop error
+                    if (i === 2) {
+                        return { 
+                            reply: "দুঃখিত, বর্তমানে এই সার্ভিসে কোনো অ্যাক্টিভ কী নেই। দয়া করে এডমিন প্যানেল থেকে এপিআই কী চেক করুন।", 
+                            error: `No active keys for ${finalProvider}/${currentModel}`,
+                            token_usage: 0,
+                            model: currentModel
+                        };
+                    }
+                    continue;
                 }
 
                 const apiKey = keyData.key;
