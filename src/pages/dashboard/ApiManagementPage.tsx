@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Trash, Plus, Check, X } from "lucide-react";
+import { Trash, Plus, Check } from "lucide-react";
 import { toast } from "sonner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
@@ -32,9 +32,9 @@ export default function ApiManagementPage() {
     const [selectedConfigProvider, setSelectedConfigProvider] = useState("google");
     const [configValues, setConfigValues] = useState<GlobalConfig>({
         provider: "google",
-        text_model: "",
-        vision_model: "",
-        voice_model: ""
+        text_model: "gemini-2.0-flash",
+        vision_model: "gemini-2.0-flash",
+        voice_model: "gemini-2.0-flash-lite"
     });
 
     useEffect(() => {
@@ -45,26 +45,18 @@ export default function ApiManagementPage() {
     const fetchApis = async () => {
         setLoading(true);
         try {
-            let token: string | null = null;
-            if (typeof window !== "undefined") {
-                token = localStorage.getItem("auth_token");
-            }
-            if (!token) {
-                setApis([]);
-                return;
-            }
+            let token = localStorage.getItem("auth_token");
+            if (!token) return;
+
             const res = await fetch(`${BACKEND_URL}/api/api-list`, {
-                headers: {
-                    Authorization: `Bearer ${token}`
-                }
+                headers: { Authorization: `Bearer ${token}` }
             });
-            const body = await res.json().catch(() => ({}));
-            if (!res.ok || !body.success) {
-                throw new Error(body.error || "Failed to fetch API list");
+            const body = await res.json();
+            if (res.ok && body.success) {
+                setApis(body.items || []);
             }
-            setApis(body.items || []);
         } catch (error: any) {
-            toast.error(error.message || "Failed to fetch API list");
+            toast.error("Failed to fetch API list");
         } finally {
             setLoading(false);
         }
@@ -72,17 +64,13 @@ export default function ApiManagementPage() {
 
     const fetchGlobalConfigs = async () => {
         try {
-            let token: string | null = null;
-            if (typeof window !== "undefined") {
-                token = localStorage.getItem("auth_token");
-            }
+            let token = localStorage.getItem("auth_token");
             const res = await fetch(`${BACKEND_URL}/api/api-list/config`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
-            const body = await res.json().catch(() => ({}));
+            const body = await res.json();
             if (res.ok && body.success) {
                 setGlobalConfigs(body.configs || []);
-                // Set initial values for the selected provider
                 const current = body.configs.find((c: any) => c.provider === selectedConfigProvider);
                 if (current) setConfigValues(current);
             }
@@ -99,19 +87,16 @@ export default function ApiManagementPage() {
         } else {
             setConfigValues({
                 provider: newProvider,
-                text_model: "",
-                vision_model: "",
-                voice_model: ""
+                text_model: "gemini-2.0-flash",
+                vision_model: "gemini-2.0-flash",
+                voice_model: "gemini-2.0-flash-lite"
             });
         }
     };
 
     const saveGlobalConfig = async () => {
         try {
-            let token: string | null = null;
-            if (typeof window !== "undefined") {
-                token = localStorage.getItem("auth_token");
-            }
+            let token = localStorage.getItem("auth_token");
             const res = await fetch(`${BACKEND_URL}/api/api-list/config`, {
                 method: "POST",
                 headers: {
@@ -120,7 +105,7 @@ export default function ApiManagementPage() {
                 },
                 body: JSON.stringify(configValues)
             });
-            const body = await res.json().catch(() => ({}));
+            const body = await res.json();
             if (res.ok && body.success) {
                 toast.success("Global configuration saved");
                 fetchGlobalConfigs();
@@ -133,61 +118,42 @@ export default function ApiManagementPage() {
     const addApi = async () => {
         if (!newApi) return;
         try {
-            let token: string | null = null;
-            if (typeof window !== "undefined") {
-                token = localStorage.getItem("auth_token");
-            }
-            if (!token) {
-                toast.error("Please login again");
-                return;
-            }
+            let token = localStorage.getItem("auth_token");
             const res = await fetch(`${BACKEND_URL}/api/api-list`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
                     Authorization: `Bearer ${token}`
                 },
-                body: JSON.stringify({
-                    provider,
-                    api: newApi
-                })
+                body: JSON.stringify({ provider, api: newApi })
             });
-            const body = await res.json().catch(() => ({}));
-            if (!res.ok || !body.success) {
-                throw new Error(body.error || "Failed to add API Key");
+            const body = await res.json();
+            if (res.ok && body.success) {
+                toast.success("API Key added successfully");
+                setNewApi("");
+                fetchApis();
+            } else {
+                throw new Error(body.error);
             }
-            toast.success("API Key added successfully");
-            setNewApi("");
-            fetchApis();
         } catch (error: any) {
             toast.error(error.message || "Failed to add API Key");
         }
     };
 
     const deleteApi = async (id: number) => {
+        if (!confirm("Are you sure?")) return;
         try {
-            let token: string | null = null;
-            if (typeof window !== "undefined") {
-                token = localStorage.getItem("auth_token");
-            }
-            if (!token) {
-                toast.error("Please login again");
-                return;
-            }
+            let token = localStorage.getItem("auth_token");
             const res = await fetch(`${BACKEND_URL}/api/api-list/${id}`, {
                 method: "DELETE",
-                headers: {
-                    Authorization: `Bearer ${token}`
-                }
+                headers: { Authorization: `Bearer ${token}` }
             });
-            const body = await res.json().catch(() => ({}));
-            if (!res.ok || !body.success) {
-                throw new Error(body.error || "Failed to delete API Key");
+            if (res.ok) {
+                toast.success("API Key deleted");
+                fetchApis();
             }
-            toast.success("API Key deleted");
-            fetchApis();
-        } catch (error: any) {
-            toast.error(error.message || "Failed to delete API Key");
+        } catch (error) {
+            toast.error("Failed to delete");
         }
     };
 
@@ -200,7 +166,7 @@ export default function ApiManagementPage() {
                     </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                    {/* Add New Key Section - NO MODEL SELECTION */}
+                    {/* Add Key Section - ONLY PROVIDER AND KEY */}
                     <div className="bg-white/5 p-4 rounded-xl border border-white/10">
                         <h3 className="text-sm font-bold text-[#00ff88] mb-4 flex items-center">
                             <Plus className="mr-2 h-4 w-4" /> Add New API Key to Rotation Pool
@@ -237,18 +203,18 @@ export default function ApiManagementPage() {
                         </div>
                     </div>
 
-                    {/* Global Configuration Card - FOR SETTING MODELS */}
+                    {/* Global Models Configuration Card */}
                     <div className="bg-white/5 p-6 rounded-xl border border-white/10 space-y-6">
                         <div className="flex items-center justify-between border-b border-white/5 pb-4">
                             <div>
                                 <h3 className="text-lg font-bold text-[#00ff88]">Global Provider Models Configuration</h3>
-                                <p className="text-xs text-muted-foreground">Define 3 models per provider. These will apply to ALL keys for that provider.</p>
+                                <p className="text-xs text-muted-foreground">Define models for Text, Vision, and Voice for each provider.</p>
                             </div>
                         </div>
                         
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 items-end">
                             <div className="space-y-2">
-                                <Label className="text-xs uppercase text-muted-foreground">Target Provider</Label>
+                                <Label className="text-xs uppercase text-muted-foreground">Select Provider</Label>
                                 <Select value={selectedConfigProvider} onValueChange={handleProviderChange}>
                                     <SelectTrigger className="bg-black/40 border-white/10">
                                         <SelectValue />
@@ -300,7 +266,7 @@ export default function ApiManagementPage() {
                         </div>
                     </div>
 
-                    {/* Active Rotation Pool List */}
+                    {/* Rotation Pool List */}
                     <div className="rounded-xl border border-white/10 overflow-hidden bg-black/20">
                         <Table>
                             <TableHeader className="bg-white/5">
