@@ -34,6 +34,8 @@ interface Product {
     currency?: string;
     stock?: number;
     allowed_page_ids?: string[];
+    is_combo?: boolean;
+    combo_items?: string[];
 }
 
 export default function ProductsPage() {
