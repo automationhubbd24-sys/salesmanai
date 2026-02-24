@@ -1112,41 +1112,61 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
 
         if (normalizedProductNames.length > 0 && replyText) {
             const lowerReply = replyText.toLowerCase();
+            
+            // 1. GREETING PROTECTION: If reply is too short, skip auto-injection (Only tags allowed)
+            // This prevents image leaks on "Hi", "Hello" etc.
+            const isShortGreeting = replyText.length < 30 && /^(hi|hello|hey|সালাম|হ্যালো|নমস্কার|জ্বি|কিভাবে)/i.test(replyText);
+            
+            // 2. TAG-BASED EXTRACTION (Highest Priority)
+            const tagRegex = /##PRODUCT\s*["'](.+?)["']/gi;
+            let tagMatch;
+            const mentionedViaTag = new Set();
+            while ((tagMatch = tagRegex.exec(replyText)) !== null) {
+                mentionedViaTag.add(tagMatch[1].toLowerCase());
+            }
+
             normalizedProductNames.forEach(name => {
                 const product = promptProductMap[name];
                 if (!product || !product.image_url) return;
                 
-                // Add Primary Image
-                let primaryUrl = product.image_url;
-                if (!/^https?:\/\//i.test(primaryUrl)) {
-                    const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
-                    primaryUrl = `${baseUrl.replace(/\/$/, '')}/${primaryUrl.replace(/^\/+/, '')}`;
-                }
+                const lowerName = name.toLowerCase();
+                const isExplicitlyTagged = mentionedViaTag.has(lowerName);
+                
+                // HYBRID RULE: 
+                // - If it's a short greeting, ONLY inject if there's a tag (For Health Steps).
+                // - Otherwise, inject if there's a tag OR a natural mention (For Cosmetics Shop).
+                const shouldInject = isExplicitlyTagged || (!isShortGreeting && lowerReply.includes(lowerName));
 
-                if (!extractedImages.some(img => img.url === primaryUrl)) {
-                    extractedImages.push({ url: primaryUrl, title: product.name || name });
-                }
+                if (shouldInject) {
+                    // Add Primary Image
+                    let primaryUrl = product.image_url;
+                    if (!/^https?:\/\//i.test(primaryUrl)) {
+                        const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
+                        primaryUrl = `${baseUrl.replace(/\/$/, '')}/${primaryUrl.replace(/^\/+/, '')}`;
+                    }
 
-                // Add Additional Images
-                if (product.additional_images && Array.isArray(product.additional_images)) {
-                    product.additional_images.forEach((url, idx) => {
-                        let additionalUrl = url;
-                        if (!/^https?:\/\//i.test(additionalUrl)) {
-                            const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
-                            additionalUrl = `${baseUrl.replace(/\/$/, '')}/${additionalUrl.replace(/^\/+/, '')}`;
-                        }
-                        if (!extractedImages.some(img => img.url === additionalUrl)) {
-                            extractedImages.push({ url: additionalUrl, title: `${product.name || name} (Pic ${idx + 2})` });
-                        }
-                    });
-                }
+                    if (!extractedImages.some(img => img.url === primaryUrl)) {
+                        extractedImages.push({ url: primaryUrl, title: product.name || name });
+                    }
 
-                const lowerReply = replyText.toLowerCase();
-                const linkPattern = new RegExp(`Link\\s*:\\s*${escapeRegExp(name)}\\b`, 'gi');
-                if (linkPattern.test(replyText)) {
-                    replyText = replyText.replace(linkPattern, '').trim();
+                    // Add Additional Images
+                    if (product.additional_images && Array.isArray(product.additional_images)) {
+                        product.additional_images.forEach((url, idx) => {
+                            let additionalUrl = url;
+                            if (!/^https?:\/\//i.test(additionalUrl)) {
+                                const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
+                                additionalUrl = `${baseUrl.replace(/\/$/, '')}/${additionalUrl.replace(/^\/+/, '')}`;
+                            }
+                            if (!extractedImages.some(img => img.url === additionalUrl)) {
+                                extractedImages.push({ url: additionalUrl, title: `${product.name || name} (Pic ${idx + 2})` });
+                            }
+                        });
+                    }
                 }
             });
+
+            // 3. CLEANUP: Remove tags from the final text
+            replyText = replyText.replace(tagRegex, '').trim();
         }
 
         // 1. STRICT FORMAT: IMAGE: Title | URL

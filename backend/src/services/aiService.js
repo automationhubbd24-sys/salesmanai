@@ -936,26 +936,42 @@ INSTRUCTIONS:
                                      parsed2.reply = null; // SILENT MODE: Return null instead of error message
                                 }
 
-                        // IMAGE INJECTION LOGIC (STRICT TAG-BASED ONLY)
+                        // IMAGE INJECTION LOGIC (SMART HYBRID)
                         const mentionedImages = [];
                         let replyText = parsed2.reply || "";
                         
-                        // 1. Tag-Based Extraction (##PRODUCT "Name")
-                        // This is the ONLY way to trigger an image.
+                        // 1. GREETING PROTECTION: If reply is too short, skip auto-injection (Only tags allowed)
+                        const isShortGreeting = replyText.length < 30 && /^(hi|hello|hey|সালাম|হ্যালো|নমস্কার|জ্বি|কিভাবে)/i.test(replyText);
+
+                        // 2. TAG-BASED EXTRACTION (##PRODUCT "Name")
                         const tagRegex = /##PRODUCT\s*["'](.+?)["']/gi;
                         let tagMatch;
+                        const mentionedViaTag = new Set();
                         while ((tagMatch = tagRegex.exec(replyText)) !== null) {
                             const productName = tagMatch[1].toLowerCase();
+                            mentionedViaTag.add(productName);
                             const product = products.find(p => p.name.toLowerCase() === productName);
                             if (product && product.image_url && !mentionedImages.includes(product.image_url)) {
                                 mentionedImages.push(product.image_url);
                             }
                         }
 
-                        // 2. Clean the Reply (Remove ##PRODUCT tags before sending to user)
+                        // 3. NAME-BASED DETECTION (For Cosmetics Shop - Skip if short greeting)
+                        if (!isShortGreeting) {
+                            const replyLower = replyText.toLowerCase();
+                            products.forEach(p => {
+                                if (replyLower.includes(p.name.toLowerCase())) {
+                                    if (p.image_url && !mentionedImages.includes(p.image_url)) {
+                                        mentionedImages.push(p.image_url);
+                                    }
+                                }
+                            });
+                        }
+
+                        // 4. CLEANUP: Remove tags before sending
                         parsed2.reply = replyText.replace(tagRegex, '').trim();
 
-                        // 3. Final Image List
+                        // 5. FINAL ASSIGNMENT
                         parsed2.images = mentionedImages;
                         
                         return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: modelToUse, foundProducts: products };
@@ -1159,26 +1175,42 @@ INSTRUCTIONS:
                              parsed2.reply = "আমি আপনার খোঁজা পণ্যগুলো পেয়েছি। নিচে দেখুন:"; 
                         }
 
-                        // IMAGE INJECTION LOGIC (STRICT TAG-BASED ONLY)
+                        // IMAGE INJECTION LOGIC (SMART HYBRID)
                         const mentionedImages = [];
                         let replyText = parsed2.reply || "";
                         
-                        // 1. Tag-Based Extraction (##PRODUCT "Name")
-                        // This is the ONLY way to trigger an image.
+                        // 1. GREETING PROTECTION: If reply is too short, skip auto-injection (Only tags allowed)
+                        const isShortGreeting = replyText.length < 30 && /^(hi|hello|hey|সালাম|হ্যালো|নমস্কার|জ্বি|কিভাবে)/i.test(replyText);
+
+                        // 2. TAG-BASED EXTRACTION (##PRODUCT "Name")
                         const tagRegex = /##PRODUCT\s*["'](.+?)["']/gi;
                         let tagMatch;
+                        const mentionedViaTag = new Set();
                         while ((tagMatch = tagRegex.exec(replyText)) !== null) {
                             const productName = tagMatch[1].toLowerCase();
+                            mentionedViaTag.add(productName);
                             const product = products.find(p => p.name.toLowerCase() === productName);
                             if (product && product.image_url && !mentionedImages.includes(product.image_url)) {
                                 mentionedImages.push(product.image_url);
                             }
                         }
 
-                        // 2. Clean the Reply (Remove ##PRODUCT tags before sending to user)
+                        // 3. NAME-BASED DETECTION (For Cosmetics Shop - Skip if short greeting)
+                        if (!isShortGreeting) {
+                            const replyLower = replyText.toLowerCase();
+                            products.forEach(p => {
+                                if (replyLower.includes(p.name.toLowerCase())) {
+                                    if (p.image_url && !mentionedImages.includes(p.image_url)) {
+                                        mentionedImages.push(p.image_url);
+                                    }
+                                }
+                            });
+                        }
+
+                        // 4. CLEANUP: Remove tags before sending
                         parsed2.reply = replyText.replace(tagRegex, '').trim();
 
-                        // 3. Final Image List
+                        // 5. FINAL ASSIGNMENT
                         parsed2.images = mentionedImages;
                         
                         return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: engineName, foundProducts: products };
