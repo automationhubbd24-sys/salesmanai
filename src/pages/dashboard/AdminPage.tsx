@@ -237,7 +237,7 @@ export default function AdminPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ api: newApi, provider: engineProvider, model: engineModel })
+        body: JSON.stringify({ api: newApi, provider: engineProvider })
       });
       
       const data = await res.json();
@@ -1448,41 +1448,6 @@ export default function AdminPage() {
                         <SelectItem value="groq">Groq (Llama)</SelectItem>
                         <SelectItem value="openrouter">OpenRouter</SelectItem>
                         <SelectItem value="openai">OpenAI</SelectItem>
-                    </SelectContent>
-                    </Select>
-                </div>
-
-                <div className="w-full md:w-[250px]">
-                    <Select value={engineModel} onValueChange={setEngineModel}>
-                    <SelectTrigger>
-                        <SelectValue placeholder="Model" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        {engineProvider === 'google' && (
-                        <>
-                            <SelectItem value="gemini-2.0-flash">Gemini 2.0 Flash</SelectItem>
-                            <SelectItem value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite</SelectItem>
-                            <SelectItem value="gemini-1.5-pro">Gemini 1.5 Pro</SelectItem>
-                        </>
-                        )}
-                        {engineProvider === 'groq' && (
-                        <>
-                            <SelectItem value="llama-3.3-70b-versatile">Llama 3.3 70B</SelectItem>
-                            <SelectItem value="mixtral-8x7b-32768">Mixtral 8x7B</SelectItem>
-                        </>
-                        )}
-                        {engineProvider === 'openrouter' && (
-                        <>
-                            <SelectItem value="default">Auto Select</SelectItem>
-                            <SelectItem value="arcee-ai/trinity-large-preview">Trinity Large (Free)</SelectItem>
-                        </>
-                        )}
-                        {engineProvider === 'openai' && (
-                        <>
-                            <SelectItem value="gpt-4o-mini">GPT-4o Mini</SelectItem>
-                            <SelectItem value="gpt-3.5-turbo">GPT-3.5 Turbo</SelectItem>
-                        </>
-                        )}
                     </SelectContent>
                     </Select>
                 </div>
