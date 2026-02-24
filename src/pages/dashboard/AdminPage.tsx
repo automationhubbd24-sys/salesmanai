@@ -1532,37 +1532,47 @@ export default function AdminPage() {
                   </Select>
                 </div>
               </CardTitle>
-              <CardDescription>Define models for Text, Vision, and Voice for each provider.</CardDescription>
+              <CardDescription>
+                {selectedConfigProvider === 'openrouter' 
+                  ? "OpenRouter uses a single unified model (or comma-separated chain) for all modalities."
+                  : "Define models for Text, Vision, and Voice for each provider."}
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-                <div className="space-y-2">
-                  <Label className="text-xs">Text Model</Label>
+                <div className={selectedConfigProvider === 'openrouter' ? "md:col-span-3 space-y-2" : "space-y-2"}>
+                  <Label className="text-xs">{selectedConfigProvider === 'openrouter' ? "Unified Chat Model" : "Text Model"}</Label>
                   <Input 
                     value={configValues.text_model} 
                     onChange={(e) => setConfigValues({...configValues, text_model: e.target.value})}
-                    placeholder="e.g. gemini-2.0-flash"
+                    placeholder={selectedConfigProvider === 'openrouter' ? "e.g. model1, model2, model3" : "e.g. gemini-2.0-flash"}
                     className="bg-black/40 border-white/10 h-9"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label className="text-xs">Vision Model</Label>
-                  <Input 
-                    value={configValues.vision_model} 
-                    onChange={(e) => setConfigValues({...configValues, vision_model: e.target.value})}
-                    placeholder="e.g. gemini-2.0-flash"
-                    className="bg-black/40 border-white/10 h-9"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-xs">Voice Model</Label>
-                  <Input 
-                    value={configValues.voice_model} 
-                    onChange={(e) => setConfigValues({...configValues, voice_model: e.target.value})}
-                    placeholder="e.g. gemini-2.0-flash-lite"
-                    className="bg-black/40 border-white/10 h-9"
-                  />
-                </div>
+                
+                {selectedConfigProvider !== 'openrouter' && (
+                  <>
+                    <div className="space-y-2">
+                      <Label className="text-xs">Vision Model</Label>
+                      <Input 
+                        value={configValues.vision_model} 
+                        onChange={(e) => setConfigValues({...configValues, vision_model: e.target.value})}
+                        placeholder="e.g. gemini-2.0-flash"
+                        className="bg-black/40 border-white/10 h-9"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs">Voice Model</Label>
+                      <Input 
+                        value={configValues.voice_model} 
+                        onChange={(e) => setConfigValues({...configValues, voice_model: e.target.value})}
+                        placeholder="e.g. gemini-2.0-flash-lite"
+                        className="bg-black/40 border-white/10 h-9"
+                      />
+                    </div>
+                  </>
+                )}
+                
                 <Button onClick={saveGlobalConfig} className="bg-[#00ff88] hover:bg-[#00cc77] text-black font-bold h-9">
                   Save Config
                 </Button>

@@ -1059,9 +1059,20 @@ INSTRUCTIONS:
         const configResult = await pgClient.query('SELECT * FROM api_engine_configs WHERE provider = $1', [targetProvider]);
         if (configResult.rows.length > 0) {
             const gConfig = configResult.rows[0];
-            engineTextModel = gConfig.text_model || engineTextModel;
-            engineVisionModel = gConfig.vision_model || engineVisionModel;
-            engineVoiceModel = gConfig.voice_model || engineVoiceModel;
+            
+            // --- OPENROUTER SPECIAL LOGIC (OLD SYSTEM) ---
+            // If provider is OpenRouter, we use a single chatmodel strategy (3 models in 1 string or fallback)
+            if (targetProvider === 'openrouter') {
+                const orModel = gConfig.text_model || engineTextModel;
+                engineTextModel = orModel;
+                engineVisionModel = gConfig.vision_model || orModel; // Fallback to main if no vision
+                engineVoiceModel = gConfig.voice_model || orModel;   // Fallback to main if no voice
+                console.log(`[AI] OpenRouter Old System Active: Using ${orModel} as base.`);
+            } else {
+                engineTextModel = gConfig.text_model || engineTextModel;
+                engineVisionModel = gConfig.vision_model || engineVisionModel;
+                engineVoiceModel = gConfig.voice_model || engineVoiceModel;
+            }
             console.log(`[AI] Loaded Global Config for ${targetProvider}: Text=${engineTextModel}, Vision=${engineVisionModel}, Voice=${engineVoiceModel}`);
         }
     } catch (err) {
