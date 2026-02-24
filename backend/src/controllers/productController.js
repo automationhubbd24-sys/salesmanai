@@ -582,6 +582,7 @@ exports.getProducts = async (req, res) => {
                 }
             }
         }
+    }
 
         if (!targetUserId) {
             return res.status(400).json({ error: "user_id is required" });
