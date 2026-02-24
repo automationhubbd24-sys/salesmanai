@@ -1634,6 +1634,7 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
              // However, to respect the "Page View" in UI, we should still filter by pageId IF it's provided.
              
              // LOGIC: Show product IF (Owned by User) AND ( (Linked to this Page) OR (Global Product) )
+             // FIX: Handle both JSON array and potential string format issues
              whereClause = `(
                 user_id = ${userIdParam} 
                 AND 
@@ -1641,6 +1642,11 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
                     allowed_page_ids IS NULL 
                     OR allowed_page_ids::jsonb = '[]'::jsonb 
                     OR allowed_page_ids::jsonb @> jsonb_build_array($2::text)
+                    OR EXISTS (
+                        SELECT 1 
+                        FROM jsonb_array_elements_text(allowed_page_ids) AS elem 
+                        WHERE elem = $2::text
+                    )
                 )
             )`;
         } else {
