@@ -172,10 +172,10 @@ export default function ApiManagementPage() {
                             <Plus className="mr-2 h-4 w-4" /> Add New API Key to Rotation Pool
                         </h3>
                         <div className="flex flex-wrap gap-4 items-end">
-                            <div className="space-y-2">
+                            <div className="w-[180px] space-y-2">
                                 <Label className="text-xs uppercase tracking-wider text-muted-foreground">Provider</Label>
                                 <Select value={provider} onValueChange={setProvider}>
-                                    <SelectTrigger className="w-[180px] bg-black/40 border-white/10">
+                                    <SelectTrigger className="w-full bg-black/40 border-white/10">
                                         <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -197,7 +197,7 @@ export default function ApiManagementPage() {
                                 />
                             </div>
 
-                            <Button onClick={addApi} className="bg-[#00ff88] hover:bg-[#00cc77] text-black font-bold px-8">
+                            <Button onClick={addApi} className="bg-[#00ff88] hover:bg-[#00cc77] text-black font-bold px-8 h-10">
                                 <Plus className="mr-2 h-4 w-4" /> Add Key
                             </Button>
                         </div>
