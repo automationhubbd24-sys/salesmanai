@@ -465,7 +465,7 @@ export default function DeveloperPage() {
                                     />
                                 </div>
                                 <div className="pt-5">
-                                    <Button size="sm" className="h-8 w-8 p-0" onClick={fetchUsage}>
+                                    <Button size="sm" className="h-8 w-8 p-0" onClick={() => fetchUsage(1)}>
                                         <RefreshCw className="h-3.5 w-3.5" />
                                     </Button>
                                 </div>
