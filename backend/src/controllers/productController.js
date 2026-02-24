@@ -508,6 +508,9 @@ exports.getProducts = async (req, res) => {
                                  isTeamMember = false;
                              }
                          }
+                         
+                         // CRITICAL: Ensure we use the correct ID for targetUserId later
+                         // If we don't set this, targetUserId might be overwritten by page logic below if pageOwnerId is different (which shouldn't happen here, but safe to be sure)
                      }
                  }
              } catch (e) {
@@ -524,6 +527,13 @@ exports.getProducts = async (req, res) => {
         // - If Page is owned by a Member of the Team Owner, use Team Owner (Single Owner Policy).
         // - Only switch to Page Owner if it's a legacy shared page unrelated to the team.
         
+        // BUG FIX: If we already forced Personal Context (isTeamMember=false) because I am Owner,
+        // we should NOT switch context again even if pageOwnerId logic triggers below.
+        // However, if pageId is present, the logic below checks pageOwnerId !== effectiveUserId.
+        // If I am Owner, pageOwnerId == effectiveUserId. So it skips.
+        // BUT if pageOwnerId is NULL in DB (legacy), it might trigger?
+        // Let's add explicit check.
+        
         if (pageId && !isTeamMember) {
             const pgClient = require('../services/pgClient');
             const pageRes = await pgClient.query(
@@ -537,8 +547,14 @@ exports.getProducts = async (req, res) => {
 
                 // If Page Owner is DIFFERENT from Current User
                 if (pageOwnerId !== effectiveUserId) {
-                    // Check if Page Owner is a MEMBER of Current User (Team Owner)
-                    let isMyMember = false;
+                    // Safety: If I am the Page Owner (by email match), force stay on my ID
+                    if (pageOwnerEmail && viewerEmail && pageOwnerEmail.trim().toLowerCase() === viewerEmail.trim().toLowerCase()) {
+                         console.log(`[ProductFetch] Email match override for Page Owner. Keeping context.`);
+                         targetUserId = effectiveUserId;
+                    } else {
+                        // Check if Page Owner is a MEMBER of Current User (Team Owner)
+                        let isMyMember = false;
+
                     try {
                         // Get Current User Email
                         const userRes = await pgClient.query('SELECT email FROM users WHERE id = $1', [effectiveUserId]);
