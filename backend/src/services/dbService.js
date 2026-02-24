@@ -1613,6 +1613,7 @@ async function createProduct(productData) {
 }
 
 async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pageId = null, allowedPageIds = null) {
+    console.log(`[DB] getProducts Called - User: ${userId}, PageID: ${pageId}, AllowedPages: ${JSON.stringify(allowedPageIds)}`);
     const offset = (page - 1) * limit;
 
     let params = [];
@@ -1678,7 +1679,7 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
     }
 
     // 3. Permission Filter (for Team Members)
-    if (allowedPageIds !== null) {
+    if (allowedPageIds !== null && allowedPageIds.length > 0) {
         // Hybrid Filtering:
         // 1. General Products -> Visible
         // 2. Page-Specific Products -> Only visible if in allowedPageIds
