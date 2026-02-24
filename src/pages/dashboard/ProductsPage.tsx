@@ -115,6 +115,14 @@ export default function ProductsPage() {
         if (typeof window === "undefined") return null;
         const teamOwner = localStorage.getItem("active_team_owner");
 
+        // Safety: If I am the team owner, I don't need to send the param
+        try {
+            const user = JSON.parse(localStorage.getItem("auth_user") || "{}");
+            if (user.email && teamOwner === user.email) return null;
+        } catch (e) {
+            console.error("Failed to parse auth_user", e);
+        }
+
         if (platform === "messenger") {
             const mode = localStorage.getItem("messenger_view_mode");
             if (mode === "team") return teamOwner;
