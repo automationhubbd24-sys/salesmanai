@@ -471,75 +471,83 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     // MOVED: Now runs AFTER media processing so we can search for products based on image/audio content!
     let productContext = "";
     let foundProducts = [];
+    
+    // USER REQUEST: Skip full product context for very short greetings (e.g. "hi", "hello") to prevent irrelevant image leaks.
+    const isGreeting = cleanUserMessage.length < 10 && /^(hi|hello|hey|সালাম|আসসালামু|জ্বি|হ্যালো)/i.test(cleanUserMessage);
+
     if (pageConfig.user_id) {
         try {
             // Search for relevant products based on user message (which now includes image descriptions)
             let searchQuery = cleanUserMessage;
             
-            // CONTEXT AWARENESS: If query is short (e.g. "price?", "details?"), look back in history for product context.
-            if (cleanUserMessage.length < 50 && history.length > 0) {
-                 // Look for last AI response or User message with Image Analysis
-                 let analysisKeywords = "";
-                 for (let i = history.length - 1; i >= 0; i--) {
-                     const msg = history[i];
-                     const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-                     
-                     // Check for Image Analysis Result
-                     if (content.includes('[Image Analysis Result]')) {
-                         // Extract meaningful keywords (e.g. first 100 chars of analysis)
-                         const analysisMatch = content.match(/\[Image Analysis Result\]\s*([\s\S]{1,100})/);
-                         if (analysisMatch && analysisMatch[1]) {
-                             analysisKeywords += " " + analysisMatch[1];
-                         }
-                     }
-                 }
-                 if (analysisKeywords) {
-                    searchQuery += " " + analysisKeywords.trim();
-                    console.log(`[AI] Enhanced search query with multi-image context: "${searchQuery}"`);
-                 }
-            }
-
-            const products = await dbService.searchProducts(pageConfig.user_id, searchQuery, pageConfig.page_id);
-            
-            if (products && products.length > 0) {
-                 foundProducts = products; // Store for return
-                 productContext = "\n[Available Products in Store]\n";
-                 products.forEach((p, i) => {
-                     // Format variants cleanly
-                     let variantInfo = "";
-                     if (Array.isArray(p.variants) && p.variants.length > 0) {
-                        variantInfo = " | Variants: " + p.variants.map(v => 
-                            `${v.name} (${v.price} ${v.currency || 'BDT'})`
-                        ).join(', ');
-                     }
-                     
-                     // Row Format (Compact for AI)
-                     const stockDisplay = p.stock !== undefined ? p.stock : 'N/A';
-                     const descDisplay = p.description ? p.description.replace(/\n/g, ' ') : 'N/A';
-                     const priceDisplay = p.price ? `${p.price} ${p.currency || 'BDT'}` : 'Ask for Price';
-                     
-                     let imgDisplay = 'N/A';
-                     if (p.image_url) {
-                        if (p.image_url.startsWith('http')) {
-                            imgDisplay = p.image_url;
-                        } else {
-                            // Convert relative path to absolute URL
-                            const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
-                            const cleanPath = p.image_url.startsWith('/') ? p.image_url : `/${p.image_url}`;
-                            imgDisplay = `${baseUrl}${cleanPath}`;
+            if (!isGreeting) {
+                // CONTEXT AWARENESS: If query is short (e.g. "price?", "details?"), look back in history for product context.
+                if (cleanUserMessage.length < 50 && history.length > 0) {
+                    // Look for last AI response or User message with Image Analysis
+                    let analysisKeywords = "";
+                    for (let i = history.length - 1; i >= 0; i--) {
+                        const msg = history[i];
+                        const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+                        
+                        // Check for Image Analysis Result
+                        if (content.includes('[Image Analysis Result]')) {
+                            // Extract meaningful keywords (e.g. first 100 chars of analysis)
+                            const analysisMatch = content.match(/\[Image Analysis Result\]\s*([\s\S]{1,100})/);
+                            if (analysisMatch && analysisMatch[1]) {
+                                analysisKeywords += " " + analysisMatch[1];
+                            }
                         }
-                     }
+                    }
+                    if (analysisKeywords) {
+                        searchQuery += " " + analysisKeywords.trim();
+                        console.log(`[AI] Enhanced search query with multi-image context: "${searchQuery}"`);
+                    }
+                }
 
-                     const keywordsDisplay = p.keywords ? p.keywords.replace(/\n/g, ' ') : 'N/A';
-                     const comboDisplay = p.is_combo ? ` | [COMBO PRODUCT] (Hidden Contents - DO NOT DISCLOSE UNLESS ASKED): ${Array.isArray(p.combo_items) ? p.combo_items.join(", ") : p.combo_items}` : "";
-                     
-                     // Format: ##product "name" | Price: ... | Stock: ... | Image: ...
-                     // Re-added Price per user feedback about "irrelevant prices" (AI needs to know the REAL price to answer correctly)
-                     productContext += `##product "${p.name}" | Price: ${priceDisplay} | Stock: ${stockDisplay} | Image: ${imgDisplay} | Desc: ${descDisplay} | Keywords: ${keywordsDisplay}${variantInfo}${comboDisplay}\n`;
-                 });
-                 productContext += "[End of Products]\n";
-                 console.log(`[AI] Injected ${products.length} products into context.`);
-             }
+                const products = await dbService.searchProducts(pageConfig.user_id, searchQuery, pageConfig.page_id);
+                
+                if (products && products.length > 0) {
+                    foundProducts = products; // Store for return
+                    productContext = "\n[Available Products in Store]\n";
+                    products.forEach((p, i) => {
+                        // Format variants cleanly
+                        let variantInfo = "";
+                        if (Array.isArray(p.variants) && p.variants.length > 0) {
+                            variantInfo = " | Variants: " + p.variants.map(v => 
+                                `${v.name} (${v.price} ${v.currency || 'BDT'})`
+                            ).join(', ');
+                        }
+                        
+                        // Row Format (Compact for AI)
+                        const stockDisplay = p.stock !== undefined ? p.stock : 'N/A';
+                        const descDisplay = p.description ? p.description.replace(/\n/g, ' ') : 'N/A';
+                        const priceDisplay = p.price ? `${p.price} ${p.currency || 'BDT'}` : 'Ask for Price';
+                        
+                        let imgDisplay = 'N/A';
+                        if (p.image_url) {
+                            if (p.image_url.startsWith('http')) {
+                                imgDisplay = p.image_url;
+                            } else {
+                                // Convert relative path to absolute URL
+                                const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
+                                const cleanPath = p.image_url.startsWith('/') ? p.image_url : `/${p.image_url}`;
+                                imgDisplay = `${baseUrl}${cleanPath}`;
+                            }
+                        }
+
+                        const keywordsDisplay = p.keywords ? p.keywords.replace(/\n/g, ' ') : 'N/A';
+                        const comboDisplay = p.is_combo ? ` | [COMBO PRODUCT] (Hidden Contents - DO NOT DISCLOSE UNLESS ASKED): ${Array.isArray(p.combo_items) ? p.combo_items.join(", ") : p.combo_items}` : "";
+                        
+                        // Format: ##product "name" | Price: ... | Stock: ... | Image: ...
+                        // Re-added Price per user feedback about "irrelevant prices" (AI needs to know the REAL price to answer correctly)
+                        productContext += `##product "${p.name}" | Price: ${priceDisplay} | Stock: ${stockDisplay} | Image: ${imgDisplay} | Desc: ${descDisplay} | Keywords: ${keywordsDisplay}${variantInfo}${comboDisplay}\n`;
+                    });
+                    productContext += "[End of Products]\n";
+                    console.log(`[AI] Injected ${products.length} products into context.`);
+                }
+            } else {
+                console.log(`[AI] Greeting detected ("${cleanUserMessage}"), skipping product search context.`);
+            }
         } catch (err) {
             console.warn("[AI] Product search failed:", err.message);
         }
@@ -692,7 +700,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         // --- DYNAMIC PRODUCT INJECTION FROM SYSTEM PROMPT ---
         try {
 
-            if (systemPromptProductNames.length > 0) {
+            if (systemPromptProductNames.length > 0 && !isGreeting) {
                 console.log(`[AI] Found product references in System Prompt: ${systemPromptProductNames.join(', ')}`);
                 const systemProducts = await dbService.getProductsByNames(pageConfig.user_id, systemPromptProductNames);
                 
@@ -936,28 +944,24 @@ INSTRUCTIONS:
                                      parsed2.reply = null; // SILENT MODE: Return null instead of error message
                                 }
 
-                        // IMAGE INJECTION LOGIC (SMART MULTI-IMAGE)
+                        // IMAGE INJECTION LOGIC (STRICT SINGLE IMAGE)
                         const mentionedImages = [];
                         const replyLower = (parsed2.reply || "").toLowerCase();
 
                         // 1. Identify which products are mentioned in the AI's reply
-                        products.forEach(p => {
-                            if (replyLower.includes(p.name.toLowerCase())) {
-                                // Add main image
-                                if (p.image_url) mentionedImages.push(p.image_url);
-                                
-                                // Add all additional images for THIS specific product
-                                if (p.additional_images && Array.isArray(p.additional_images)) {
-                                    p.additional_images.forEach(img => {
-                                        if (img && !mentionedImages.includes(img)) {
-                                            mentionedImages.push(img);
-                                        }
-                                    });
+                        // 2. USER REQUEST: No images on greeting even if AI mentions product name.
+                        if (!isGreeting) {
+                            products.forEach(p => {
+                                if (replyLower.includes(p.name.toLowerCase())) {
+                                    // Add ONLY the main image (Multi-image disabled per user request)
+                                    if (p.image_url && !mentionedImages.includes(p.image_url)) {
+                                        mentionedImages.push(p.image_url);
+                                    }
                                 }
-                            }
-                        });
+                            });
+                        }
 
-                        // 2. Fallback: Removed to prevent auto-injection of images from System Prompt context.
+                        // 3. Fallback: Removed to prevent auto-injection of images from System Prompt context.
                         // Images will ONLY be sent if the AI explicitly mentions the product name in its reply.
                         
                         parsed2.images = mentionedImages;
@@ -1163,28 +1167,24 @@ INSTRUCTIONS:
                              parsed2.reply = "আমি আপনার খোঁজা পণ্যগুলো পেয়েছি। নিচে দেখুন:"; 
                         }
 
-                        // IMAGE INJECTION LOGIC (SMART MULTI-IMAGE)
+                        // IMAGE INJECTION LOGIC (STRICT SINGLE IMAGE)
                         const mentionedImages = [];
                         const replyLower = (parsed2.reply || "").toLowerCase();
 
                         // 1. Identify which products are mentioned in the AI's reply
-                        products.forEach(p => {
-                            if (replyLower.includes(p.name.toLowerCase())) {
-                                // Add main image
-                                if (p.image_url) mentionedImages.push(p.image_url);
-                                
-                                // Add all additional images for THIS specific product
-                                if (p.additional_images && Array.isArray(p.additional_images)) {
-                                    p.additional_images.forEach(img => {
-                                        if (img && !mentionedImages.includes(img)) {
-                                            mentionedImages.push(img);
-                                        }
-                                    });
+                        // 2. USER REQUEST: No images on greeting even if AI mentions product name.
+                        if (!isGreeting) {
+                            products.forEach(p => {
+                                if (replyLower.includes(p.name.toLowerCase())) {
+                                    // Add ONLY the main image (Multi-image disabled per user request)
+                                    if (p.image_url && !mentionedImages.includes(p.image_url)) {
+                                        mentionedImages.push(p.image_url);
+                                    }
                                 }
-                            }
-                        });
+                            });
+                        }
 
-                        // 2. Fallback: Removed to prevent auto-injection of images from System Prompt context.
+                        // 3. Fallback: Removed to prevent auto-injection of images from System Prompt context.
                         // Images will ONLY be sent if the AI explicitly mentions the product name in its reply.
                         
                         parsed2.images = mentionedImages;
