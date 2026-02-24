@@ -2,9 +2,12 @@ const dbService = require('./dbService');
 
 const dynamicLimits = new Map();
 
-let keyCache = [];
+let keyCache = []; // Keeping for backward compatibility if needed in loops
+let keyCacheMap = new Map(); // NEW: Key lookup Map (apiKey -> object) for O(1) access
+let keysByProvider = new Map();
+let keysByModel = new Map();
 let lastCacheUpdate = 0;
-const CACHE_TTL = 5 * 60 * 1000; // 5 Minutes
+const CACHE_TTL = 10 * 60 * 1000; // Increased to 10 Minutes for lower CPU
 
 const DAILY_USAGE_LIMIT = 18; // Strict limit: 18 requests per 24h
 const STATUS_ACTIVE = 'active';
@@ -19,18 +22,22 @@ const DEFAULT_COOLDOWN = 60 * 1000; // 1 Minute default for RPM/TPM
 
 const keyUsageMap = new Map(); 
 
+const keyUsageTimestamps = new Map(); // Key: apiKey, Value: Array of timestamps in the last 60 seconds
+const modelUsageTimestamps = new Map(); // Key: modelName, Value: Array of timestamps in the last 60 seconds
+const modelDailyUsage = new Map(); // Key: modelName, Value: { date: string, count: number }
+
 const modelIndexMap = new Map();
 
 const pendingUpdates = new Set();
-// Flush Interval (Every 5 Seconds for better visibility)
-setInterval(flushUsageStats, 5 * 1000);
+// Flush Interval (Increased to 10 Seconds to save CPU)
+setInterval(flushUsageStats, 10 * 1000);
 
-// --- Background Cache Refresh (Every 5 Minutes) ---
+// --- Background Cache Refresh (Increased to 10 Minutes) ---
 // Proactively fetches new keys/limits from DB to keep memory fresh
 setInterval(() => {
-    console.log("[KeyService] Background cache refresh triggered.");
+    // console.log("[KeyService] Background cache refresh triggered.");
     updateKeyCache(true); // force = true
-}, 5 * 60 * 1000);
+}, 10 * 60 * 1000);
 // --------------------------------------------------
 
 // --- Default Limits Map (Fallback if DB values are null) ---
@@ -126,6 +133,11 @@ async function updateKeyCache(force = false) {
         const now = Date.now();
         const filtered = [];
         for (const k of keys) {
+            // Log for debugging: check if any salesmanchatbot-flash/lite specific keys exist
+            if (k.text_model || k.vision_model || k.voice_model) {
+                 // console.log(`[KeyService] Found Role-Specific Key: ${k.api.substring(0,8)}... for ${k.text_model || k.vision_model || k.voice_model}`);
+            }
+
             if (k.status && k.status !== STATUS_ACTIVE) {
                 if (k.status === STATUS_DISABLED && k.last_used_at) {
                     const disabledAt = new Date(k.last_used_at).getTime();
@@ -152,12 +164,60 @@ async function updateKeyCache(force = false) {
 
     if (keys) {
         keyCache = keys;
-        lastCacheUpdate = now;
-        console.log(`[KeyService] Cache updated. Total Keys: ${keys.length}`);
         
-        // Optional: Clean up deadKeys map if a key is no longer in the DB
+        // --- NEW: Pre-index keys for faster access (O(1) lookups) ---
+        const newKeyCacheMap = new Map();
+        const newKeysByProvider = new Map();
+        const newKeysByModel = new Map();
+        
+        keys.forEach(k => {
+            // Index by API Key (Direct Map Lookup)
+            newKeyCacheMap.set(k.api, k);
+
+            // Index by Provider
+            const provider = k.provider || 'unknown';
+            if (!newKeysByProvider.has(provider)) newKeysByProvider.set(provider, []);
+            newKeysByProvider.get(provider).push(k);
+            
+            // Handle Google/Gemini alias
+            if (provider === 'google' || provider === 'gemini') {
+                if (!newKeysByProvider.has('google')) newKeysByProvider.set('google', []);
+                if (!newKeysByProvider.has('gemini')) newKeysByProvider.set('gemini', []);
+                // Add to both if not already added by primary provider
+                if (provider === 'google') newKeysByProvider.get('gemini').push(k);
+                else newKeysByProvider.get('google').push(k);
+            }
+
+            // Index by Model
+            const model = k.model || 'default';
+            if (!newKeysByModel.has(model)) newKeysByModel.set(model, []);
+            newKeysByModel.get(model).push(k);
+
+            // Index by Specific Roles (from engine configs)
+            if (k.text_model) {
+                if (!newKeysByModel.has(k.text_model)) newKeysByModel.set(k.text_model, []);
+                newKeysByModel.get(k.text_model).push(k);
+            }
+            if (k.vision_model) {
+                if (!newKeysByModel.has(k.vision_model)) newKeysByModel.set(k.vision_model, []);
+                newKeysByModel.get(k.vision_model).push(k);
+            }
+            if (k.voice_model) {
+                if (!newKeysByModel.has(k.voice_model)) newKeysByModel.set(k.voice_model, []);
+                newKeysByModel.get(k.voice_model).push(k);
+            }
+        });
+
+        keyCacheMap = newKeyCacheMap;
+        keysByProvider = newKeysByProvider;
+        keysByModel = newKeysByModel;
+        
+        lastCacheUpdate = now;
+        // console.log(`[KeyService] Cache updated. Total Keys: ${keys.length}`);
+        
+        // --- NEW: Efficient deadKeys cleanup ---
         for (const [key] of deadKeys) {
-            if (!keys.find(k => k.api === key)) {
+            if (!keyCacheMap.has(key)) {
                 deadKeys.delete(key);
             }
         }
@@ -234,24 +294,25 @@ function isKeyWithinLimits(keyDbObject) {
         return false;
     }
     
-    // Determine Limits (DB > Dynamic > Default Map > Safe Fallback)
-    let rpdLimit = keyDbObject.rpd_limit;
-    let rpmLimit = keyDbObject.rpm_limit;
+    // Determine Limits (Manual/Dynamic > DB > Default Map > Safe Fallback)
+    const dyn = dynamicLimits.get(keyDbObject.model);
+    
+    let rpdLimit = (dyn && dyn.rpd) ? dyn.rpd : keyDbObject.rpd_limit;
+    let rpmLimit = (dyn && dyn.rpm) ? dyn.rpm : keyDbObject.rpm_limit;
 
     if (keyDbObject.provider === 'google' || keyDbObject.provider === 'gemini') {
-        rpdLimit = GEMINI_RPD_LIMIT;
-        rpmLimit = GEMINI_RPM_LIMIT;
+        // For Google, we use strict global constants unless manual limit is LOWER
+        rpdLimit = Math.min(GEMINI_RPD_LIMIT, rpdLimit || GEMINI_RPD_LIMIT);
+        rpmLimit = Math.min(GEMINI_RPM_LIMIT, rpmLimit || GEMINI_RPM_LIMIT);
     } else if (!rpdLimit || !rpmLimit) {
-        const dyn = dynamicLimits.get(keyDbObject.model);
         let fallbackDefault = DEFAULT_LIMITS['default'];
         if (keyDbObject.model && keyDbObject.model.endsWith(':free')) {
             fallbackDefault = { rpm: 20, rpd: 50 }; // Official OpenRouter Free Tier Limits
         }
-
         const modelDefaults = DEFAULT_LIMITS[keyDbObject.model] || fallbackDefault;
         
-        if (!rpdLimit) rpdLimit = (dyn && dyn.rpd) ? dyn.rpd : modelDefaults.rpd;
-        if (!rpmLimit) rpmLimit = (dyn && dyn.rpm) ? dyn.rpm : modelDefaults.rpm;
+        if (!rpdLimit) rpdLimit = modelDefaults.rpd;
+        if (!rpmLimit) rpmLimit = modelDefaults.rpm;
     }
 
     // Remove old dynamic Gemini limit logic as we now have strict constants
@@ -278,13 +339,41 @@ function isKeyWithinLimits(keyDbObject) {
         return false;
     }
 
-    const minIntervalMs = 60000 / rpmLimit;
+    // --- NEW: Global Model-Wide RPD Check ---
+    // User Requirement: Total daily requests for a model must not exceed the limit set in Admin Config
+    if (dyn && dyn.rpd) {
+        const daily = modelDailyUsage.get(keyDbObject.model);
+        if (daily && daily.date === today && daily.count >= dyn.rpd) {
+            // console.log(`[KeyService] 🚫 Model-Wide RPD Limit Reached for ${keyDbObject.model} (${daily.count}/${dyn.rpd})`);
+            return false;
+        }
+    }
+
+    // --- NEW: Strict RPM Check (Sliding Window) ---
+    // User Requirement: RPM limit MUST NOT be exceeded, even by one request.
+    const timestamps = keyUsageTimestamps.get(keyDbObject.api) || [];
     
-    const usageKey = `${keyDbObject.api}:${keyDbObject.model || 'default'}`;
-    const lastUsed = keyUsageMap.get(usageKey) || 0;
-    if (now - lastUsed < minIntervalMs) {
-        // console.log(`Key ${keyDbObject.api.substring(0,6)}... hit RPM limit (Wait ${minIntervalMs - (now - lastUsed)}ms)`);
+    // Clean up timestamps older than 60 seconds
+    const minuteAgo = now - 60000;
+    const recentTimestamps = timestamps.filter(ts => ts > minuteAgo);
+    keyUsageTimestamps.set(keyDbObject.api, recentTimestamps);
+
+    if (recentTimestamps.length >= rpmLimit) {
+        // console.log(`[KeyService] 🚫 RPM Limit Reached for ${keyDbObject.api.substring(0,8)}... (${recentTimestamps.length}/${rpmLimit})`);
         return false;
+    }
+
+    // --- NEW: Global Model-Wide RPM Check ---
+    // User Requirement: Total RPM for a model must not exceed the limit set in Admin Config
+    if (dyn && dyn.rpm) {
+        const modelTs = modelUsageTimestamps.get(keyDbObject.model) || [];
+        const recentModelTs = modelTs.filter(ts => ts > minuteAgo);
+        modelUsageTimestamps.set(keyDbObject.model, recentModelTs);
+        
+        if (recentModelTs.length >= dyn.rpm) {
+            // console.log(`[KeyService] 🚫 Model-Wide RPM Limit Reached for ${keyDbObject.model} (${recentModelTs.length}/${dyn.rpm})`);
+            return false;
+        }
     }
 
     // 3. Check TPM (Tokens Per Minute)
@@ -315,7 +404,7 @@ async function recordKeyUsage(apiKey, tokenUsage = 0) {
     const now = Date.now();
     const today = new Date().toISOString().split('T')[0];
 
-    const cachedKey = keyCache.find(k => k.api === apiKey);
+    const cachedKey = keyCacheMap.get(apiKey);
 
     if (cachedKey) {
         const usageKey = `${apiKey}:${cachedKey.model || 'default'}`;
@@ -366,15 +455,8 @@ async function flushUsageStats() {
 
     // OPTIMIZATION: Bulk Upsert to prevent Server Overload with 2400+ keys
     const updates = keysToUpdate.map(apiKey => {
-        const cachedKey = keyCache.find(k => k.api === apiKey);
+        const cachedKey = keyCacheMap.get(apiKey);
         if (!cachedKey) return null;
-        
-        // We need to include 'api' for the upsert conflict target
-        // And other required fields if they are missing (but we are updating, so it's fine)
-        // Note: For upsert to work on 'api', it must be a unique constraint.
-        // The schema usually has 'id' as PK, but we can try to use 'api' as match.
-        // If 'api' is not unique constraint, we must fetch ID. 
-        // Assuming 'api' is unique enough or we use loop fallback if upsert fails.
         
         return {
             api: apiKey,
@@ -477,71 +559,41 @@ async function getSmartKey(provider, model) {
     // 1. Ensure Cache is Fresh
     await updateKeyCache();
 
-    // 2. Filter Keys from Memory Cache
-    let validKeys = keyCache;
+    // 2. USE PRE-INDEXED MAPS FOR O(1) LOOKUP (Fast selection)
+    let validKeys = [];
 
-    // Filter by Provider
-    if (provider) {
-        if (provider === 'google' || provider === 'gemini') {
-            validKeys = validKeys.filter(k => k.provider === 'google' || k.provider === 'gemini');
-        } else {
-            validKeys = validKeys.filter(k => k.provider === provider);
-        }
-    }
-
-    // Filter by Model (Strict Match)
-    let modelSpecificKeys = [];
     if (model) {
-        modelSpecificKeys = validKeys.filter(k => k.model === model);
+        validKeys = keysByModel.get(model) || [];
+        // If still no keys, try provider generic keys
+        if (validKeys.length === 0 && provider) {
+            validKeys = keysByProvider.get(provider) || [];
+        }
+    } else if (provider) {
+        validKeys = keysByProvider.get(provider) || [];
+    } else {
+        validKeys = keyCache; // Fallback to all (unlikely)
     }
 
-    // RETRY LOGIC: If no keys found in cache, FORCE REFRESH from DB and try again
-    if (model && modelSpecificKeys.length === 0) {
+    if (validKeys.length === 0) {
+        // RETRY LOGIC: If no keys found in cache, FORCE REFRESH from DB and try again
         // Prevent excessive DB hammering: Only force refresh if cache is older than 10 seconds
         if (Date.now() - lastCacheUpdate > 10000) {
-            console.log(`[KeyService] No local keys found for ${provider}/${model}. Forcing DB refresh...`);
+            // console.log(`[KeyService] No local keys found for ${provider}/${model}. Forcing DB refresh...`);
             await updateKeyCache(true);
             
-            // Re-filter after refresh
-            validKeys = keyCache;
-            if (provider) {
-                if (provider === 'google' || provider === 'gemini') {
-                    validKeys = validKeys.filter(k => k.provider === 'google' || k.provider === 'gemini');
-                } else {
-                    validKeys = validKeys.filter(k => k.provider === provider);
-                }
-            }
+            // Try again after refresh
             if (model) {
-                modelSpecificKeys = validKeys.filter(k => k.model === model);
-            }
-        } else {
-             // console.log(`[KeyService] No strict keys for ${model} and cache is fresh. Skipping refresh.`);
-        }
-    }
-
-    // Use model-specific keys if available. 
-    // NEW API ENGINE: We now look for text_model, vision_model, or voice_model matches
-    if (model) {
-        // Try exact match on specific role columns first
-        const specificKeys = validKeys.filter(k => 
-            k.text_model === model || 
-            k.vision_model === model || 
-            k.voice_model === model
-        );
-
-        if (specificKeys.length > 0) {
-            validKeys = specificKeys;
-        } else {
-            // RELAXED MODE: Fallback to generic provider keys if no specific model match
-            if (validKeys.length > 0) {
-                console.log(`[KeyService] No specific keys for model ${model}. Using generic ${provider} keys.`);
-            } else {
-                console.warn(`[KeyService] No keys found for ${provider} (Specific or Generic). Returning null.`);
-                return null;
+                validKeys = keysByModel.get(model) || (provider ? keysByProvider.get(provider) : []);
+            } else if (provider) {
+                validKeys = keysByProvider.get(provider) || [];
             }
         }
     }
-    // If model is NOT specified, we use any key for the provider (validKeys is already filtered by provider)
+
+    if (validKeys.length === 0) {
+        // console.warn(`[KeyService] No keys found for ${provider} (Specific or Generic). Returning null.`);
+        return null;
+    }
 
     const mapKey = `${provider || 'all'}:${model || 'all'}`;
     let currentIndex = modelIndexMap.get(mapKey) || 0;
@@ -564,9 +616,36 @@ async function getSmartKey(provider, model) {
             }
             candidateKey.last_used_at = new Date().toISOString();
             
+            // --- ATOMIC TIMESTAMP RECORDING ---
+            // Record timestamp IMMEDIATELY before returning to prevent race condition
+            const now = Date.now();
+            
+            // Per Key
+            const tsList = keyUsageTimestamps.get(candidateKey.api) || [];
+            tsList.push(now);
+            keyUsageTimestamps.set(candidateKey.api, tsList);
+
+            // Per Model (Global)
+            if (candidateKey.model) {
+                // RPM
+                const modelTs = modelUsageTimestamps.get(candidateKey.model) || [];
+                modelTs.push(now);
+                modelUsageTimestamps.set(candidateKey.model, modelTs);
+
+                // RPD
+                const daily = modelDailyUsage.get(candidateKey.model) || { date: today, count: 0 };
+                if (daily.date === today) {
+                    daily.count++;
+                } else {
+                    daily.date = today;
+                    daily.count = 1;
+                }
+                modelDailyUsage.set(candidateKey.model, daily);
+            }
+
             pendingUpdates.add(candidateKey.api);
             
-            modelIndexMap.set(mapKey, currentIndex);
+            modelIndexMap.set(mapKey, (currentIndex + 1) % validKeys.length);
 
             return {
                 key: candidateKey.api,
@@ -574,41 +653,28 @@ async function getSmartKey(provider, model) {
                 model: candidateKey.model
             };
         }
-    }
-
-    if (Date.now() - lastCacheUpdate > 5000) {
-        console.log(`[KeyService] All cached keys are dead/limited. Forcing DB refresh to check for new keys...`);
-        await updateKeyCache(true);
         
-        // Re-fetch and Re-filter
-        validKeys = keyCache;
-        if (provider) {
-             if (provider === 'google' || provider === 'gemini') {
-                validKeys = validKeys.filter(k => k.provider === 'google' || k.provider === 'gemini');
-            } else {
-                validKeys = validKeys.filter(k => k.provider === provider);
-            }
-        }
-        if (model) {
-            validKeys = validKeys.filter(k => k.model === model);
-        }
-        for (let i = 0; i < validKeys.length; i++) {
-            const candidateKey = validKeys[i];
-            if (isKeyAlive(candidateKey.api) && isKeyWithinLimits(candidateKey)) {
-                modelIndexMap.set(mapKey, (i + 1) % validKeys.length);
-                return {
-                    key: candidateKey.api,
-                    provider: candidateKey.provider,
-                    model: candidateKey.model
-                };
-            }
+        currentIndex = (currentIndex + 1) % validKeys.length;
+    }
+
+    // Final fallback (Try any generic provider key if specific model failed)
+    if (model && provider) {
+        const genericKeys = keysByProvider.get(provider) || [];
+        // Already tried some of these if they were in the specific list, 
+        // but this ensures we try all keys for the provider if model-specific fails.
+        // To keep it fast, we only do this if validKeys was specifically filtered by model.
+        if (validKeys !== genericKeys) {
+             // Recursive call with model=null to try provider generic keys
+             return getSmartKey(provider, null);
         }
     }
 
-    // If still no valid key...
-    console.warn(`[KeyService] All ${validKeys.length} keys for ${provider}/${model} are dead/limited.`);
     return null;
 }
+
+// --- 24. Initialization ---
+// Populate the cache immediately on server start
+updateKeyCache(true);
 
 module.exports = {
     // NEW: Adaptive Rate Limit Reporter
@@ -640,20 +706,47 @@ module.exports = {
     recordKeyUsage,
     updateKeyStatusFromHeaders,
     updateKeyCache, // Export this!
-    report429, // Export 429 handler
-    isModelLocked, // Export lock checker
-
-    // Allow manual override from Config UI
-    setManualLimit(modelId, { rpm, rpd }) {
-        if (!modelId) return;
-        console.log(`[KeyService] 🔧 Manual Limit Set for ${modelId}: RPM=${rpm}, RPD=${rpd}`);
+    report429, 
+    isModelLocked,
+    setManualLimit(modelId, limits) {
+        if (!modelId || !limits) return;
+        const rpm = parseInt(limits.rpm) || 1000;
+        const rpd = parseInt(limits.rpd) || 10000;
+        console.log(`[KeyService] ⚙️ Manually Setting Limits for ${modelId}: RPM=${rpm}, RPD=${rpd}`);
         dynamicLimits.set(modelId, { rpm, rpd, source: 'manual' });
     },
-
     getLimitForModel: (modelId) => {
         const dyn = dynamicLimits.get(modelId);
         const def = DEFAULT_LIMITS[modelId] || DEFAULT_LIMITS['default'];
         if (dyn) return { ...def, ...dyn, source: 'realtime' };
         return { ...def, source: 'static' };
+    },
+    
+    // NEW: Get filtered keys for Active Rotation Pool display
+    getActiveRotationPool: (providerFilter = null, limit = 10) => {
+        let keys = [];
+        
+        if (providerFilter) {
+            // Filter by Provider
+            if (providerFilter === 'google' || providerFilter === 'gemini') {
+                keys = keysByProvider.get('google') || [];
+            } else {
+                keys = keysByProvider.get(providerFilter) || [];
+            }
+        } else {
+            // No filter, use all keys
+            keys = keyCache;
+        }
+
+        // Return only top N keys (limit)
+        return keys.slice(0, limit).map(k => ({
+            id: k.id,
+            provider: k.provider,
+            model: k.model,
+            api: k.api.substring(0, 12) + '***', // Mask key for safety
+            status: k.status,
+            usage_today: k.usage_today,
+            last_used_at: k.last_used_at
+        }));
     }
 };

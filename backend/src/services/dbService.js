@@ -1470,7 +1470,19 @@ async function logApiUsage(userId, model, tokens, cost = 0) {
     }
 }
 
+// 40. Get All API Keys
+async function getAllKeys() {
+    try {
+        const result = await query('SELECT * FROM api_list');
+        return result.rows || [];
+    } catch (error) {
+        console.error("[DB] getAllKeys Error:", error.message);
+        return [];
+    }
+}
+
 module.exports = {
+    getAllKeys,
     logApiUsage,
     getPageConfig,
     getPagePrompts,

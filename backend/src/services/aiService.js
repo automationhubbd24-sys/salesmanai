@@ -8,6 +8,30 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
+// --- GLOBAL ENGINE CONFIG CACHE ---
+let globalEngineConfigCache = new Map();
+let lastConfigFetch = 0;
+const CONFIG_CACHE_TTL = 10 * 60 * 1000; // 10 Minutes
+
+async function getGlobalEngineConfig(provider) {
+    const now = Date.now();
+    if (globalEngineConfigCache.has(provider) && (now - lastConfigFetch < CONFIG_CACHE_TTL)) {
+        return globalEngineConfigCache.get(provider);
+    }
+
+    try {
+        const pgClient = require('./pgClient');
+        const res = await pgClient.query('SELECT * FROM api_engine_configs WHERE provider = $1', [provider]);
+        const config = res.rows[0] || null;
+        globalEngineConfigCache.set(provider, config);
+        lastConfigFetch = now;
+        return config;
+    } catch (err) {
+        console.warn(`[AI] Failed to fetch global engine config for ${provider}:`, err.message);
+        return globalEngineConfigCache.get(provider) || null; // Fallback to stale cache
+    }
+}
+
 // --- DYNAMIC FREE MODEL OPTIMIZER (OpenRouter) ---
 // User Request: Dynamically fetch best free models using Gemini (Cheap Engine) to analyze the list.
 let bestFreeModels = {
@@ -1058,38 +1082,28 @@ INSTRUCTIONS:
     let visionProvider = targetProvider;
     let voiceProvider = targetProvider;
 
-    try {
-        const pgClient = require('./pgClient');
-        const configResult = await pgClient.query('SELECT * FROM api_engine_configs WHERE provider = $1', [targetProvider]);
-        if (configResult.rows.length > 0) {
-            const gConfig = configResult.rows[0];
-            
-            engineTextModel = gConfig.text_model || engineTextModel;
-            engineVisionModel = gConfig.vision_model || engineVisionModel;
-            engineVoiceModel = gConfig.voice_model || engineVoiceModel;
-            
-            // Apply Provider Overrides if set
-            if (gConfig.text_provider_override) textProvider = gConfig.text_provider_override;
-            if (gConfig.vision_provider_override) visionProvider = gConfig.vision_provider_override;
-            if (gConfig.voice_provider_override) voiceProvider = gConfig.voice_provider_override;
+    const gConfig = await getGlobalEngineConfig(targetProvider);
+    if (gConfig) {
+        engineTextModel = gConfig.text_model || engineTextModel;
+        engineVisionModel = gConfig.vision_model || engineVisionModel;
+        engineVoiceModel = gConfig.voice_model || engineVoiceModel;
+        
+        // Apply Provider Overrides if set
+        if (gConfig.text_provider_override) textProvider = gConfig.text_provider_override;
+        if (gConfig.vision_provider_override) visionProvider = gConfig.vision_provider_override;
+        if (gConfig.voice_provider_override) voiceProvider = gConfig.voice_provider_override;
 
-            // Apply Rate Limits to KeyService
-            if (keyService.setManualLimit) {
-                if (gConfig.text_rpm || gConfig.text_rpd) 
-                    keyService.setManualLimit(engineTextModel, { rpm: gConfig.text_rpm, rpd: gConfig.text_rpd });
-                if (gConfig.vision_rpm || gConfig.vision_rpd) 
-                    keyService.setManualLimit(engineVisionModel, { rpm: gConfig.vision_rpm, rpd: gConfig.vision_rpd });
-                if (gConfig.voice_rpm || gConfig.voice_rpd) 
-                    keyService.setManualLimit(engineVoiceModel, { rpm: gConfig.voice_rpm, rpd: gConfig.voice_rpd });
-            }
-
-            console.log(`[AI] Loaded Global Config for ${targetProvider}: 
-                Text=${engineTextModel} (${textProvider}, RPM=${gConfig.text_rpm}), 
-                Vision=${engineVisionModel} (${visionProvider}, RPM=${gConfig.vision_rpm}), 
-                Voice=${engineVoiceModel} (${voiceProvider}, RPM=${gConfig.voice_rpm})`);
+        // Apply Rate Limits to KeyService
+        if (keyService.setManualLimit) {
+            if (gConfig.text_rpm || gConfig.text_rpd) 
+                keyService.setManualLimit(engineTextModel, { rpm: gConfig.text_rpm, rpd: gConfig.text_rpd });
+            if (gConfig.vision_rpm || gConfig.vision_rpd) 
+                keyService.setManualLimit(engineVisionModel, { rpm: gConfig.vision_rpm, rpd: gConfig.vision_rpd });
+            if (gConfig.voice_rpm || gConfig.voice_rpd) 
+                keyService.setManualLimit(engineVoiceModel, { rpm: gConfig.voice_rpm, rpd: gConfig.voice_rpd });
         }
-    } catch (err) {
-        console.warn(`[AI] Failed to load global engine config for ${targetProvider}, using defaults:`, err.message);
+
+        // console.log(`[AI] Loaded Global Config for ${targetProvider} (Cached)`);
     }
 
     // 3. Resolve Final Model and Provider based on Modality
@@ -1106,124 +1120,145 @@ INSTRUCTIONS:
 
     console.log(`[AI] Engine Resolved: ${finalProvider}/${finalModel} (Audio: ${isAudio}, Vision: ${isVision})`);
 
-    // 4. Execution Loop (Rotation Pool)
-    for (let i = 0; i < 3; i++) {
-        let keyData = null;
-        try {
-            keyData = await keyService.getSmartKey(finalProvider, finalModel);
-            if (!keyData || !keyData.key) {
-                console.warn(`[AI] No valid ${finalModel} keys for ${finalProvider} Attempt ${i+1}.`);
-                break;
-            }
+    // 4. Execution Loop (Rotation Pool with Smart Fallbacks)
+    const modelsToTry = [finalModel];
+    
+    // Add dynamic fallbacks if it's a "system" or "salesmanchatbot" request without a specific user model
+    if (!userModel && (defaultProvider === 'system' || defaultProvider === 'salesmanchatbot')) {
+        if (dynamicModel && dynamicModel !== finalModel) modelsToTry.push(dynamicModel);
+        if (fallbackModel && fallbackModel !== finalModel && fallbackModel !== dynamicModel) modelsToTry.push(fallbackModel);
+    }
 
-            const apiKey = keyData.key;
-            let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
-            if (finalProvider === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
-            else if (finalProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
-            else if (finalProvider === 'openai') baseURL = 'https://api.openai.com/v1';
-            
-            const openai = new OpenAI({ 
-                apiKey: apiKey, 
-                baseURL: baseURL,
-                timeout: 20000
-            });
-
+    for (let modelIndex = 0; modelIndex < modelsToTry.length; modelIndex++) {
+        const currentModel = modelsToTry[modelIndex];
+        
+        for (let i = 0; i < 3; i++) {
+            let keyData = null;
             try {
-                const completion = await openai.chat.completions.create({
-                    model: finalModel,
-                    messages: messages,
-                    response_format: responseFormat
-                });
-                
-                const rawContent = completion.choices[0].message.content || '';
-                let tokenUsage = completion.usage ? completion.usage.total_tokens : 0;
-                tokenUsage = estimateTokenUsage(messages, rawContent, tokenUsage);
-                keyService.recordKeyUsage(apiKey, tokenUsage);
-                
-                try {
-                    const parsed = extractJsonFromAiResponse(rawContent);
-                    
-                    if (parsed && parsed.tool === 'search_products' && parsed.query) {
-                        console.log(`[AI] Tool Call: Searching products for "${parsed.query}"...`);
-                        const products = await dbService.searchProducts(pageConfig.user_id, parsed.query, pageConfig.page_id);
-                        
-                        messages.push({ role: 'assistant', content: JSON.stringify(parsed) });
-                        
-                        const toolOutputContext = `[System] Search Results for "${parsed.query}": ${JSON.stringify(products)}. 
-INSTRUCTIONS:
-1. Use the search results above to answer the user's question in Bengali.
-2. If the product has an 'image_url', you MUST include it in the 'images' array of your JSON response.
-3. If no products were found, apologize and say you couldn't find it.
-4. Return ONLY a JSON object with 'reply' (string) and 'images' (array of strings).`;
-
-                        messages.push({ role: 'system', content: toolOutputContext });
-                        
-                        const completion2 = await openai.chat.completions.create({
-                            model: finalModel,
-                            messages: messages,
-                            response_format: { type: "json_object" }
-                        });
-                        
-                        const rawContent2 = completion2.choices[0].message.content || '';
-                        let tokenUsage2 = completion2.usage ? completion2.usage.total_tokens : 0;
-                        tokenUsage2 = estimateTokenUsage(messages, rawContent2, tokenUsage2);
-                        keyService.recordKeyUsage(apiKey, tokenUsage2);
-                        
-                        const parsed2 = extractJsonFromAiResponse(rawContent2);
-                        if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text;
-
-                        if (!parsed2.reply && products.length > 0) {
-                             parsed2.reply = "আমি আপনার খোঁজা পণ্যগুলো পেয়েছি। নিচে দেখুন:"; 
-                        }
-
-                        // IMAGE INJECTION LOGIC (STRICT TAG-BASED ONLY)
-                        const mentionedImages = [];
-                        let replyText = parsed2.reply || "";
-                        
-                        // 1. Tag-Based Extraction (##PRODUCT "Name")
-                        // This is the ONLY way to trigger an image.
-                        const tagRegex = /##PRODUCT\s*["'](.+?)["']/gi;
-                        let tagMatch;
-                        while ((tagMatch = tagRegex.exec(replyText)) !== null) {
-                            const productName = tagMatch[1].toLowerCase();
-                            const product = products.find(p => p.name.toLowerCase() === productName);
-                            if (product && product.image_url && !mentionedImages.includes(product.image_url)) {
-                                mentionedImages.push(product.image_url);
-                            }
-                        }
-
-                        // 2. Clean the Reply (Remove ##PRODUCT tags before sending to user)
-                        parsed2.reply = replyText.replace(tagRegex, '').trim();
-
-                        // 3. Final Image List
-                        parsed2.images = mentionedImages;
-                        
-                        return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: targetProvider, foundProducts: products };
-                    }
-
-                    if (!parsed.reply) parsed.reply = parsed.response || parsed.text;
-                    return { ...parsed, model: targetProvider, token_usage: tokenUsage + totalTokenUsage, foundProducts };
-                } catch (e) {
-                     console.error('[AI] Logic/Tool Failed:', e);
-                     let cleanText = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-                     const extracted = extractImagesFromText(cleanText);
-                     cleanText = extractReplyFromText(extracted.text);
-                     return { 
-                         reply: cleanText, 
-                         sentiment: 'neutral', 
-                         model: targetProvider, 
-                         token_usage: tokenUsage + totalTokenUsage, 
-                         foundProducts,
-                         images: extracted.images 
-                     };
+                keyData = await keyService.getSmartKey(finalProvider, currentModel);
+                if (!keyData || !keyData.key) {
+                    console.warn(`[AI] No valid ${currentModel} keys for ${finalProvider} Attempt ${i+1}.`);
+                    // If no keys for this model, try next model in the chain
+                    break;
                 }
 
-            } catch (error) {
-                console.warn(`[AI] Swarm Key Failed (${finalProvider}):`, error.message);
-                handleAiError(error, apiKey, finalModel);
+                const apiKey = keyData.key;
+                let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
+                if (finalProvider === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
+                else if (finalProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
+                else if (finalProvider === 'openai') baseURL = 'https://api.openai.com/v1';
+                
+                const openai = new OpenAI({ 
+                    apiKey: apiKey, 
+                    baseURL: baseURL,
+                    timeout: 20000
+                });
+
+                try {
+                    // Determine if we need to force a specific response format
+                    let activeResponseFormat = responseFormat;
+                    
+                    const completion = await openai.chat.completions.create({
+                        model: currentModel,
+                        messages: messages,
+                        response_format: activeResponseFormat
+                    });
+                    
+                    const rawContent = completion.choices[0].message.content || '';
+                    if (!rawContent || rawContent.trim() === '') {
+                        console.warn(`[AI] Empty content from ${currentModel}. Retrying...`);
+                        continue;
+                    }
+
+                    let tokenUsage = completion.usage ? completion.usage.total_tokens : 0;
+                    tokenUsage = estimateTokenUsage(messages, rawContent, tokenUsage);
+                    keyService.recordKeyUsage(apiKey, tokenUsage);
+                    
+                    try {
+                        const parsed = extractJsonFromAiResponse(rawContent);
+                        
+                        if (parsed && parsed.tool === 'search_products' && parsed.query) {
+                            console.log(`[AI] Tool Call: Searching products for "${parsed.query}"...`);
+                            const products = await dbService.searchProducts(pageConfig.user_id, parsed.query, pageConfig.page_id);
+                            
+                            messages.push({ role: 'assistant', content: JSON.stringify(parsed) });
+                            
+                            const toolOutputContext = `[System] Search Results for "${parsed.query}": ${JSON.stringify(products)}. 
+    INSTRUCTIONS:
+    1. Use the search results above to answer the user's question in Bengali.
+    2. If the product has an 'image_url', you MUST include it in the 'images' array of your JSON response.
+    3. If no products were found, apologize and say you couldn't find it.
+    4. Return ONLY a JSON object with 'reply' (string) and 'images' (array of strings).`;
+
+                            messages.push({ role: 'system', content: toolOutputContext });
+                            
+                            const completion2 = await openai.chat.completions.create({
+                                model: currentModel,
+                                messages: messages,
+                                response_format: { type: "json_object" }
+                            });
+                            
+                            const rawContent2 = completion2.choices[0].message.content || '';
+                            let tokenUsage2 = completion2.usage ? completion2.usage.total_tokens : 0;
+                            tokenUsage2 = estimateTokenUsage(messages, rawContent2, tokenUsage2);
+                            keyService.recordKeyUsage(apiKey, tokenUsage2);
+                            
+                            const parsed2 = extractJsonFromAiResponse(rawContent2);
+                            if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text;
+
+                            if (!parsed2.reply && products.length > 0) {
+                                parsed2.reply = "আমি আপনার খোঁজা পণ্যগুলো পেয়েছি। নিচে দেখুন:"; 
+                            }
+
+                            // IMAGE INJECTION LOGIC (STRICT TAG-BASED ONLY)
+                            const mentionedImages = [];
+                            let replyText = parsed2.reply || "";
+                            
+                            // 1. Tag-Based Extraction (##PRODUCT "Name")
+                            // This is the ONLY way to trigger an image.
+                            const tagRegex = /##PRODUCT\s*["'](.+?)["']/gi;
+                            let tagMatch;
+                            while ((tagMatch = tagRegex.exec(replyText)) !== null) {
+                                const productName = tagMatch[1].toLowerCase();
+                                const product = products.find(p => p.name.toLowerCase() === productName);
+                                if (product && product.image_url && !mentionedImages.includes(product.image_url)) {
+                                    mentionedImages.push(product.image_url);
+                                }
+                            }
+
+                            // 2. Clean the Reply (Remove ##PRODUCT tags before sending to user)
+                            parsed2.reply = replyText.replace(tagRegex, '').trim();
+
+                            // 3. Final Image List
+                            parsed2.images = mentionedImages;
+                            
+                            return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: targetProvider, foundProducts: products };
+                        }
+
+                        if (!parsed.reply) parsed.reply = parsed.response || parsed.text;
+                        return { ...parsed, model: targetProvider, token_usage: tokenUsage + totalTokenUsage, foundProducts };
+                    } catch (e) {
+                        console.error('[AI] Logic/Tool Failed:', e);
+                        let cleanText = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+                        const extracted = extractImagesFromText(cleanText);
+                        cleanText = extractReplyFromText(extracted.text);
+                        return { 
+                            reply: cleanText, 
+                            sentiment: 'neutral', 
+                            model: targetProvider, 
+                            token_usage: tokenUsage + totalTokenUsage, 
+                            foundProducts,
+                            images: extracted.images 
+                        };
+                    }
+
+                } catch (error) {
+                    console.warn(`[AI] Swarm Key Failed (${finalProvider}/${currentModel}):`, error.message);
+                    handleAiError(error, apiKey, currentModel);
+                }
+            } catch (setupError) {
+                console.warn(`[AI] Swarm Setup Error:`, setupError.message);
             }
-        } catch (setupError) {
-            console.warn(`[AI] Swarm Setup Error:`, setupError.message);
         }
     }
     

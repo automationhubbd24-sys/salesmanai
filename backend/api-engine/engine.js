@@ -2,26 +2,33 @@ const express = require('express');
 const router = express.Router();
 const keyService = require('../src/services/keyService');
 const dbService = require('../src/services/dbService');
+const authMiddleware = require('../src/middleware/authMiddleware');
 const axios = require('axios');
 
 // --- 1. ENGINE STATS & DASHBOARD ---
-router.get('/stats', async (req, res) => {
+router.get('/stats', authMiddleware, async (req, res) => {
     try {
-        const keys = await dbService.getAllKeys();
-        const active = keys.filter(k => k.status === 'active').length;
-        const dead = keys.filter(k => k.status === 'disabled').length;
+        const { provider } = req.query; // Get provider filter from query
+        
+        const allKeys = await dbService.getAllKeys();
+        const active = allKeys.filter(k => k.status === 'active').length;
+        const dead = allKeys.filter(k => k.status === 'disabled').length;
+        
+        // Use smart rotation pool logic for the displayed keys
+        const poolKeys = keyService.getActiveRotationPool(provider, 10);
         
         res.json({
             engine_status: 'online',
-            total_keys: keys.length,
+            total_keys: allKeys.length,
             active_keys: active,
             dead_keys: dead,
             providers: {
-                google: keys.filter(k => k.provider === 'google' || k.provider === 'gemini').length,
-                openai: keys.filter(k => k.provider === 'openai').length,
-                groq: keys.filter(k => k.provider === 'groq').length,
-                openrouter: keys.filter(k => k.provider === 'openrouter').length
-            }
+                google: allKeys.filter(k => k.provider === 'google' || k.provider === 'gemini').length,
+                openai: allKeys.filter(k => k.provider === 'openai').length,
+                groq: allKeys.filter(k => k.provider === 'groq').length,
+                openrouter: allKeys.filter(k => k.provider === 'openrouter').length
+            },
+            keys: poolKeys // Return filtered top 10 keys
         });
     } catch (error) {
         res.status(500).json({ error: error.message });

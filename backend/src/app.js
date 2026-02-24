@@ -10,6 +10,7 @@ const liteEngineRoutes = require('./routes/liteEngineRoutes');
 const openrouterEngineRoutes = require('./routes/openrouterEngineRoutes');
 const dbAdminRoutes = require('./routes/dbAdminRoutes');
 const apiListRoutes = require('./routes/apiListRoutes');
+const apiEngineRoutes = require('../api-engine/engine'); // Added for API Engine stats
 const teamRoutes = require('./routes/teamRoutes');
 const statsRoutes = require('./routes/statsRoutes');
 const aiRoutes = require('./routes/aiRoutes');
@@ -46,6 +47,7 @@ app.use('/api/lite', liteEngineRoutes);
 app.use('/api/openrouter', openrouterEngineRoutes);
 app.use('/api/db-admin', dbAdminRoutes);
 app.use('/api/api-list', apiListRoutes);
+app.use('/api/api-engine', apiEngineRoutes);
 
 app.use('/teams', teamRoutes);
 app.use('/api/teams', teamRoutes); // Alias for /api prefix

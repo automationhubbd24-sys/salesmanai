@@ -149,6 +149,7 @@ export default function AdminPage() {
   const [newApi, setNewApi] = useState("");
   const [engineProvider, setEngineProvider] = useState("google");
   const [engineModel, setEngineModel] = useState("default");
+  const [engineFilter, setEngineFilter] = useState("all");
 
   const [geminiModel, setGeminiModel] = useState("gemini-2.5-flash-lite");
   const [geminiMessage, setGeminiMessage] = useState("hi from SalesmanChatbot key test");
@@ -212,11 +213,24 @@ export default function AdminPage() {
       const token = localStorage.getItem("auth_token");
       if (!token) return;
 
-      // Fetch Stats
-      const statsRes = await fetch(`${BACKEND_URL}/api/api-engine/stats`, {
+      // Fetch Stats with Provider Filter
+      let statsUrl = `${BACKEND_URL}/api/api-engine/stats`;
+      if (engineFilter !== "all") {
+        statsUrl += `?provider=${engineFilter}`;
+      }
+
+      const statsRes = await fetch(statsUrl, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (statsRes.ok) setEngineStats(await statsRes.json());
+      
+      if (statsRes.ok) {
+        const data = await statsRes.json();
+        setEngineStats(data);
+        // Use the filtered keys from the stats response
+        if (data.keys) {
+          setEngineKeys(data.keys);
+        }
+      }
 
       // Fetch Configs
       const configRes = await fetch(`${BACKEND_URL}/api/api-engine/config`, {
@@ -235,12 +249,15 @@ export default function AdminPage() {
         if (current) setConfigValues(current);
       }
 
-      // Fetch Keys
+      // If no filter, we might want to fetch all keys for the regular list (optional)
+      // For now, let's stick to the 10-key pool requirement
+      /*
       const keysRes = await fetch(`${BACKEND_URL}/api/api-list`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const keysData = await keysRes.json();
       if (keysData.success) setEngineKeys(keysData.items);
+      */
 
     } catch (error) {
       console.error(error);
@@ -249,6 +266,13 @@ export default function AdminPage() {
       setEngineStatsLoading(false);
     }
   };
+
+  // Re-fetch when filter changes
+  useEffect(() => {
+    if (isAuthenticated) {
+      fetchEngineData();
+    }
+  }, [engineFilter]);
 
   const updateEngineConfig = async (name: string, config: Partial<EngineConfig>) => {
     try {
@@ -1503,10 +1527,11 @@ export default function AdminPage() {
                 <CardTitle className="text-sm font-medium text-muted-foreground">Providers</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="flex gap-2 text-xs">
+                <div className="flex gap-2 text-xs flex-wrap">
                   <Badge variant="outline" className="bg-blue-500/10 text-blue-400">G: {engineStats?.providers?.google || 0}</Badge>
                   <Badge variant="outline" className="bg-orange-500/10 text-orange-400">O: {engineStats?.providers?.openai || 0}</Badge>
                   <Badge variant="outline" className="bg-purple-500/10 text-purple-400">Gq: {engineStats?.providers?.groq || 0}</Badge>
+                  <Badge variant="outline" className="bg-cyan-500/10 text-cyan-400">OR: {engineStats?.providers?.openrouter || 0}</Badge>
                 </div>
               </CardContent>
             </Card>
@@ -1774,16 +1799,30 @@ export default function AdminPage() {
 
           {/* Key List */}
           <Card className="border-white/10">
-            <CardHeader className="flex flex-row items-center justify-between">
+            <CardHeader className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
               <div>
                 <CardTitle className="flex items-center gap-2">
                   <Server className="h-5 w-5" /> Active Rotation Pool
                 </CardTitle>
-                <CardDescription>Keys currently being used by the API Engine.</CardDescription>
+                <CardDescription>Keys currently being used by the API Engine (Showing top 10).</CardDescription>
               </div>
-              <Button variant="outline" size="sm" onClick={fetchEngineData}>
-                <RefreshCw className="h-4 w-4 mr-2" /> Refresh
-              </Button>
+              <div className="flex items-center gap-2 w-full md:w-auto">
+                <Select value={engineFilter} onValueChange={setEngineFilter}>
+                  <SelectTrigger className="w-[150px]">
+                    <SelectValue placeholder="Filter Provider" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Providers</SelectItem>
+                    <SelectItem value="google">Google Gemini</SelectItem>
+                    <SelectItem value="openrouter">OpenRouter</SelectItem>
+                    <SelectItem value="groq">Groq</SelectItem>
+                    <SelectItem value="openai">OpenAI</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button variant="outline" size="sm" onClick={fetchEngineData}>
+                  <RefreshCw className="h-4 w-4 mr-2" /> Refresh
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               <div className="rounded-md border border-white/10 overflow-hidden">
