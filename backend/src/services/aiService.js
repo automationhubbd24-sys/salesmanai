@@ -515,7 +515,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                      
                      // Row Format (Compact for AI)
                      const stockDisplay = p.stock !== undefined ? p.stock : 'N/A';
-                     const descDisplay = p.description ? p.description.replace(/\n/g, ' ').substring(0, 200) : 'N/A';
+                     const descDisplay = p.description ? p.description.replace(/\n/g, ' ') : 'N/A';
                      const priceDisplay = p.price ? `${p.price} ${p.currency || 'BDT'}` : 'Ask for Price';
                      
                      let imgDisplay = 'N/A';
@@ -530,7 +530,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                         }
                      }
 
-                     const keywordsDisplay = p.keywords ? p.keywords.replace(/\n/g, ' ').substring(0, 200) : 'N/A';
+                     const keywordsDisplay = p.keywords ? p.keywords.replace(/\n/g, ' ') : 'N/A';
                      const comboDisplay = p.is_combo ? ` | [COMBO PRODUCT] (Hidden Contents - DO NOT DISCLOSE UNLESS ASKED): ${Array.isArray(p.combo_items) ? p.combo_items.join(", ") : p.combo_items}` : "";
                      
                      // Format: ##product "name" | Price: ... | Stock: ... | Image: ...
@@ -735,7 +735,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
 ${productContext}
 
 [System Rules]
-1. STRICT PRODUCT DATA: You are a salesperson. You MUST ONLY talk about products listed in [Context: Available Products]. If the user asks about a product not listed there, use the tool { "tool": "search_products", "query": "product name" } to find it first.
+1. STRICT PRODUCT DATA & VERBATIM DESC: You are a salesperson. You MUST ONLY talk about products listed in [Context: Available Products]. When providing product details, you MUST use the exact "Desc" field provided in the context. DO NOT summarize, shorten, or change a single word or emoji in the description. Copy it exactly. If the user asks about a product not listed there, use the tool { "tool": "search_products", "query": "product name" } to find it first.
 2. NO HALLUCINATIONS: Do NOT invent prices, stock, or features. If a price is "Ask for Price", say exactly that.
 3. IMAGES: Use ONLY provided image URLs from the product list.
 4. SILENCE: If your instructions say "no reply" or to be silent, return { "reply": null }
