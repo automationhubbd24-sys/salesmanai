@@ -215,8 +215,9 @@ export default function WhatsAppSettingsPage() {
       const params = new URLSearchParams();
       params.set("limit", "50");
 
+      const mode = localStorage.getItem("whatsapp_view_mode");
       const teamOwner = localStorage.getItem("active_team_owner");
-      if (teamOwner) {
+      if (mode === "team" && teamOwner) {
         params.set("team_owner", teamOwner);
       }
 
