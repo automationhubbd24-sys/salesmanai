@@ -664,9 +664,9 @@ router.get('/chats', authMiddleware, async (req, res) => {
             SELECT id, page_id, created_at, reply_by, token, ai_model, text, sender_id, timestamp, status
             FROM fb_chats
             WHERE page_id = $1
-              AND created_at >= $2::timestamptz
-              AND created_at <= $3::timestamptz
-            ORDER BY created_at DESC
+              AND (created_at >= $2::timestamptz OR timestamp >= EXTRACT(EPOCH FROM $2::timestamptz) * 1000)
+              AND (created_at <= $3::timestamptz OR timestamp <= EXTRACT(EPOCH FROM $3::timestamptz) * 1000)
+            ORDER BY created_at DESC, timestamp DESC
             LIMIT $4 OFFSET $5
             `,
             [pageId, from, to, limit, offset]
@@ -678,8 +678,8 @@ router.get('/chats', authMiddleware, async (req, res) => {
             SELECT COUNT(*) AS total
             FROM fb_chats
             WHERE page_id = $1
-              AND created_at >= $2::timestamptz
-              AND created_at <= $3::timestamptz
+              AND (created_at >= $2::timestamptz OR timestamp >= EXTRACT(EPOCH FROM $2::timestamptz) * 1000)
+              AND (created_at <= $3::timestamptz OR timestamp <= EXTRACT(EPOCH FROM $3::timestamptz) * 1000)
             `,
             [pageId, from, to]
         );
@@ -688,12 +688,13 @@ router.get('/chats', authMiddleware, async (req, res) => {
         const statsResult = await pgClient.query(
             `
             SELECT 
-                COUNT(*) FILTER (WHERE reply_by = 'bot') AS bot_replies,
+                COUNT(*) AS total_count,
+                SUM(CASE WHEN reply_by = 'bot' THEN 1 ELSE 0 END) AS bot_replies,
                 COALESCE(SUM(token), 0)::int AS total_tokens
             FROM fb_chats
             WHERE page_id = $1
-              AND created_at >= $2::timestamptz
-              AND created_at <= $3::timestamptz
+              AND (created_at >= $2::timestamptz OR timestamp >= EXTRACT(EPOCH FROM $2::timestamptz) * 1000)
+              AND (created_at <= $3::timestamptz OR timestamp <= EXTRACT(EPOCH FROM $3::timestamptz) * 1000)
             `,
             [pageId, from, to]
         );
@@ -704,8 +705,8 @@ router.get('/chats', authMiddleware, async (req, res) => {
             SELECT ai_model, SUM(token)::int AS total_tokens
             FROM fb_chats
             WHERE page_id = $1
-              AND created_at >= $2::timestamptz
-              AND created_at <= $3::timestamptz
+              AND (created_at >= $2::timestamptz OR timestamp >= EXTRACT(EPOCH FROM $2::timestamptz) * 1000)
+              AND (created_at <= $3::timestamptz OR timestamp <= EXTRACT(EPOCH FROM $3::timestamptz) * 1000)
               AND reply_by = 'bot'
               AND token > 0
             GROUP BY ai_model
@@ -718,11 +719,17 @@ router.get('/chats', authMiddleware, async (req, res) => {
             tokenBreakdown[row.ai_model || 'Unknown'] = row.total_tokens;
         });
 
+        const finalTotal = parseInt(countResult.rows[0].total || 0);
+        const finalBotReplies = parseInt(statsResult.rows[0].bot_replies || 0);
+        const finalTokens = parseInt(statsResult.rows[0].total_tokens || 0);
+
+        console.log(`[GET /chats] Page: ${pageId}, Range: ${from} to ${to}, Found: ${dataResult.rows.length}, Total: ${finalTotal}`);
+
         res.json({
             data: dataResult.rows,
-            total: parseInt(countResult.rows[0].total),
-            filteredBotReplyCount: parseInt(statsResult.rows[0].bot_replies),
-            filteredTokenCount: parseInt(statsResult.rows[0].total_tokens),
+            total: finalTotal,
+            filteredBotReplyCount: finalBotReplies,
+            filteredTokenCount: finalTokens,
             tokenBreakdown: tokenBreakdown
         });
     } catch (err) {
