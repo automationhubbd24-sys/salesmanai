@@ -24,6 +24,7 @@ interface GlobalConfig {
 }
 
 export default function ApiManagementPage() {
+    // FINAL UI CLEANUP: No individual model selection allowed during key addition.
     const [apis, setApis] = useState<ApiItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [newApi, setNewApi] = useState("");
