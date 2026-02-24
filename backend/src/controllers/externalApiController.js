@@ -477,21 +477,32 @@ exports.getUsageStats = async (req, res) => {
         if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
         const { startDate, endDate } = req.query;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 20;
+        const offset = (page - 1) * limit;
 
         const pgClient = require('../services/pgClient');
 
+        // 1. Fetch Paginated Stats
         const recentResult = await pgClient.query(
             `SELECT *
              FROM api_usage_stats
              WHERE user_id = $1
              ORDER BY created_at DESC
-             LIMIT 100`,
-            [userId]
+             LIMIT $2 OFFSET $3`,
+            [userId, limit, offset]
         );
         const stats = recentResult.rows || [];
 
-        // 2. Calculate Totals
-        // Total Cost & Tokens & Requests
+        // 1.5 Fetch Total Count for Pagination
+        const countResult = await pgClient.query(
+            'SELECT COUNT(*)::int as total FROM api_usage_stats WHERE user_id = $1',
+            [userId]
+        );
+        const totalCount = countResult.rows[0]?.total || 0;
+        const totalPages = Math.ceil(totalCount / limit);
+
+        // 2. Calculate Totals (Same as before)
 
         const totalResult = await pgClient.query(
             'SELECT cost, tokens FROM api_usage_stats WHERE user_id = $1',
@@ -559,6 +570,12 @@ exports.getUsageStats = async (req, res) => {
 
         res.json({ 
             stats: stats,
+            pagination: {
+                total_records: totalCount,
+                total_pages: totalPages,
+                current_page: page,
+                limit: limit
+            },
             summary: {
                 total_cost: totalCost,
                 total_tokens: totalTokens,

@@ -32,6 +32,11 @@ export default function DeveloperPage() {
     const [endDate, setEndDate] = useState<string>("");
     const [regenDialogOpen, setRegenDialogOpen] = useState(false);
     const [isRegenerating, setIsRegenerating] = useState(false);
+    const [currentPage, setCurrentPage] = useState(1);
+    const [pagination, setPagination] = useState<any>({
+        total_pages: 1,
+        total_records: 0
+    });
 
     const formatCompact = (value?: number) => {
         const n = Number(value || 0);
@@ -58,23 +63,24 @@ export default function DeveloperPage() {
 
     useEffect(() => {
         if (startDate && endDate) {
-            fetchUsage();
+            setCurrentPage(1); // Reset to page 1 on date filter change
+            fetchUsage(1);
         }
     }, [startDate, endDate]);
 
     useEffect(() => {
         fetchKey();
-        fetchUsage();
+        fetchUsage(1);
     }, []);
 
-    const fetchUsage = async () => {
+    const fetchUsage = async (page = 1) => {
         try {
             const token = localStorage.getItem("auth_token");
             if (!token) return;
 
-            let url = `${BACKEND_URL}/api/external/usage`;
+            let url = `${BACKEND_URL}/api/external/usage?page=${page}&limit=20`;
             if (startDate && endDate) {
-                url += `?startDate=${startDate}&endDate=${endDate}`;
+                url += `&startDate=${startDate}&endDate=${endDate}`;
             }
 
             const res = await fetch(url, {
@@ -85,6 +91,10 @@ export default function DeveloperPage() {
             const data = await res.json();
             if (data.stats) setUsageStats(data.stats);
             if (data.summary) setUsageSummary(data.summary);
+            if (data.pagination) {
+                setPagination(data.pagination);
+                setCurrentPage(data.pagination.current_page);
+            }
         } catch (error) {
             console.error("Failed to fetch usage stats", error);
         }
@@ -543,6 +553,35 @@ export default function DeveloperPage() {
                             </Table>
                         </div>
                     </div>
+
+                    {/* Pagination Controls */}
+                    {pagination.total_pages > 1 && (
+                        <div className="flex items-center justify-between mt-4 px-2">
+                            <div className="text-xs text-muted-foreground">
+                                Showing page {currentPage} of {pagination.total_pages} ({pagination.total_records} total records)
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <Button 
+                                    variant="outline" 
+                                    size="sm" 
+                                    className="h-8 text-xs"
+                                    onClick={() => fetchUsage(currentPage - 1)}
+                                    disabled={currentPage <= 1}
+                                >
+                                    Previous
+                                </Button>
+                                <Button 
+                                    variant="outline" 
+                                    size="sm" 
+                                    className="h-8 text-xs"
+                                    onClick={() => fetchUsage(currentPage + 1)}
+                                    disabled={currentPage >= pagination.total_pages}
+                                >
+                                    Next
+                                </Button>
+                            </div>
+                        </div>
+                    )}
                 </CardContent>
             </Card>
         </div>
