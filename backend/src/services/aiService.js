@@ -936,24 +936,44 @@ INSTRUCTIONS:
                                      parsed2.reply = null; // SILENT MODE: Return null instead of error message
                                 }
 
-                                // IMAGE INJECTION LOGIC
-                                if (parsed2.images && Array.isArray(parsed2.images)) {
-                                    // Validate images
-                                     const validImages = parsed2.images.filter(img => 
-                                        products.some(p => p.image_url === img)
-                                    );
-                                    parsed2.images = validImages;
-                                } else {
-                                    // Auto-inject if missing
-                                    const productImages = products
-                                        .filter(p => p.image_url)
-                                        .map(p => p.image_url);
-                                    if (productImages.length > 0) {
-                                        parsed2.images = productImages;
-                                    }
-                                }
+                        // IMAGE INJECTION LOGIC (SMART MULTI-IMAGE)
+                        const mentionedImages = [];
+                        const replyLower = (parsed2.reply || "").toLowerCase();
+
+                        // 1. Identify which products are mentioned in the AI's reply
+                        products.forEach(p => {
+                            if (replyLower.includes(p.name.toLowerCase())) {
+                                // Add main image
+                                if (p.image_url) mentionedImages.push(p.image_url);
                                 
-                                return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: modelToUse, foundProducts: products };
+                                // Add all additional images for THIS specific product
+                                if (p.additional_images && Array.isArray(p.additional_images)) {
+                                    p.additional_images.forEach(img => {
+                                        if (img && !mentionedImages.includes(img)) {
+                                            mentionedImages.push(img);
+                                        }
+                                    });
+                                }
+                            }
+                        });
+
+                        // 2. Fallback: If no specific product name mentioned but products were found, 
+                        // use the first product's images (Original behavior but with multi-image support)
+                        if (mentionedImages.length === 0 && products.length > 0) {
+                            const firstP = products[0];
+                            if (firstP.image_url) mentionedImages.push(firstP.image_url);
+                            if (firstP.additional_images && Array.isArray(firstP.additional_images)) {
+                                firstP.additional_images.forEach(img => {
+                                    if (img && !mentionedImages.includes(img)) {
+                                        mentionedImages.push(img);
+                                    }
+                                });
+                            }
+                        }
+
+                        parsed2.images = mentionedImages;
+                        
+                        return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: modelToUse, foundProducts: products };
                             } catch (aiError) {
                                 console.error(`[AI] Phase 1 Tool Re-generation Failed: ${aiError.message}`);
                                 dbService.logError(aiError, 'AI Service - Tool Re-generation', { model: modelToUse, messages: messages.length });
@@ -1023,7 +1043,7 @@ INSTRUCTIONS:
         }
     };
 
-    // Phase 2: Key-Centric Swarm (Google Flash Only)
+    // --- PHASE 2: SALESMANCHATBOT ENGINE (SMART ROUTING) ---
     if (userKeyAttempted) {
         console.warn(`[AI] Phase 1 was attempted but failed or was invalid. Strict Isolation Active: Blocking Cloud API fallback.`);
         return { 
@@ -1034,128 +1054,71 @@ INSTRUCTIONS:
         };
     }
 
-    console.log(`[AI] Phase 2: Key-Centric Swarm (Cheap/System Keys)...`);
+    console.log(`[AI] Phase 2: SalesmanChatbot Engine Smart Routing...`);
 
-    // Determine Model: Use dashboard setting if it's a Gemini model, otherwise default to Flash
-    let swarmModel = (pageConfig.chatmodel && pageConfig.chatmodel.includes('gemini')) ? pageConfig.chatmodel : 'gemini-2.0-flash';
-    let swarmProvider = 'google';
+    // 1. Resolve Modality
+    let isVision = false;
+    let isAudio = false;
+    messages.forEach(msg => {
+        if (Array.isArray(msg.content)) {
+            msg.content.forEach(part => {
+                if (part.type === 'image_url') isVision = true;
+                if (part.type === 'input_audio') isAudio = true;
+            });
+        }
+    });
 
-    // Check if User wants OpenRouter in Phase 2 (Explicit Override via Dashboard)
-    if (pageConfig.chatmodel && (pageConfig.chatmodel.includes('/') || pageConfig.provider === 'openrouter')) {
-        swarmModel = pageConfig.chatmodel;
-        swarmProvider = 'openrouter';
-        console.log(`[AI] Phase 2: User requested OpenRouter model: ${swarmModel}`);
-    }
+    // 2. Resolve Engine Config
+    const engineName = (pageConfig.chatmodel && pageConfig.chatmodel.startsWith('salesmanchatbot-')) 
+        ? pageConfig.chatmodel 
+        : 'salesmanchatbot-pro'; // Default to Pro
 
-    // --- STRATEGY A: OpenRouter (Single Attempt) ---
-    if (swarmProvider === 'openrouter') {
-        try {
-            const keyData = await keyService.getSmartKey('openrouter', swarmModel);
-            if (keyData && keyData.key) {
-                const apiKey = keyData.key;
-                const baseURL = 'https://openrouter.ai/api/v1';
-                
-                const openai = new OpenAI({ 
-                    apiKey: apiKey, 
-                    baseURL: baseURL,
-                    timeout: 25000
-                });
+    const engineConfigs = await dbService.getEngineConfigs();
+    let config = engineConfigs.find(c => c.name === engineName);
+    if (!config) config = engineConfigs.find(c => c.name === 'salesmanchatbot-pro'); // Fallback to Pro
 
-                console.log(`[AI] OpenRouter (Phase 2): Testing ${swarmModel}...`);
-                const completion = await openai.chat.completions.create({
-                    model: swarmModel,
-                    messages: messages,
-                    response_format: { type: "json_object" } // Try JSON mode
-                });
-                
-                const rawContent = completion.choices[0].message.content || '';
-                let tokenUsage = completion.usage ? completion.usage.total_tokens : 0;
-                keyService.recordKeyUsage(apiKey, tokenUsage);
-                
-                const parsed = extractJsonFromAiResponse(rawContent);
-                if (parsed.tool === 'search_products' && parsed.query) {
-                        console.log(`[AI] Tool Call: Searching products for "${parsed.query}"...`);
-                        const products = await dbService.searchProducts(pageConfig.user_id, parsed.query, pageConfig.page_id);
-                        
-                            // Phase 2: Re-generate answer using the SAME model
-                            messages.push({ role: 'assistant', content: JSON.stringify(parsed) });
-                            
-                            const toolOutputContext = `[System] Search Results for "${parsed.query}": ${JSON.stringify(products)}. 
-INSTRUCTIONS:
-1. Use the search results above to answer the user's question in Bengali.
-2. If the product has an 'image_url', you MUST include it in the 'images' array of your JSON response.
-3. If no products were found, apologize and say you couldn't find it.
-4. Return ONLY a JSON object with 'reply' (string) and 'images' (array of strings).`;
+    // 3. Resolve Provider and Model with Cross-Provider Logic
+    let finalProvider = config.provider;
+    let finalModel = config.text_model;
 
-                            messages.push({ role: 'system', content: toolOutputContext });
-                            
-                            const completion2 = await openai.chat.completions.create({
-                                model: swarmModel,
-                                messages: messages,
-                                response_format: { type: "json_object" }
-                            });
-                            
-                            const rawContent2 = completion2.choices[0].message.content || '';
-                            let tokenUsage2 = completion2.usage ? completion2.usage.total_tokens : 0;
-                            keyService.recordKeyUsage(apiKey, tokenUsage2);
-                            
-                            const parsed2 = extractJsonFromAiResponse(rawContent2);
-                            if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text;
-
-                            // FALLBACK FOR EMPTY REPLY
-                            if (!parsed2.reply && products.length > 0) {
-                                 parsed2.reply = "আমি আপনার খোঁজা পণ্যগুলো পেয়েছি। নিচে দেখুন:"; 
-                            }
-
-                            // Ensure images are passed through if AI found them
-                            if (parsed2.images && Array.isArray(parsed2.images)) {
-                                // Validate images are from search results (anti-hallucination)
-                                const validImages = parsed2.images.filter(img => 
-                                    products.some(p => p.image_url === img)
-                                );
-                                parsed2.images = validImages;
-                            } else {
-                                // Auto-inject images if AI forgot but we have them
-                                const productImages = products
-                                    .filter(p => p.image_url)
-                                    .map(p => p.image_url);
-                                if (productImages.length > 0) {
-                                    parsed2.images = productImages;
-                                }
-                            }
-                            
-                            return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: swarmModel, foundProducts: products };
-                        }
-
-                if (!parsed.reply) parsed.reply = parsed.response || parsed.text;
-                return { ...parsed, model: swarmModel, token_usage: tokenUsage + totalTokenUsage, foundProducts };
-
-            } else {
-                console.warn(`[AI] No OpenRouter keys found for ${swarmModel}. Falling back to Google Swarm.`);
+    if (isAudio) {
+        if (config.voice_provider_override) {
+            const override = engineConfigs.find(c => c.name === config.voice_provider_override);
+            if (override) {
+                finalProvider = override.provider;
+                finalModel = override.voice_model;
             }
-        } catch (e) {
-            console.warn(`[AI] OpenRouter Phase 2 Failed: ${e.message}. Falling back to Google Swarm.`);
+        } else {
+            finalModel = config.voice_model;
+        }
+    } else if (isVision) {
+        if (config.image_provider_override) {
+            const override = engineConfigs.find(c => c.name === config.image_provider_override);
+            if (override) {
+                finalProvider = override.provider;
+                finalModel = override.image_model;
+            }
+        } else {
+            finalModel = config.image_model;
         }
     }
 
-    // --- STRATEGY B: Google Swarm (Fallback / Default) ---
-    // If we fell back, reset model to User's Choice or Gemini 2.0 Flash (Safer Default)
-    // FIX: Respect user's chatmodel if it is a Google model, otherwise default to 2.0 Flash
-    swarmModel = (pageConfig.chatmodel && pageConfig.chatmodel.includes('gemini')) ? pageConfig.chatmodel : 'gemini-2.0-flash';
-    console.log(`[AI] Phase 2: Google Swarm (Model: ${swarmModel})...`);
+    console.log(`[AI] Engine Resolved: ${engineName} -> ${finalProvider}/${finalModel} (Audio: ${isAudio}, Vision: ${isVision})`);
 
-    // 1. GOOGLE SWARM LOOP (Try up to 3 different keys)
+    // 4. Execution Loop (Rotation Pool)
     for (let i = 0; i < 3; i++) {
         let keyData = null;
         try {
-            keyData = await keyService.getSmartKey('google', swarmModel);
+            keyData = await keyService.getSmartKey(finalProvider, finalModel);
             if (!keyData || !keyData.key) {
-                console.warn(`[AI] No valid ${swarmModel} keys available for Swarm Attempt ${i+1}. Skipping.`);
+                console.warn(`[AI] No valid ${finalModel} keys for ${finalProvider} Attempt ${i+1}.`);
                 break;
             }
 
             const apiKey = keyData.key;
-            const baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
+            let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
+            if (finalProvider === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
+            else if (finalProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
             
             const openai = new OpenAI({ 
                 apiKey: apiKey, 
@@ -1164,9 +1127,8 @@ INSTRUCTIONS:
             });
 
             try {
-                console.log(`[AI] Google Swarm (Key ${i+1}): Testing ${swarmModel} on key ${apiKey.substring(0,6)}...`);
                 const completion = await openai.chat.completions.create({
-                    model: swarmModel,
+                    model: finalModel,
                     messages: messages,
                     response_format: responseFormat
                 });
@@ -1179,12 +1141,10 @@ INSTRUCTIONS:
                 try {
                     const parsed = extractJsonFromAiResponse(rawContent);
                     
-                    if (parsed.tool === 'search_products' && parsed.query) {
+                    if (parsed && parsed.tool === 'search_products' && parsed.query) {
                         console.log(`[AI] Tool Call: Searching products for "${parsed.query}"...`);
                         const products = await dbService.searchProducts(pageConfig.user_id, parsed.query, pageConfig.page_id);
                         
-                        // Phase 2: Re-generate answer using the SAME model
-                        // Format the tool output as a system message to guide the AI
                         messages.push({ role: 'assistant', content: JSON.stringify(parsed) });
                         
                         const toolOutputContext = `[System] Search Results for "${parsed.query}": ${JSON.stringify(products)}. 
@@ -1196,9 +1156,8 @@ INSTRUCTIONS:
 
                         messages.push({ role: 'system', content: toolOutputContext });
                         
-                        console.log(`[AI] Tool Result found (Phase 2). Re-generating answer...`);
                         const completion2 = await openai.chat.completions.create({
-                            model: swarmModel,
+                            model: finalModel,
                             messages: messages,
                             response_format: { type: "json_object" }
                         });
@@ -1209,78 +1168,78 @@ INSTRUCTIONS:
                         keyService.recordKeyUsage(apiKey, tokenUsage2);
                         
                         const parsed2 = extractJsonFromAiResponse(rawContent2);
-                            if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text;
+                        if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text;
 
-                            // FALLBACK FOR EMPTY REPLY
-                            if (!parsed2.reply && products.length > 0) {
-                                 parsed2.reply = "আমি আপনার খোঁজা পণ্যগুলো পেয়েছি। নিচে দেখুন:"; 
+                        if (!parsed2.reply && products.length > 0) {
+                             parsed2.reply = "আমি আপনার খোঁজা পণ্যগুলো পেয়েছি। নিচে দেখুন:"; 
+                        }
+
+                        // IMAGE INJECTION LOGIC (SMART MULTI-IMAGE)
+                        const mentionedImages = [];
+                        const replyLower = (parsed2.reply || "").toLowerCase();
+
+                        // 1. Identify which products are mentioned in the AI's reply
+                        products.forEach(p => {
+                            if (replyLower.includes(p.name.toLowerCase())) {
+                                // Add main image
+                                if (p.image_url) mentionedImages.push(p.image_url);
+                                
+                                // Add all additional images for THIS specific product
+                                if (p.additional_images && Array.isArray(p.additional_images)) {
+                                    p.additional_images.forEach(img => {
+                                        if (img && !mentionedImages.includes(img)) {
+                                            mentionedImages.push(img);
+                                        }
+                                    });
+                                }
                             }
+                        });
 
-                            // Ensure images are passed through if AI found them
-                        if (parsed2.images && Array.isArray(parsed2.images)) {
-                            // Validate images are from search results (anti-hallucination)
-                            const validImages = parsed2.images.filter(img => 
-                                products.some(p => p.image_url === img)
-                            );
-                            parsed2.images = validImages;
-                        } else {
-                            // Auto-inject images if AI forgot but we have them
-                            const productImages = products
-                                .filter(p => p.image_url)
-                                .map(p => p.image_url);
-                            if (productImages.length > 0) {
-                                parsed2.images = productImages;
+                        // 2. Fallback: If no specific product name mentioned but products were found
+                        if (mentionedImages.length === 0 && products.length > 0) {
+                            const firstP = products[0];
+                            if (firstP.image_url) mentionedImages.push(firstP.image_url);
+                            if (firstP.additional_images && Array.isArray(firstP.additional_images)) {
+                                firstP.additional_images.forEach(img => {
+                                    if (img && !mentionedImages.includes(img)) {
+                                        mentionedImages.push(img);
+                                    }
+                                });
                             }
                         }
 
-                        return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: swarmModel, foundProducts: products };
+                        parsed2.images = mentionedImages;
+                        
+                        return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: engineName, foundProducts: products };
                     }
 
                     if (!parsed.reply) parsed.reply = parsed.response || parsed.text;
-                    return { ...parsed, model: swarmModel, token_usage: tokenUsage + totalTokenUsage, foundProducts };
+                    return { ...parsed, model: engineName, token_usage: tokenUsage + totalTokenUsage, foundProducts };
                 } catch (e) {
-                     console.error('[AI] Phase 2 Logic/Tool Failed:', e);
+                     console.error('[AI] Logic/Tool Failed:', e);
                      let cleanText = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-                     
-                     // Attempt to extract images from text response
                      const extracted = extractImagesFromText(cleanText);
-                     cleanText = extracted.text;
-                     const extractedImages = extracted.images;
-
-                     cleanText = extractReplyFromText(cleanText);
-
-                     // If reply is empty but we have images, provide a fallback text
-                     if (!cleanText && extractedImages.length > 0) {
-                         cleanText = "Here are the images you requested:";
-                     }
-
+                     cleanText = extractReplyFromText(extracted.text);
                      return { 
                          reply: cleanText, 
                          sentiment: 'neutral', 
-                         model: swarmModel, 
+                         model: engineName, 
                          token_usage: tokenUsage + totalTokenUsage, 
                          foundProducts,
-                         images: extractedImages 
+                         images: extracted.images 
                      };
                 }
 
-            } catch (flashError) {
-                console.warn(`[AI] ${swarmModel} Failed on Key ${i+1} (${flashError.message}).`);
-                
-                const status = flashError.status || (flashError.response ? flashError.response.status : null);
-                handleAiError(flashError, apiKey, swarmModel);
-                
-                if (status === 401 || status === 403) {
-                    continue;
-                }
+            } catch (error) {
+                console.warn(`[AI] Swarm Key Failed (${finalProvider}):`, error.message);
+                handleAiError(error, apiKey, finalModel);
             }
-
         } catch (setupError) {
             console.warn(`[AI] Swarm Setup Error:`, setupError.message);
         }
     }
     
-    console.error(`[AI] All Phase 2 attempts failed (No valid ${swarmModel} keys).`);
+    console.error(`[AI] All SalesmanChatbot Engine attempts failed.`);
     return null;
 }
 

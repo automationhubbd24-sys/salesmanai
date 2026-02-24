@@ -38,6 +38,17 @@ interface EngineStats {
   };
 }
 
+interface EngineConfig {
+  id: number;
+  name: string;
+  provider: string;
+  text_model: string;
+  voice_model: string;
+  image_model: string;
+  voice_provider_override: string | null;
+  image_provider_override: string | null;
+}
+
 type Transaction = {
   id: string;
   user_email: string;
@@ -101,9 +112,10 @@ export default function AdminPage() {
   const [engineStats, setEngineStats] = useState<EngineStats | null>(null);
   const [engineKeys, setEngineKeys] = useState<ApiKey[]>([]);
   const [engineStatsLoading, setEngineStatsLoading] = useState(false);
+  const [engineConfigs, setEngineConfigs] = useState<EngineConfig[]>([]);
   const [newApi, setNewApi] = useState("");
   const [engineProvider, setEngineProvider] = useState("google");
-  const [engineModel, setEngineModel] = useState("gemini-2.0-flash");
+  const [engineModel, setEngineModel] = useState("default");
 
   const [geminiModel, setGeminiModel] = useState("gemini-2.5-flash-lite");
   const [geminiMessage, setGeminiMessage] = useState("hi from SalesmanChatbot key test");
@@ -173,6 +185,12 @@ export default function AdminPage() {
       });
       if (statsRes.ok) setEngineStats(await statsRes.json());
 
+      // Fetch Configs
+      const configRes = await fetch(`${BACKEND_URL}/api/api-engine/config`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (configRes.ok) setEngineConfigs(await configRes.json());
+
       // Fetch Keys
       const keysRes = await fetch(`${BACKEND_URL}/api/api-list`, {
         headers: { Authorization: `Bearer ${token}` }
@@ -185,6 +203,26 @@ export default function AdminPage() {
       toast.error("Failed to load engine data");
     } finally {
       setEngineStatsLoading(false);
+    }
+  };
+
+  const updateEngineConfig = async (name: string, config: Partial<EngineConfig>) => {
+    try {
+      const token = localStorage.getItem("auth_token");
+      const res = await fetch(`${BACKEND_URL}/api/api-engine/config`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ name, ...config })
+      });
+      if (res.ok) {
+        toast.success(`Updated ${name} configuration`);
+        fetchEngineData();
+      }
+    } catch (error) {
+      toast.error("Failed to update engine configuration");
     }
   };
 
@@ -1257,6 +1295,86 @@ export default function AdminPage() {
 
         {/* API Engine Tab */}
         <TabsContent value="api-engine" className="space-y-6">
+          {/* Engine Model Configuration */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {engineConfigs.map((config) => (
+              <Card key={config.id} className="border-primary/20 bg-card/50">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Cpu className="h-5 w-5 text-primary" />
+                    {config.name === 'salesmanchatbot-pro' ? 'Pro Engine (Google)' : 
+                     config.name === 'salesmanchatbot-flash' ? 'Flash Engine (OpenRouter)' : 
+                     'Lite Engine (Groq)'}
+                  </CardTitle>
+                  <CardDescription>Configure models for {config.name}</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label className="text-xs">Text Model</Label>
+                    <Input 
+                      value={config.text_model} 
+                      onChange={(e) => updateEngineConfig(config.name, { text_model: e.target.value })}
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs">Voice Model</Label>
+                    <Input 
+                      value={config.voice_model} 
+                      onChange={(e) => updateEngineConfig(config.name, { voice_model: e.target.value })}
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs">Image Model</Label>
+                    <Input 
+                      value={config.image_model} 
+                      onChange={(e) => updateEngineConfig(config.name, { image_model: e.target.value })}
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                  
+                  <div className="pt-2 border-t border-white/5 space-y-3">
+                    <div className="space-y-2">
+                      <Label className="text-[10px] text-muted-foreground uppercase">Voice Provider Override</Label>
+                      <Select 
+                        value={config.voice_provider_override || "none"} 
+                        onValueChange={(val) => updateEngineConfig(config.name, { voice_provider_override: val === "none" ? null : val })}
+                      >
+                        <SelectTrigger className="h-7 text-[11px]">
+                          <SelectValue placeholder="No Override" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Default (Same Engine)</SelectItem>
+                          <SelectItem value="salesmanchatbot-pro">Use Pro (Google)</SelectItem>
+                          <SelectItem value="salesmanchatbot-flash">Use Flash (OpenRouter)</SelectItem>
+                          <SelectItem value="salesmanchatbot-lite">Use Lite (Groq)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-[10px] text-muted-foreground uppercase">Image Provider Override</Label>
+                      <Select 
+                        value={config.image_provider_override || "none"} 
+                        onValueChange={(val) => updateEngineConfig(config.name, { image_provider_override: val === "none" ? null : val })}
+                      >
+                        <SelectTrigger className="h-7 text-[11px]">
+                          <SelectValue placeholder="No Override" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Default (Same Engine)</SelectItem>
+                          <SelectItem value="salesmanchatbot-pro">Use Pro (Google)</SelectItem>
+                          <SelectItem value="salesmanchatbot-flash">Use Flash (OpenRouter)</SelectItem>
+                          <SelectItem value="salesmanchatbot-lite">Use Lite (Groq)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
           {/* Stats Grid */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <Card className="bg-card/50 backdrop-blur border-primary/20">
