@@ -12,8 +12,13 @@ import { BACKEND_URL } from "@/config";
 interface ApiItem {
     id: number;
     provider: string;
+    model: string;
     api: string;
     status?: string;
+}
+
+interface GlobalConfig {
+    provider: string;
     text_model: string;
     vision_model: string;
     voice_model: string;
@@ -24,8 +29,11 @@ export default function ApiManagementPage() {
     const [loading, setLoading] = useState(true);
     const [newApi, setNewApi] = useState("");
     const [provider, setProvider] = useState("gemini");
-    const [editingId, setEditingId] = useState<number | null>(null);
-    const [editValues, setEditValues] = useState({
+    const [model, setModel] = useState("gemini-2.5-flash");
+    const [globalConfigs, setGlobalConfigs] = useState<GlobalConfig[]>([]);
+    const [selectedConfigProvider, setSelectedConfigProvider] = useState("google");
+    const [configValues, setConfigValues] = useState<GlobalConfig>({
+        provider: "google",
         text_model: "",
         vision_model: "",
         voice_model: ""
@@ -33,34 +41,108 @@ export default function ApiManagementPage() {
 
     useEffect(() => {
         fetchApis();
+        fetchGlobalConfigs();
     }, []);
 
     const fetchApis = async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem("auth_token");
-            if (!token) return;
-
-            const res = await fetch(`${BACKEND_URL}/api/api-list`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            const body = await res.json();
-            if (res.ok && body.success) {
-                setApis(body.items || []);
+            let token: string | null = null;
+            if (typeof window !== "undefined") {
+                token = localStorage.getItem("auth_token");
             }
+            if (!token) {
+                setApis([]);
+                return;
+            }
+            const res = await fetch(`${BACKEND_URL}/api/api-list`, {
+                headers: {
+                    Authorization: `Bearer ${token}`
+                }
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok || !body.success) {
+                throw new Error(body.error || "Failed to fetch API list");
+            }
+            setApis(body.items || []);
         } catch (error: any) {
-            toast.error("Failed to fetch API list");
+            toast.error(error.message || "Failed to fetch API list");
         } finally {
             setLoading(false);
+        }
+    };
+
+    const fetchGlobalConfigs = async () => {
+        try {
+            let token: string | null = null;
+            if (typeof window !== "undefined") {
+                token = localStorage.getItem("auth_token");
+            }
+            const res = await fetch(`${BACKEND_URL}/api/api-list/config`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            const body = await res.json().catch(() => ({}));
+            if (res.ok && body.success) {
+                setGlobalConfigs(body.configs || []);
+                // Set initial values for the selected provider
+                const current = body.configs.find((c: any) => c.provider === selectedConfigProvider);
+                if (current) setConfigValues(current);
+            }
+        } catch (error) {
+            console.error("Failed to fetch configs", error);
+        }
+    };
+
+    const handleProviderChange = (newProvider: string) => {
+        setSelectedConfigProvider(newProvider);
+        const current = globalConfigs.find(c => c.provider === newProvider);
+        if (current) {
+            setConfigValues(current);
+        } else {
+            setConfigValues({
+                provider: newProvider,
+                text_model: "",
+                vision_model: "",
+                voice_model: ""
+            });
+        }
+    };
+
+    const saveGlobalConfig = async () => {
+        try {
+            let token: string | null = null;
+            if (typeof window !== "undefined") {
+                token = localStorage.getItem("auth_token");
+            }
+            const res = await fetch(`${BACKEND_URL}/api/api-list/config`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${token}`
+                },
+                body: JSON.stringify(configValues)
+            });
+            const body = await res.json().catch(() => ({}));
+            if (res.ok && body.success) {
+                toast.success("Global configuration saved");
+                fetchGlobalConfigs();
+            }
+        } catch (error) {
+            toast.error("Failed to save configuration");
         }
     };
 
     const addApi = async () => {
         if (!newApi) return;
         try {
-            const token = localStorage.getItem("auth_token");
-            if (!token) return;
-
+            let token: string | null = null;
+            if (typeof window !== "undefined") {
+                token = localStorage.getItem("auth_token");
+            }
+            if (!token) {
+                toast.error("Please login again");
+                return;
+            }
             const res = await fetch(`${BACKEND_URL}/api/api-list`, {
                 method: "POST",
                 headers: {
@@ -69,81 +151,56 @@ export default function ApiManagementPage() {
                 },
                 body: JSON.stringify({
                     provider,
+                    model,
                     api: newApi
                 })
             });
-            const body = await res.json();
-            if (res.ok && body.success) {
-                toast.success("API Key added successfully");
-                setNewApi("");
-                fetchApis();
-            } else {
-                throw new Error(body.error);
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok || !body.success) {
+                throw new Error(body.error || "Failed to add API Key");
             }
+            toast.success("API Key added successfully");
+            setNewApi("");
+            fetchApis();
         } catch (error: any) {
             toast.error(error.message || "Failed to add API Key");
         }
     };
 
-    const updateApi = async (id: number) => {
-        try {
-            const token = localStorage.getItem("auth_token");
-            if (!token) return;
-
-            const res = await fetch(`${BACKEND_URL}/api/api-list/${id}`, {
-                method: "PUT",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${token}`
-                },
-                body: JSON.stringify(editValues)
-            });
-            const body = await res.json();
-            if (res.ok && body.success) {
-                toast.success("API Models updated");
-                setEditingId(null);
-                fetchApis();
-            }
-        } catch (error: any) {
-            toast.error("Failed to update models");
-        }
-    };
-
-    const startEditing = (api: ApiItem) => {
-        setEditingId(api.id);
-        setEditValues({
-            text_model: api.text_model,
-            vision_model: api.vision_model,
-            voice_model: api.voice_model
-        });
-    };
-
     const deleteApi = async (id: number) => {
-        if (!confirm("Are you sure?")) return;
         try {
-            const token = localStorage.getItem("auth_token");
+            let token: string | null = null;
+            if (typeof window !== "undefined") {
+                token = localStorage.getItem("auth_token");
+            }
+            if (!token) {
+                toast.error("Please login again");
+                return;
+            }
             const res = await fetch(`${BACKEND_URL}/api/api-list/${id}`, {
                 method: "DELETE",
-                headers: { Authorization: `Bearer ${token}` }
+                headers: {
+                    Authorization: `Bearer ${token}`
+                }
             });
-            if (res.ok) {
-                toast.success("API Key deleted");
-                fetchApis();
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok || !body.success) {
+                throw new Error(body.error || "Failed to delete API Key");
             }
-        } catch (error) {
-            toast.error("Failed to delete");
+            toast.success("API Key deleted");
+            fetchApis();
+        } catch (error: any) {
+            toast.error(error.message || "Failed to delete API Key");
         }
     };
 
     return (
         <div className="container mx-auto p-6 space-y-6">
-            <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10 shadow-[0_18px_40px_rgba(0,0,0,0.35)]">
+            <Card>
                 <CardHeader>
-                    <CardTitle className="text-2xl font-bold bg-gradient-to-r from-white to-white/60 bg-clip-text text-transparent">
-                        API Engine Management
-                    </CardTitle>
+                    <CardTitle>API Key Management (Global Pool)</CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-6">
+                <CardContent className="space-y-4">
                     <div className="flex flex-wrap gap-4 items-end bg-white/5 p-4 rounded-xl border border-white/10">
                         <div className="space-y-2">
                             <Label className="text-xs uppercase tracking-wider text-muted-foreground">Provider</Label>
@@ -152,7 +209,7 @@ export default function ApiManagementPage() {
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="gemini">Gemini (Google)</SelectItem>
+                                    <SelectItem value="google">Google Gemini</SelectItem>
                                     <SelectItem value="openai">OpenAI</SelectItem>
                                     <SelectItem value="openrouter">OpenRouter</SelectItem>
                                     <SelectItem value="groq">Groq</SelectItem>
@@ -175,61 +232,106 @@ export default function ApiManagementPage() {
                         </Button>
                     </div>
 
-                    <div className="rounded-xl border border-white/10 overflow-hidden bg-black/20">
+                    {/* Global Configuration Card */}
+                    <div className="bg-white/5 p-6 rounded-xl border border-white/10 space-y-6">
+                        <div className="flex items-center justify-between border-b border-white/5 pb-4">
+                            <div>
+                                <h3 className="text-lg font-bold text-[#00ff88]">Global Provider Models Configuration</h3>
+                                <p className="text-xs text-muted-foreground">Define 3 models per provider. These will apply to ALL keys for that provider.</p>
+                            </div>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 items-end">
+                            <div className="space-y-2">
+                                <Label className="text-xs uppercase text-muted-foreground">Target Provider</Label>
+                                <Select value={selectedConfigProvider} onValueChange={handleProviderChange}>
+                                    <SelectTrigger className="bg-black/40 border-white/10">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="google">Google Gemini</SelectItem>
+                                        <SelectItem value="openai">OpenAI</SelectItem>
+                                        <SelectItem value="openrouter">OpenRouter</SelectItem>
+                                        <SelectItem value="groq">Groq</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label className="text-xs uppercase text-muted-foreground">Text Model</Label>
+                                <Input 
+                                    className="bg-black/40 border-white/10 text-xs"
+                                    value={configValues.text_model}
+                                    onChange={(e) => setConfigValues({...configValues, text_model: e.target.value})}
+                                    placeholder="e.g. gemini-2.0-flash"
+                                />
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label className="text-xs uppercase text-muted-foreground">Vision Model</Label>
+                                <Input 
+                                    className="bg-black/40 border-white/10 text-xs"
+                                    value={configValues.vision_model}
+                                    onChange={(e) => setConfigValues({...configValues, vision_model: e.target.value})}
+                                    placeholder="e.g. gemini-2.0-flash"
+                                />
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label className="text-xs uppercase text-muted-foreground">Voice Model</Label>
+                                <Input 
+                                    className="bg-black/40 border-white/10 text-xs"
+                                    value={configValues.voice_model}
+                                    onChange={(e) => setConfigValues({...configValues, voice_model: e.target.value})}
+                                    placeholder="e.g. gemini-2.0-flash-lite"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end pt-2">
+                            <Button onClick={saveGlobalConfig} className="bg-[#00ff88]/10 hover:bg-[#00ff88]/20 text-[#00ff88] border border-[#00ff88]/30 font-bold px-10">
+                                <Check className="mr-2 h-4 w-4" /> Save Configuration
+                            </Button>
+                        </div>
+                    </div>
+
+                    <div className="rounded-md border">
                         <Table>
                             <TableHeader className="bg-white/5">
                                 <TableRow className="border-white/10 hover:bg-transparent">
                                     <TableHead className="text-white/60">Provider</TableHead>
-                                    <TableHead className="text-white/60">Text Model</TableHead>
-                                    <TableHead className="text-white/60">Vision Model</TableHead>
-                                    <TableHead className="text-white/60">Voice Model</TableHead>
                                     <TableHead className="text-white/60">Key (Masked)</TableHead>
+                                    <TableHead className="text-white/60">Status</TableHead>
                                     <TableHead className="text-right text-white/60">Actions</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {loading ? (
-                                    <TableRow><TableCell colSpan={6} className="text-center py-10 text-muted-foreground">Loading...</TableCell></TableRow>
+                                    <TableRow><TableCell colSpan={4} className="text-center py-10 text-muted-foreground">Loading...</TableCell></TableRow>
                                 ) : apis.length === 0 ? (
-                                    <TableRow><TableCell colSpan={6} className="text-center py-10 text-muted-foreground">No API keys added yet.</TableCell></TableRow>
+                                    <TableRow><TableCell colSpan={4} className="text-center py-10 text-muted-foreground">No API keys added yet.</TableCell></TableRow>
                                 ) : (
                                     apis.map((api) => (
                                         <TableRow key={api.id} className="border-white/5 hover:bg-white/5 transition-colors">
-                                            <TableCell className="font-bold capitalize">{api.provider}</TableCell>
-                                            
-                                            {editingId === api.id ? (
-                                                <>
-                                                    <TableCell><Input size={1} className="h-8 bg-black/60 border-white/20 text-xs" value={editValues.text_model} onChange={e => setEditValues({...editValues, text_model: e.target.value})} /></TableCell>
-                                                    <TableCell><Input size={1} className="h-8 bg-black/60 border-white/20 text-xs" value={editValues.vision_model} onChange={e => setEditValues({...editValues, vision_model: e.target.value})} /></TableCell>
-                                                    <TableCell><Input size={1} className="h-8 bg-black/60 border-white/20 text-xs" value={editValues.voice_model} onChange={e => setEditValues({...editValues, voice_model: e.target.value})} /></TableCell>
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <TableCell className="text-xs text-white/80 font-mono">{api.text_model}</TableCell>
-                                                    <TableCell className="text-xs text-white/80 font-mono">{api.vision_model}</TableCell>
-                                                    <TableCell className="text-xs text-white/80 font-mono">{api.voice_model}</TableCell>
-                                                </>
-                                            )}
-
-                                            <TableCell className="font-mono text-[10px] text-white/40">
-                                                {api.api ? `${api.api.substring(0, 6)}...${api.api.substring(api.api.length - 4)}` : '******'}
+                                            <TableCell className="capitalize font-bold">{api.provider}</TableCell>
+                                            <TableCell className="font-mono text-xs text-white/40">
+                                                {api.api ? `${api.api.substring(0, 8)}...${api.api.substring(api.api.length - 4)}` : '******'}
                                             </TableCell>
-                                            
+                                            <TableCell>
+                                                {api.status === "active" ? (
+                                                    <div className="flex items-center gap-2 text-green-400 text-[10px] uppercase font-bold tracking-widest">
+                                                        <div className="h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse" /> Active
+                                                    </div>
+                                                ) : (
+                                                    <div className="flex items-center gap-2 text-red-400 text-[10px] uppercase font-bold tracking-widest">
+                                                        <div className="h-1.5 w-1.5 rounded-full bg-red-400" /> Inactive
+                                                    </div>
+                                                )}
+                                            </TableCell>
                                             <TableCell className="text-right">
-                                                <div className="flex justify-end gap-2">
-                                                    {editingId === api.id ? (
-                                                        <Button variant="ghost" size="icon" className="h-8 w-8 text-green-400" onClick={() => updateApi(api.id)}>
-                                                            <Check className="h-4 w-4" />
-                                                        </Button>
-                                                    ) : (
-                                                        <Button variant="ghost" size="icon" className="h-8 w-8 text-white/40 hover:text-white" onClick={() => startEditing(api)}>
-                                                            <Plus className="h-4 w-4" />
-                                                        </Button>
-                                                    )}
-                                                    <Button variant="ghost" size="icon" className="h-8 w-8 text-red-400/40 hover:text-red-400" onClick={() => deleteApi(api.id)}>
-                                                        <Trash className="h-4 w-4" />
-                                                    </Button>
-                                                </div>
+                                                <Button variant="ghost" size="icon" className="h-8 w-8 text-red-400/40 hover:text-red-400" onClick={() => deleteApi(api.id)}>
+                                                    <Trash className="h-4 w-4" />
+                                                </Button>
                                             </TableCell>
                                         </TableRow>
                                     ))

@@ -936,42 +936,26 @@ INSTRUCTIONS:
                                      parsed2.reply = null; // SILENT MODE: Return null instead of error message
                                 }
 
-                        // IMAGE INJECTION LOGIC (SMART HYBRID)
+                        // IMAGE INJECTION LOGIC (STRICT TAG-BASED ONLY)
                         const mentionedImages = [];
                         let replyText = parsed2.reply || "";
                         
-                        // 1. GREETING PROTECTION: If reply is too short, skip auto-injection (Only tags allowed)
-                        const isShortGreeting = replyText.length < 30 && /^(hi|hello|hey|সালাম|হ্যালো|নমস্কার|জ্বি|কিভাবে)/i.test(replyText);
-
-                        // 2. TAG-BASED EXTRACTION (##PRODUCT "Name")
+                        // 1. Tag-Based Extraction (##PRODUCT "Name")
+                        // This is the ONLY way to trigger an image.
                         const tagRegex = /##PRODUCT\s*["'](.+?)["']/gi;
                         let tagMatch;
-                        const mentionedViaTag = new Set();
                         while ((tagMatch = tagRegex.exec(replyText)) !== null) {
                             const productName = tagMatch[1].toLowerCase();
-                            mentionedViaTag.add(productName);
                             const product = products.find(p => p.name.toLowerCase() === productName);
                             if (product && product.image_url && !mentionedImages.includes(product.image_url)) {
                                 mentionedImages.push(product.image_url);
                             }
                         }
 
-                        // 3. NAME-BASED DETECTION (For Cosmetics Shop - Skip if short greeting)
-                        if (!isShortGreeting) {
-                            const replyLower = replyText.toLowerCase();
-                            products.forEach(p => {
-                                if (replyLower.includes(p.name.toLowerCase())) {
-                                    if (p.image_url && !mentionedImages.includes(p.image_url)) {
-                                        mentionedImages.push(p.image_url);
-                                    }
-                                }
-                            });
-                        }
-
-                        // 4. CLEANUP: Remove tags before sending
+                        // 2. Clean the Reply (Remove ##PRODUCT tags before sending to user)
                         parsed2.reply = replyText.replace(tagRegex, '').trim();
 
-                        // 5. FINAL ASSIGNMENT
+                        // 3. Final Image List
                         parsed2.images = mentionedImages;
                         
                         return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: modelToUse, foundProducts: products };
@@ -1060,77 +1044,48 @@ INSTRUCTIONS:
     // 1. Resolve Modality
     let isVision = false;
     let isAudio = false;
-    messages.forEach(msg => {
-        if (Array.isArray(msg.content)) {
-            msg.content.forEach(part => {
-                if (part.type === 'image_url') isVision = true;
-                if (part.type === 'input_audio') isAudio = true;
-            });
+    if (imageUrls && imageUrls.length > 0) isVision = true;
+    if (audioUrls && audioUrls.length > 0) isAudio = true;
+
+    // 2. Resolve Engine Config (Global Provider Config)
+    // User Request: Fetch models from Global Engine Config based on provider
+    const targetProvider = defaultProvider || 'google';
+    let engineTextModel = defaultModel || 'gemini-1.5-flash';
+    let engineVisionModel = 'gemini-1.5-flash';
+    let engineVoiceModel = 'gemini-1.5-flash-lite';
+
+    try {
+        const pgClient = require('./pgClient');
+        const configResult = await pgClient.query('SELECT * FROM api_engine_configs WHERE provider = $1', [targetProvider]);
+        if (configResult.rows.length > 0) {
+            const gConfig = configResult.rows[0];
+            engineTextModel = gConfig.text_model || engineTextModel;
+            engineVisionModel = gConfig.vision_model || engineVisionModel;
+            engineVoiceModel = gConfig.voice_model || engineVoiceModel;
+            console.log(`[AI] Loaded Global Config for ${targetProvider}: Text=${engineTextModel}, Vision=${engineVisionModel}, Voice=${engineVoiceModel}`);
         }
-    });
-
-    // 2. Resolve Engine Config
-    const engineName = (pageConfig.chatmodel && pageConfig.chatmodel.startsWith('salesmanchatbot-')) 
-        ? pageConfig.chatmodel 
-        : 'salesmanchatbot-pro'; // Default to Pro
-
-    const engineConfigs = await dbService.getEngineConfigs();
-    let config = engineConfigs.find(c => c.name === engineName);
-    if (!config) config = engineConfigs.find(c => c.name === 'salesmanchatbot-pro'); // Fallback to Pro
-
-    // 3. Resolve Provider and Model with Cross-Provider Logic
-    let finalProvider = config.provider;
-    let finalModel = config.text_model;
-
-    if (isAudio) {
-        if (config.voice_provider_override) {
-            const override = engineConfigs.find(c => c.name === config.voice_provider_override);
-            if (override) {
-                finalProvider = override.provider;
-                finalModel = override.voice_model;
-            }
-        } else {
-            finalModel = config.voice_model;
-        }
-    } else if (isVision) {
-        if (config.image_provider_override) {
-            const override = engineConfigs.find(c => c.name === config.image_provider_override);
-            if (override) {
-                finalProvider = override.provider;
-                finalModel = override.image_model;
-            }
-        } else {
-            finalModel = config.image_model;
-        }
+    } catch (err) {
+        console.warn(`[AI] Failed to load global engine config for ${targetProvider}, using defaults:`, err.message);
     }
 
-    console.log(`[AI] Engine Resolved: ${engineName} -> ${finalProvider}/${finalModel} (Audio: ${isAudio}, Vision: ${isVision})`);
+    // 3. Resolve Final Model based on Modality
+    let finalModel = engineTextModel;
+    if (isAudio) finalModel = engineVoiceModel;
+    else if (isVision) finalModel = engineVisionModel;
+
+    console.log(`[AI] Engine Resolved: ${targetProvider}/${finalModel} (Audio: ${isAudio}, Vision: ${isVision})`);
 
     // 4. Execution Loop (Rotation Pool)
     for (let i = 0; i < 3; i++) {
         let keyData = null;
         try {
-            keyData = await keyService.getSmartKey(finalProvider, finalModel);
+            keyData = await keyService.getSmartKey(targetProvider, finalModel);
             if (!keyData || !keyData.key) {
                 console.warn(`[AI] No valid ${finalModel} keys for ${finalProvider} Attempt ${i+1}.`);
                 break;
             }
 
             const apiKey = keyData.key;
-            
-            // NEW API ENGINE: Use the specific model field from the KEY itself if available
-            let actualModelToUse = finalModel;
-            if (isAudio && keyData.voice_model) {
-                actualModelToUse = keyData.voice_model;
-                console.log(`[AI] Using Key-Specific Voice Model: ${actualModelToUse}`);
-            } else if (isVision && keyData.vision_model) {
-                actualModelToUse = keyData.vision_model;
-                console.log(`[AI] Using Key-Specific Vision Model: ${actualModelToUse}`);
-            } else if (keyData.text_model) {
-                actualModelToUse = keyData.text_model;
-                console.log(`[AI] Using Key-Specific Text Model: ${actualModelToUse}`);
-            }
-
             let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
             if (finalProvider === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
             else if (finalProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
@@ -1143,7 +1098,7 @@ INSTRUCTIONS:
 
             try {
                 const completion = await openai.chat.completions.create({
-                    model: actualModelToUse,
+                    model: finalModel,
                     messages: messages,
                     response_format: responseFormat
                 });
@@ -1172,7 +1127,7 @@ INSTRUCTIONS:
                         messages.push({ role: 'system', content: toolOutputContext });
                         
                         const completion2 = await openai.chat.completions.create({
-                            model: actualModelToUse,
+                            model: finalModel,
                             messages: messages,
                             response_format: { type: "json_object" }
                         });
@@ -1189,49 +1144,33 @@ INSTRUCTIONS:
                              parsed2.reply = "আমি আপনার খোঁজা পণ্যগুলো পেয়েছি। নিচে দেখুন:"; 
                         }
 
-                        // IMAGE INJECTION LOGIC (SMART HYBRID)
+                        // IMAGE INJECTION LOGIC (STRICT TAG-BASED ONLY)
                         const mentionedImages = [];
                         let replyText = parsed2.reply || "";
                         
-                        // 1. GREETING PROTECTION: If reply is too short, skip auto-injection (Only tags allowed)
-                        const isShortGreeting = replyText.length < 30 && /^(hi|hello|hey|সালাম|হ্যালো|নমস্কার|জ্বি|কিভাবে)/i.test(replyText);
-
-                        // 2. TAG-BASED EXTRACTION (##PRODUCT "Name")
+                        // 1. Tag-Based Extraction (##PRODUCT "Name")
+                        // This is the ONLY way to trigger an image.
                         const tagRegex = /##PRODUCT\s*["'](.+?)["']/gi;
                         let tagMatch;
-                        const mentionedViaTag = new Set();
                         while ((tagMatch = tagRegex.exec(replyText)) !== null) {
                             const productName = tagMatch[1].toLowerCase();
-                            mentionedViaTag.add(productName);
                             const product = products.find(p => p.name.toLowerCase() === productName);
                             if (product && product.image_url && !mentionedImages.includes(product.image_url)) {
                                 mentionedImages.push(product.image_url);
                             }
                         }
 
-                        // 3. NAME-BASED DETECTION (For Cosmetics Shop - Skip if short greeting)
-                        if (!isShortGreeting) {
-                            const replyLower = replyText.toLowerCase();
-                            products.forEach(p => {
-                                if (replyLower.includes(p.name.toLowerCase())) {
-                                    if (p.image_url && !mentionedImages.includes(p.image_url)) {
-                                        mentionedImages.push(p.image_url);
-                                    }
-                                }
-                            });
-                        }
-
-                        // 4. CLEANUP: Remove tags before sending
+                        // 2. Clean the Reply (Remove ##PRODUCT tags before sending to user)
                         parsed2.reply = replyText.replace(tagRegex, '').trim();
 
-                        // 5. FINAL ASSIGNMENT
+                        // 3. Final Image List
                         parsed2.images = mentionedImages;
                         
-                        return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: engineName, foundProducts: products };
+                        return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: targetProvider, foundProducts: products };
                     }
 
                     if (!parsed.reply) parsed.reply = parsed.response || parsed.text;
-                    return { ...parsed, model: engineName, token_usage: tokenUsage + totalTokenUsage, foundProducts };
+                    return { ...parsed, model: targetProvider, token_usage: tokenUsage + totalTokenUsage, foundProducts };
                 } catch (e) {
                      console.error('[AI] Logic/Tool Failed:', e);
                      let cleanText = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
@@ -1240,7 +1179,7 @@ INSTRUCTIONS:
                      return { 
                          reply: cleanText, 
                          sentiment: 'neutral', 
-                         model: engineName, 
+                         model: targetProvider, 
                          token_usage: tokenUsage + totalTokenUsage, 
                          foundProducts,
                          images: extracted.images 

@@ -8,5 +8,9 @@ router.post('/', authMiddleware, apiListController.create);
 router.put('/:id', authMiddleware, apiListController.update);
 router.delete('/:id', authMiddleware, apiListController.remove);
 
+// Global Engine Config Routes
+router.get('/config', authMiddleware, apiListController.getGlobalConfigs);
+router.post('/config', authMiddleware, apiListController.saveGlobalConfig);
+
 module.exports = router;
 

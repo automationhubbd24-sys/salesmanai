@@ -3,7 +3,7 @@ const pgClient = require('../services/pgClient');
 exports.list = async (req, res) => {
     try {
         const result = await pgClient.query(
-            'SELECT id, provider, api, status, text_model, vision_model, voice_model FROM api_list ORDER BY id DESC'
+            'SELECT id, provider, api, status FROM api_list ORDER BY id DESC'
         );
         res.json({ success: true, items: result.rows });
     } catch (error) {
@@ -16,52 +16,19 @@ exports.create = async (req, res) => {
     try {
         const provider = String(req.body.provider || '').trim();
         const api = String(req.body.api || '').trim();
-        const text_model = String(req.body.text_model || 'gemini-2.0-flash').trim();
-        const vision_model = String(req.body.vision_model || 'gemini-2.0-flash').trim();
-        const voice_model = String(req.body.voice_model || 'gemini-2.0-flash-lite').trim();
 
         if (!provider || !api) {
             return res.status(400).json({ success: false, error: 'provider and api are required' });
         }
 
         const result = await pgClient.query(
-            'INSERT INTO api_list (provider, api, status, text_model, vision_model, voice_model) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-            [provider, api, 'active', text_model, vision_model, voice_model]
+            'INSERT INTO api_list (provider, api, status) VALUES ($1, $2, $3) RETURNING *',
+            [provider, api, 'active']
         );
 
         res.json({ success: true, item: result.rows[0] });
     } catch (error) {
         console.error('apiList create error:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-};
-
-exports.update = async (req, res) => {
-    try {
-        const id = parseInt(req.params.id, 10);
-        const { text_model, vision_model, voice_model, status } = req.body;
-
-        if (!id || Number.isNaN(id)) {
-            return res.status(400).json({ success: false, error: 'Invalid id' });
-        }
-
-        const result = await pgClient.query(
-            `UPDATE api_list 
-             SET text_model = COALESCE($1, text_model), 
-                 vision_model = COALESCE($2, vision_model), 
-                 voice_model = COALESCE($3, voice_model),
-                 status = COALESCE($4, status)
-             WHERE id = $5 RETURNING *`,
-            [text_model, vision_model, voice_model, status, id]
-        );
-
-        if (result.rows.length === 0) {
-            return res.status(404).json({ success: false, error: 'API key not found' });
-        }
-
-        res.json({ success: true, item: result.rows[0] });
-    } catch (error) {
-        console.error('apiList update error:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 };
@@ -77,6 +44,43 @@ exports.remove = async (req, res) => {
         res.json({ success: true });
     } catch (error) {
         console.error('apiList remove error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+exports.getGlobalConfigs = async (req, res) => {
+    try {
+        const result = await pgClient.query('SELECT * FROM api_engine_configs ORDER BY provider ASC');
+        res.json({ success: true, configs: result.rows });
+    } catch (error) {
+        console.error('getGlobalConfigs error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+exports.saveGlobalConfig = async (req, res) => {
+    try {
+        const { provider, text_model, vision_model, voice_model } = req.body;
+        if (!provider) {
+            return res.status(400).json({ success: false, error: 'Provider is required' });
+        }
+
+        const result = await pgClient.query(
+            `INSERT INTO api_engine_configs (provider, text_model, vision_model, voice_model, updated_at)
+             VALUES ($1, $2, $3, $4, NOW())
+             ON CONFLICT (provider) 
+             DO UPDATE SET 
+                text_model = EXCLUDED.text_model,
+                vision_model = EXCLUDED.vision_model,
+                voice_model = EXCLUDED.voice_model,
+                updated_at = NOW()
+             RETURNING *`,
+            [provider, text_model, vision_model, voice_model]
+        );
+
+        res.json({ success: true, config: result.rows[0] });
+    } catch (error) {
+        console.error('saveGlobalConfig error:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 };
