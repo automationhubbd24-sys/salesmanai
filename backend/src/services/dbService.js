@@ -1620,36 +1620,35 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
     let whereClause = '';
 
     // 1. Base Filter: User & Page Context
+    let isPageOwner = false;
+    if (pageId) {
+        try {
+            // Check if the current user is the owner of this page
+            const ownerCheck = await query('SELECT user_id FROM page_access_token_message WHERE page_id = $1', [String(pageId)]);
+            if (ownerCheck.rows.length > 0 && ownerCheck.rows[0].user_id === userId) {
+                isPageOwner = true;
+                console.log(`[DB] User ${userId} is OWNER of Page ${pageId}. Forcing full visibility.`);
+            }
+        } catch (e) {
+            console.error("[DB] Page Owner Check Failed:", e);
+        }
+    }
+
     if (pageId) {
         params.push(userId); // $1
         params.push(String(pageId)); // $2
         
         // Complex Logic for Page View:
-        // 1. If User is Owner (allowedPageIds is null/undefined OR empty array): Show ALL products owned by them
+        // 1. If User is Owner (allowedPageIds is null/undefined OR empty array OR Explicit Owner Check): Show ALL products owned by them
         // 2. If User is Team Member (allowedPageIds has values): Show products linked to their allowed pages
         
-        if (!allowedPageIds || (Array.isArray(allowedPageIds) && allowedPageIds.length === 0)) {
+        if (isPageOwner || !allowedPageIds || (Array.isArray(allowedPageIds) && allowedPageIds.length === 0)) {
              // OWNER VIEW: Show everything owned by this user
              // We ignore the specific page restriction in the DB query because the Owner should see EVERYTHING.
-             // If they want to filter by page in the UI, we can add that logic, but for now, if they own it, they see it.
-             // However, to respect the "Page View" in UI, we should still filter by pageId IF it's provided.
              
-             // LOGIC: Show product IF (Owned by User) AND ( (Linked to this Page) OR (Global Product) )
-             // FIX: Handle both JSON array and potential string format issues
-             whereClause = `(
-                user_id = ${userIdParam} 
-                AND 
-                (
-                    allowed_page_ids IS NULL 
-                    OR allowed_page_ids::jsonb = '[]'::jsonb 
-                    OR allowed_page_ids::jsonb @> jsonb_build_array($2::text)
-                    OR EXISTS (
-                        SELECT 1 
-                        FROM jsonb_array_elements_text(allowed_page_ids) AS elem 
-                        WHERE elem = $2::text
-                    )
-                )
-            )`;
+             // LOGIC: Show ALL products owned by this user to ensure visibility
+             // This bypasses any JSONB array matching issues.
+             whereClause = `user_id = ${userIdParam}`;
         } else {
             // TEAM MEMBER VIEW: Restricted by allowed_page_ids
              whereClause = `(
@@ -1708,6 +1707,7 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
     );
 
     const totalCount = countResult.rows.length > 0 ? countResult.rows[0].cnt : 0;
+    console.log(`[DB] Found ${totalCount} products for query. WhereClause: ${whereClause} Params: ${JSON.stringify(params)}`);
 
     const dataResult = await query(
         `SELECT *
