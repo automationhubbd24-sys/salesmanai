@@ -199,138 +199,52 @@ exports.handleChatCompletion = async (req, res) => {
         let responseModelName = "salesmanchatbot-pro"; // Default to Pro
         let billingLabel = "Cheap Engine API Call";
 
-        if (model === 'salesmanchatbot-flash' || model === 'salesmanchatbot-2.0-lite') {
-            // --- FLASH ENGINE (Groq) ---
-            responseModelName = "salesmanchatbot-flash";
-            billingLabel = "Flash Engine API Call";
-            
-            const result = await liteEngineService.processRequest({
-                message: userMessage,
-                history: history,
-                images: imageUrls,
-                audioUrl: audioUrls.length > 0 ? audioUrls[0] : null,
-                systemPrompt: systemPrompt || "You are a helpful assistant.",
-                stream: stream === true || stream === 'true'
-            });
+        // --- UNIFIED ENGINE CALL (Using Rotation Pool) ---
+        // This handles salesmanchatbot-pro, flash, and lite models through aiService
+        const prompts = systemPrompt ? { text_prompt: systemPrompt } : {};
+        
+        const aiResponseObj = await aiService.generateReply(
+            userMessage,
+            { 
+                user_id: userConfig.user_id,
+                ai_provider: 'system', 
+                chat_model: model || 'default', 
+                is_external_api: true 
+            }, 
+            prompts, 
+            history,
+            'API_User', 
+            'API_Owner', 
+            null, 
+            imageUrls, 
+            audioUrls, 
+            0 
+        );
 
-            // Handle Streaming Response
-            if (stream === true || stream === 'true') {
-                const responseId = `chatcmpl-${Date.now()}`;
-                const created = Math.floor(Date.now() / 1000);
-
-                res.setHeader('Content-Type', 'text/event-stream');
-                res.setHeader('Cache-Control', 'no-cache');
-                res.setHeader('Connection', 'keep-alive');
-
-                let fullText = "";
-                try {
-                    for await (const chunk of result) {
-                        const content = chunk.choices?.[0]?.delta?.content || "";
-                        fullText += content;
-                        
-                        const data = {
-                            id: responseId,
-                            object: 'chat.completion.chunk',
-                            created: created,
-                            model: responseModelName,
-                            choices: [
-                                {
-                                    index: 0,
-                                    delta: { content: content },
-                                    finish_reason: chunk.choices?.[0]?.finish_reason || null
-                                }
-                            ]
-                        };
-                        res.write(`data: ${JSON.stringify(data)}\n\n`);
-                    }
-                    
-                    // Final log and deduction after stream finishes
-                    const cleanFullText = cleanAiText(fullText);
-                    const promptTokens = Math.ceil((userMessage.length + (systemPrompt?.length || 0)) / 3.5);
-                    const completionTokens = Math.ceil(cleanFullText.length / 3.5);
-                    totalTokens = promptTokens + completionTokens;
-
-                    const costPerToken = getCostPerToken(responseModelName);
-                    const finalCost = Math.max(totalTokens * costPerToken, 0.00001);
-
-                    if (!freeTierActive) {
-                        await dbService.deductUserBalance(userConfig.user_id, finalCost, `${billingLabel} (Stream: ${totalTokens} tokens)`);
-                    }
-                    await dbService.logApiUsage(userConfig.user_id, responseModelName, totalTokens, freeTierActive ? 0 : finalCost);
-
-                    res.write('data: [DONE]\n\n');
-                    return res.end();
-                } catch (streamError) {
-                    console.error('[ExternalAPI] Stream Error:', streamError);
-                    return res.end();
-                }
-            }
-
-            aiText = cleanAiText(result);
-            const promptTokens = Math.ceil((userMessage.length + (systemPrompt?.length || 0)) / 3.5);
-            const completionTokens = Math.ceil(aiText.length / 3.5);
-            totalTokens = promptTokens + completionTokens;
-
-        } else if (model === 'salesmanchatbot-lite' || model === 'salesmanchatbot-2.0-pro') {
-            // --- LITE ENGINE (OpenRouter) ---
-            // Note: User renamed OpenRouter engine to 'salesmanchatbot-lite'
-            responseModelName = "salesmanchatbot-lite";
-            billingLabel = "Lite Engine API Call";
-
-            const result = await openrouterEngineService.processRequest({
-                message: userMessage,
-                history: history,
-                images: imageUrls,
-                systemPrompt: systemPrompt || ""
-            });
-            aiText = cleanAiText(result);
-
-             const promptTokens = Math.ceil((userMessage.length + (systemPrompt?.length || 0)) / 3.5);
-             const completionTokens = Math.ceil(aiText.length / 3.5);
-             totalTokens = promptTokens + completionTokens;
-
+        if (typeof aiResponseObj === 'object' && aiResponseObj !== null) {
+            aiText = aiResponseObj.reply || aiResponseObj.text || JSON.stringify(aiResponseObj);
+            totalTokens = aiResponseObj.token_usage || 0;
+            responseModelName = aiResponseObj.model || responseModelName;
         } else {
-            // --- PRO ENGINE (Gemini / RAG / Default) ---
-            // User requested 'salesmanchatbot' to be named 'salesmanchatbot-pro'
-            responseModelName = "salesmanchatbot-pro";
-            billingLabel = "Pro Engine API Call";
-
-            const prompts = systemPrompt ? { text_prompt: systemPrompt } : {};
-
-            const aiResponseObj = await aiService.generateReply(
-                userMessage,
-                { ai_provider: 'system', chat_model: model || 'default', is_external_api: true }, 
-                prompts, 
-                history,
-                'API_User', 
-                'API_Owner', 
-                null, 
-                imageUrls, 
-                audioUrls, 
-                0 
-            );
-
-            if (typeof aiResponseObj === 'object' && aiResponseObj !== null) {
-                aiText = aiResponseObj.reply || aiResponseObj.text || JSON.stringify(aiResponseObj);
-                totalTokens = aiResponseObj.token_usage || 0;
-            } else {
-                aiText = String(aiResponseObj);
-            }
-
-            // Clean AI Text from any JSON artifacts
-            aiText = cleanAiText(aiText);
-
-            // Fallback Token Calculation for Default Engine
-            // If the underlying provider did not return usage,
-            // approximate total tokens including system prompt, history and reply.
-            if (totalTokens === 0) {
-                const historyChars = history.reduce((acc, m) => acc + (m.content?.length || 0), 0);
-                const systemChars = systemPrompt ? systemPrompt.length : 0;
-                const inputChars = userMessage.length + historyChars + systemChars;
-                const outputChars = aiText.length;
-                totalTokens = Math.ceil((inputChars + outputChars) / 4);
-            }
+            aiText = String(aiResponseObj);
         }
+
+        // Clean AI Text from any JSON artifacts
+        aiText = cleanAiText(aiText);
+
+        // Fallback Token Calculation if engine returned 0
+        if (totalTokens === 0) {
+            const historyChars = history.reduce((acc, m) => acc + (m.content?.length || 0), 0);
+            const systemChars = systemPrompt ? systemPrompt.length : 0;
+            const inputChars = userMessage.length + historyChars + systemChars;
+            const outputChars = aiText.length;
+            totalTokens = Math.ceil((inputChars + outputChars) / 4);
+        }
+
+        // Determine Billing Label based on Model
+        if (model === 'salesmanchatbot-flash') billingLabel = "Flash Engine API Call";
+        else if (model === 'salesmanchatbot-lite') billingLabel = "Lite Engine API Call";
+        else billingLabel = "Pro Engine API Call";
 
         // 5. Calculate Cost & Deduct Balance
         const costPerToken = getCostPerToken(responseModelName);

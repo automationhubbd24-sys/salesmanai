@@ -6,13 +6,37 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Shield, Database as DatabaseIcon, Trash2, Edit, CheckCircle, CreditCard, DollarSign, Loader2, XCircle } from "lucide-react";
+import { Shield, Database as DatabaseIcon, Trash2, Edit, CheckCircle, CreditCard, DollarSign, Loader2, XCircle, Cpu, Plus, RefreshCw, Server, Activity, AlertTriangle } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { BACKEND_URL } from "@/config";
 import OpenRouterConfigPage from "./OpenRouterConfigPage";
+
+interface ApiKey {
+  id: number;
+  provider: string;
+  model: string;
+  api: string;
+  status: string;
+  usage_today: number;
+  last_used_at: string;
+}
+
+interface EngineStats {
+  engine_status: string;
+  total_keys: number;
+  active_keys: number;
+  dead_keys: number;
+  providers: {
+    google: number;
+    openai: number;
+    groq: number;
+    openrouter: number;
+  };
+}
 
 type Transaction = {
   id: string;
@@ -73,6 +97,14 @@ export default function AdminPage() {
   const [topupAmount, setTopupAmount] = useState("");
   const [topupLoading, setTopupLoading] = useState(false);
 
+  // API Engine State
+  const [engineStats, setEngineStats] = useState<EngineStats | null>(null);
+  const [engineKeys, setEngineKeys] = useState<ApiKey[]>([]);
+  const [engineStatsLoading, setEngineStatsLoading] = useState(false);
+  const [newApi, setNewApi] = useState("");
+  const [engineProvider, setEngineProvider] = useState("google");
+  const [engineModel, setEngineModel] = useState("gemini-2.0-flash");
+
   const [geminiModel, setGeminiModel] = useState("gemini-2.5-flash-lite");
   const [geminiMessage, setGeminiMessage] = useState("hi from SalesmanChatbot key test");
   const [geminiLoading, setGeminiLoading] = useState(false);
@@ -125,8 +157,78 @@ export default function AdminPage() {
       fetchTransactions();
       fetchCoupons();
       fetchDbTables();
+      fetchEngineData();
     }
   }, [isAuthenticated]);
+
+  const fetchEngineData = async () => {
+    try {
+      setEngineStatsLoading(true);
+      const token = localStorage.getItem("auth_token");
+      if (!token) return;
+
+      // Fetch Stats
+      const statsRes = await fetch(`${BACKEND_URL}/api/api-engine/stats`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (statsRes.ok) setEngineStats(await statsRes.json());
+
+      // Fetch Keys
+      const keysRes = await fetch(`${BACKEND_URL}/api/api-list`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const keysData = await keysRes.json();
+      if (keysData.success) setEngineKeys(keysData.items);
+
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to load engine data");
+    } finally {
+      setEngineStatsLoading(false);
+    }
+  };
+
+  const addEngineKey = async () => {
+    if (!newApi) return toast.error("API Key is required");
+    
+    try {
+      const token = localStorage.getItem("auth_token");
+      const res = await fetch(`${BACKEND_URL}/api/api-engine/keys`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ api: newApi, provider: engineProvider, model: engineModel })
+      });
+      
+      const data = await res.json();
+      if (data.success) {
+        toast.success("Key added to rotation pool");
+        setNewApi("");
+        fetchEngineData();
+      } else {
+        toast.error(data.error || "Failed to add key");
+      }
+    } catch (error) {
+      toast.error("Failed to add key");
+    }
+  };
+
+  const deleteEngineKey = async (id: number) => {
+    if (!confirm("Are you sure?")) return;
+    try {
+      const token = localStorage.getItem("auth_token");
+      await fetch(`${BACKEND_URL}/api/api-engine/keys/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      toast.success("Key removed");
+      fetchEngineData();
+    } catch (error) {
+      toast.error("Failed to delete key");
+    }
+  };
 
   const openInsertRow = () => {
     const initialFormState: any = {};
@@ -847,6 +949,7 @@ export default function AdminPage() {
           <TabsTrigger value="payments">Payments</TabsTrigger>
           <TabsTrigger value="finance">Finance</TabsTrigger>
           <TabsTrigger value="engine">Engine Test</TabsTrigger>
+          <TabsTrigger value="api-engine">API Engine</TabsTrigger>
           <TabsTrigger value="gemini">Gemini Monitor</TabsTrigger>
           <TabsTrigger value="db">Database Admin</TabsTrigger>
           <TabsTrigger value="openrouter">OpenRouter Config</TabsTrigger>
@@ -1144,6 +1247,197 @@ export default function AdminPage() {
                           </TableCell>
                         </TableRow>
                       ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* API Engine Tab */}
+        <TabsContent value="api-engine" className="space-y-6">
+          {/* Stats Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Card className="bg-card/50 backdrop-blur border-primary/20">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Engine Status</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center gap-2">
+                  <div className={`h-3 w-3 rounded-full ${engineStats?.engine_status === 'online' ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+                  <span className="text-2xl font-bold capitalize">{engineStats?.engine_status || 'Offline'}</span>
+                </div>
+              </CardContent>
+            </Card>
+            
+            <Card className="bg-card/50 backdrop-blur border-white/10">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Active Keys</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center gap-2">
+                  <Activity className="h-5 w-5 text-green-400" />
+                  <span className="text-2xl font-bold">{engineStats?.active_keys || 0}</span>
+                  <span className="text-xs text-muted-foreground">/ {engineStats?.total_keys || 0}</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card/50 backdrop-blur border-white/10">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Dead Keys</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="h-5 w-5 text-red-400" />
+                  <span className="text-2xl font-bold">{engineStats?.dead_keys || 0}</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card/50 backdrop-blur border-white/10">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Providers</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex gap-2 text-xs">
+                  <Badge variant="outline" className="bg-blue-500/10 text-blue-400">G: {engineStats?.providers?.google || 0}</Badge>
+                  <Badge variant="outline" className="bg-orange-500/10 text-orange-400">O: {engineStats?.providers?.openai || 0}</Badge>
+                  <Badge variant="outline" className="bg-purple-500/10 text-purple-400">Gq: {engineStats?.providers?.groq || 0}</Badge>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Add Key Section */}
+          <Card className="border-white/10 bg-[#0f0f0f]/50">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-primary">
+                <Plus className="h-5 w-5" /> Add New API Key to Rotation Pool
+              </CardTitle>
+              <CardDescription>The engine will automatically handle rotation and failure recovery for these keys.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col md:flex-row gap-4">
+                <div className="w-full md:w-[200px]">
+                    <Select value={engineProvider} onValueChange={setEngineProvider}>
+                    <SelectTrigger>
+                        <SelectValue placeholder="Provider" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="google">Google Gemini</SelectItem>
+                        <SelectItem value="groq">Groq (Llama)</SelectItem>
+                        <SelectItem value="openrouter">OpenRouter</SelectItem>
+                        <SelectItem value="openai">OpenAI</SelectItem>
+                    </SelectContent>
+                    </Select>
+                </div>
+
+                <div className="w-full md:w-[250px]">
+                    <Select value={engineModel} onValueChange={setEngineModel}>
+                    <SelectTrigger>
+                        <SelectValue placeholder="Model" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {engineProvider === 'google' && (
+                        <>
+                            <SelectItem value="gemini-2.0-flash">Gemini 2.0 Flash</SelectItem>
+                            <SelectItem value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite</SelectItem>
+                            <SelectItem value="gemini-1.5-pro">Gemini 1.5 Pro</SelectItem>
+                        </>
+                        )}
+                        {engineProvider === 'groq' && (
+                        <>
+                            <SelectItem value="llama-3.3-70b-versatile">Llama 3.3 70B</SelectItem>
+                            <SelectItem value="mixtral-8x7b-32768">Mixtral 8x7B</SelectItem>
+                        </>
+                        )}
+                        {engineProvider === 'openrouter' && (
+                        <>
+                            <SelectItem value="default">Auto Select</SelectItem>
+                            <SelectItem value="arcee-ai/trinity-large-preview">Trinity Large (Free)</SelectItem>
+                        </>
+                        )}
+                        {engineProvider === 'openai' && (
+                        <>
+                            <SelectItem value="gpt-4o-mini">GPT-4o Mini</SelectItem>
+                            <SelectItem value="gpt-3.5-turbo">GPT-3.5 Turbo</SelectItem>
+                        </>
+                        )}
+                    </SelectContent>
+                    </Select>
+                </div>
+
+                <Input 
+                  placeholder="Paste API Key here..." 
+                  value={newApi}
+                  onChange={(e) => setNewApi(e.target.value)}
+                  className="flex-1"
+                />
+                
+                <Button onClick={addEngineKey} className="bg-primary hover:bg-primary/90">
+                  <Plus className="mr-2 h-4 w-4" /> Add Key
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Key List */}
+          <Card className="border-white/10">
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <Server className="h-5 w-5" /> Active Rotation Pool
+                </CardTitle>
+                <CardDescription>Keys currently being used by the API Engine.</CardDescription>
+              </div>
+              <Button variant="outline" size="sm" onClick={fetchEngineData}>
+                <RefreshCw className="h-4 w-4 mr-2" /> Refresh
+              </Button>
+            </CardHeader>
+            <CardContent>
+              <div className="rounded-md border border-white/10 overflow-hidden">
+                <Table>
+                  <TableHeader className="bg-muted/50">
+                    <TableRow>
+                      <TableHead>Provider</TableHead>
+                      <TableHead>Model</TableHead>
+                      <TableHead>Key (Preview)</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Usage (Today)</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {engineKeys.map((k) => (
+                      <TableRow key={k.id}>
+                        <TableCell className="capitalize font-medium">{k.provider}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="font-mono text-xs">{k.model || 'default'}</Badge>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">
+                          {k.api.substring(0, 8)}...{k.api.substring(k.api.length - 4)}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={k.status === 'active' ? 'default' : 'destructive'} className={k.status === 'active' ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' : ''}>
+                            {k.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>{k.usage_today || 0}</TableCell>
+                        <TableCell className="text-right">
+                          <Button variant="ghost" size="icon" onClick={() => deleteEngineKey(k.id)} className="text-red-400 hover:text-red-300 hover:bg-red-900/20">
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {engineKeys.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                          No API keys found in rotation pool.
+                        </TableCell>
+                      </TableRow>
                     )}
                   </TableBody>
                 </Table>

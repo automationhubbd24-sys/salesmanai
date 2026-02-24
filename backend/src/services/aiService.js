@@ -715,6 +715,9 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                              if (p.stock_quantity) productContext += `Stock: ${p.stock_quantity}\n`;
                              if (shortDesc) productContext += `Desc: ${shortDesc}\n`;
                              if (p.image_url) productContext += `Image: ${p.image_url}\n`;
+                             if (p.additional_images && Array.isArray(p.additional_images) && p.additional_images.length > 0) {
+                                 productContext += `More Images: ${p.additional_images.join(', ')}\n`;
+                             }
                              productContext += `\n`;
                         }
                     });

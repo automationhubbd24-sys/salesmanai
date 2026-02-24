@@ -480,6 +480,13 @@ export default function ProductsPage() {
                 formData.append("image", productImage);
             }
 
+            // Additional Images
+            if (productImages && productImages.length > 0) {
+                productImages.forEach((file) => {
+                    formData.append("images", file);
+                });
+            }
+
             const teamOwner = getTeamOwnerForContext();
             const query = teamOwner ? `?team_owner=${teamOwner}` : "";
 

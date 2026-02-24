@@ -19,7 +19,7 @@ const upload = multer({
     }
 });
 
-exports.uploadMiddleware = upload.single('image');
+exports.uploadMiddleware = upload.fields([{ name: 'image', maxCount: 1 }, { name: 'images', maxCount: 10 }]);
 
 async function getEffectiveUserIdFromRequest(req, baseUserId) {
     let userId = baseUserId || null;
@@ -379,30 +379,40 @@ exports.createProduct = async (req, res) => {
 
         // 1. Handle Image Upload
         let imageUrl = null;
-        console.log("[ProductCreate] Checking for file upload...");
-        if (req.file) {
-            console.log("[ProductCreate] File found:", req.file.originalname, req.file.mimetype, req.file.size);
+        let additionalImages = [];
+        console.log("[ProductCreate] Checking for file uploads...");
+        
+        const envBaseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL;
+        const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+        const host = req.get('host');
+        const reqBaseUrl = `${protocol}://${host}`;
+        const baseUrl = envBaseUrl || reqBaseUrl;
+
+        // Handle Primary Image
+        if (req.files && req.files.image && req.files.image[0]) {
+            const primaryFile = req.files.image[0];
+            console.log("[ProductCreate] Primary file found:", primaryFile.originalname);
             try {
-                // VPS FIX: Prefer PUBLIC_BASE_URL from env, then BACKEND_URL, then construct from request
-                // We pass 'undefined' to let imageService use its robust fallback logic which includes PUBLIC_BASE_URL
-                const envBaseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL;
-                
-                // Construct reliable request-based URL (handling proxies)
-                const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-                const host = req.get('host');
-                const reqBaseUrl = `${protocol}://${host}`;
-                
-                const baseUrl = envBaseUrl || reqBaseUrl;
-                
-                console.log(`[ProductCreate] Uploading for Effective User (Owner): ${userId}`);
-                imageUrl = await imageService.uploadProductImage(req.file.buffer, req.file.mimetype, userId, baseUrl);
-                console.log("[ProductCreate] Image uploaded successfully. URL:", imageUrl);
+                imageUrl = await imageService.uploadProductImage(primaryFile.buffer, primaryFile.mimetype, userId, baseUrl);
+                console.log("[ProductCreate] Primary image uploaded. URL:", imageUrl);
             } catch (imgError) {
-                console.error("[ProductCreate] Image upload failed:", imgError);
-                return res.status(500).json({ error: "Image upload failed: " + imgError.message });
+                console.error("[ProductCreate] Primary image upload failed:", imgError);
+                return res.status(500).json({ error: "Primary image upload failed: " + imgError.message });
             }
-        } else {
-            console.log("[ProductCreate] No file attached in request.");
+        }
+
+        // Handle Additional Images
+        if (req.files && req.files.images) {
+            console.log(`[ProductCreate] Found ${req.files.images.length} additional images.`);
+            const uploadPromises = req.files.images.map(file => 
+                imageService.uploadProductImage(file.buffer, file.mimetype, userId, baseUrl)
+            );
+            try {
+                additionalImages = await Promise.all(uploadPromises);
+                console.log(`[ProductCreate] ${additionalImages.length} additional images uploaded.`);
+            } catch (imgError) {
+                console.error("[ProductCreate] Additional images upload failed:", imgError);
+            }
         }
 
         // 2. Parse Body
@@ -444,6 +454,7 @@ exports.createProduct = async (req, res) => {
             name,
             description,
             image_url: imageUrl,
+            additional_images: JSON.stringify(additionalImages),
             variants: JSON.stringify(variants),
             is_active: isActive,
             price,

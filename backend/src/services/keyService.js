@@ -6,10 +6,13 @@ let keyCache = [];
 let lastCacheUpdate = 0;
 const CACHE_TTL = 5 * 60 * 1000; // 5 Minutes
 
-const DAILY_USAGE_LIMIT = 20;
+const DAILY_USAGE_LIMIT = 18; // Strict limit: 18 requests per 24h
 const STATUS_ACTIVE = 'active';
 const STATUS_DISABLED = 'disabled';
 const DISABLE_DURATION_MS = 24 * 60 * 60 * 1000;
+
+const GEMINI_RPM_LIMIT = 4; // Strict limit: 4 requests per 60s
+const GEMINI_RPD_LIMIT = 18; // Strict limit: 18 requests per 24h
 
 const deadKeys = new Map();
 const DEFAULT_COOLDOWN = 60 * 1000; // 1 Minute default for RPM/TPM
@@ -235,7 +238,10 @@ function isKeyWithinLimits(keyDbObject) {
     let rpdLimit = keyDbObject.rpd_limit;
     let rpmLimit = keyDbObject.rpm_limit;
 
-    if (!rpdLimit || !rpmLimit) {
+    if (keyDbObject.provider === 'google' || keyDbObject.provider === 'gemini') {
+        rpdLimit = GEMINI_RPD_LIMIT;
+        rpmLimit = GEMINI_RPM_LIMIT;
+    } else if (!rpdLimit || !rpmLimit) {
         const dyn = dynamicLimits.get(keyDbObject.model);
         let fallbackDefault = DEFAULT_LIMITS['default'];
         if (keyDbObject.model && keyDbObject.model.endsWith(':free')) {
@@ -248,6 +254,8 @@ function isKeyWithinLimits(keyDbObject) {
         if (!rpmLimit) rpmLimit = (dyn && dyn.rpm) ? dyn.rpm : modelDefaults.rpm;
     }
 
+    // Remove old dynamic Gemini limit logic as we now have strict constants
+    /*
     if (keyDbObject.provider === 'google' || keyDbObject.provider === 'gemini') {
         if (!keyDbObject.rpd_limit || keyDbObject.rpd_limit > 20) {
             rpdLimit = 20;
@@ -261,6 +269,7 @@ function isKeyWithinLimits(keyDbObject) {
             rpmLimit = targetRpm;
         }
     }
+    */
 
     if (usageToday >= rpdLimit) {
         if (keyDbObject.provider === 'google' && keyDbObject.api) {

@@ -1115,31 +1115,36 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             normalizedProductNames.forEach(name => {
                 const product = promptProductMap[name];
                 if (!product || !product.image_url) return;
-                let url = product.image_url;
-                if (!/^https?:\/\//i.test(url)) {
-                    // Assume it's a relative path to our own storage
+                
+                // Add Primary Image
+                let primaryUrl = product.image_url;
+                if (!/^https?:\/\//i.test(primaryUrl)) {
                     const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
-                    url = `${baseUrl.replace(/\/$/, '')}/${url.replace(/^\/+/, '')}`;
+                    primaryUrl = `${baseUrl.replace(/\/$/, '')}/${primaryUrl.replace(/^\/+/, '')}`;
                 }
 
-                const imageUrl = url;
-                const hasImageAlready = extractedImages.some(img => img.url === imageUrl);
+                if (!extractedImages.some(img => img.url === primaryUrl)) {
+                    extractedImages.push({ url: primaryUrl, title: product.name || name });
+                }
 
+                // Add Additional Images
+                if (product.additional_images && Array.isArray(product.additional_images)) {
+                    product.additional_images.forEach((url, idx) => {
+                        let additionalUrl = url;
+                        if (!/^https?:\/\//i.test(additionalUrl)) {
+                            const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
+                            additionalUrl = `${baseUrl.replace(/\/$/, '')}/${additionalUrl.replace(/^\/+/, '')}`;
+                        }
+                        if (!extractedImages.some(img => img.url === additionalUrl)) {
+                            extractedImages.push({ url: additionalUrl, title: `${product.name || name} (Pic ${idx + 2})` });
+                        }
+                    });
+                }
+
+                const lowerReply = replyText.toLowerCase();
                 const linkPattern = new RegExp(`Link\\s*:\\s*${escapeRegExp(name)}\\b`, 'gi');
-                const hasLinkPattern = linkPattern.test(replyText);
-                const hasNameMention = lowerReply.includes(name.toLowerCase());
-
-                if (hasLinkPattern || (hasNameMention && !hasImageAlready)) {
-                    if (hasLinkPattern) {
-                        replyText = replyText.replace(linkPattern, '').trim();
-                    }
-                    const line = `IMAGE: ${product.name || name} | ${imageUrl}`;
-                    if (replyText.length > 0 && !replyText.endsWith('\n')) {
-                        replyText += '\n';
-                    }
-                    if (!replyText.includes(line)) {
-                        replyText += line;
-                    }
+                if (linkPattern.test(replyText)) {
+                    replyText = replyText.replace(linkPattern, '').trim();
                 }
             });
         }

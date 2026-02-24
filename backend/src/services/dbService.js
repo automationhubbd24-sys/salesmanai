@@ -1581,6 +1581,7 @@ async function createProduct(productData) {
         'name',
         'description',
         'image_url',
+        'additional_images',
         'variants',
         'is_active',
         'price',
@@ -1598,8 +1599,8 @@ async function createProduct(productData) {
     fields.forEach((field, index) => {
         placeholders.push(`$${index + 1}`);
         values.push(
-            field === 'variants' || field === 'allowed_page_ids' || field === 'combo_items'
-                ? (productData[field] || null)
+            field === 'variants' || field === 'allowed_page_ids' || field === 'combo_items' || field === 'additional_images'
+                ? (productData[field] || (field === 'additional_images' ? '[]' : null))
                 : (productData[field] ?? null)
         );
     });
