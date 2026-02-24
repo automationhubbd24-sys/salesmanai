@@ -45,7 +45,6 @@ export default function ProductsPage() {
     const [userId, setUserId] = useState<string | null>(null);
     const [products, setProducts] = useState<Product[]>([]);
     const [searchQuery, setSearchQuery] = useState("");
-    const [debugData, setDebugData] = useState<any>(null);
     
     // Form State
     const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -159,6 +158,24 @@ export default function ProductsPage() {
         }
     }, [searchQuery, userId]);
 
+    // Auto-reload on page change
+    useEffect(() => {
+        const handleReload = () => {
+            if (userId) {
+                const token = localStorage.getItem("auth_token");
+                fetchProducts(userId, searchQuery, token || undefined);
+            }
+        };
+        
+        window.addEventListener("db-connection-changed", handleReload);
+        window.addEventListener("dashboard:reload", handleReload);
+        
+        return () => {
+            window.removeEventListener("db-connection-changed", handleReload);
+            window.removeEventListener("dashboard:reload", handleReload);
+        };
+    }, [userId, searchQuery]);
+
     const checkAccess = async () => {
         try {
             if (typeof window === "undefined") {
@@ -214,17 +231,6 @@ export default function ProductsPage() {
             }
 
             const url = `${BACKEND_URL}/api/products?${params.toString()}`;
-            console.log("Fetching Products:", { uid, pageId, teamOwner, url });
-
-            // --- DEBUG PANEL LOGIC ---
-            setDebugData({ 
-                uid, 
-                pageId: pageId || "NULL", 
-                teamOwner: teamOwner || "NULL", 
-                url, 
-                timestamp: new Date().toLocaleTimeString() 
-            });
-            // -------------------------
 
             const headers: HeadersInit = {};
             if (token) {
@@ -621,18 +627,6 @@ export default function ProductsPage() {
 
     return (
         <div className="space-y-6 p-6 pb-24">
-            {debugData && (
-                <div className="bg-red-950/40 p-3 rounded-lg border border-red-500/30 text-xs font-mono text-red-200 mb-4 select-text">
-                    <div className="font-bold text-red-400 mb-1 border-b border-red-500/30 pb-1">DEBUG INFO (Take Screenshot)</div>
-                    <div className="grid grid-cols-2 gap-2">
-                        <div>UID: <span className="text-white">{debugData.uid}</span></div>
-                        <div>Page: <span className="text-white">{debugData.pageId}</span></div>
-                        <div>TeamOwner: <span className="text-white">{debugData.teamOwner}</span></div>
-                        <div>Time: <span className="text-white">{debugData.timestamp}</span></div>
-                    </div>
-                    <div className="mt-1 break-all opacity-70">URL: {debugData.url}</div>
-                </div>
-            )}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight">Global Products</h1>
