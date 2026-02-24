@@ -111,6 +111,21 @@ export default function ProductsPage() {
     const [showVariants, setShowVariants] = useState(false);
     const [pendingDeleteProduct, setPendingDeleteProduct] = useState<Product | null>(null);
 
+    const getTeamOwnerForContext = () => {
+        if (typeof window === "undefined") return null;
+        if (platform === "messenger") {
+            const mode = localStorage.getItem("messenger_view_mode");
+            if (mode === "team") return localStorage.getItem("active_team_owner");
+            return null;
+        }
+        if (platform === "whatsapp") {
+            const mode = localStorage.getItem("whatsapp_view_mode");
+            if (mode === "team") return localStorage.getItem("active_team_owner");
+            return null;
+        }
+        return null;
+    };
+
     useEffect(() => {
         checkAccess();
         fetchPages();
@@ -173,12 +188,8 @@ export default function ProductsPage() {
                 } else if (platform === "whatsapp") {
                     pageId = localStorage.getItem("active_wa_session_id");
                 }
-                
-                // Add Team Context
-                const teamOwner = localStorage.getItem("active_team_owner");
-                if (teamOwner) {
-                    params.set("team_owner", teamOwner);
-                }
+                const teamOwner = getTeamOwnerForContext();
+                if (teamOwner) params.set("team_owner", teamOwner);
             }
 
             if (pageId) {
@@ -213,7 +224,7 @@ export default function ProductsPage() {
             const token = localStorage.getItem("auth_token");
             if (!token) return;
 
-            const teamOwner = localStorage.getItem("active_team_owner");
+            const teamOwner = getTeamOwnerForContext();
             const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
             
             if (teamOwner) {
@@ -417,7 +428,7 @@ export default function ProductsPage() {
                 formData.append("image", productImage);
             }
 
-            const teamOwner = localStorage.getItem("active_team_owner");
+            const teamOwner = getTeamOwnerForContext();
             const query = teamOwner ? `?team_owner=${teamOwner}` : "";
 
             const url = editProductId 
@@ -477,7 +488,7 @@ export default function ProductsPage() {
                 headers.Authorization = `Bearer ${token}`;
             }
 
-            const teamOwner = localStorage.getItem("active_team_owner");
+            const teamOwner = getTeamOwnerForContext();
             const query = teamOwner ? `?team_owner=${teamOwner}` : "";
             
             const res = await fetch(`${BACKEND_URL}/api/products/import-woocommerce${query}`, {
@@ -511,12 +522,8 @@ export default function ProductsPage() {
             const params = new URLSearchParams();
             params.set("user_id", userId);
 
-            if (typeof window !== "undefined") {
-                const teamOwner = localStorage.getItem("active_team_owner");
-                if (teamOwner) {
-                    params.set("team_owner", teamOwner);
-                }
-            }
+            const teamOwner = getTeamOwnerForContext();
+            if (teamOwner) params.set("team_owner", teamOwner);
 
             let pageId: string | null = null;
             if (typeof window !== "undefined") {
