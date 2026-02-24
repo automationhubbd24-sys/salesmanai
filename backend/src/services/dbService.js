@@ -1645,7 +1645,12 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
         if (isPageOwner || !allowedPageIds || (Array.isArray(allowedPageIds) && allowedPageIds.length === 0)) {
              // OWNER VIEW: Show everything owned by this user
              params.push(userId); // $1
-             whereClause = `user_id = $1`;
+             params.push(String(pageId)); // $2
+             whereClause = `user_id = $1 AND (
+                allowed_page_ids IS NULL 
+                OR allowed_page_ids::jsonb = '[]'::jsonb 
+                OR allowed_page_ids::jsonb @> jsonb_build_array($2::text)
+             )`;
         } else {
             // TEAM MEMBER VIEW: Restricted by allowed_page_ids
             params.push(userId); // $1
