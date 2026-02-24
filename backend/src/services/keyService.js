@@ -520,19 +520,21 @@ async function getSmartKey(provider, model) {
     }
 
     // Use model-specific keys if available. 
-    // STRICT MODE: If model is specified, we PREFER keys for that model.
-    // BUT if no model-specific keys exist, we FALLBACK to ANY key for that provider.
-    // This allows using a generic "google" key for any "gemini-*" model.
+    // NEW API ENGINE: We now look for text_model, vision_model, or voice_model matches
     if (model) {
-        if (modelSpecificKeys.length > 0) {
-            validKeys = modelSpecificKeys;
+        // Try exact match on specific role columns first
+        const specificKeys = validKeys.filter(k => 
+            k.text_model === model || 
+            k.vision_model === model || 
+            k.voice_model === model
+        );
+
+        if (specificKeys.length > 0) {
+            validKeys = specificKeys;
         } else {
-            // RELAXED MODE: If we didn't find keys specifically labeled for this model,
-            // we check if we have ANY keys for this provider.
-            // Google keys are generally universal.
+            // RELAXED MODE: Fallback to generic provider keys if no specific model match
             if (validKeys.length > 0) {
-                console.log(`[KeyService] No specific keys for ${model}. Using generic ${provider} keys.`);
-                // validKeys is already filtered by provider, so we keep it.
+                console.log(`[KeyService] No specific keys for model ${model}. Using generic ${provider} keys.`);
             } else {
                 console.warn(`[KeyService] No keys found for ${provider} (Specific or Generic). Returning null.`);
                 return null;

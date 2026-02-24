@@ -1117,6 +1117,20 @@ INSTRUCTIONS:
             }
 
             const apiKey = keyData.key;
+            
+            // NEW API ENGINE: Use the specific model field from the KEY itself if available
+            let actualModelToUse = finalModel;
+            if (isAudio && keyData.voice_model) {
+                actualModelToUse = keyData.voice_model;
+                console.log(`[AI] Using Key-Specific Voice Model: ${actualModelToUse}`);
+            } else if (isVision && keyData.vision_model) {
+                actualModelToUse = keyData.vision_model;
+                console.log(`[AI] Using Key-Specific Vision Model: ${actualModelToUse}`);
+            } else if (keyData.text_model) {
+                actualModelToUse = keyData.text_model;
+                console.log(`[AI] Using Key-Specific Text Model: ${actualModelToUse}`);
+            }
+
             let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
             if (finalProvider === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
             else if (finalProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
@@ -1129,7 +1143,7 @@ INSTRUCTIONS:
 
             try {
                 const completion = await openai.chat.completions.create({
-                    model: finalModel,
+                    model: actualModelToUse,
                     messages: messages,
                     response_format: responseFormat
                 });
@@ -1158,7 +1172,7 @@ INSTRUCTIONS:
                         messages.push({ role: 'system', content: toolOutputContext });
                         
                         const completion2 = await openai.chat.completions.create({
-                            model: finalModel,
+                            model: actualModelToUse,
                             messages: messages,
                             response_format: { type: "json_object" }
                         });
