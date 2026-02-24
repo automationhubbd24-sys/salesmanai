@@ -54,6 +54,15 @@ interface GlobalEngineConfig {
   text_model: string;
   vision_model: string;
   voice_model: string;
+  text_provider_override?: string | null;
+  vision_provider_override?: string | null;
+  voice_provider_override?: string | null;
+  text_rpm?: number;
+  text_rpd?: number;
+  vision_rpm?: number;
+  vision_rpd?: number;
+  voice_rpm?: number;
+  voice_rpd?: number;
 }
 
 type Transaction = {
@@ -126,7 +135,16 @@ export default function AdminPage() {
     provider: "google",
     text_model: "gemini-2.0-flash",
     vision_model: "gemini-2.0-flash",
-    voice_model: "gemini-2.0-flash-lite"
+    voice_model: "gemini-2.0-flash-lite",
+    text_provider_override: null,
+    vision_provider_override: null,
+    voice_provider_override: null,
+    text_rpm: 0,
+    text_rpd: 0,
+    vision_rpm: 0,
+    vision_rpd: 0,
+    voice_rpm: 0,
+    voice_rpd: 0
   });
   const [newApi, setNewApi] = useState("");
   const [engineProvider, setEngineProvider] = useState("google");
@@ -1515,7 +1533,16 @@ export default function AdminPage() {
                           provider: val,
                           text_model: val === 'google' ? 'gemini-2.0-flash' : '',
                           vision_model: val === 'google' ? 'gemini-2.0-flash' : '',
-                          voice_model: val === 'google' ? 'gemini-2.0-flash-lite' : ''
+                          voice_model: val === 'google' ? 'gemini-2.0-flash-lite' : '',
+                          text_provider_override: null,
+                          vision_provider_override: null,
+                          voice_provider_override: null,
+                          text_rpm: 0,
+                          text_rpd: 0,
+                          vision_rpm: 0,
+                          vision_rpd: 0,
+                          voice_rpm: 0,
+                          voice_rpd: 0
                         });
                       }
                     }}
@@ -1533,48 +1560,175 @@ export default function AdminPage() {
                 </div>
               </CardTitle>
               <CardDescription>
-                {selectedConfigProvider === 'openrouter' 
-                  ? "OpenRouter uses a single unified model (or comma-separated chain) for all modalities."
-                  : "Define models for Text, Vision, and Voice for each provider."}
+                Define models, cross-provider overrides, and rate limits for each modality.
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-                <div className={selectedConfigProvider === 'openrouter' ? "md:col-span-3 space-y-2" : "space-y-2"}>
-                  <Label className="text-xs">{selectedConfigProvider === 'openrouter' ? "Unified Chat Model" : "Text Model"}</Label>
-                  <Input 
-                    value={configValues.text_model} 
-                    onChange={(e) => setConfigValues({...configValues, text_model: e.target.value})}
-                    placeholder={selectedConfigProvider === 'openrouter' ? "e.g. model1, model2, model3" : "e.g. gemini-2.0-flash"}
-                    className="bg-black/40 border-white/10 h-9"
-                  />
+            <CardContent className="space-y-6">
+              {/* Text Modality */}
+              <div className="space-y-4 p-4 border border-white/5 rounded-lg bg-white/5">
+                <div className="flex items-center gap-2 text-sm font-bold text-[#00ff88]">
+                   Text Modality
                 </div>
-                
-                {selectedConfigProvider !== 'openrouter' && (
-                  <>
-                    <div className="space-y-2">
-                      <Label className="text-xs">Vision Model</Label>
-                      <Input 
-                        value={configValues.vision_model} 
-                        onChange={(e) => setConfigValues({...configValues, vision_model: e.target.value})}
-                        placeholder="e.g. gemini-2.0-flash"
-                        className="bg-black/40 border-white/10 h-9"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label className="text-xs">Voice Model</Label>
-                      <Input 
-                        value={configValues.voice_model} 
-                        onChange={(e) => setConfigValues({...configValues, voice_model: e.target.value})}
-                        placeholder="e.g. gemini-2.0-flash-lite"
-                        className="bg-black/40 border-white/10 h-9"
-                      />
-                    </div>
-                  </>
-                )}
-                
-                <Button onClick={saveGlobalConfig} className="bg-[#00ff88] hover:bg-[#00cc77] text-black font-bold h-9">
-                  Save Config
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                  <div className="space-y-2">
+                    <Label className="text-xs">Model Name</Label>
+                    <Input 
+                      value={configValues.text_model} 
+                      onChange={(e) => setConfigValues({...configValues, text_model: e.target.value})}
+                      placeholder="e.g. gemini-2.0-flash"
+                      className="bg-black/40 border-white/10 h-9"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs">Provider Override</Label>
+                    <Select 
+                      value={configValues.text_provider_override || "none"} 
+                      onValueChange={(val) => setConfigValues({...configValues, text_provider_override: val === "none" ? null : val})}
+                    >
+                      <SelectTrigger className="bg-black/40 border-white/10 h-9">
+                        <SelectValue placeholder="No Override" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Default ({selectedConfigProvider})</SelectItem>
+                        <SelectItem value="google">Google Gemini</SelectItem>
+                        <SelectItem value="groq">Groq (Llama)</SelectItem>
+                        <SelectItem value="openrouter">OpenRouter</SelectItem>
+                        <SelectItem value="openai">OpenAI</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs">RPM (Req/Min)</Label>
+                    <Input 
+                      type="number"
+                      value={configValues.text_rpm} 
+                      onChange={(e) => setConfigValues({...configValues, text_rpm: parseInt(e.target.value) || 0})}
+                      className="bg-black/40 border-white/10 h-9"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs">RPD (Req/Day)</Label>
+                    <Input 
+                      type="number"
+                      value={configValues.text_rpd} 
+                      onChange={(e) => setConfigValues({...configValues, text_rpd: parseInt(e.target.value) || 0})}
+                      className="bg-black/40 border-white/10 h-9"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Vision Modality */}
+              <div className="space-y-4 p-4 border border-white/5 rounded-lg bg-white/5">
+                <div className="flex items-center gap-2 text-sm font-bold text-orange-400">
+                   Vision Modality
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                  <div className="space-y-2">
+                    <Label className="text-xs">Model Name</Label>
+                    <Input 
+                      value={configValues.vision_model} 
+                      onChange={(e) => setConfigValues({...configValues, vision_model: e.target.value})}
+                      placeholder="e.g. gemini-2.0-flash"
+                      className="bg-black/40 border-white/10 h-9"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs">Provider Override</Label>
+                    <Select 
+                      value={configValues.vision_provider_override || "none"} 
+                      onValueChange={(val) => setConfigValues({...configValues, vision_provider_override: val === "none" ? null : val})}
+                    >
+                      <SelectTrigger className="bg-black/40 border-white/10 h-9">
+                        <SelectValue placeholder="No Override" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Default ({selectedConfigProvider})</SelectItem>
+                        <SelectItem value="google">Google Gemini</SelectItem>
+                        <SelectItem value="groq">Groq (Llama)</SelectItem>
+                        <SelectItem value="openrouter">OpenRouter</SelectItem>
+                        <SelectItem value="openai">OpenAI</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs">RPM (Req/Min)</Label>
+                    <Input 
+                      type="number"
+                      value={configValues.vision_rpm} 
+                      onChange={(e) => setConfigValues({...configValues, vision_rpm: parseInt(e.target.value) || 0})}
+                      className="bg-black/40 border-white/10 h-9"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs">RPD (Req/Day)</Label>
+                    <Input 
+                      type="number"
+                      value={configValues.vision_rpd} 
+                      onChange={(e) => setConfigValues({...configValues, vision_rpd: parseInt(e.target.value) || 0})}
+                      className="bg-black/40 border-white/10 h-9"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Voice Modality */}
+              <div className="space-y-4 p-4 border border-white/5 rounded-lg bg-white/5">
+                <div className="flex items-center gap-2 text-sm font-bold text-blue-400">
+                   Voice Modality
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                  <div className="space-y-2">
+                    <Label className="text-xs">Model Name</Label>
+                    <Input 
+                      value={configValues.voice_model} 
+                      onChange={(e) => setConfigValues({...configValues, voice_model: e.target.value})}
+                      placeholder="e.g. gemini-2.0-flash-lite"
+                      className="bg-black/40 border-white/10 h-9"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs">Provider Override</Label>
+                    <Select 
+                      value={configValues.voice_provider_override || "none"} 
+                      onValueChange={(val) => setConfigValues({...configValues, voice_provider_override: val === "none" ? null : val})}
+                    >
+                      <SelectTrigger className="bg-black/40 border-white/10 h-9">
+                        <SelectValue placeholder="No Override" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Default ({selectedConfigProvider})</SelectItem>
+                        <SelectItem value="google">Google Gemini</SelectItem>
+                        <SelectItem value="groq">Groq (Llama)</SelectItem>
+                        <SelectItem value="openrouter">OpenRouter</SelectItem>
+                        <SelectItem value="openai">OpenAI</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs">RPM (Req/Min)</Label>
+                    <Input 
+                      type="number"
+                      value={configValues.voice_rpm} 
+                      onChange={(e) => setConfigValues({...configValues, voice_rpm: parseInt(e.target.value) || 0})}
+                      className="bg-black/40 border-white/10 h-9"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs">RPD (Req/Day)</Label>
+                    <Input 
+                      type="number"
+                      value={configValues.voice_rpd} 
+                      onChange={(e) => setConfigValues({...configValues, voice_rpd: parseInt(e.target.value) || 0})}
+                      className="bg-black/40 border-white/10 h-9"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-4">
+                <Button onClick={saveGlobalConfig} className="bg-[#00ff88] hover:bg-[#00cc77] text-black font-bold px-12">
+                  Save All Configurations for {selectedConfigProvider.toUpperCase()}
                 </Button>
               </div>
             </CardContent>

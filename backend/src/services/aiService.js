@@ -1053,6 +1053,10 @@ INSTRUCTIONS:
     let engineTextModel = defaultModel || 'gemini-1.5-flash';
     let engineVisionModel = 'gemini-1.5-flash';
     let engineVoiceModel = 'gemini-1.5-flash-lite';
+    
+    let textProvider = targetProvider;
+    let visionProvider = targetProvider;
+    let voiceProvider = targetProvider;
 
     try {
         const pgClient = require('./pgClient');
@@ -1060,38 +1064,53 @@ INSTRUCTIONS:
         if (configResult.rows.length > 0) {
             const gConfig = configResult.rows[0];
             
-            // --- OPENROUTER SPECIAL LOGIC (OLD SYSTEM) ---
-            // If provider is OpenRouter, we use a single chatmodel strategy (3 models in 1 string or fallback)
-            if (targetProvider === 'openrouter') {
-                const orModel = gConfig.text_model || engineTextModel;
-                engineTextModel = orModel;
-                engineVisionModel = gConfig.vision_model || orModel; // Fallback to main if no vision
-                engineVoiceModel = gConfig.voice_model || orModel;   // Fallback to main if no voice
-                console.log(`[AI] OpenRouter Old System Active: Using ${orModel} as base.`);
-            } else {
-                engineTextModel = gConfig.text_model || engineTextModel;
-                engineVisionModel = gConfig.vision_model || engineVisionModel;
-                engineVoiceModel = gConfig.voice_model || engineVoiceModel;
+            engineTextModel = gConfig.text_model || engineTextModel;
+            engineVisionModel = gConfig.vision_model || engineVisionModel;
+            engineVoiceModel = gConfig.voice_model || engineVoiceModel;
+            
+            // Apply Provider Overrides if set
+            if (gConfig.text_provider_override) textProvider = gConfig.text_provider_override;
+            if (gConfig.vision_provider_override) visionProvider = gConfig.vision_provider_override;
+            if (gConfig.voice_provider_override) voiceProvider = gConfig.voice_provider_override;
+
+            // Apply Rate Limits to KeyService
+            if (keyService.setManualLimit) {
+                if (gConfig.text_rpm || gConfig.text_rpd) 
+                    keyService.setManualLimit(engineTextModel, { rpm: gConfig.text_rpm, rpd: gConfig.text_rpd });
+                if (gConfig.vision_rpm || gConfig.vision_rpd) 
+                    keyService.setManualLimit(engineVisionModel, { rpm: gConfig.vision_rpm, rpd: gConfig.vision_rpd });
+                if (gConfig.voice_rpm || gConfig.voice_rpd) 
+                    keyService.setManualLimit(engineVoiceModel, { rpm: gConfig.voice_rpm, rpd: gConfig.voice_rpd });
             }
-            console.log(`[AI] Loaded Global Config for ${targetProvider}: Text=${engineTextModel}, Vision=${engineVisionModel}, Voice=${engineVoiceModel}`);
+
+            console.log(`[AI] Loaded Global Config for ${targetProvider}: 
+                Text=${engineTextModel} (${textProvider}, RPM=${gConfig.text_rpm}), 
+                Vision=${engineVisionModel} (${visionProvider}, RPM=${gConfig.vision_rpm}), 
+                Voice=${engineVoiceModel} (${voiceProvider}, RPM=${gConfig.voice_rpm})`);
         }
     } catch (err) {
         console.warn(`[AI] Failed to load global engine config for ${targetProvider}, using defaults:`, err.message);
     }
 
-    // 3. Resolve Final Model based on Modality
+    // 3. Resolve Final Model and Provider based on Modality
     let finalModel = engineTextModel;
-    if (isAudio) finalModel = engineVoiceModel;
-    else if (isVision) finalModel = engineVisionModel;
+    let finalProvider = textProvider;
 
-    console.log(`[AI] Engine Resolved: ${targetProvider}/${finalModel} (Audio: ${isAudio}, Vision: ${isVision})`);
+    if (isAudio) {
+        finalModel = engineVoiceModel;
+        finalProvider = voiceProvider;
+    } else if (isVision) {
+        finalModel = engineVisionModel;
+        finalProvider = visionProvider;
+    }
+
+    console.log(`[AI] Engine Resolved: ${finalProvider}/${finalModel} (Audio: ${isAudio}, Vision: ${isVision})`);
 
     // 4. Execution Loop (Rotation Pool)
-    let finalProvider = targetProvider;
     for (let i = 0; i < 3; i++) {
         let keyData = null;
         try {
-            keyData = await keyService.getSmartKey(targetProvider, finalModel);
+            keyData = await keyService.getSmartKey(finalProvider, finalModel);
             if (!keyData || !keyData.key) {
                 console.warn(`[AI] No valid ${finalModel} keys for ${finalProvider} Attempt ${i+1}.`);
                 break;
