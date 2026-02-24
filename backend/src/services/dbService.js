@@ -1644,17 +1644,16 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
         
         if (isPageOwner || !allowedPageIds || (Array.isArray(allowedPageIds) && allowedPageIds.length === 0)) {
              // OWNER VIEW: Show everything owned by this user
-             // We ignore the specific page restriction in the DB query because the Owner should see EVERYTHING.
-             
-             // LOGIC: Show ALL products owned by this user to ensure visibility
-             // This bypasses any JSONB array matching issues.
              whereClause = `user_id = $1`;
         } else {
             // TEAM MEMBER VIEW: Restricted by allowed_page_ids
-             whereClause = `(
+            const perms = allowedPageIds.map(String);
+            params.push(perms); // $3
+            
+            whereClause = `(
                 (user_id = $1 AND (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb))
                 OR
-                (allowed_page_ids::jsonb @> jsonb_build_array($2::text) AND allowed_page_ids::jsonb ?| array[${allowedPageIds.map(id => `'${id}'`).join(',')}] )
+                (allowed_page_ids::jsonb @> jsonb_build_array($2::text) AND allowed_page_ids::jsonb ?| $3::text[] )
             )`;
         }
     } else {
