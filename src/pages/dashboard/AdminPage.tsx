@@ -49,6 +49,13 @@ interface EngineConfig {
   image_provider_override: string | null;
 }
 
+interface GlobalEngineConfig {
+  provider: string;
+  text_model: string;
+  vision_model: string;
+  voice_model: string;
+}
+
 type Transaction = {
   id: string;
   user_email: string;
@@ -113,6 +120,14 @@ export default function AdminPage() {
   const [engineKeys, setEngineKeys] = useState<ApiKey[]>([]);
   const [engineStatsLoading, setEngineStatsLoading] = useState(false);
   const [engineConfigs, setEngineConfigs] = useState<EngineConfig[]>([]);
+  const [globalConfigs, setGlobalConfigs] = useState<GlobalEngineConfig[]>([]);
+  const [selectedConfigProvider, setSelectedConfigProvider] = useState("google");
+  const [configValues, setConfigValues] = useState<GlobalEngineConfig>({
+    provider: "google",
+    text_model: "gemini-2.0-flash",
+    vision_model: "gemini-2.0-flash",
+    voice_model: "gemini-2.0-flash-lite"
+  });
   const [newApi, setNewApi] = useState("");
   const [engineProvider, setEngineProvider] = useState("google");
   const [engineModel, setEngineModel] = useState("default");
@@ -191,6 +206,17 @@ export default function AdminPage() {
       });
       if (configRes.ok) setEngineConfigs(await configRes.json());
 
+      // Fetch Global Engine Configs
+      const globalConfigRes = await fetch(`${BACKEND_URL}/api/api-list/config`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const globalConfigData = await globalConfigRes.json();
+      if (globalConfigRes.ok && globalConfigData.success) {
+        setGlobalConfigs(globalConfigData.configs || []);
+        const current = globalConfigData.configs.find((c: any) => c.provider === selectedConfigProvider);
+        if (current) setConfigValues(current);
+      }
+
       // Fetch Keys
       const keysRes = await fetch(`${BACKEND_URL}/api/api-list`, {
         headers: { Authorization: `Bearer ${token}` }
@@ -223,6 +249,46 @@ export default function AdminPage() {
       }
     } catch (error) {
       toast.error("Failed to update engine configuration");
+    }
+  };
+
+  const fetchGlobalConfigs = async () => {
+    try {
+      const token = localStorage.getItem("auth_token");
+      const res = await fetch(`${BACKEND_URL}/api/api-list/config`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const body = await res.json();
+      if (res.ok && body.success) {
+        setGlobalConfigs(body.configs || []);
+        const current = body.configs.find((c: any) => c.provider === selectedConfigProvider);
+        if (current) setConfigValues(current);
+      }
+    } catch (error) {
+      console.error("Failed to fetch configs", error);
+    }
+  };
+
+  const saveGlobalConfig = async () => {
+    try {
+      const token = localStorage.getItem("auth_token");
+      const res = await fetch(`${BACKEND_URL}/api/api-list/config`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(configValues)
+      });
+      const body = await res.json();
+      if (res.ok && body.success) {
+        toast.success("Global configuration saved");
+        fetchGlobalConfigs();
+      } else {
+        toast.error(body.error || "Failed to save configuration");
+      }
+    } catch (error) {
+      toast.error("Failed to save configuration");
     }
   };
 
@@ -1427,6 +1493,82 @@ export default function AdminPage() {
               </CardContent>
             </Card>
           </div>
+
+          {/* Global Models Configuration Card */}
+          <Card className="border-white/10 bg-[#0f0f0f]/50">
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between text-[#00ff88]">
+                <div className="flex items-center gap-2">
+                  <Cpu className="h-5 w-5" />
+                  Global Provider Models Configuration
+                </div>
+                <div className="w-[180px]">
+                  <Select 
+                    value={selectedConfigProvider} 
+                    onValueChange={(val) => {
+                      setSelectedConfigProvider(val);
+                      const current = globalConfigs.find(c => c.provider === val);
+                      if (current) {
+                        setConfigValues(current);
+                      } else {
+                        setConfigValues({
+                          provider: val,
+                          text_model: val === 'google' ? 'gemini-2.0-flash' : '',
+                          vision_model: val === 'google' ? 'gemini-2.0-flash' : '',
+                          voice_model: val === 'google' ? 'gemini-2.0-flash-lite' : ''
+                        });
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="bg-black/40 border-white/10 h-8">
+                      <SelectValue placeholder="Select Provider" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="google">Google Gemini</SelectItem>
+                      <SelectItem value="groq">Groq (Llama)</SelectItem>
+                      <SelectItem value="openrouter">OpenRouter</SelectItem>
+                      <SelectItem value="openai">OpenAI</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </CardTitle>
+              <CardDescription>Define models for Text, Vision, and Voice for each provider.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                <div className="space-y-2">
+                  <Label className="text-xs">Text Model</Label>
+                  <Input 
+                    value={configValues.text_model} 
+                    onChange={(e) => setConfigValues({...configValues, text_model: e.target.value})}
+                    placeholder="e.g. gemini-2.0-flash"
+                    className="bg-black/40 border-white/10 h-9"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">Vision Model</Label>
+                  <Input 
+                    value={configValues.vision_model} 
+                    onChange={(e) => setConfigValues({...configValues, vision_model: e.target.value})}
+                    placeholder="e.g. gemini-2.0-flash"
+                    className="bg-black/40 border-white/10 h-9"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">Voice Model</Label>
+                  <Input 
+                    value={configValues.voice_model} 
+                    onChange={(e) => setConfigValues({...configValues, voice_model: e.target.value})}
+                    placeholder="e.g. gemini-2.0-flash-lite"
+                    className="bg-black/40 border-white/10 h-9"
+                  />
+                </div>
+                <Button onClick={saveGlobalConfig} className="bg-[#00ff88] hover:bg-[#00cc77] text-black font-bold h-9">
+                  Save Config
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Add Key Section */}
           <Card className="border-white/10 bg-[#0f0f0f]/50">

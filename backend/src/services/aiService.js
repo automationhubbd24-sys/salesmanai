@@ -1076,6 +1076,7 @@ INSTRUCTIONS:
     console.log(`[AI] Engine Resolved: ${targetProvider}/${finalModel} (Audio: ${isAudio}, Vision: ${isVision})`);
 
     // 4. Execution Loop (Rotation Pool)
+    let finalProvider = targetProvider;
     for (let i = 0; i < 3; i++) {
         let keyData = null;
         try {
@@ -1089,6 +1090,7 @@ INSTRUCTIONS:
             let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
             if (finalProvider === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
             else if (finalProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
+            else if (finalProvider === 'openai') baseURL = 'https://api.openai.com/v1';
             
             const openai = new OpenAI({ 
                 apiKey: apiKey, 
