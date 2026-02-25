@@ -1131,152 +1131,146 @@ INSTRUCTIONS:
 
     console.log(`[AI] Engine Resolved: ${finalProvider}/${finalModel} (Audio: ${isAudio}, Vision: ${isVision})`);
 
-    // 4. Execution Loop (Rotation Pool - NO AUTO FALLBACK)
-    // User Request: "service droop hobe karon jara pro nibe oder to pro tai lagbe"
-    // We only try the selected model. If it fails, we return an error.
-    const modelsToTry = [finalModel];
+    // 4. Execution Loop (STRICT SINGLE ATTEMPT)
+    // User Request: "multiple try deoya jabe na retry kora jabe na"
+    const currentModel = finalModel;
     
-    for (let modelIndex = 0; modelIndex < modelsToTry.length; modelIndex++) {
-        const currentModel = modelsToTry[modelIndex];
+    let keyData = null;
+    try {
+        keyData = await keyService.getSmartKey(finalProvider, currentModel);
+        if (!keyData || !keyData.key) {
+            console.warn(`[AI] No valid ${currentModel} keys for ${finalProvider}.`);
+            return finalize({ 
+                reply: "দুঃখিত, বর্তমানে এই সার্ভিসে কোনো অ্যাক্টিভ কী নেই। দয়া করে এডমিন প্যানেল থেকে এপিআই কী চেক করুন।", 
+                error: `No active keys for ${finalProvider}/${currentModel}`,
+                token_usage: 0,
+                model: currentModel
+            });
+        }
+
+        const apiKey = keyData.key;
+        let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
+        if (finalProvider === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
+        else if (finalProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
+        else if (finalProvider === 'openai') baseURL = 'https://api.openai.com/v1';
         
-        for (let i = 0; i < 3; i++) {
-            let keyData = null;
+        const openai = new OpenAI({ 
+            apiKey: apiKey, 
+            baseURL: baseURL,
+            timeout: 20000
+        });
+
+        try {
+            const completion = await openai.chat.completions.create({
+                model: currentModel,
+                messages: messages,
+                response_format: responseFormat
+            });
+            
+            const rawContent = completion.choices[0].message.content || '';
+            if (!rawContent || rawContent.trim() === '') {
+                 throw new Error("Empty content from AI");
+            }
+
+            let tokenUsage = completion.usage ? completion.usage.total_tokens : 0;
+            tokenUsage = estimateTokenUsage(messages, rawContent, tokenUsage);
+            keyService.recordKeyUsage(apiKey, tokenUsage);
+            
             try {
-                keyData = await keyService.getSmartKey(finalProvider, currentModel);
-                if (!keyData || !keyData.key) {
-                    console.warn(`[AI] No valid ${currentModel} keys for ${finalProvider} Attempt ${i+1}.`);
-                    
-                    // If this was the last attempt and no keys found, return service drop error
-                    if (i === 2) {
-                        return finalize({ 
-                            reply: "দুঃখিত, বর্তমানে এই সার্ভিসে কোনো অ্যাক্টিভ কী নেই। দয়া করে এডমিন প্যানেল থেকে এপিআই কী চেক করুন।", 
-                            error: `No active keys for ${finalProvider}/${currentModel}`,
-                            token_usage: 0,
-                            model: currentModel
-                        });
-                    }
-                    continue;
-                }
-
-                const apiKey = keyData.key;
-                let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
-                if (finalProvider === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
-                else if (finalProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
-                else if (finalProvider === 'openai') baseURL = 'https://api.openai.com/v1';
+                const parsed = extractJsonFromAiResponse(rawContent);
                 
-                const openai = new OpenAI({ 
-                    apiKey: apiKey, 
-                    baseURL: baseURL,
-                    timeout: 20000
-                });
-
-                try {
-                    // Determine if we need to force a specific response format
-                    let activeResponseFormat = responseFormat;
+                if (parsed && parsed.tool === 'search_products' && parsed.query) {
+                    console.log(`[AI] Tool Call: Searching products for "${parsed.query}"...`);
+                    const products = await dbService.searchProducts(pageConfig.user_id, parsed.query, pageConfig.page_id);
                     
-                    const completion = await openai.chat.completions.create({
+                    messages.push({ role: 'assistant', content: JSON.stringify(parsed) });
+                    
+                    const toolOutputContext = `[System] Search Results for "${parsed.query}": ${JSON.stringify(products)}. 
+INSTRUCTIONS:
+1. Use the search results above to answer the user's question in Bengali.
+2. If the product has an 'image_url', you MUST include it in the 'images' array of your JSON response.
+3. If no products were found, apologize and say you couldn't find it.
+4. Return ONLY a JSON object with 'reply' (string) and 'images' (array of strings).`;
+
+                    messages.push({ role: 'system', content: toolOutputContext });
+                    
+                    // Second call for tool result is considered a NEW call by AI, so it counts as another usage
+                    // getSmartKey will be called again by the engine flow if we were in a controller, 
+                    // but here we are inside generateReply. To be strict, we call getSmartKey again.
+                    const keyData2 = await keyService.getSmartKey(finalProvider, currentModel);
+                    const apiKey2 = keyData2?.key || apiKey;
+
+                    const openai2 = new OpenAI({ apiKey: apiKey2, baseURL: baseURL, timeout: 20000 });
+                    const completion2 = await openai2.chat.completions.create({
                         model: currentModel,
                         messages: messages,
-                        response_format: activeResponseFormat
+                        response_format: { type: "json_object" }
                     });
                     
-                    const rawContent = completion.choices[0].message.content || '';
-                    if (!rawContent || rawContent.trim() === '') {
-                        console.warn(`[AI] Empty content from ${currentModel}. Retrying...`);
-                        continue;
-                    }
-
-                    let tokenUsage = completion.usage ? completion.usage.total_tokens : 0;
-                    tokenUsage = estimateTokenUsage(messages, rawContent, tokenUsage);
-                    keyService.recordKeyUsage(apiKey, tokenUsage);
+                    const rawContent2 = completion2.choices[0].message.content || '';
+                    let tokenUsage2 = completion2.usage ? completion2.usage.total_tokens : 0;
+                    tokenUsage2 = estimateTokenUsage(messages, rawContent2, tokenUsage2);
+                    keyService.recordKeyUsage(apiKey2, tokenUsage2);
                     
-                    try {
-                        const parsed = extractJsonFromAiResponse(rawContent);
-                        
-                        if (parsed && parsed.tool === 'search_products' && parsed.query) {
-                            console.log(`[AI] Tool Call: Searching products for "${parsed.query}"...`);
-                            const products = await dbService.searchProducts(pageConfig.user_id, parsed.query, pageConfig.page_id);
-                            
-                            messages.push({ role: 'assistant', content: JSON.stringify(parsed) });
-                            
-                            const toolOutputContext = `[System] Search Results for "${parsed.query}": ${JSON.stringify(products)}. 
-    INSTRUCTIONS:
-    1. Use the search results above to answer the user's question in Bengali.
-    2. If the product has an 'image_url', you MUST include it in the 'images' array of your JSON response.
-    3. If no products were found, apologize and say you couldn't find it.
-    4. Return ONLY a JSON object with 'reply' (string) and 'images' (array of strings).`;
+                    const parsed2 = extractJsonFromAiResponse(rawContent2);
+                    if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text;
 
-                            messages.push({ role: 'system', content: toolOutputContext });
-                            
-                            const completion2 = await openai.chat.completions.create({
-                                model: currentModel,
-                                messages: messages,
-                                response_format: { type: "json_object" }
-                            });
-                            
-                            const rawContent2 = completion2.choices[0].message.content || '';
-                            let tokenUsage2 = completion2.usage ? completion2.usage.total_tokens : 0;
-                            tokenUsage2 = estimateTokenUsage(messages, rawContent2, tokenUsage2);
-                            keyService.recordKeyUsage(apiKey, tokenUsage2);
-                            
-                            const parsed2 = extractJsonFromAiResponse(rawContent2);
-                            if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text;
-
-                            if (!parsed2.reply && products.length > 0) {
-                                parsed2.reply = "আমি আপনার খোঁজা পণ্যগুলো পেয়েছি। নিচে দেখুন:"; 
-                            }
-
-                            // IMAGE INJECTION LOGIC (STRICT TAG-BASED ONLY)
-                            const mentionedImages = [];
-                            let replyText = parsed2.reply || "";
-                            
-                            // 1. Tag-Based Extraction (##PRODUCT "Name")
-                            // This is the ONLY way to trigger an image.
-                            const tagRegex = /##PRODUCT\s*["'](.+?)["']/gi;
-                            let tagMatch;
-                            while ((tagMatch = tagRegex.exec(replyText)) !== null) {
-                                const productName = tagMatch[1].toLowerCase();
-                                const product = products.find(p => p.name.toLowerCase() === productName);
-                                if (product && product.image_url && !mentionedImages.includes(product.image_url)) {
-                                    mentionedImages.push(product.image_url);
-                                }
-                            }
-
-                            // 2. Clean the Reply (Remove ##PRODUCT tags before sending to user)
-                            parsed2.reply = replyText.replace(tagRegex, '').trim();
-
-                            // 3. Final Image List
-                            parsed2.images = mentionedImages;
-                            
-                            return finalize({ ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: currentModel, foundProducts: products });
-                        }
-
-                        if (!parsed.reply) parsed.reply = parsed.response || parsed.text;
-                        return finalize({ ...parsed, model: currentModel, token_usage: tokenUsage + totalTokenUsage, foundProducts });
-                    } catch (e) {
-                        console.error('[AI] Logic/Tool Failed:', e);
-                        let cleanText = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-                        const extracted = extractImagesFromText(cleanText);
-                        cleanText = extractReplyFromText(extracted.text);
-                        return finalize({ 
-                            reply: cleanText, 
-                            sentiment: 'neutral', 
-                            model: currentModel, 
-                            token_usage: tokenUsage + totalTokenUsage, 
-                            foundProducts,
-                            images: extracted.images 
-                        });
+                    if (!parsed2.reply && products.length > 0) {
+                        parsed2.reply = "আমি আপনার খোঁজা পণ্যগুলো পেয়েছি। নিচে দেখুন:"; 
                     }
 
-                } catch (error) {
-                    console.warn(`[AI] Swarm Key Failed (${finalProvider}/${currentModel}):`, error.message);
-                    handleAiError(error, apiKey, currentModel);
+                    // IMAGE INJECTION LOGIC (STRICT TAG-BASED ONLY)
+                    const mentionedImages = [];
+                    let replyText = parsed2.reply || "";
+                    
+                    const tagRegex = /##PRODUCT\s*["'](.+?)["']/gi;
+                    let tagMatch;
+                    while ((tagMatch = tagRegex.exec(replyText)) !== null) {
+                        const productName = tagMatch[1].toLowerCase();
+                        const product = products.find(p => p.name.toLowerCase() === productName);
+                        if (product && product.image_url && !mentionedImages.includes(product.image_url)) {
+                            mentionedImages.push(product.image_url);
+                        }
+                    }
+
+                    parsed2.reply = replyText.replace(tagRegex, '').trim();
+                    parsed2.images = mentionedImages;
+                    
+                    return finalize({ ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: currentModel, foundProducts: products });
                 }
-            } catch (setupError) {
-                console.warn(`[AI] Swarm Setup Error:`, setupError.message);
+
+                if (!parsed.reply) parsed.reply = parsed.response || parsed.text;
+                return finalize({ ...parsed, model: currentModel, token_usage: tokenUsage + totalTokenUsage, foundProducts });
+            } catch (e) {
+                console.error('[AI] Logic/Tool Failed:', e);
+                let cleanText = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+                const extracted = extractImagesFromText(cleanText);
+                cleanText = extractReplyFromText(extracted.text);
+                return finalize({ 
+                    reply: cleanText, 
+                    sentiment: 'neutral', 
+                    model: currentModel, 
+                    token_usage: tokenUsage + totalTokenUsage, 
+                    foundProducts,
+                    images: extracted.images 
+                });
             }
+
+        } catch (error) {
+            console.error(`[AI] Call Failed (${finalProvider}/${currentModel}):`, error.message);
+            handleAiError(error, apiKey, currentModel);
+            return finalize({ 
+                reply: null, 
+                error: `AI Call Failed: ${error.message}`,
+                token_usage: 0,
+                model: currentModel
+            });
         }
+    } catch (setupError) {
+        console.error(`[AI] Setup Error:`, setupError.message);
+        return finalize({ reply: null, error: setupError.message, token_usage: 0, model: currentModel });
     }
+}
     
     console.error(`[AI] All SalesmanChatbot Engine attempts failed.`);
     return finalize(null);

@@ -318,50 +318,19 @@ function isKeyWithinLimits(keyData) {
     return true;
 }
 
-// Record Usage (Call this AFTER successful AI response)
+// Record Usage (Call this AFTER successful AI response to track tokens)
 async function recordKeyUsage(apiKey, tokenUsage = 0) {
     if (!apiKey) return;
-
-    const now = Date.now();
-    const today = new Date().toISOString().split('T')[0];
 
     const cachedKey = keyCacheMap.get(apiKey);
 
     if (cachedKey) {
         const usageKey = `${apiKey}:${cachedKey.model || 'default'}`;
-        keyUsageMap.set(usageKey, now);
-    } else {
-        keyUsageMap.set(apiKey, now);
-    }
+        keyUsageMap.set(usageKey, Date.now());
 
-    // 2. Update In-Memory Cache Object (Immediate Reflection for RPD/TPD)
-    if (cachedKey) {
-        // --- ATOMIC USAGE INCREMENT ---
-        // Increment usage count and today's usage ONLY on success
-        cachedKey.usage_count = (cachedKey.usage_count || 0) + 1;
-
-        if (cachedKey.last_date_checked === today) {
-            cachedKey.usage_today = (cachedKey.usage_today || 0) + 1;
-            cachedKey.usage_tokens_today = (cachedKey.usage_tokens_today || 0) + tokenUsage;
-        } else {
-            cachedKey.last_date_checked = today;
-            cachedKey.usage_today = 1;
-            cachedKey.usage_tokens_today = tokenUsage;
-        }
-        cachedKey.last_used_at = new Date().toISOString();
+        // Update token usage ONLY (Request count is now in getSmartKey)
+        cachedKey.usage_tokens_today = (cachedKey.usage_tokens_today || 0) + tokenUsage;
         
-        // --- MODEL-WIDE RPD INCREMENT ---
-        if (cachedKey.model) {
-            const daily = modelDailyUsage.get(cachedKey.model) || { date: today, count: 0 };
-            if (daily.date === today) {
-                daily.count++;
-            } else {
-                daily.date = today;
-                daily.count = 1;
-            }
-            modelDailyUsage.set(cachedKey.model, daily);
-        }
-
         // Mark for batch update to DB
         pendingUpdates.add(apiKey);
     }
@@ -527,8 +496,8 @@ async function getSmartKey(provider, model) {
 
         if (isKeyAlive(candidateKey.api) && isKeyWithinLimits(candidateKey)) {
             // --- ATOMIC TIMESTAMP RECORDING (RPM Check) ---
-            // Record timestamp IMMEDIATELY before returning to block concurrent requests
             const now = Date.now();
+            const today = new Date().toISOString().split('T')[0];
             
             // Per Key RPM
             const tsList = keyUsageTimestamps.get(candidateKey.api) || [];
@@ -542,8 +511,30 @@ async function getSmartKey(provider, model) {
                 modelUsageTimestamps.set(candidateKey.model, modelTs);
             }
 
-            // NOTE: usage_today and usage_count are now incremented ONLY in recordKeyUsage()
-            // to ensure 1 successful request = 1 usage count.
+            // --- USAGE COUNTING (Every Call Attempt) ---
+            // User Request: "jotobar ai call diba totobar countut hobe"
+            candidateKey.usage_count = (candidateKey.usage_count || 0) + 1;
+            if (candidateKey.last_date_checked === today) {
+                candidateKey.usage_today = (candidateKey.usage_today || 0) + 1;
+            } else {
+                candidateKey.last_date_checked = today;
+                candidateKey.usage_today = 1;
+            }
+            candidateKey.last_used_at = new Date().toISOString();
+
+            // --- MODEL-WIDE RPD INCREMENT ---
+            if (candidateKey.model) {
+                const daily = modelDailyUsage.get(candidateKey.model) || { date: today, count: 0 };
+                if (daily.date === today) {
+                    daily.count++;
+                } else {
+                    daily.date = today;
+                    daily.count = 1;
+                }
+                modelDailyUsage.set(candidateKey.model, daily);
+            }
+
+            pendingUpdates.add(candidateKey.api);
             
             modelIndexMap.set(mapKey, (currentIndex + 1) % validKeys.length);
 
