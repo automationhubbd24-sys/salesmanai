@@ -430,14 +430,39 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     const finalize = async (result) => {
         if (!result) return null;
         
-        // Log to API Usage Stats for Dashboard (O(1) in Background)
-        if (pageConfig.user_id && result.token_usage > 0) {
-            const cost = dbService.calculateCost(result.model, result.token_usage);
-            // Fire and forget (don't await to keep response fast)
-            dbService.logApiUsage(pageConfig.user_id, result.model, result.token_usage, cost);
+        // --- 1. Log to AI Usage Logs (ai_usage_logs table) ---
+        // This is the main log table for the dashboard.
+        // User request: "ai usagees logs null hoye ase"
+        try {
+            const logData = {
+                user_id: pageConfig.user_id,
+                page_id: pageConfig.page_id,
+                model: result.model || finalModel,
+                prompt_tokens: 0, // We usually have total_tokens in token_usage
+                completion_tokens: 0,
+                total_tokens: result.token_usage || 0,
+                cost: dbService.calculateCost(result.model || finalModel, result.token_usage || 0),
+                status: result.error ? 'error' : 'success',
+                error_message: result.error || null,
+                sender_name: senderName,
+                user_message: userMessage,
+                ai_reply: result.reply || null
+            };
+            
+            // Call dbService to log this. (Fire and forget)
+            dbService.logAiUsage && dbService.logAiUsage(logData);
+        } catch (err) {
+            console.warn("[AI] Failed to log to ai_usage_logs:", err.message);
         }
 
-        // --- NEW: Force Flush Key Stats to DB ---
+        // --- 2. Log to API Usage Stats (api_usage_stats table) ---
+        if (pageConfig.user_id && result.token_usage > 0) {
+            const cost = dbService.calculateCost(result.model || finalModel, result.token_usage);
+            // Fire and forget (don't await to keep response fast)
+            dbService.logApiUsage(pageConfig.user_id, result.model || finalModel, result.token_usage, cost);
+        }
+
+        // --- 3. Force Flush Key Stats to DB ---
         // Since getSmartKey increments usage_today in memory, we must ensure it is saved
         // so the dashboard (Active Rotation Pool) can show it immediately after refresh.
         if (keyService.flushUsageStats) {
@@ -1091,7 +1116,17 @@ INSTRUCTIONS:
 
     // 2. Resolve Engine Config (Global Provider Config)
     // User Request: Fetch models from Global Engine Config based on provider
-    const targetProvider = defaultProvider || 'salesmanchatbot';
+    let targetProvider = defaultProvider || 'salesmanchatbot';
+    
+    // Map internal 'salesmanchatbot' provider to 'google' for config lookup
+    // unless the user has specifically created a 'salesmanchatbot' config entry.
+    if (targetProvider === 'salesmanchatbot') {
+        const hasCustomConfig = await getGlobalEngineConfig('salesmanchatbot');
+        if (!hasCustomConfig) {
+            targetProvider = 'google';
+        }
+    }
+
     let engineTextModel = defaultModel || 'salesmanchatbot-pro';
     let engineVisionModel = defaultModel || 'salesmanchatbot-pro';
     let engineVoiceModel = defaultModel || 'salesmanchatbot-pro';

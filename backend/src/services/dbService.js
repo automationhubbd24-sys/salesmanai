@@ -1498,6 +1498,35 @@ async function getActiveWhatsAppSessions() {
 }
 
 // 25. Log API Usage (Unified API)
+async function logAiUsage(data) {
+    if (!data.user_id) return;
+
+    try {
+        await query(
+            `INSERT INTO ai_usage_logs 
+                (user_id, page_id, model, prompt_tokens, completion_tokens, total_tokens, cost, status, error_message, sender_name, user_message, ai_reply)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+            [
+                data.user_id,
+                data.page_id,
+                data.model,
+                data.prompt_tokens || 0,
+                data.completion_tokens || 0,
+                data.total_tokens || 0,
+                data.cost || 0,
+                data.status || 'success',
+                data.error_message || null,
+                data.sender_name || 'Unknown',
+                data.user_message || null,
+                data.ai_reply || null
+            ]
+        );
+    } catch (error) {
+        console.warn("[DB] Failed to log to ai_usage_logs:", error.message);
+    }
+}
+
+// 25. Log API Usage Stats (Simplified)
 async function logApiUsage(userId, model, tokens, cost = 0) {
     if (!userId) return;
 
@@ -1514,7 +1543,7 @@ async function logApiUsage(userId, model, tokens, cost = 0) {
         );
         // console.log(`[DB] Logged Usage: ${userId.substring(0,8)}... | ${model} | ${t} tokens | ${c} BDT`);
     } catch (error) {
-        console.warn("[DB] Failed to log API usage:", error.message);
+        console.warn("[DB] Failed to log API usage stats:", error.message);
         // Fallback: If FK fails (user not in users table yet), we might want to log it to error_logs
         logError(error, 'logApiUsage', { userId, model, tokens, cost });
     }
@@ -1583,6 +1612,7 @@ module.exports = {
     addApiKey,
     deleteApiKey,
     logApiUsage,
+    logAiUsage,
     calculateCost,
     getPageConfig,
     getPagePrompts,
