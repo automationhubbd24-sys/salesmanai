@@ -268,21 +268,19 @@ async function queueMessage(event) {
     }
 
     // 2. Handle Attachments (Images & Stickers)
+    let hasSticker = false;
     if (event.message?.attachments) {
-        // FIX: Removed event.message.sticker_id check to allow Screenshots/Images that might trigger false positives
-        // UPDATE: Also removing att.payload.sticker_id check to ensure NO product images are missed. 
-        // If a sticker is analyzed, AI will just describe it, which is better than missing a product.
+        // DETECT STICKERS: Facebook sends stickers as images but with a sticker_id
+        hasSticker = event.message.attachments.some(att => att.payload && att.payload.sticker_id);
         
         const imageUrls = event.message.attachments
-            .filter(att => att.type === 'image')
+            .filter(att => att.type === 'image' && !att.payload.sticker_id) // ONLY real images (no stickers)
             .map(att => att.payload.url);
         
         if (imageUrls.length > 0) {
             console.log(`[Webhook] Image URLs Queued: ${imageUrls.length}`);
-            // We just store the URLs now, analysis happens in processBufferedMessages
         }
 
-        
         // 3. Handle Audio (Voice Messages) - DEFERRED PROCESSING
         const audioUrls = event.message.attachments
             .filter(att => att.type === 'audio')
@@ -301,27 +299,17 @@ async function queueMessage(event) {
 
     if (!messageText && !event.message?.attachments) return; // Ignore if empty and no attachments
 
-    // Check Duplicate immediately to avoid processing same message twice
-    // NOTE: Disabled for Facebook Messenger as it handles real-time delivery well.
-    // Kept commented out in case needed for debugging later.
-    /*
-    const isDuplicate = await dbService.checkDuplicate(messageId);
-    if (isDuplicate) {
-        console.log(`Duplicate message ${messageId} ignored.`);
-        return;
-    }
-    */
-
     const replyToId = event.message?.reply_to?.mid || null;
 
     // --- SAVE USER MESSAGE TO fb_chats (Immediate - Raw) ---
     try {
+        let rawLogText = messageText || (hasSticker ? '[Sticker]' : '[Media Message]');
         await dbService.saveFbChat({
             page_id: pageId,
             sender_id: senderId,
             recipient_id: pageId,
             message_id: messageId,
-            text: messageText || '[Media Message]', // Placeholder if text is empty
+            text: rawLogText, 
             timestamp: Date.now(),
             status: 'received',
             reply_by: 'user'
@@ -340,16 +328,9 @@ async function queueMessage(event) {
 
     const sessionData = debounceMap.get(sessionId);
     
-    // Extract URLs for this specific message (EXCLUDING STICKERS)
-    // FIX: Removed event.message.sticker_id check to allow Screenshots/Images that might trigger false positives
-    // UPDATE: Also removing att.payload.sticker_id check to ensure NO product images are missed. 
-    // If a sticker is analyzed, AI will just describe it, which is better than missing a product.
-    if (event.message?.attachments) {
-        console.log(`[Webhook] Raw Attachments for ${sessionId}:`, JSON.stringify(event.message.attachments.map(a => ({ type: a.type, sticker_id: a.payload?.sticker_id, url: a.payload?.url?.substring(0, 30) }))));
-    }
-
+    // Extract URLs for this specific message (STRICTLY EXCLUDING STICKERS)
     const thisMsgImages = event.message?.attachments?.filter(att => 
-        att.type === 'image'
+        att.type === 'image' && !att.payload?.sticker_id
     ).map(att => att.payload.url) || [];
     
     const thisMsgAudios = event.message?.attachments?.filter(att => 
@@ -364,8 +345,9 @@ async function queueMessage(event) {
         reply_to: replyToId,
         images: thisMsgImages,
         audios: thisMsgAudios,
+        isSticker: hasSticker, // Mark if this specific message was a sticker
         isPostback: !!event.postback,
-        referral: referralData // Pass referral data to buffer
+        referral: referralData 
     });
 
     console.log(`Queued message for ${sessionId}. Buffer size: ${sessionData.messages.length}`);
@@ -417,8 +399,23 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             replyToId = workflowResult.replyToId || null;
             allImages = workflowResult.allImages || [];
             allAudios = workflowResult.allAudios || [];
-            hasPostback = workflowResult.hasPostback || false;
-            adContext = workflowResult.adContext || "";
+        hasPostback = workflowResult.hasPostback || false;
+        adContext = workflowResult.adContext || "";
+
+        const allStickers = messages.filter(m => m.isSticker);
+        const hasOnlyStickers = allStickers.length > 0 && 
+                                allStickers.length === messages.length && 
+                                !combinedText.trim() && 
+                                allImages.length === 0 && 
+                                allAudios.length === 0;
+        
+        // --- STICKER GATEKEEPER ---
+        if (hasOnlyStickers) {
+            const logMsg = `[Sticker Gatekeeper] Blocked sticker-only message for ${sessionId}.`;
+            console.log(logMsg);
+            logToFile(logMsg);
+            return;
+        }
         } catch (wfError) {
             console.error(`[Workflow Error] Failed to run messenger workflow: ${wfError.message}`);
             dbService.logError(wfError, 'Webhook Controller - Workflow Execution', { pageId, senderId, messages: messages.length });
