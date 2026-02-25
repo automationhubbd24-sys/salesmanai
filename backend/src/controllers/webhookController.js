@@ -196,12 +196,18 @@ const verifyWebhook = (req, res) => {
 
 // Queue Message for Debounce
 async function queueMessage(event) {
+    // --- DEBUG: Log Incoming Event to see why echoes fail ---
+    if (event.message && event.message.is_echo) {
+        console.log(`[Echo Debug] RAW PAYLOAD:`, JSON.stringify(event));
+    }
+
     // --- ECHO HANDLING (Admin Replies & Bot Confirmations) ---
     if (event.message && (event.message.is_echo || event.sender.id === event.recipient.id)) {
         // --- SMART ECHO FILTER ---
-        // If app_id exists, it's a BOT Echo. Skip it (bot already saved its reply in its flow).
-        // If app_id is missing, it's an ADMIN Echo from Inbox. Save it.
+        // If app_id exists AND it matches our bot, it's a BOT Echo. Skip it.
+        // If app_id is missing or doesn't match, it's an ADMIN Echo from Inbox.
         if (event.message.app_id) {
+            console.log(`[Echo Debug] Bot App ID Detected: ${event.message.app_id}. Skipping...`);
             return; 
         }
 
@@ -213,7 +219,6 @@ async function queueMessage(event) {
         console.log(`[Echo] Admin Message Detected for User: ${recipientId} on Page: ${pageId}. Text: ${text.substring(0, 20)}...`);
 
         // Save to fb_chats (Upsert handles duplicates)
-        // This ensures Admin replies from Inbox are saved immediately.
         try {
             await dbService.saveFbChat({
                 page_id: pageId,
@@ -231,7 +236,6 @@ async function queueMessage(event) {
             await dbService.saveChatMessage(sessionId, 'assistant', text, messageId);
 
             // --- PERMANENT HANDOVER LOGIC (Admin Action) ---
-            // Process AFTER saving to ensure sequential logic
             const pagePrompts = await dbService.getPagePrompts(pageId);
             if (pagePrompts && text) {
                 const blockEmoji = pagePrompts.block_emoji;
@@ -249,7 +253,7 @@ async function queueMessage(event) {
             console.error(`[Echo] Error processing admin reply:`, err.message);
         }
 
-        return; // STOP Processing (Don't trigger AI for echoes)
+        return; // STOP Processing
     }
     // ---------------------------------------------------------
 
