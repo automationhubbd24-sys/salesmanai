@@ -1723,57 +1723,56 @@ Rules:
         }
     }
 
-    // ATTEMPT 3: OpenRouter (Qwen 2.5 VL - Free)
-    // ONLY for Free Users
-    if (pageConfig.cheap_engine !== false) {
-        try {
-            const provider = 'openrouter';
-            const model = 'qwen/qwen-2.5-vl-7b-instruct:free';
-            console.log(`[Vision] Attempt 3: ${model} (${provider})`);
+    // ATTEMPT 3: OpenRouter Vision (Dynamically from Config)
+    try {
+        const provider = 'openrouter';
+        // User Update: Use the vision model from pageConfig (set via Admin API Engine)
+        const model = pageConfig.vision_model || pageConfig.chat_model || 'qwen/qwen-2.5-vl-7b-instruct:free';
+        
+        console.log(`[Vision] Attempt 3: ${model} (${provider})`);
 
-            let keyData = await keyService.getSmartKey(provider, model);
-            if (!keyData || !keyData.key) keyData = await keyService.getSmartKey(provider, 'default');
-            if (!keyData || !keyData.key) throw new Error("No Key found for OpenRouter");
+        let keyData = await keyService.getSmartKey(provider, model);
+        if (!keyData || !keyData.key) keyData = await keyService.getSmartKey(provider, 'default');
+        if (!keyData || !keyData.key) throw new Error("No Key found for OpenRouter");
 
-            const apiKey = keyData.key;
-            
-            // Use URL if available (Prefer URL for OpenRouter)
-            const imageContent = (!imageUrl.startsWith('data:')) 
-                ? { url: imageUrl }
-                : { url: `data:${mimeType};base64,${base64Image}` }; // Use base64 if it was a data URI
+        const apiKey = keyData.key;
+        
+        // Use URL if available (Prefer URL for OpenRouter)
+        const imageContent = (!imageUrl.startsWith('data:')) 
+            ? { url: imageUrl }
+            : { url: `data:${mimeType};base64,${base64Image}` }; // Use base64 if it was a data URI
 
-            const payload = {
-                model: model,
-                messages: [
-                    { role: "system", content: systemPrompt },
-                    {
-                        role: "user",
-                        content: [{ type: "image_url", image_url: imageContent }]
-                    }
-                ]
-            };
-
-            const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', payload, {
-                headers: { 
-                    'Authorization': `Bearer ${apiKey}`,
-                    'Content-Type': 'application/json',
-                    'HTTP-Referer': 'https://orderly-conversations.com', 
-                    'X-Title': 'Orderly Conversations'
+        const payload = {
+            model: model,
+            messages: [
+                { role: "system", content: systemPrompt },
+                {
+                    role: "user",
+                    content: [{ type: "image_url", image_url: imageContent }]
                 }
-            });
+            ]
+        };
 
-            const result = response.data?.choices?.[0]?.message?.content;
-            const usage = response.data?.usage?.total_tokens || 0;
-            if (!result) throw new Error("Empty response from OpenRouter");
+        const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', payload, {
+            headers: { 
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+                'HTTP-Referer': 'https://orderly-conversations.com', 
+                'X-Title': 'Orderly Conversations'
+            }
+        });
 
-            logDebug(`[Vision] Success with ${model}: ${result.substring(0, 30)}... Usage: ${usage}`);
-            return { text: result, usage: usage };
+        const result = response.data?.choices?.[0]?.message?.content;
+        const usage = response.data?.usage?.total_tokens || 0;
+        if (!result) throw new Error("Empty response from OpenRouter");
 
-        } catch (error) {
-            const errMsg = error.response?.data?.error?.message || error.message;
-            console.warn(`[Vision] Attempt 3 (${'qwen/qwen-2.5-vl-7b-instruct:free'}) Failed: ${errMsg}`);
-            errors.push(`OpenRouter Qwen: ${errMsg}`);
-        }
+        logDebug(`[Vision] Success with ${model}: ${result.substring(0, 30)}... Usage: ${usage}`);
+        return { text: result, usage: usage };
+
+    } catch (error) {
+        const errMsg = error.response?.data?.error?.message || error.message;
+        console.warn(`[Vision] Attempt 3 Failed: ${errMsg}`);
+        errors.push(`OpenRouter Vision: ${errMsg}`);
     }
 
     // FINAL FAILURE LOGGING
