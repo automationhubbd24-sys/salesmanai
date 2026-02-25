@@ -485,6 +485,20 @@ async function checkN8nDebounce(key) {
     }
 }
 
+async function getFbChatById(messageId) {
+    if (!messageId) return null;
+    try {
+        const result = await query(
+            'SELECT * FROM fb_chats WHERE message_id = $1 LIMIT 1',
+            [messageId]
+        );
+        return result.rows.length > 0 ? result.rows[0] : null;
+    } catch (error) {
+        console.error("Error in getFbChatById:", error);
+        return null;
+    }
+}
+
 async function getMessageById(messageId) {
     if (!messageId) return null;
     
@@ -1693,6 +1707,7 @@ module.exports = {
     checkN8nDebounce,
     saveFbComment,
     logMessage,
+    getFbChatById,
     getMessageById,
     saveOrderTracking,
     checkLockStatus,

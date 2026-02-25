@@ -1073,6 +1073,11 @@ INSTRUCTIONS:
                                 
                                 const parsed2 = extractJsonFromAiResponse(rawContent2);
                                 
+                                // NULL CHECK
+                                if (!parsed2) {
+                                     throw new Error("AI returned an unparseable response after tool execution.");
+                                }
+
                                 // STRICT MODE: Do not fallback to 'response' or 'text'
                                 // if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text;
                                 
@@ -1114,7 +1119,7 @@ INSTRUCTIONS:
                         }
                         // -------------------------------------
 
-                        if (!parsed.reply) parsed.reply = parsed.response || parsed.text;
+                        if (parsed && !parsed.reply) parsed.reply = parsed.response || parsed.text;
                         return finalize({ ...parsed, token_usage: tokenUsage + totalTokenUsage, model: modelToUse, foundProducts });
                     } catch (e) {
                         console.error('[AI] Phase 1 Logic Failed:', e);
