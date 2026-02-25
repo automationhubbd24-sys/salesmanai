@@ -650,9 +650,34 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                      const keywordsDisplay = p.keywords ? p.keywords.replace(/\n/g, ' ') : 'N/A';
                      const comboDisplay = p.is_combo ? ` | [COMBO PRODUCT] (Hidden Contents - DO NOT DISCLOSE UNLESS ASKED): ${Array.isArray(p.combo_items) ? p.combo_items.join(", ") : p.combo_items}` : "";
                      
+                     // Helper to normalize images
+                     const normalizeUrl = (url) => {
+                        if (!url || url === 'N/A') return 'N/A';
+                        if (url.startsWith('http')) return url;
+                        const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
+                        const cleanPath = url.startsWith('/') ? url : `/${url}`;
+                        return `${baseUrl}${cleanPath}`;
+                     };
+
+                     const imgDisplay = normalizeUrl(p.image_url);
+                     
+                     // Process additional images
+                     let additionalImgs = [];
+                     try {
+                        if (p.additional_images) {
+                            additionalImgs = typeof p.additional_images === 'string' 
+                                ? JSON.parse(p.additional_images) 
+                                : p.additional_images;
+                        }
+                     } catch (e) {}
+                     
+                     const additionalImgsDisplay = Array.isArray(additionalImgs) && additionalImgs.length > 0
+                        ? additionalImgs.map(normalizeUrl).join(', ')
+                        : 'None';
+                     
                      // Format: ##product "name" | Price: ... | Stock: ... | Image: ...
                      // Re-added Price per user feedback about "irrelevant prices" (AI needs to know the REAL price to answer correctly)
-                     productContext += `##product "${p.name}" | Price: ${priceDisplay} | Stock: ${stockDisplay} | Image: ${imgDisplay} | Desc: ${descDisplay} | Keywords: ${keywordsDisplay}${variantInfo}${comboDisplay}\n`;
+                     productContext += `##product "${p.name}" | Price: ${priceDisplay} | Stock: ${stockDisplay} | Main Image: ${imgDisplay} | Additional Images: ${additionalImgsDisplay} | Desc: ${descDisplay} | Keywords: ${keywordsDisplay}${variantInfo}${comboDisplay}\n`;
                  });
                  productContext += "[End of Products]\n";
                  console.log(`[AI] Injected ${products.length} products into context.`);
@@ -1322,8 +1347,40 @@ INSTRUCTIONS:
                     while ((tagMatch = tagRegex.exec(replyText)) !== null) {
                         const productName = tagMatch[1].toLowerCase();
                         const product = products.find(p => p.name.toLowerCase() === productName);
-                        if (product && product.image_url && !mentionedImages.includes(product.image_url)) {
-                            mentionedImages.push(product.image_url);
+                        
+                        if (product) {
+                            // Helper to normalize URL (same as above)
+                            const normalizeUrl = (url) => {
+                                if (!url || url === 'N/A') return null;
+                                if (url.startsWith('http')) return url;
+                                const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
+                                const cleanPath = url.startsWith('/') ? url : `/${url}`;
+                                return `${baseUrl}${cleanPath}`;
+                            };
+
+                            // 1. Add Main Image
+                            const mainImg = normalizeUrl(product.image_url);
+                            if (mainImg && !mentionedImages.includes(mainImg)) {
+                                mentionedImages.push(mainImg);
+                            }
+
+                            // 2. Add Additional Images
+                            try {
+                                let additionalImgs = [];
+                                if (product.additional_images) {
+                                    additionalImgs = typeof product.additional_images === 'string' 
+                                        ? JSON.parse(product.additional_images) 
+                                        : product.additional_images;
+                                }
+                                if (Array.isArray(additionalImgs)) {
+                                    additionalImgs.forEach(img => {
+                                        const norm = normalizeUrl(img);
+                                        if (norm && !mentionedImages.includes(norm)) {
+                                            mentionedImages.push(norm);
+                                        }
+                                    });
+                                }
+                            } catch (e) {}
                         }
                     }
 
