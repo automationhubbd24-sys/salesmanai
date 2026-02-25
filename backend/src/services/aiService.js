@@ -500,21 +500,12 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     if (audioUrls && audioUrls.length > 0) {
         console.log(`[AI] Processing ${audioUrls.length} audio files...`);
         const audioResults = await Promise.all(audioUrls.map(async url => {
-            // User Override: Force Groq Whisper-Large-V3 for voice transcription even if provider is OpenRouter.
-            // "openrouter er modde provider ovverride kore whisper-large-v3 eta use korbone"
-            // We pass a modified config just for this call.
-            const voiceConfig = { ...pageConfig };
+            // User Request: "automatic na ami ovveride korle work korbe"
+            // Solution: REMOVED automatic Groq override.
+            // It will now strictly follow what is in pageConfig (which comes from frontend).
+            // If frontend says 'openrouter', it will try openrouter. If frontend says 'groq', it will use groq.
             
-            // If user is using OpenRouter (which lacks free/good voice models), switch to Groq Whisper.
-            // Also apply if provider is generic/unknown to be safe.
-            const currentProvider = pageConfig.ai || pageConfig.operator || 'google';
-            if (currentProvider === 'openrouter' || currentProvider === 'salesmanchatbot') {
-                console.log("[AI] Voice Override: Switching to Groq Whisper-Large-V3 for transcription.");
-                voiceConfig.ai = 'groq';
-                // We don't need to set model because transcribeAudio defaults to whisper-large-v3 for Groq
-            }
-
-            const res = await transcribeAudio(url, voiceConfig);
+            const res = await transcribeAudio(url, pageConfig);
             if (typeof res === 'object') {
                 totalTokenUsage += (res.usage || 0);
                 return res.text;
