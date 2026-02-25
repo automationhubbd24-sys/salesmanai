@@ -321,8 +321,8 @@ export default function MessengerIntegrationPage() {
                     // Define Field Sets
                     // 'messaging_referrals' requires special permission, 'feed' requires pages_manage_posts
                     // REMOVED 'changes' as it causes (#100) Param subscribed_fields error
-                    const allFields = ['messages', 'messaging_postbacks', 'message_deliveries', 'message_reads', 'messaging_optins', 'messaging_referrals', 'feed', 'standby'];
-                    const basicFields = ['messages', 'messaging_postbacks', 'message_deliveries', 'message_reads'];
+                    const allFields = ['messages', 'messaging_postbacks', 'message_deliveries', 'message_reads', 'messaging_optins', 'messaging_referrals', 'feed', 'standby', 'message_echoes'];
+                    const basicFields = ['messages', 'messaging_postbacks', 'message_deliveries', 'message_reads', 'message_echoes'];
 
                     // Attempt 1: Try ALL Fields
                     let subResult: any = await subscribeAppToPage(page.id, page.access_token, allFields);
