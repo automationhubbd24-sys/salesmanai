@@ -1462,12 +1462,13 @@ Rules:
 
         if (pageConfig.cheap_engine === false) {
              // Paid User: STRICTLY use configured model.
-             const userModel = pageConfig.chat_model || pageConfig.chatmodel;
+             // User Request: Use specific models for specific tasks if available.
+             const userModel = pageConfig.vision_model || pageConfig.chat_model || pageConfig.chatmodel;
              
              if (userModel) {
                  model = userModel;
              } else {
-                 return { text: "Error: No Chat Model selected in configuration for Own API.", usage: 0 };
+                 return { text: "Error: No Vision/Chat Model selected in configuration for Own API.", usage: 0 };
              }
 
              if (pageConfig.api_key) {
@@ -1475,7 +1476,7 @@ Rules:
                  if (userKeys.length > 0) apiKey = userKeys[0];
              }
 
-             // Detect Provider from Key
+             // Detect Provider from Key or Config
              if (apiKey) {
                  if (apiKey.startsWith('sk-or-v1')) provider = 'openrouter';
                  else if (apiKey.startsWith('AIza')) provider = 'google';
@@ -1487,8 +1488,8 @@ Rules:
              }
 
         } else {
-             // Free User: Default to 1.5-flash or configured Gemini
-             const userModel = pageConfig.chat_model || pageConfig.chatmodel;
+             // Free User: Default to configured Vision Model or Chat Model
+             const userModel = pageConfig.vision_model || pageConfig.chat_model || pageConfig.chatmodel;
              // Fix: Use stable model names for Google Vision
              model = (userModel && userModel.includes('gemini')) ? userModel : 'gemini-1.5-flash-latest';
              
@@ -1759,10 +1760,28 @@ async function transcribeAudio(audioUrl, config) {
     // ONLY add system keys if NO User Key was provided.
     // User Requirement: "own api er modde defualt chatmodel defualt api asob kisui use kora jabe na"
     if (!userKey) {
-        priorityChain.push(
-            { provider: 'google', model: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash' }, // 2.0 is reliable for Audio
-            { provider: 'groq', model: 'whisper-large-v3', name: 'Groq Whisper V3' }
-        );
+        // User Update: Use configured voice model if available
+        const voiceModel = config.voice_model || config.audio_model;
+        
+        if (voiceModel) {
+             console.log(`[Audio] Using Configured Voice Model: ${voiceModel}`);
+             // Add logic to determine provider from model name or config
+             let provider = 'google'; // Default
+             if (voiceModel.includes('whisper')) provider = 'groq';
+             else if (voiceModel.includes('gemini')) provider = 'google';
+             else if (voiceModel.includes('openai')) provider = 'openai';
+             
+             // If user explicitly set a provider for voice (e.g. via separate field if exists, or global ai_provider)
+             if (config.ai === 'groq' || config.ai_provider === 'groq') provider = 'groq';
+             
+             priorityChain.push({ provider, model: voiceModel, name: `Configured (${voiceModel})` });
+        } else {
+             // Fallback if NO voice model configured (but we shouldn't really reach here if frontend is set up right)
+             priorityChain.push(
+                { provider: 'google', model: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash' }, // 2.0 is reliable for Audio
+                { provider: 'groq', model: 'whisper-large-v3', name: 'Groq Whisper V3' }
+             );
+        }
     }
 
     for (const option of priorityChain) {
@@ -1782,7 +1801,9 @@ async function transcribeAudio(audioUrl, config) {
             // OPENAI WHISPER API (User Key)
             if (option.provider === 'openai') {
                 const formData = new FormData();
-                formData.append('file', audioBuffer, { filename: `audio.${mimeType.split('/')[1]}`, contentType: mimeType });
+                const bufferStream = new (require('stream').PassThrough)();
+                bufferStream.end(audioBuffer);
+                formData.append('file', bufferStream, { filename: `audio.${mimeType.split('/')[1] || 'mp3'}`, contentType: mimeType });
                 formData.append('model', 'whisper-1');
 
                 const res = await axios.post('https://api.openai.com/v1/audio/transcriptions', formData, {
@@ -1801,8 +1822,8 @@ async function transcribeAudio(audioUrl, config) {
 
             // GEMINI DIRECT API
             if (option.provider === 'google') {
-                const baseUrl = 'https://generativelanguage.googleapis.com/v1beta';
-                const url = `${baseUrl}/models/${option.model}:generateContent?key=${apiKey}`;
+                const baseUrl = 'https://generativelanguage.googleapis.com/v1beta/models';
+                const url = `${baseUrl}/${option.model}:generateContent?key=${apiKey}`;
                 
                 const payload = {
                     contents: [{
@@ -1827,8 +1848,10 @@ async function transcribeAudio(audioUrl, config) {
             // GROQ WHISPER API (Fastest)
             if (option.provider === 'groq') {
                 const formData = new FormData();
-                formData.append('file', audioBuffer, { filename: `audio.${mimeType.split('/')[1]}`, contentType: mimeType });
-                formData.append('model', 'whisper-large-v3');
+                const bufferStream = new (require('stream').PassThrough)();
+                bufferStream.end(audioBuffer);
+                formData.append('file', bufferStream, { filename: `audio.${mimeType.split('/')[1] || 'mp3'}`, contentType: mimeType });
+                formData.append('model', 'whisper-large-v3'); // Groq supports this model ID
                 // formData.append('language', 'bn'); // Let it auto-detect for Banglish support
                 formData.append('temperature', '0');
 
@@ -1839,7 +1862,7 @@ async function transcribeAudio(audioUrl, config) {
                     }
                 });
 
-                const text = res.data?.text;
+                const text = res.data.text;
                 if (text) {
                     console.log(`[Audio] Success with ${option.name}: "${text.substring(0, 30)}..."`);
                     return { text: text.trim(), usage: 0 }; // Whisper is cheap/free on Groq usually
