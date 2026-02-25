@@ -258,9 +258,10 @@ function isKeyAlive(key) {
 }
 
 // 4. Rate Limit Verification (STRICT MODE)
-function isKeyWithinLimits(keyData) {
+function isKeyWithinLimits(keyData, requestedModel = null) {
     // Check if the entire model is locked (due to repeated 429s)
-    if (isModelLocked(keyData.model)) {
+    const modelToCheck = requestedModel || keyData.model;
+    if (isModelLocked(modelToCheck)) {
         return false;
     }
 
@@ -294,19 +295,20 @@ function isKeyWithinLimits(keyData) {
     }
 
     // --- 2. MODEL-LEVEL LIMITS (STRICT) ---
-    if (keyData.model) {
-        const manual = dynamicLimits.get(keyData.model);
+    // Check limits for the requested model (e.g. from Global Config)
+    if (modelToCheck) {
+        const manual = dynamicLimits.get(modelToCheck);
         if (manual) {
             // Strict Model RPD
             if (manual.rpd) {
-                const daily = modelDailyUsage.get(keyData.model) || { date: today, count: 0 };
+                const daily = modelDailyUsage.get(modelToCheck) || { date: today, count: 0 };
                 if (daily.date === today && daily.count >= manual.rpd) {
                     return false;
                 }
             }
             // Strict Model RPM
             if (manual.rpm) {
-                const mTimestamps = modelUsageTimestamps.get(keyData.model) || [];
+                const mTimestamps = modelUsageTimestamps.get(modelToCheck) || [];
                 const mValid = mTimestamps.filter(ts => ts > oneMinuteAgo);
                 if (mValid.length >= manual.rpm) {
                     return false;
@@ -502,7 +504,7 @@ async function getSmartKey(provider, model) {
     for (let i = 0; i < validKeys.length; i++) {
         const candidateKey = validKeys[currentIndex];
 
-        if (isKeyAlive(candidateKey.api) && isKeyWithinLimits(candidateKey)) {
+        if (isKeyAlive(candidateKey.api) && isKeyWithinLimits(candidateKey, model)) {
             // --- ATOMIC TIMESTAMP RECORDING (RPM Check) ---
             const now = Date.now();
             const today = new Date().toISOString().split('T')[0];
@@ -513,10 +515,11 @@ async function getSmartKey(provider, model) {
             keyUsageTimestamps.set(candidateKey.api, tsList);
 
             // Per Model RPM (Global)
-            if (candidateKey.model) {
-                const modelTs = modelUsageTimestamps.get(candidateKey.model) || [];
+            const modelToIncrement = model || candidateKey.model;
+            if (modelToIncrement) {
+                const modelTs = modelUsageTimestamps.get(modelToIncrement) || [];
                 modelTs.push(now);
-                modelUsageTimestamps.set(candidateKey.model, modelTs);
+                modelUsageTimestamps.set(modelToIncrement, modelTs);
             }
 
             // --- USAGE COUNTING (Every Call Attempt) ---
@@ -531,15 +534,15 @@ async function getSmartKey(provider, model) {
             candidateKey.last_used_at = new Date().toISOString();
 
             // --- MODEL-WIDE RPD INCREMENT ---
-            if (candidateKey.model) {
-                const daily = modelDailyUsage.get(candidateKey.model) || { date: today, count: 0 };
+            if (modelToIncrement) {
+                const daily = modelDailyUsage.get(modelToIncrement) || { date: today, count: 0 };
                 if (daily.date === today) {
                     daily.count++;
                 } else {
                     daily.date = today;
                     daily.count = 1;
                 }
-                modelDailyUsage.set(candidateKey.model, daily);
+                modelDailyUsage.set(modelToIncrement, daily);
             }
 
             pendingUpdates.add(candidateKey.api);
@@ -629,7 +632,6 @@ module.exports = {
         return keys.slice(0, limit).map(k => ({
             id: k.id,
             provider: k.provider,
-            model: k.model,
             api: k.api.substring(0, 12) + '***', // Mask key for safety
             status: k.status,
             usage_today: k.usage_today,

@@ -1830,7 +1830,6 @@ export default function AdminPage() {
                   <TableHeader className="bg-muted/50">
                     <TableRow>
                       <TableHead>Provider</TableHead>
-                      <TableHead>Model</TableHead>
                       <TableHead>Key (Preview)</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Usage (Today)</TableHead>
@@ -1841,9 +1840,6 @@ export default function AdminPage() {
                     {engineKeys.map((k) => (
                       <TableRow key={k.id}>
                         <TableCell className="capitalize font-medium">{k.provider}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="font-mono text-xs">{k.model || 'default'}</Badge>
-                        </TableCell>
                         <TableCell className="font-mono text-xs text-muted-foreground">
                           {k.api.substring(0, 8)}...{k.api.substring(k.api.length - 4)}
                         </TableCell>
