@@ -1202,10 +1202,13 @@ INSTRUCTIONS:
                     messages.push({ role: 'system', content: toolOutputContext });
                     
                     // Second call for tool result is considered a NEW call by AI, so it counts as another usage
-                    // getSmartKey will be called again by the engine flow if we were in a controller, 
-                    // but here we are inside generateReply. To be strict, we call getSmartKey again.
+                    // To be strict, we call getSmartKey again. If no keys left (limit hit), we fail.
                     const keyData2 = await keyService.getSmartKey(finalProvider, currentModel);
-                    const apiKey2 = keyData2?.key || apiKey;
+                    if (!keyData2 || !keyData2.key) {
+                        console.warn(`[AI] Tool Re-generation Failed: No valid keys available after first call.`);
+                        throw new Error("API Limit reached during tool processing.");
+                    }
+                    const apiKey2 = keyData2.key;
 
                     const openai2 = new OpenAI({ apiKey: apiKey2, baseURL: baseURL, timeout: 20000 });
                     const completion2 = await openai2.chat.completions.create({

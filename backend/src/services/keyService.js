@@ -275,7 +275,7 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
 
     // Check RPD (Requests Per Day)
     if (keyData.last_date_checked === today && (keyData.usage_today || 0) >= rpdLimit) {
-        // console.log(`[KeyService] Key ${keyData.api.substring(0,8)}... hit RPD limit (${rpdLimit})`);
+        console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPD limit (${rpdLimit})`);
         return false;
     }
 
@@ -290,7 +290,7 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
     }
 
     if (validTimestamps.length >= rpmLimit) {
-        // console.log(`[KeyService] Key ${keyData.api.substring(0,8)}... hit RPM limit (${rpmLimit})`);
+        console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPM limit (${rpmLimit})`);
         return false;
     }
 
@@ -303,6 +303,7 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
             if (manual.rpd) {
                 const daily = modelDailyUsage.get(modelToCheck) || { date: today, count: 0 };
                 if (daily.date === today && daily.count >= manual.rpd) {
+                    console.warn(`[KeyService] ⛔ Model ${modelToCheck} hit GLOBAL RPD limit (${manual.rpd})`);
                     return false;
                 }
             }
@@ -311,6 +312,7 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
                 const mTimestamps = modelUsageTimestamps.get(modelToCheck) || [];
                 const mValid = mTimestamps.filter(ts => ts > oneMinuteAgo);
                 if (mValid.length >= manual.rpm) {
+                    console.warn(`[KeyService] ⛔ Model ${modelToCheck} hit GLOBAL RPM limit (${manual.rpm})`);
                     return false;
                 }
             }
