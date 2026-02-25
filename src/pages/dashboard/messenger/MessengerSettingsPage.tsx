@@ -1090,6 +1090,28 @@ export default function MessengerSettingsPage() {
                         </p>
                     </div>
 
+                    <div className="flex flex-col space-y-2">
+                        <Label>Old Messages in Memory <span className="text-amber-600 dark:text-amber-400 font-normal ml-2">(1–50)</span></Label>
+                        <div className="flex items-center space-x-4">
+                            <Input 
+                                type="number" 
+                                value={memoryLimit} 
+                                onChange={(e) => {
+                                    const raw = Number(e.target.value) || 1;
+                                    const clamped = Math.max(1, Math.min(50, raw));
+                                    setMemoryLimit(clamped);
+                                }} 
+                                min={1} 
+                                max={50}
+                                className="w-24 font-mono"
+                            />
+                            <span className="text-sm text-muted-foreground">messages</span>
+                        </div>
+                        <p className="text-sm text-muted-foreground">
+                            Controls how many recent messages (1–50) the AI uses as memory context.
+                        </p>
+                    </div>
+
                     <div className="flex justify-end">
                         <Button onClick={handleSaveBehavior} disabled={behaviorSaving} variant="secondary">
                             {behaviorSaving ? (

@@ -449,6 +449,29 @@ export default function MessengerControlPage() {
                 </p>
             </div>
 
+            <div className="space-y-2">
+                <Label className="flex items-center gap-2">
+                    <MessageSquare className="w-4 h-4 text-blue-500" />
+                    Check Conversion Limit
+                </Label>
+                <Input 
+                    type="number" 
+                    min={1}
+                    max={50}
+                    value={config.check_conversion} 
+                    onChange={(e) => setConfig({...config, check_conversion: parseInt(e.target.value) || 10})}
+                />
+                <p className="text-xs text-muted-foreground">
+                    Number of recent messages to check for emojis.
+                </p>
+            </div>
+
+            <div className="pt-4 flex justify-end">
+                <Button onClick={handleSave} disabled={saving}>
+                    {saving ? "Saving..." : "Save Changes"}
+                </Button>
+            </div>
+
         </CardContent>
       </Card>
     </div>
