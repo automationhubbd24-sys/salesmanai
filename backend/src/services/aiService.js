@@ -474,25 +474,34 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         // This is the main log table for the dashboard.
         // User request: "ai usagees logs null hoye ase"
         try {
+            // Debug: Log incoming data to console to see what we're sending to DB
+            console.log(`[AI Logger] Finalizing response for User: ${pageConfig.user_id}, Page: ${pageConfig.page_id}`);
+            
             const logData = {
                 user_id: pageConfig.user_id,
                 page_id: pageConfig.page_id,
-                model: result.model || finalModel,
+                model: result.model || finalModel || 'unknown',
                 prompt_tokens: 0, // We usually have total_tokens in token_usage
                 completion_tokens: 0,
                 total_tokens: result.token_usage || 0,
                 cost: dbService.calculateCost(result.model || finalModel, result.token_usage || 0),
                 status: result.error ? 'error' : 'success',
                 error_message: result.error || null,
-                sender_name: senderName,
-                user_message: userMessage,
-                ai_reply: result.reply || null
+                sender_name: senderName || 'Customer',
+                user_message: userMessage || '',
+                ai_reply: result.reply || (result.error ? `Error: ${result.error}` : null)
             };
             
-            // Call dbService to log this. (Fire and forget)
-            dbService.logAiUsage && dbService.logAiUsage(logData);
+            // Call dbService to log this. (Fire and forget, but with internal catch)
+            if (dbService.logAiUsage) {
+                dbService.logAiUsage(logData).catch(err => {
+                    console.error("[AI Logger] dbService.logAiUsage error:", err.message);
+                });
+            } else {
+                console.warn("[AI Logger] dbService.logAiUsage is not defined!");
+            }
         } catch (err) {
-            console.warn("[AI] Failed to log to ai_usage_logs:", err.message);
+            console.warn("[AI Logger] Error preparing logData:", err.message);
         }
 
         // --- 2. Log to API Usage Stats (api_usage_stats table) ---
@@ -503,8 +512,6 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         }
 
         // --- 3. Force Flush Key Stats to DB ---
-        // Since getSmartKey increments usage_today in memory, we must ensure it is saved
-        // so the dashboard (Active Rotation Pool) can show it immediately after refresh.
         if (keyService.flushUsageStats) {
             keyService.flushUsageStats(); 
         }

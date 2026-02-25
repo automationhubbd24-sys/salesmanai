@@ -1499,30 +1499,38 @@ async function getActiveWhatsAppSessions() {
 
 // 25. Log API Usage (Unified API)
 async function logAiUsage(data) {
-    if (!data.user_id) return;
+    if (!data.user_id) {
+        console.warn("[DB] logAiUsage skipped: user_id is missing.");
+        return;
+    }
 
     try {
+        console.log(`[DB] Saving AI Usage Log for User: ${data.user_id}, Model: ${data.model}`);
+        
         await query(
             `INSERT INTO ai_usage_logs 
                 (user_id, page_id, model, prompt_tokens, completion_tokens, total_tokens, cost, status, error_message, sender_name, user_message, ai_reply)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
             [
                 data.user_id,
-                data.page_id,
-                data.model,
+                data.page_id || null,
+                data.model || 'unknown',
                 data.prompt_tokens || 0,
                 data.completion_tokens || 0,
                 data.total_tokens || 0,
                 data.cost || 0,
                 data.status || 'success',
                 data.error_message || null,
-                data.sender_name || 'Unknown',
+                data.sender_name || 'Customer',
                 data.user_message || null,
                 data.ai_reply || null
             ]
         );
+        // console.log("[DB] logAiUsage successful.");
     } catch (error) {
-        console.warn("[DB] Failed to log to ai_usage_logs:", error.message);
+        console.error("[DB] CRITICAL: Failed to log to ai_usage_logs table!", error.message);
+        // Log more details for debugging
+        console.error("[DB] Data attempted:", JSON.stringify(data));
     }
 }
 
