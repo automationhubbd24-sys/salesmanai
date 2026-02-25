@@ -907,9 +907,10 @@ You must output valid JSON only.
         try {
             const axios = require('axios');
             // FIX: Use absolute URL for Production to avoid 'localhost' issues in external API calls
+            // Standardizing URL to match n8n and external integration expectations
             const base = process.env.PUBLIC_BASE_URL 
-                ? `${process.env.PUBLIC_BASE_URL}/api/external/v1`
-                : (process.env.SALESMANCHATBOT_API_BASE_URL || `http://localhost:${process.env.PORT || 3001}/api/external/v1`);
+                ? `${process.env.PUBLIC_BASE_URL}/api/external/v1/chat/completions`
+                : (process.env.SALESMANCHATBOT_API_BASE_URL || `http://localhost:${process.env.PORT || 3001}/api/external/v1/chat/completions`);
             
             const modelToUse = (pageConfig.chat_model || 'salesmanchatbot-pro');
             const payload = {
@@ -921,8 +922,8 @@ You must output valid JSON only.
                 'Content-Type': 'application/json'
             };
             
-            console.log(`[AI] SalesmanChatbot Own API: Calling ${base}/chat/completions with model=${modelToUse}`);
-            const resp = await axios.post(`${base}/chat/completions`, payload, { headers, timeout: 25000 });
+            console.log(`[AI] SalesmanChatbot Own API: Calling ${base} with model=${modelToUse}`);
+            const resp = await axios.post(base, payload, { headers, timeout: 25000 });
             const data = resp.data;
             const aiText = data?.choices?.[0]?.message?.content || null;
             const tokenUsage = data?.usage?.total_tokens || 0;
