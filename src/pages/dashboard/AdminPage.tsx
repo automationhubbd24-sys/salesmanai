@@ -150,6 +150,8 @@ export default function AdminPage() {
   const [engineProvider, setEngineProvider] = useState("google");
   const [engineModel, setEngineModel] = useState("default");
   const [engineFilter, setEngineFilter] = useState("all");
+  const [enginePage, setEnginePage] = useState(1);
+  const [engineTotal, setEngineTotal] = useState(0);
 
   const [geminiModel, setGeminiModel] = useState("gemini-2.5-flash-lite");
   const [geminiMessage, setGeminiMessage] = useState("hi from SalesmanChatbot key test");
@@ -207,16 +209,16 @@ export default function AdminPage() {
     }
   }, [isAuthenticated]);
 
-  const fetchEngineData = async () => {
+  const fetchEngineData = async (page = 1) => {
     try {
       setEngineStatsLoading(true);
       const token = localStorage.getItem("auth_token");
       if (!token) return;
 
-      // Fetch Stats with Provider Filter
-      let statsUrl = `${BACKEND_URL}/api/api-engine/stats`;
+      // Fetch Stats with Provider Filter and Pagination
+      let statsUrl = `${BACKEND_URL}/api/api-engine/stats?page=${page}&limit=10`;
       if (engineFilter !== "all") {
-        statsUrl += `?provider=${engineFilter}`;
+        statsUrl += `&provider=${engineFilter}`;
       }
 
       const statsRes = await fetch(statsUrl, {
@@ -229,6 +231,8 @@ export default function AdminPage() {
         // Use the filtered keys from the stats response
         if (data.keys) {
           setEngineKeys(data.keys);
+          setEngineTotal(data.total || 0);
+          setEnginePage(data.page || 1);
         }
       }
 
@@ -270,7 +274,8 @@ export default function AdminPage() {
   // Re-fetch when filter changes
   useEffect(() => {
     if (isAuthenticated) {
-      fetchEngineData();
+      setEnginePage(1);
+      fetchEngineData(1);
     }
   }, [engineFilter]);
 
@@ -1858,7 +1863,7 @@ export default function AdminPage() {
                     ))}
                     {engineKeys.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
                           No API keys found in rotation pool.
                         </TableCell>
                       </TableRow>
@@ -1866,6 +1871,57 @@ export default function AdminPage() {
                   </TableBody>
                 </Table>
               </div>
+
+              {/* Pagination Controls */}
+              {engineTotal > 10 && (
+                <div className="flex items-center justify-between mt-4 px-2">
+                  <div className="text-xs text-muted-foreground">
+                    Showing {(enginePage - 1) * 10 + 1} to {Math.min(enginePage * 10, engineTotal)} of {engineTotal} keys
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      disabled={enginePage <= 1}
+                      onClick={() => {
+                        setEnginePage(enginePage - 1);
+                        fetchEngineData(enginePage - 1);
+                      }}
+                      className="h-8 text-xs"
+                    >
+                      <ChevronLeft className="h-4 w-4 mr-1" /> Previous
+                    </Button>
+                    <div className="flex items-center gap-1">
+                      {Array.from({ length: Math.ceil(engineTotal / 10) }).map((_, i) => (
+                        <Button
+                          key={i}
+                          variant={enginePage === i + 1 ? "default" : "ghost"}
+                          size="sm"
+                          onClick={() => {
+                            setEnginePage(i + 1);
+                            fetchEngineData(i + 1);
+                          }}
+                          className="h-8 w-8 p-0 text-xs"
+                        >
+                          {i + 1}
+                        </Button>
+                      )).slice(Math.max(0, enginePage - 3), Math.min(Math.ceil(engineTotal / 10), enginePage + 2))}
+                    </div>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      disabled={enginePage >= Math.ceil(engineTotal / 10)}
+                      onClick={() => {
+                        setEnginePage(enginePage + 1);
+                        fetchEngineData(enginePage + 1);
+                      }}
+                      className="h-8 text-xs"
+                    >
+                      Next <ChevronRight className="h-4 w-4 ml-1" />
+                    </Button>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

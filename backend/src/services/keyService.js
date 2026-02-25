@@ -612,11 +612,11 @@ module.exports = {
         return { ...def, source: 'static' };
     },
     
-    // NEW: Get filtered keys for Active Rotation Pool display
-    getActiveRotationPool: (providerFilter = null, limit = 10) => {
+    // NEW: Get filtered keys for Active Rotation Pool display with pagination
+    getActiveRotationPool: (providerFilter = null, page = 1, limit = 10) => {
         let keys = [];
         
-        if (providerFilter) {
+        if (providerFilter && providerFilter !== 'all') {
             // Filter by Provider
             if (providerFilter === 'google' || providerFilter === 'gemini') {
                 keys = keysByProvider.get('google') || [];
@@ -628,14 +628,22 @@ module.exports = {
             keys = keyCache;
         }
 
-        // Return only top N keys (limit)
-        return keys.slice(0, limit).map(k => ({
-            id: k.id,
-            provider: k.provider,
-            api: k.api.substring(0, 12) + '***', // Mask key for safety
-            status: k.status,
-            usage_today: k.usage_today,
-            last_used_at: k.last_used_at
-        }));
+        const total = keys.length;
+        const offset = (page - 1) * limit;
+        const paginatedKeys = keys.slice(offset, offset + limit);
+
+        return {
+            total,
+            page,
+            limit,
+            keys: paginatedKeys.map(k => ({
+                id: k.id,
+                provider: k.provider,
+                api: k.api.substring(0, 12) + '***', // Mask key for safety
+                status: k.status,
+                usage_today: k.usage_today,
+                last_used_at: k.last_used_at
+            }))
+        };
     }
 };
