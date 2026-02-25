@@ -500,7 +500,21 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     if (audioUrls && audioUrls.length > 0) {
         console.log(`[AI] Processing ${audioUrls.length} audio files...`);
         const audioResults = await Promise.all(audioUrls.map(async url => {
-            const res = await transcribeAudio(url, pageConfig);
+            // User Override: Force Groq Whisper-Large-V3 for voice transcription even if provider is OpenRouter.
+            // "openrouter er modde provider ovverride kore whisper-large-v3 eta use korbone"
+            // We pass a modified config just for this call.
+            const voiceConfig = { ...pageConfig };
+            
+            // If user is using OpenRouter (which lacks free/good voice models), switch to Groq Whisper.
+            // Also apply if provider is generic/unknown to be safe.
+            const currentProvider = pageConfig.ai || pageConfig.operator || 'google';
+            if (currentProvider === 'openrouter' || currentProvider === 'salesmanchatbot') {
+                console.log("[AI] Voice Override: Switching to Groq Whisper-Large-V3 for transcription.");
+                voiceConfig.ai = 'groq';
+                // We don't need to set model because transcribeAudio defaults to whisper-large-v3 for Groq
+            }
+
+            const res = await transcribeAudio(url, voiceConfig);
             if (typeof res === 'object') {
                 totalTokenUsage += (res.usage || 0);
                 return res.text;
@@ -1630,10 +1644,15 @@ Rules:
 
         const apiKey = keyData.key;
         
-        // Use URL if available (Prefer URL for OpenRouter)
-        const imageContent = (!imageUrl.startsWith('data:')) 
-            ? { url: imageUrl }
-            : { url: `data:${mimeType};base64,${base64Image}` }; // Use base64 if it was a data URI
+        // USE URL DIRECTLY IF POSSIBLE (User Preference)
+        // But if it's a private URL (like FB/WAHA), we MUST use Base64.
+        // If we already downloaded it (base64Image exists), use Base64 to be safe.
+        let imageContent;
+        if (base64Image) {
+             imageContent = { url: `data:${mimeType};base64,${base64Image}` };
+        } else {
+             imageContent = { url: imageUrl };
+        }
 
         const payload = {
             model: model,
@@ -1652,7 +1671,8 @@ Rules:
                 'Content-Type': 'application/json',
                 'HTTP-Referer': 'https://orderly-conversations.com', 
                 'X-Title': 'Orderly Conversations'
-            }
+            },
+            timeout: 40000 // Increased timeout for heavy models
         });
 
         const result = response.data?.choices?.[0]?.message?.content;
