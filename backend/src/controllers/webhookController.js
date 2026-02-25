@@ -203,20 +203,20 @@ async function queueMessage(event) {
 
     // --- ECHO HANDLING (Admin Replies & Bot Confirmations) ---
     if (event.message && (event.message.is_echo || event.sender.id === event.recipient.id)) {
-        // --- SMART ECHO FILTER ---
-        // If app_id exists AND it matches our bot, it's a BOT Echo. Skip it.
-        // If app_id is missing or doesn't match, it's an ADMIN Echo from Inbox.
-        if (event.message.app_id) {
-            console.log(`[Echo Debug] Bot App ID Detected: ${event.message.app_id}. Skipping...`);
-            return; 
-        }
-
         const pageId = event.sender.id; // Sender is Page
         const recipientId = event.recipient.id; // Recipient is User
         const messageId = event.message.mid;
         const text = event.message.text || '';
         
-        console.log(`[Echo] Admin Message Detected for User: ${recipientId} on Page: ${pageId}. Text: ${text.substring(0, 20)}...`);
+        // --- SMART ECHO FILTER (Race Condition Proof) ---
+        // Check if this message was already saved by our Bot flow
+        const existingChat = await dbService.getFbChatById(messageId);
+        if (existingChat && existingChat.reply_by === 'bot') {
+            // console.log(`[Echo] Skipping Bot-generated message: ${messageId}`);
+            return; 
+        }
+
+        console.log(`[Echo] Admin Action Detected for User: ${recipientId} on Page: ${pageId}. Text: ${text.substring(0, 20)}...`);
 
         // Save to fb_chats (Upsert handles duplicates)
         try {
