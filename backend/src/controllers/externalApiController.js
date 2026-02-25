@@ -128,7 +128,7 @@ exports.handleChatCompletion = async (req, res) => {
         }
 
         // 4. Process Request (OpenAI Format)
-        const { messages, model, stream } = req.body;
+        const { messages, model, stream, user: externalUser } = req.body;
 
         if (!messages || !Array.isArray(messages)) {
             return res.status(400).json({ error: { message: 'messages array is required', type: 'invalid_request_error' } });
@@ -207,7 +207,7 @@ exports.handleChatCompletion = async (req, res) => {
             userMessage,
             { 
                 user_id: userConfig.user_id,
-                page_id: 'ExternalAPI', // Set a default page_id for logging
+                page_id: externalUser || 'ExternalAPI', // Use 'user' field from request if available for tracking
                 ai_provider: 'salesmanchatbot', // Default to salesmanchatbot for better routing
                 chat_model: model || 'salesmanchatbot-pro', 
                 is_external_api: true 

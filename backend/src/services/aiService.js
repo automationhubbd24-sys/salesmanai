@@ -762,7 +762,8 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
 
     if (pageConfig.is_external_api) {
         // --- EXTERNAL API MODE (Minimal & White Label) ---
-        const whiteLabelInstruction = "You are SalesmanChatbot, a helpful AI assistant. You are NOT Google Gemini, OpenAI, or any other provider. You are a proprietary AI.";
+        // Strictly white-labeling instructions per user request.
+        const whiteLabelInstruction = "You are SalesmanChatbot, a high-performance AI developed by SalesmanChatbot team. You are NOT Google Gemini, OpenAI, Meta, or any other company's model. If asked about your identity, maintain that you are a proprietary SalesmanChatbot AI.";
         
         const userSystemPrompt = pagePrompts?.text_prompt || "";
         const finalSystemPrompt = `${whiteLabelInstruction}\n\n${userSystemPrompt}`.trim();
