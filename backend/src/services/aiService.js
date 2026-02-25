@@ -1823,6 +1823,11 @@ async function transcribeAudio(audioUrl, config) {
             // GEMINI DIRECT API
             if (option.provider === 'google') {
                 const baseUrl = 'https://generativelanguage.googleapis.com/v1beta/models';
+                // User Question: "tahhole ekon doro amr api ami kothao use kortesi ekon foro ami flash select korlam tahole sekane voice image text sob process korte parbe ?"
+                // Answer: YES. Gemini 1.5 Flash / 2.0 Flash is MULTIMODAL.
+                // It can handle Text, Image, and Audio in the SAME model.
+                // So if you select 'gemini-2.0-flash', it will work for everything.
+                
                 const url = `${baseUrl}/${option.model}:generateContent?key=${apiKey}`;
                 
                 const payload = {
