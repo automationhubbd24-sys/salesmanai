@@ -198,12 +198,19 @@ const verifyWebhook = (req, res) => {
 async function queueMessage(event) {
     // --- ECHO HANDLING (Admin Replies & Bot Confirmations) ---
     if (event.message && (event.message.is_echo || event.sender.id === event.recipient.id)) {
+        // --- SMART ECHO FILTER ---
+        // If app_id exists, it's a BOT Echo. Skip it (bot already saved its reply in its flow).
+        // If app_id is missing, it's an ADMIN Echo from Inbox. Save it.
+        if (event.message.app_id) {
+            return; 
+        }
+
         const pageId = event.sender.id; // Sender is Page
         const recipientId = event.recipient.id; // Recipient is User
         const messageId = event.message.mid;
         const text = event.message.text || '';
         
-        console.log(`[Echo] Admin/Bot Message Detected for User: ${recipientId} on Page: ${pageId}. Text: ${text.substring(0, 20)}...`);
+        console.log(`[Echo] Admin Message Detected for User: ${recipientId} on Page: ${pageId}. Text: ${text.substring(0, 20)}...`);
 
         // Save to fb_chats (Upsert handles duplicates)
         // This ensures Admin replies from Inbox are saved immediately.
@@ -216,7 +223,7 @@ async function queueMessage(event) {
                 text: text,
                 timestamp: Date.now(),
                 status: 'sent',
-                reply_by: 'page'
+                reply_by: 'admin'
             });
 
             // Save to Context History (Assistant role)
