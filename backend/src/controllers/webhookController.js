@@ -203,27 +203,28 @@ async function queueMessage(event) {
 
     // --- ECHO HANDLING (Admin Replies & Bot Confirmations) ---
     if (event.message && (event.message.is_echo || event.sender.id === event.recipient.id)) {
-        const pageId = event.sender.id; // Sender is Page
-        const recipientId = event.recipient.id; // Recipient is User
+        // IMPORTANT: In Echo, Sender = Page, Recipient = User
+        const pageId = event.sender.id; 
+        const recipientId = event.recipient.id; 
         const messageId = event.message.mid;
         const text = event.message.text || '';
-        
+
         // --- SMART ECHO FILTER (Race Condition Proof) ---
-        // Check if this message was already saved by our Bot flow
-        const existingChat = await dbService.getFbChatById(messageId);
-        if (existingChat && existingChat.reply_by === 'bot') {
-            // console.log(`[Echo] Skipping Bot-generated message: ${messageId}`);
-            return; 
-        }
-
-        console.log(`[Echo] Admin Action Detected for User: ${recipientId} on Page: ${pageId}. Text: ${text.substring(0, 20)}...`);
-
-        // Save to fb_chats (Upsert handles duplicates)
+        // We check DB first. If it's NOT in DB or NOT marked as 'bot', it's ADMIN.
         try {
+            const existingChat = await dbService.getFbChatById(messageId);
+            if (existingChat && (existingChat.reply_by === 'bot' || existingChat.reply_by === 'system')) {
+                // Already handled by our system flow, skip echo
+                return; 
+            }
+
+            console.log(`[Echo] ADMIN ACTION DETECTED: Page ${pageId} -> User ${recipientId}. Text: ${text.substring(0, 20)}...`);
+
+            // Save Admin Reply to DB
             await dbService.saveFbChat({
                 page_id: pageId,
-                sender_id: pageId,
-                recipient_id: recipientId,
+                sender_id: pageId, // Page is sender
+                recipient_id: recipientId, // User is recipient
                 message_id: messageId,
                 text: text,
                 timestamp: Date.now(),
@@ -231,11 +232,11 @@ async function queueMessage(event) {
                 reply_by: 'admin'
             });
 
-            // Save to Context History (Assistant role)
+            // Save to AI Context Memory
             const sessionId = `${pageId}_${recipientId}`;
             await dbService.saveChatMessage(sessionId, 'assistant', text, messageId);
 
-            // --- PERMANENT HANDOVER LOGIC (Admin Action) ---
+            // --- INSTANT EMOJI LOCK CHECK ---
             const pagePrompts = await dbService.getPagePrompts(pageId);
             if (pagePrompts && text) {
                 const blockEmoji = pagePrompts.block_emoji;
@@ -243,14 +244,14 @@ async function queueMessage(event) {
 
                 if (blockEmoji && text.includes(blockEmoji)) {
                     await dbService.toggleFbLock(pageId, recipientId, true);
-                    console.log(`[Handover] 🔒 ADMIN LOCK: ${recipientId} | Emoji: ${blockEmoji}`);
+                    console.log(`[Handover] 🔒 ADMIN LOCK: ${recipientId} via Emoji`);
                 } else if (unblockEmoji && text.includes(unblockEmoji)) {
                     await dbService.toggleFbLock(pageId, recipientId, false);
-                    console.log(`[Handover] 🔓 ADMIN UNLOCK: ${recipientId} | Emoji: ${unblockEmoji}`);
+                    console.log(`[Handover] 🔓 ADMIN UNLOCK: ${recipientId} via Emoji`);
                 }
             }
         } catch (err) {
-            console.error(`[Echo] Error processing admin reply:`, err.message);
+            console.error(`[Echo Error] Failed to process admin reply:`, err.message);
         }
 
         return; // STOP Processing
