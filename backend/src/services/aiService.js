@@ -731,22 +731,14 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     }
 
     // --- MODEL NAME NORMALIZATION & ALIASES ---
-    // User Request: Map internal names to real models and SPECIFIC servers.
-    // Pro -> Gemini (Google)
-    // Flash -> OpenRouter
-    // Lite -> Groq
-    const INTERNAL_MODEL_MAP = {
-        'salesmanchatbot-pro': { model: 'gemini-2.0-flash', provider: 'google' },
-        'salesmanchatbot-flash': { model: 'google/gemini-2.0-flash:free', provider: 'openrouter' },
-        'salesmanchatbot-lite': { model: 'llama-3.1-8b-instant', provider: 'groq' },
-    };
-
-    if (INTERNAL_MODEL_MAP[defaultModel]) {
-        const mapping = INTERNAL_MODEL_MAP[defaultModel];
-        if (defaultProvider === 'salesmanchatbot' || defaultProvider === 'system') {
-            defaultProvider = mapping.provider;
-        }
-        defaultModel = mapping.model;
+    // User Request: Internal names (pro/flash/lite) now act as pointers to specific engine configs.
+    // We don't hardcode models here anymore; we use the values from the Database (Engine Config table).
+    if (defaultModel === 'salesmanchatbot-pro') {
+        if (defaultProvider === 'salesmanchatbot' || defaultProvider === 'system') defaultProvider = 'google';
+    } else if (defaultModel === 'salesmanchatbot-flash') {
+        if (defaultProvider === 'salesmanchatbot' || defaultProvider === 'system') defaultProvider = 'openrouter';
+    } else if (defaultModel === 'salesmanchatbot-lite') {
+        if (defaultProvider === 'salesmanchatbot' || defaultProvider === 'system') defaultProvider = 'groq';
     }
 
     console.log(`[AI] Final Engine Config: ${defaultProvider} / ${defaultModel}`);
@@ -981,14 +973,9 @@ You must output valid JSON only.
                     timeout: 25000 // 25s Timeout for User Keys
                 });
                 // Normalize Model Name for User Keys
-                // User Requirement: Use EXACTLY what user typed, UNLESS it's one of our internal aliases.
+                // User Requirement: Use EXACTLY what user typed. No mapping for user keys.
                 let modelToUse = pageConfig.chat_model;
                 
-                // Map internal aliases to real models for user keys too
-                if (INTERNAL_MODEL_MAP[modelToUse]) {
-                    modelToUse = INTERNAL_MODEL_MAP[modelToUse];
-                }
-
                 if (!modelToUse) {
                      throw new Error("No model selected for Own API. Please select a model in your settings.");
                 }
