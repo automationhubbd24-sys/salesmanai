@@ -1182,8 +1182,6 @@ INSTRUCTIONS:
 
     // PHASE 2: SALESMANCHATBOT ENGINE (SMART ROUTING) ---
     // User Request: If User provided their own key and it was attempted, STOP HERE.
-    // "ami emr facebook page er jonno api ta lagaisilam then 3 ta kaj kore to 4 ta দুঃখিত... ei error ase"
-    // This happens because it falls back to Phase 2 when Phase 1 fails.
     if (userKeyAttempted) {
         console.warn(`[AI] Phase 1 was attempted but failed or was invalid. Strict Isolation Active: Blocking Cloud API fallback.`);
         return finalize({ 
@@ -1203,12 +1201,20 @@ INSTRUCTIONS:
     if (audioUrls && audioUrls.length > 0) isAudio = true;
 
     // 2. Resolve Engine Config (Global Provider Config)
-    // User Request: Fetch models from Global Engine Config based on provider
     let targetProvider = defaultProvider || 'salesmanchatbot';
+    let targetEngineName = defaultModel || 'salesmanchatbot-pro';
+
+    // --- SALESMANCHATBOT UNIFIED ENGINE MAPPING ---
+    // User Request: Map branded model names to their respective backend engines
+    if (targetEngineName === 'salesmanchatbot-pro') {
+        targetProvider = 'google';
+    } else if (targetEngineName === 'salesmanchatbot-flash') {
+        targetProvider = 'openrouter';
+    } else if (targetEngineName === 'salesmanchatbot-lite') {
+        targetProvider = 'groq';
+    }
     
     // Map internal aliases to actual database provider names
-    // salesmanchatbot -> google
-    // gemini -> google
     if (targetProvider === 'salesmanchatbot' || targetProvider === 'gemini') {
         const hasCustomConfig = await getGlobalEngineConfig(targetProvider);
         if (!hasCustomConfig) {
@@ -1216,16 +1222,19 @@ INSTRUCTIONS:
         }
     }
 
-    let engineTextModel = defaultModel || 'salesmanchatbot-pro';
-    let engineVisionModel = defaultModel || 'salesmanchatbot-pro';
-    let engineVoiceModel = defaultModel || 'salesmanchatbot-pro';
+    // Load Global Engine Config based on resolved provider
+    const gConfig = await getGlobalEngineConfig(targetProvider);
+
+    let engineTextModel = targetEngineName;
+    let engineVisionModel = targetEngineName;
+    let engineVoiceModel = targetEngineName;
     
     let textProvider = targetProvider;
     let visionProvider = targetProvider;
     let voiceProvider = targetProvider;
 
-    const gConfig = await getGlobalEngineConfig(targetProvider);
     if (gConfig) {
+        // STRICT RULE: Use models from Global Engine Config
         engineTextModel = gConfig.text_model || engineTextModel;
         engineVisionModel = gConfig.vision_model || engineVisionModel;
         engineVoiceModel = gConfig.voice_model || engineVoiceModel;
@@ -1244,8 +1253,6 @@ INSTRUCTIONS:
             if (gConfig.voice_rpm || gConfig.voice_rpd) 
                 keyService.setManualLimit(engineVoiceModel, { rpm: gConfig.voice_rpm, rpd: gConfig.voice_rpd });
         }
-
-        // console.log(`[AI] Loaded Global Config for ${targetProvider} (Cached)`);
     }
 
     // 3. Resolve Final Model and Provider based on Modality
@@ -1263,7 +1270,6 @@ INSTRUCTIONS:
     console.log(`[AI] Engine Resolved: ${finalProvider}/${finalModel} (Audio: ${isAudio}, Vision: ${isVision})`);
 
     // 4. Execution Loop (STRICT SINGLE ATTEMPT)
-    // User Request: "multiple try deoya jabe na retry kora jabe na"
     const currentModel = finalModel;
     
     let keyData = null;

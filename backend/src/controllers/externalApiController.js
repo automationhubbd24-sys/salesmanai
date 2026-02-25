@@ -210,7 +210,8 @@ exports.handleChatCompletion = async (req, res) => {
                 page_id: externalUser || 'ExternalAPI', // Use 'user' field from request if available for tracking
                 ai_provider: 'salesmanchatbot', // Default to salesmanchatbot for better routing
                 chat_model: model || 'salesmanchatbot-pro', 
-                is_external_api: true 
+                is_external_api: true,
+                cheap_engine: false // Disable cheap engine logic for branded API calls
             }, 
             prompts, 
             history,
