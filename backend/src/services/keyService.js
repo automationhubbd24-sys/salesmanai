@@ -44,21 +44,25 @@ setInterval(() => {
 // Based on typical Free Tier limits as of early 2025
 const DEFAULT_LIMITS = {
     // Gemini Limits (Based on User Info)
+    'gemini-2.5-flash': { rpm: 15, rpd: 1500 }, // User Request: 2.5 Support
+    'gemini-2.5-flash-lite': { rpm: 15, rpd: 1500 }, 
     'gemini-2.0-flash': { rpm: 15, rpd: 1500 }, 
     'gemini-2.0-flash-lite': { rpm: 15, rpd: 1500 }, 
     'gemini-1.5-pro': { rpm: 2, rpd: 50 },
     
     // Groq Limits (Based on Official Docs)
-    'llama-3.3-70b-versatile': { rpm: 30, rpd: 1000 }, // High Intelligence, Lower Daily Limit
-    'llama-3.1-8b-instant': { rpm: 30, rpd: 14400 },   // High Speed, Massive Daily Limit
+    'llama-3.3-70b-versatile': { rpm: 30, rpd: 1000 }, 
+    'llama-3.1-8b-instant': { rpm: 30, rpd: 14400 },   
+    'groq/compound-mini': { rpm: 30, rpd: 1000 }, // User Request: Support this alias
+    'meta-llama/llama-4-scout-17b-16e-instruct': { rpm: 25, rpd: 500 }, // User Request: Support this alias
     
     // OpenRouter Free Limits (Safe Defaults)
-    'arcee-ai/trinity-large-preview:free': { rpm: 9999, rpd: 9999 }, // TESTED: Survived 100+ requests (Unlimited)
-    'upstage/solar-pro-3:free': { rpm: 20, rpd: 50 }, // TESTED: Hit limit at 25 requests (Not Unlimited)
-    'liquid/lfm-2.5-1.2b-instruct:free': { rpm: 20, rpd: 50 }, // TESTED: Immediate 429
-    'nvidia/nemotron-nano-12b-v2-vl:free': { rpm: 20, rpd: 50 }, // TESTED: Immediate 429
-    'nousresearch/hermes-3-llama-3.1-405b:free': { rpm: 20, rpd: 50 }, // Huge model, likely strict limit
-    'openrouter/default': { rpm: 1000, rpd: 10000 }, // High optimistic default
+    'arcee-ai/trinity-large-preview:free': { rpm: 9999, rpd: 9999 }, 
+    'upstage/solar-pro-3:free': { rpm: 20, rpd: 50 }, 
+    'liquid/lfm-2.5-1.2b-instruct:free': { rpm: 20, rpd: 50 }, 
+    'nvidia/nemotron-nano-12b-v2-vl:free': { rpm: 20, rpd: 50 }, 
+    'nousresearch/hermes-3-llama-3.1-405b:free': { rpm: 20, rpd: 50 }, 
+    'openrouter/default': { rpm: 1000, rpd: 10000 },
     
     // DYNAMIC MODEL FALLBACK:
     'dynamic': { rpm: 100, rpd: 10000 }, // Generous default for whatever the optimizer picks
