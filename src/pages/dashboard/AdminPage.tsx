@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Shield, Database as DatabaseIcon, Trash2, Edit, CheckCircle, CreditCard, DollarSign, Loader2, XCircle, Cpu, Plus, RefreshCw, Server, Activity, AlertTriangle } from "lucide-react";
+import { Shield, Database as DatabaseIcon, Trash2, Edit, CheckCircle, CreditCard, DollarSign, Loader2, XCircle, Cpu, Plus, RefreshCw, Server, Activity, AlertTriangle, ChevronLeft, ChevronRight } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
@@ -1824,7 +1824,7 @@ export default function AdminPage() {
                     <SelectItem value="openai">OpenAI</SelectItem>
                   </SelectContent>
                 </Select>
-                <Button variant="outline" size="sm" onClick={fetchEngineData}>
+                <Button variant="outline" size="sm" onClick={() => fetchEngineData(enginePage)}>
                   <RefreshCw className="h-4 w-4 mr-2" /> Refresh
                 </Button>
               </div>
