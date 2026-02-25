@@ -95,48 +95,21 @@ async function getGlobalEngineConfig(provider) {
 }
 
 // --- DYNAMIC FREE MODEL OPTIMIZER (OpenRouter) ---
-// User Request: Dynamically fetch best free models using Gemini (Cheap Engine) to analyze the list.
+// User Request: "automatic na ami fronted e set korbo segulai pradanno pabe tumi nijer teke backend e kono model takbe na"
+// Solution: Removed ALL backend default/verified model lists. 
+// The system will now ONLY use what is passed from the frontend/user config.
 let bestFreeModels = {
-    text: 'meta-llama/llama-3.3-70b-versatile', // Default fallback
-    vision: 'qwen/qwen-2.5-vl-7b-instruct:free', // Default fallback (Wait, we tested Qwen 3 VL is better)
-    // Actually, user confirmed Qwen 3 VL is good. But let's set defaults based on TESTED success.
-    voice: 'meta-llama/llama-3.1-8b-instant' 
+    text: null,
+    vision: null,
+    voice: null
 };
 
-// TESTED & VERIFIED MODELS (2026 Context)
-const VERIFIED_MODELS = {
-    openrouter: {
-        text: 'arcee-ai/trinity-large-preview:free',
-        vision: 'qwen/qwen3-vl-30b-a3b-thinking', // Best Tested
-        voice: 'nvidia/nemotron-nano-12b-v2-vl:free' // Fallback
-    },
-    groq: {
-        text: 'llama-3.3-70b-versatile',
-        vision: 'meta-llama/llama-4-scout-17b-16e-instruct', // Best Tested
-        voice: 'whisper-large-v3' // Best Tested
-    },
-    gemini: {
-        text: 'gemini-2.0-flash',
-        vision: 'gemini-2.5-flash-lite', // Best Tested
-        voice: 'gemini-2.0-flash-lite'
-    }
-};
+// Removed VERIFIED_MODELS constant to enforce user choice.
 
 async function updateBestFreeModels() {
-    // Override with VERIFIED models first to ensure stability
-    bestFreeModels = {
-        text: VERIFIED_MODELS.openrouter.text,
-        vision: VERIFIED_MODELS.openrouter.vision,
-        voice: VERIFIED_MODELS.groq.voice // Groq Whisper is best for voice
-    };
-    console.log('[AI Optimizer] Loaded VERIFIED models:', bestFreeModels);
-
-    try {
-        // console.log('[AI Optimizer] Fetching latest free models from OpenRouter...');
-        // ... (Keep existing logic as fallback or enhancement later)
-    } catch (e) {
-        console.warn('[AI Optimizer] Failed to update free models:', e.message);
-    }
+    // Disabled automatic optimizer. 
+    // We rely entirely on user configuration from DB/Frontend.
+    console.log('[AI Optimizer] Automatic optimization disabled by user preference.');
 }
 
 // Schedule: Run every 2 hours
@@ -635,74 +608,26 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     // ----------------------------------------------------
 
     // 1. Prepare Configuration
-    let dynamicProvider = 'openrouter'; 
-    let dynamicModel = 'arcee-ai/trinity-large-preview'; // Verified Free Model
-    let fallbackModel = 'meta-llama/llama-3.1-8b-instruct:free';
-
-    if (useCheapEngine) {
-        try {
-            const commandConfig = await commandApiService.getCommandConfig();
-            if (commandConfig) {
-                dynamicProvider = commandConfig.provider || dynamicProvider;
-                dynamicModel = commandConfig.chatmodel || dynamicModel;
-                fallbackModel = commandConfig.fallback_chatmodel || fallbackModel;
-            }
-        } catch (err) {
-            console.warn("[AI] Failed to fetch Command API config, using strong defaults:", err.message);
-        }
-    }
-
-    // PRIORITIZE PAGE CONFIG (User's specific choice overrides everything)
-    let userModel = (pageConfig.chat_model && pageConfig.chat_model !== 'default') ? pageConfig.chat_model.trim() : null;
-    
-    // AUTO MODEL SELECTION (User Request: "openrouter/auto")
-    if (userModel === 'openrouter/auto') {
-        console.log(`[AI] Auto-Model Selected. Using best free model: ${bestFreeModels.text}`);
-        userModel = bestFreeModels.text;
-    }
+    // User Request: "automatic na ami fronted e set korbo segulai pradanno pabe tumi nijer teke backend e kono model takbe na"
+    // Solution: REMOVE ALL HARDCODED DEFAULTS.
+    // Use ONLY what comes from pageConfig (Frontend).
 
     const userProvider = pageConfig.ai || pageConfig.operator || pageConfig.ai_provider; 
+    let userModel = (pageConfig.chat_model && pageConfig.chat_model !== 'default') ? pageConfig.chat_model.trim() : null;
 
-    let defaultProvider = userProvider || (useCheapEngine ? dynamicProvider : 'gemini');
-    let defaultModel = userModel;
+    // Strict Fallback (Only if User Config is missing/broken)
+    let defaultProvider = userProvider || 'google'; // Default to Google if provider missing
+    let defaultModel = userModel || 'gemini-1.5-flash'; // Absolute minimum fallback if model missing
 
-    // IF User did NOT specify a model (null), pick a smart default based on the Provider
-    if (!defaultModel) {
-        if (defaultProvider === 'salesmanchatbot') {
-            defaultModel = 'salesmanchatbot-pro';
-        } else if (defaultProvider === 'openrouter') {
-            defaultModel = useCheapEngine ? dynamicModel : 'arcee-ai/trinity-large-preview';
-        } else if (defaultProvider === 'groq') {
-            defaultModel = 'llama-3.3-70b-versatile';
-        } else if (defaultProvider === 'gemini') {
-            defaultModel = 'gemini-1.5-flash'; // Minimal fallback
-        }
-    }
-
-    if (!defaultModel) {
-        defaultModel = useCheapEngine ? dynamicModel : 'salesmanchatbot-pro';
-    }
-
-    // Force free model for OpenRouter if using default
-    if (!userModel && defaultProvider === 'openrouter' && defaultModel.includes('gemini') && !defaultModel.includes(':free')) {
-        defaultModel = 'arcee-ai/trinity-large-preview';
-    }
+    console.log(`[AI] Engine Config: Provider=${defaultProvider}, Model=${defaultModel}`);
 
     // --- MODEL NAME NORMALIZATION & ALIASES ---
     // User Request: REMOVED ALL HARDCODED MAPPINGS.
     // Use exactly what is provided by the configuration.
     
-    console.log(`[AI] Final Engine Config: ${defaultProvider} / ${defaultModel}`);
-
     // --- DYNAMIC BEST MODEL LOGIC REMOVED ---
     // User Request: "salesmanchatbot flash and lite eo same" (No fallbacks)
-    /*
-    if (!userModel) {
-        defaultModel = 'gemini-2.0-flash';
-        dynamicModel = 'gemini-2.0-flash-lite';
-        fallbackModel = bestFreeModels.text || 'meta-llama/llama-3.1-8b-instruct:free'; 
-    }
-    */
+    
     // -------------------------------------------------
     
     // --- MEDIA HANDLING COMPLETED ABOVE ---
