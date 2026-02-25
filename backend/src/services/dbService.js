@@ -272,6 +272,19 @@ async function initTables() {
         `);
         console.log("[DB] 'api_usage_stats' table checked/initialized.");
 
+        // Ensure 'api_list' has unique constraint on 'api'
+        await query(`
+            DO $$ 
+            BEGIN 
+                IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='api_list') THEN
+                    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'api_list_api_key') THEN
+                        ALTER TABLE api_list ADD CONSTRAINT api_list_api_key UNIQUE (api);
+                    END IF;
+                END IF;
+            END $$;
+        `);
+        console.log("[DB] 'api_list' unique constraint checked.");
+
     } catch (error) {
         console.error("[DB] Failed to init tables:", error);
     }

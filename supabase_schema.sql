@@ -534,7 +534,7 @@ CREATE TABLE IF NOT EXISTS public.fb_comments (
 CREATE TABLE IF NOT EXISTS public.api_list (
   id bigint GENERATED ALWAYS AS IDENTITY NOT NULL PRIMARY KEY,
   provider text NOT NULL, -- 'google', 'openai', 'gemini'
-  api text NOT NULL, -- The API Key
+  api text NOT NULL UNIQUE, -- The API Key
   model text DEFAULT 'gemini-2.5-flash',
   usage_count bigint DEFAULT 0,
   created_at timestamp with time zone DEFAULT now()
