@@ -635,18 +635,6 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                      const descDisplay = p.description ? p.description.replace(/\n/g, ' ') : 'N/A';
                      const priceDisplay = p.price ? `${p.price} ${p.currency || 'BDT'}` : 'Ask for Price';
                      
-                     let imgDisplay = 'N/A';
-                     if (p.image_url) {
-                        if (p.image_url.startsWith('http')) {
-                            imgDisplay = p.image_url;
-                        } else {
-                            // Convert relative path to absolute URL
-                            const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
-                            const cleanPath = p.image_url.startsWith('/') ? p.image_url : `/${p.image_url}`;
-                            imgDisplay = `${baseUrl}${cleanPath}`;
-                        }
-                     }
-
                      const keywordsDisplay = p.keywords ? p.keywords.replace(/\n/g, ' ') : 'N/A';
                      const comboDisplay = p.is_combo ? ` | [COMBO PRODUCT] (Hidden Contents - DO NOT DISCLOSE UNLESS ASKED): ${Array.isArray(p.combo_items) ? p.combo_items.join(", ") : p.combo_items}` : "";
                      
