@@ -436,6 +436,13 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             // Fire and forget (don't await to keep response fast)
             dbService.logApiUsage(pageConfig.user_id, result.model, result.token_usage, cost);
         }
+
+        // --- NEW: Force Flush Key Stats to DB ---
+        // Since getSmartKey increments usage_today in memory, we must ensure it is saved
+        // so the dashboard (Active Rotation Pool) can show it immediately after refresh.
+        if (keyService.flushUsageStats) {
+            keyService.flushUsageStats(); 
+        }
         
         return result;
     };

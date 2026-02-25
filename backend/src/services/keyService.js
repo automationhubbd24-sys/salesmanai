@@ -596,6 +596,7 @@ module.exports = {
     recordKeyUsage,
     updateKeyStatusFromHeaders,
     updateKeyCache, // Export this!
+    flushUsageStats, // Export this!
     report429, 
     isModelLocked,
     setManualLimit(modelId, limits) {
