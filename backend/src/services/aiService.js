@@ -1271,10 +1271,6 @@ INSTRUCTIONS:
         return finalize({ reply: null, error: setupError.message, token_usage: 0, model: currentModel });
     }
 }
-    
-    console.error(`[AI] All SalesmanChatbot Engine attempts failed.`);
-    return finalize(null);
-}
 
 const WAHA_BASE_URL = process.env.WAHA_BASE_URL || 'https://wahubbd.salesmanchatbot.online';
 const WAHA_API_KEY = process.env.WAHA_API_KEY || 'e9457ca133cc4d73854ee0d43cee3bc5';
