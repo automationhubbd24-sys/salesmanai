@@ -730,28 +730,25 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         defaultModel = 'arcee-ai/trinity-large-preview';
     }
 
-    console.log(`[AI] Final Engine Config: ${defaultProvider} / ${defaultModel}`);
-
     // --- MODEL NAME NORMALIZATION & ALIASES ---
-    // User Request: REMOVED to respect exact model selection.
-    // "user jeta select korbe sei model found hole setai work korbe kono defult deoya jabe na"
-    /*
-    const MODEL_ALIASES = {
-        'gemini-2.0-flash': 'gemini-2.0-flash',
-        'gemini-pro': 'gemini-1.5-pro',
-        'gemini2.5-flash': 'gemini-2.0-flash',
-        'groq-fast': 'llama-3.3-70b-versatile', 
-        'groq-speed': 'llama-3.1-8b-instant', 
-        'grok-4.1-fast': 'llama-3.3-70b-versatile',
-        'salesmanchatbot-pro': 'gemini-2.0-flash',
-        'salesmanchatbot-flash': 'gemini-2.0-flash',
-        'salesmanchatbot-lite': 'gemini-2.0-flash-lite',
+    // User Request: Map internal names to real models for both global and own API usage.
+    const INTERNAL_MODEL_MAP = {
+        'salesmanchatbot-pro': 'gemini-2.0-flash', // Pro uses Gemini 2.0 Flash
+        'salesmanchatbot-flash': 'google/gemini-2.0-flash:free', // Flash uses OpenRouter Gemini Free
+        'salesmanchatbot-lite': 'google/gemini-2.0-flash-lite:free', // Lite uses OpenRouter Gemini Lite Free
     };
 
-    if (MODEL_ALIASES[defaultModel]) {
-        defaultModel = MODEL_ALIASES[defaultModel];
+    if (INTERNAL_MODEL_MAP[defaultModel]) {
+        // If it's one of our internal models, ensure the provider is also correct
+        if (defaultModel === 'salesmanchatbot-flash' || defaultModel === 'salesmanchatbot-lite') {
+            if (defaultProvider === 'salesmanchatbot') defaultProvider = 'openrouter';
+        } else if (defaultModel === 'salesmanchatbot-pro') {
+            if (defaultProvider === 'salesmanchatbot') defaultProvider = 'google';
+        }
+        defaultModel = INTERNAL_MODEL_MAP[defaultModel];
     }
-    */
+
+    console.log(`[AI] Final Engine Config: ${defaultProvider} / ${defaultModel}`);
 
     // --- DYNAMIC BEST MODEL LOGIC REMOVED ---
     // User Request: "salesmanchatbot flash and lite eo same" (No fallbacks)
@@ -983,9 +980,14 @@ You must output valid JSON only.
                     timeout: 25000 // 25s Timeout for User Keys
                 });
                 // Normalize Model Name for User Keys
-                // User Requirement: Use EXACTLY what user typed. No mapping.
-                // STRICT MODE: If Own API is used, user MUST provide a model. No default fallback.
+                // User Requirement: Use EXACTLY what user typed, UNLESS it's one of our internal aliases.
                 let modelToUse = pageConfig.chat_model;
+                
+                // Map internal aliases to real models for user keys too
+                if (INTERNAL_MODEL_MAP[modelToUse]) {
+                    modelToUse = INTERNAL_MODEL_MAP[modelToUse];
+                }
+
                 if (!modelToUse) {
                      throw new Error("No model selected for Own API. Please select a model in your settings.");
                 }
