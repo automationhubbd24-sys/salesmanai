@@ -500,16 +500,17 @@ async function getSmartKey(provider, model) {
         return null;
     }
 
-    const mapKey = `${provider || 'all'}:${model || 'all'}`;
-    let currentIndex = modelIndexMap.get(mapKey) || 0;
+    // --- KEY ROTATION LOGIC (Shuffle) ---
+    // User Request: "ek api teke hut kore loop e onek request gele api block kore dibe"
+    // Solution: Shuffle keys to distribute load randomly instead of round-robin always starting from 0.
     
-    if (currentIndex >= validKeys.length) {
-        currentIndex = 0;
+    // Fisher-Yates Shuffle for better randomness
+    for (let i = validKeys.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [validKeys[i], validKeys[j]] = [validKeys[j], validKeys[i]];
     }
 
-    for (let i = 0; i < validKeys.length; i++) {
-        const candidateKey = validKeys[currentIndex];
-
+    for (const candidateKey of validKeys) {
         if (isKeyAlive(candidateKey.api) && isKeyWithinLimits(candidateKey, model)) {
             // --- ATOMIC TIMESTAMP RECORDING (RPM Check) ---
             const now = Date.now();
@@ -529,7 +530,6 @@ async function getSmartKey(provider, model) {
             }
 
             // --- USAGE COUNTING (Every Call Attempt) ---
-            // User Request: "jotobar ai call diba totobar countut hobe"
             candidateKey.usage_count = (candidateKey.usage_count || 0) + 1;
             if (candidateKey.last_date_checked === today) {
                 candidateKey.usage_today = (candidateKey.usage_today || 0) + 1;
@@ -553,16 +553,13 @@ async function getSmartKey(provider, model) {
 
             pendingUpdates.add(candidateKey.api);
             
-            modelIndexMap.set(mapKey, (currentIndex + 1) % validKeys.length);
-
+            // Return immediately once a valid key is found (Random selection due to shuffle)
             return {
                 key: candidateKey.api,
                 provider: candidateKey.provider,
                 model: candidateKey.model
             };
         }
-        
-        currentIndex = (currentIndex + 1) % validKeys.length;
     }
 
     return null;
