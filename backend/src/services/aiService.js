@@ -613,18 +613,27 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     // ----------------------------------------------------
 
     // 1. Prepare Configuration
-    // User Request: "automatic na ami fronted e set korbo segulai pradanno pabe tumi nijer teke backend e kono model takbe na"
-    // Solution: REMOVE ALL HARDCODED DEFAULTS.
-    // Use ONLY what comes from pageConfig (Frontend).
+    // User Request: "vaii tumi defult keno add dicco ? ami fronted e save kore dibo best model ta amr motabek kono engine e nijer teke defult e work korbe na"
+    // Solution: REMOVE ALL FALLBACKS.
+    // If frontend config is missing, THROW ERROR.
 
     const userProvider = pageConfig.ai || pageConfig.operator || pageConfig.ai_provider; 
     let userModel = (pageConfig.chat_model && pageConfig.chat_model !== 'default') ? pageConfig.chat_model.trim() : null;
 
-    // Strict Fallback (Only if User Config is missing/broken)
-    let defaultProvider = userProvider || 'google'; // Default to Google if provider missing
-    let defaultModel = userModel || 'gemini-1.5-flash'; // Absolute minimum fallback if model missing
+    if (!userProvider) {
+         console.error("[AI] Fatal: No AI Provider selected in pageConfig.");
+         throw new Error("AI Provider not configured. Please select a provider in settings.");
+    }
 
-    console.log(`[AI] Engine Config: Provider=${defaultProvider}, Model=${defaultModel}`);
+    if (!userModel) {
+         console.error("[AI] Fatal: No Chat Model selected in pageConfig.");
+         throw new Error("Chat Model not configured. Please select a model in settings.");
+    }
+
+    let defaultProvider = userProvider;
+    let defaultModel = userModel;
+
+    console.log(`[AI] Engine Config (Strict): Provider=${defaultProvider}, Model=${defaultModel}`);
 
     // --- MODEL NAME NORMALIZATION & ALIASES ---
     // User Request: REMOVED ALL HARDCODED MAPPINGS.
@@ -1576,50 +1585,11 @@ Rules:
     // ATTEMPT 2: Gemini 2.0 Flash (Explicit Fallback)
     // ONLY for Free Users
     if (pageConfig.cheap_engine !== false) {
-        try {
-            await ensureBase64(); // Ensure loaded
-            
-            const provider = 'google';
-            const model = 'gemini-2.0-flash';
-            
-            const attemptedModel = (pageConfig.chatmodel && pageConfig.chatmodel.includes('gemini')) ? pageConfig.chatmodel : 'gemini-1.5-flash';
-            if (attemptedModel === model) throw new Error("Already attempted in Step 1");
-
-            console.log(`[Vision] Attempt 2: ${model} (${provider})`);
-            
-            const keyData = await keyService.getSmartKey(provider, model);
-            if (!keyData || !keyData.key) throw new Error("No Key found for Gemini 2.0 Flash");
-
-            const apiKey = keyData.key;
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-            
-            const payload = {
-                contents: [{
-                    parts: [
-                        { text: systemPrompt },
-                        { inline_data: { mime_type: mimeType, data: base64Image } }
-                    ]
-                }]
-            };
-
-            const visionResponse = await axios.post(url, payload, {
-                headers: { 'Content-Type': 'application/json' }
-            });
-
-            const result = visionResponse.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-            const usage = visionResponse.data?.usageMetadata?.totalTokenCount || 0;
-            if (!result) throw new Error("Empty response from Gemini Flash");
-
-            logDebug(`[Vision] Success with ${model}: ${result.substring(0, 30)}... Usage: ${usage}`);
-            return { text: result, usage: usage };
-
-        } catch (error) {
-            const errMsg = error.response?.data?.error?.message || error.message;
-            if (errMsg !== "Already attempted in Step 1") {
-                console.warn(`[Vision] Attempt 2 (${'gemini-2.0-flash'}) Failed: ${errMsg}`);
-                errors.push(`Gemini 2.0 Flash: ${errMsg}`);
-            }
-        }
+        // User Request: "best model ta amr motabek kono engine e nijer teke defult e work korbe na"
+        // Solution: REMOVE FALLBACK.
+        // If Attempt 1 failed (configured model), we STOP.
+        // We do NOT automatically switch to Gemini 2.0 Flash.
+        console.warn("[Vision] Configured model failed. Automatic fallback disabled by user policy.");
     }
 
     // ATTEMPT 3: OpenRouter Vision (Dynamically from Config)
@@ -1777,10 +1747,9 @@ async function transcribeAudio(audioUrl, config) {
              priorityChain.push({ provider, model: voiceModel, name: `Configured (${voiceModel})` });
         } else {
              // Fallback if NO voice model configured (but we shouldn't really reach here if frontend is set up right)
-             priorityChain.push(
-                { provider: 'google', model: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash' }, // 2.0 is reliable for Audio
-                { provider: 'groq', model: 'whisper-large-v3', name: 'Groq Whisper V3' }
-             );
+             // User Request: "best model ta amr motabek kono engine e nijer teke defult e work korbe na"
+             // Solution: NO DEFAULT FALLBACKS.
+             console.error("[Audio] No Voice Model configured. Skipping transcription.");
         }
     }
 
