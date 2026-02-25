@@ -1267,6 +1267,21 @@ INSTRUCTIONS:
         finalProvider = visionProvider;
     }
 
+    // --- PROVIDER ALIAS FIXES (User Request: 100% Correct Mappings) ---
+    // Fix: Ensure 'google' provider correctly maps to 'gemini' logic if needed, or vice-versa
+    // Fix: Ensure 'groq' provider maps correctly
+    
+    // Normalization for OpenRouter (if user put commas, take the first one)
+    if (finalProvider === 'openrouter' && finalModel.includes(',')) {
+        finalModel = finalModel.split(',')[0].trim();
+    }
+
+    // Special Case: OpenRouter Voice Override to Groq (if configured)
+    // If user set Voice Provider Override to 'groq', ensure we switch base URL and key logic
+    if (isAudio && voiceProvider === 'groq') {
+        finalProvider = 'groq';
+    }
+
     console.log(`[AI] Engine Resolved: ${finalProvider}/${finalModel} (Audio: ${isAudio}, Vision: ${isVision})`);
 
     // 4. Execution Loop (STRICT SINGLE ATTEMPT)
@@ -1274,12 +1289,20 @@ INSTRUCTIONS:
     
     let keyData = null;
     try {
+        // Special Handling for Provider Overrides:
+        // If finalProvider changed (e.g. OpenRouter -> Groq for Voice), we must query keys for THAT provider.
         keyData = await keyService.getSmartKey(finalProvider, currentModel);
+        
+        // Fallback: If specific model key not found, try default key for that provider
         if (!keyData || !keyData.key) {
-            console.warn(`[AI] No valid ${currentModel} keys for ${finalProvider}.`);
+             keyData = await keyService.getSmartKey(finalProvider, 'default');
+        }
+
+        if (!keyData || !keyData.key) {
+            console.warn(`[AI] No valid keys for ${finalProvider}/${currentModel}.`);
             return finalize({ 
                 reply: "দুঃখিত, বর্তমানে এই সার্ভিসে কোনো অ্যাক্টিভ কী নেই। দয়া করে এডমিন প্যানেল থেকে এপিআই কী চেক করুন।", 
-                error: `No active keys for ${finalProvider}/${currentModel}`,
+                error: `No active keys for ${finalProvider}`,
                 token_usage: 0,
                 model: currentModel
             });
@@ -1287,14 +1310,17 @@ INSTRUCTIONS:
 
         const apiKey = keyData.key;
         let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
+        
+        // DYNAMIC BASE URL MAPPING
         if (finalProvider === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
         else if (finalProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
         else if (finalProvider === 'openai') baseURL = 'https://api.openai.com/v1';
+        else if (finalProvider === 'google' || finalProvider === 'gemini') baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
         
         const openai = new OpenAI({ 
             apiKey: apiKey, 
             baseURL: baseURL,
-            timeout: 20000
+            timeout: 60000 // Increased timeout for slower models/images
         });
 
         try {
