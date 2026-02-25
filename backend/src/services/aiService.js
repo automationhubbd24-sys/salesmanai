@@ -426,6 +426,20 @@ function extractReplyFromText(text) {
 // Step 2: Business Logic / AI Brain
 async function generateReply(userMessage, pageConfig, pagePrompts, history = [], senderName = 'Customer', ownerName = 'Automation Hub BD', senderGender = null, imageUrls = [], audioUrls = [], extraTokenUsage = 0) {
     
+    // 0. Unified Logger Helper (Defined at top to avoid Hoisting/Initialization errors)
+    const finalize = async (result) => {
+        if (!result) return null;
+        
+        // Log to API Usage Stats for Dashboard (O(1) in Background)
+        if (pageConfig.user_id && result.token_usage > 0) {
+            const cost = dbService.calculateCost(result.model, result.token_usage);
+            // Fire and forget (don't await to keep response fast)
+            dbService.logApiUsage(pageConfig.user_id, result.model, result.token_usage, cost);
+        }
+        
+        return result;
+    };
+
     // --- MULTI-TENANCY SAFETY CHECK ---
     const pageId = pageConfig.page_id;
     
@@ -1120,20 +1134,6 @@ INSTRUCTIONS:
     // We only try the selected model. If it fails, we return an error.
     const modelsToTry = [finalModel];
     
-    // 5. Unified Logger Helper
-    const finalize = async (result) => {
-        if (!result) return null;
-        
-        // Log to API Usage Stats for Dashboard (O(1) in Background)
-        if (pageConfig.user_id && result.token_usage > 0) {
-            const cost = dbService.calculateCost(result.model, result.token_usage);
-            // Fire and forget (don't await to keep response fast)
-            dbService.logApiUsage(pageConfig.user_id, result.model, result.token_usage, cost);
-        }
-        
-        return result;
-    };
-
     for (let modelIndex = 0; modelIndex < modelsToTry.length; modelIndex++) {
         const currentModel = modelsToTry[modelIndex];
         
