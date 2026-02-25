@@ -8,6 +8,46 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
+// --- NEW: AUTOMATIC KEY FAILURE HANDLING ---
+/**
+ * Handles API errors by marking keys as dead or quota exceeded.
+ * @param {Error} error - The error object from the API call.
+ * @param {string} apiKey - The API key that failed.
+ * @param {string} model - The model being used.
+ */
+function handleAiError(error, apiKey, model) {
+    if (!apiKey) return;
+    
+    const errorMsg = (error.message || '').toLowerCase();
+    const statusCode = error.status || (error.response ? error.response.status : null);
+
+    console.error(`[AI Error Handler] Handling error for key ${apiKey.substring(0, 8)}... | Status: ${statusCode} | Msg: ${errorMsg}`);
+
+    // 1. Quota / Rate Limit (429)
+    if (statusCode === 429 || errorMsg.includes('429') || errorMsg.includes('limit') || errorMsg.includes('quota') || errorMsg.includes('exhausted')) {
+        console.warn(`[AI] ⛔ Quota Exceeded for key ${apiKey.substring(0, 8)}... marking as EXCEEDED.`);
+        if (keyService.markKeyAsQuotaExceeded) {
+            keyService.markKeyAsQuotaExceeded(apiKey);
+        }
+        return;
+    }
+
+    // 2. Invalid Key / Auth (401 / 403)
+    if (statusCode === 401 || statusCode === 403 || errorMsg.includes('401') || errorMsg.includes('403') || errorMsg.includes('invalid') || errorMsg.includes('key') || errorMsg.includes('authentication')) {
+        console.error(`[AI] 💀 Invalid Key detected: ${apiKey.substring(0, 8)}... marking as DEAD (30 days).`);
+        if (keyService.markKeyAsDead) {
+            keyService.markKeyAsDead(apiKey, 30 * 24 * 60 * 60 * 1000, 'invalid_key'); // 30 days cooldown
+        }
+        return;
+    }
+
+    // 3. General API Error (Network, Timeout, 500, etc.)
+    console.warn(`[AI] ⚠️ General API Error for key ${apiKey.substring(0, 8)}... cooldown for 10 minutes.`);
+    if (keyService.markKeyAsDead) {
+        keyService.markKeyAsDead(apiKey, 10 * 60 * 1000, 'api_error'); // 10 minutes cooldown
+    }
+}
+
 // --- GLOBAL ENGINE CONFIG CACHE ---
 let globalEngineConfigCache = new Map();
 let lastConfigFetch = 0;
