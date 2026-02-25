@@ -1544,9 +1544,14 @@ Rules:
             const apiKey = keyData.key;
             
             // USE URL DIRECTLY IF POSSIBLE (User Preference)
-            const imageContent = imageUrl.startsWith('data:') 
-                ? { url: imageUrl } 
-                : { url: imageUrl }; // OpenRouter handles URLs directly
+            // But if it's a private URL (like FB/WAHA), we MUST use Base64.
+            // If we already downloaded it (base64Image exists), use Base64 to be safe.
+            let imageContent;
+            if (base64Image) {
+                 imageContent = { url: `data:${mimeType};base64,${base64Image}` };
+            } else {
+                 imageContent = { url: imageUrl };
+            }
 
             const payload = {
                 model: model,
@@ -1566,7 +1571,7 @@ Rules:
                     'HTTP-Referer': 'https://orderly-conversations.com', 
                     'X-Title': 'Orderly Conversations'
                 },
-                timeout: 25000
+                timeout: 40000 // Increased timeout for heavy models
             });
 
             const result = response.data?.choices?.[0]?.message?.content;
