@@ -1728,7 +1728,7 @@ Rules:
     if (pageConfig.cheap_engine !== false) {
         try {
             const provider = 'openrouter';
-            const model = 'qwen/qwen-2.5-vl-7b-instruct:free';
+            const model = 'qwen/qwen-2.5-vl-7b-instruct'; // Fixed: Removed :free to avoid 'No endpoints found'
             console.log(`[Vision] Attempt 3: ${model} (${provider})`);
 
             let keyData = await keyService.getSmartKey(provider, model);
@@ -1753,9 +1753,11 @@ Rules:
                 ]
             };
 
+            console.log(`[Vision] Calling OpenRouter with Key: ${apiKey.substring(0, 15)}...`);
+
             const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', payload, {
                 headers: { 
-                    'Authorization': `Bearer ${apiKey}`,
+                    'Authorization': `Bearer ${apiKey.trim()}`,
                     'Content-Type': 'application/json',
                     'HTTP-Referer': 'https://orderly-conversations.com', 
                     'X-Title': 'Orderly Conversations'

@@ -5,9 +5,9 @@ async function debugOpenRouterVision() {
     const apiKey = 'sk-f835891e79afe814767ec4499aef8c96fc5698a4397ef79d';
     // Test multiple OpenRouter Vision models
     const models = [
+        'nvidia/nemotron-nano-12b-v2-vl:free',
         'arcee-ai/trinity-large-preview',
-        'qwen/qwen-2.5-vl-7b-instruct:free',
-        'google/gemini-2.0-flash-001'
+        'qwen/qwen-2.5-vl-7b-instruct:free'
     ];
     
     const imageUrl = 'https://tbkgipmtrggdykyknfcm.supabase.co/storage/v1/object/public/product-images/657a89a4-f712-44ba-a3b7-b150b966a65c/1771914711503.jpg';
