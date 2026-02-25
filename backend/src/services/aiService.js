@@ -913,8 +913,12 @@ You must output valid JSON only.
     if (!useCheapEngine && defaultProvider === 'salesmanchatbot' && pageConfig.api_key) {
         try {
             const axios = require('axios');
-            const base = process.env.SALESMANCHATBOT_API_BASE_URL || `http://localhost:${process.env.PORT || 3001}/api/external/v1`;
-            const modelToUse = (pageConfig.chatmodel || 'salesmanchatbot-pro');
+            // FIX: Use absolute URL for Production to avoid 'localhost' issues in external API calls
+            const base = process.env.PUBLIC_BASE_URL 
+                ? `${process.env.PUBLIC_BASE_URL}/api/external/v1`
+                : (process.env.SALESMANCHATBOT_API_BASE_URL || `http://localhost:${process.env.PORT || 3001}/api/external/v1`);
+            
+            const modelToUse = (pageConfig.chat_model || 'salesmanchatbot-pro');
             const payload = {
                 model: modelToUse,
                 messages: messages,
@@ -923,6 +927,7 @@ You must output valid JSON only.
                 'Authorization': `Bearer ${pageConfig.api_key}`,
                 'Content-Type': 'application/json'
             };
+            
             console.log(`[AI] SalesmanChatbot Own API: Calling ${base}/chat/completions with model=${modelToUse}`);
             const resp = await axios.post(`${base}/chat/completions`, payload, { headers, timeout: 25000 });
             const data = resp.data;
@@ -932,12 +937,15 @@ You must output valid JSON only.
                 return finalize({ reply: aiText, sentiment: 'neutral', token_usage: tokenUsage + totalTokenUsage, model: modelToUse, foundProducts });
             }
         } catch (error) {
-            console.warn(`[AI] SalesmanChatbot Own API Error:`, error.message);
+            const statusCode = error.response ? error.response.status : 'N/A';
+            const errorMsg = error.response?.data?.error?.message || error.message;
+            console.warn(`[AI] SalesmanChatbot Own API Error (${statusCode}):`, errorMsg);
+            
             return { 
                 reply: null, 
-                error: `SalesmanChatbot API Error: ${error.message}. Check your API key/model.`,
+                error: `[AI Error - Silent] Strict Domain Control (Null Reply) | AI Provider Error: ${statusCode} ${errorMsg}`,
                 token_usage: 0,
-                model: pageConfig.chatmodel || 'salesmanchatbot-pro'
+                model: pageConfig.chat_model || 'salesmanchatbot-pro'
             };
         }
     }
