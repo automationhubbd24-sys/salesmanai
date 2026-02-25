@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Bot, MessageSquare, Loader2, Save, Image, Sparkles, MessageCircle, Lock, PackageSearch, ReplyAll, LayoutTemplate, Hand, StopCircle, RefreshCcw, Edit, Mic } from "lucide-react";
+import { Bot, MessageSquare, Loader2, Save, Image, Sparkles, MessageCircle, Lock, PackageSearch, ReplyAll, LayoutTemplate, Hand, StopCircle, CheckCircle2, RefreshCcw, Edit, Mic } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "react-router-dom";
 
@@ -430,13 +430,13 @@ export default function MessengerControlPage() {
                     onChange={(e) => setConfig({...config, block_emoji: e.target.value})}
                 />
                 <p className="text-xs text-muted-foreground">
-                    AI stops if this emoji is found in recent messages.
+                    Admin sending this emoji will permanently pause the AI.
                 </p>
             </div>
 
             <div className="space-y-2">
                 <Label className="flex items-center gap-2">
-                    <RefreshCcw className="w-4 h-4 text-green-500" />
+                    <CheckCircle2 className="w-4 h-4 text-[#00ff88]" />
                     Unblock Emoji
                 </Label>
                 <Input 
@@ -445,24 +445,7 @@ export default function MessengerControlPage() {
                     onChange={(e) => setConfig({...config, unblock_emoji: e.target.value})}
                 />
                 <p className="text-xs text-muted-foreground">
-                    AI resumes if this emoji is sent after a block.
-                </p>
-            </div>
-
-            <div className="space-y-2">
-                <Label className="flex items-center gap-2">
-                    <MessageSquare className="w-4 h-4 text-blue-500" />
-                    Check Conversion Limit
-                </Label>
-                <Input 
-                    type="number" 
-                    min={1}
-                    max={50}
-                    value={config.check_conversion} 
-                    onChange={(e) => setConfig({...config, check_conversion: parseInt(e.target.value) || 10})}
-                />
-                <p className="text-xs text-muted-foreground">
-                    Number of recent messages to check for emojis.
+                    Admin sending this emoji will resume the AI.
                 </p>
             </div>
 

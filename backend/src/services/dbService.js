@@ -230,6 +230,30 @@ async function logError(error, context = 'Unknown', metadata = {}) {
 // 9. Initialize Tables (Run on Startup)
 async function initTables() {
     try {
+        // FB Contacts Table (For Handover/Lock)
+        await query(`
+            CREATE TABLE IF NOT EXISTS fb_contacts (
+                id SERIAL PRIMARY KEY,
+                page_id TEXT NOT NULL,
+                sender_id TEXT NOT NULL,
+                is_locked BOOLEAN DEFAULT FALSE,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                UNIQUE(page_id, sender_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_fb_contacts_page_sender ON fb_contacts(page_id, sender_id);
+        `);
+
+        // Ensure 'is_locked' column exists (for backward compatibility)
+        await query(`
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_contacts' AND column_name='is_locked') THEN
+                    ALTER TABLE fb_contacts ADD COLUMN is_locked BOOLEAN DEFAULT FALSE;
+                END IF;
+            END $$;
+        `);
+        console.log("[DB] 'fb_contacts' table/column checked.");
+
         // Error Logs Table
         await query(`
             CREATE TABLE IF NOT EXISTS error_logs (
@@ -1469,6 +1493,41 @@ async function checkWhatsAppLockStatus(sessionName, senderId) {
     }
 }
 
+// --- FACEBOOK LOCK SYSTEM ---
+async function checkFbLockStatus(pageId, senderId) {
+    try {
+        const result = await query(
+            'SELECT is_locked FROM fb_contacts WHERE page_id = $1 AND sender_id = $2 LIMIT 1',
+            [pageId, senderId]
+        );
+        if (result.rows.length > 0) {
+            return result.rows[0].is_locked === true;
+        }
+        return false;
+    } catch (error) {
+        console.error("Error checking FB lock status:", error);
+        return false;
+    }
+}
+
+async function toggleFbLock(pageId, senderId, isLocked) {
+    try {
+        // Upsert logic: ensure the contact exists and update its lock status
+        await query(
+            `INSERT INTO fb_contacts (page_id, sender_id, is_locked, updated_at)
+             VALUES ($1, $2, $3, NOW())
+             ON CONFLICT (page_id, sender_id) 
+             DO UPDATE SET is_locked = EXCLUDED.is_locked, updated_at = NOW()`,
+            [pageId, senderId, isLocked]
+        );
+        console.log(`[DB] FB Chat ${isLocked ? 'LOCKED' : 'UNLOCKED'} for ${senderId} on Page ${pageId}`);
+        return true;
+    } catch (error) {
+        console.error("Error toggling FB lock:", error);
+        return false;
+    }
+}
+
 // --- Helper: Get Last N WhatsApp Messages (Raw) for Echo Check ---
 async function getLastNWhatsAppMessages(sessionName, recipientId, limit = 20) {
     const { query } = require('./pgClient');
@@ -1663,6 +1722,8 @@ module.exports = {
     createWhatsAppSessionEntry,
     getActiveWhatsAppSessions,
     getWhatsAppDailyAICount,
+    checkFbLockStatus,
+    toggleFbLock,
 
     // --- PRODUCT MANAGEMENT ---
     createProduct,

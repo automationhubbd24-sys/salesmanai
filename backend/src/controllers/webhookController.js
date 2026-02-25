@@ -203,6 +203,23 @@ async function queueMessage(event) {
         const messageId = event.message.mid;
         const text = event.message.text || '';
         
+        // --- PERMANENT HANDOVER LOGIC (Admin Action) ---
+        // Fetch prompts to get block/unblock emojis
+        const pagePrompts = await dbService.getPagePrompts(pageId);
+        if (pagePrompts && text) {
+            const blockEmoji = pagePrompts.block_emoji;
+            const unblockEmoji = pagePrompts.unblock_emoji;
+
+            if (blockEmoji && text.includes(blockEmoji)) {
+                await dbService.toggleFbLock(pageId, recipientId, true);
+                console.log(`[Handover] Admin blocked AI for ${recipientId} using emoji ${blockEmoji}`);
+            } else if (unblockEmoji && text.includes(unblockEmoji)) {
+                await dbService.toggleFbLock(pageId, recipientId, false);
+                console.log(`[Handover] Admin unblocked AI for ${recipientId} using emoji ${unblockEmoji}`);
+            }
+        }
+        // ------------------------------------------------
+
         // Save to fb_chats (Upsert handles duplicates)
         // This ensures Admin replies from Inbox are saved.
         await dbService.saveFbChat({
@@ -563,27 +580,16 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         // -----------------------------------------------------------------
 
         // --- FAILURE LOCK CHECK ---
-        const isLocked = await dbService.checkLockStatus(pageId, senderId);
-        if (isLocked) {
-            const logMsg = `[Failure Lock] Conversation with ${senderId} is locked for 24h due to repeated failures.`;
-            console.log(logMsg);
-            logToFile(logMsg);
-            // Log to DB
-            await dbService.saveFbChat({
-                page_id: pageId,
-                sender_id: pageId,
-                recipient_id: senderId,
-                message_id: `sys_${Date.now()}`,
-                text: `[SYSTEM] Conversation Locked (Repeated Failures).`,
-                timestamp: Date.now(),
-                status: 'system_error',
-                reply_by: 'system'
-            });
-            return;
-        }
-        // --------------------------
-        
-        // --- OPTIMIZATION: PARALLEL DATA FETCHING (Modified for Dynamic History) ---
+    const isLocked = await dbService.checkFbLockStatus(pageId, senderId);
+    if (isLocked) {
+        const logMsg = `[Handover Lock] AI is permanently disabled for ${senderId} on Page ${pageId}.`;
+        console.log(logMsg);
+        logToFile(logMsg);
+        return;
+    }
+    // --------------------------
+    
+    // --- OPTIMIZATION: PARALLEL DATA FETCHING (Modified for Dynamic History) ---
         // 1. Fetch Page Prompts FIRST to get the 'check_conversion' (History Limit)
         // This ensures we only fetch exactly what the user configured (Token Saving)
         let pagePrompts = null;
@@ -820,70 +826,18 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         // senderName already fetched
         // -------------------------
         
-        // Dynamic History Limit from DB (check_conversion) or default 10
-        // history already fetched with default 50. If check_conversion is different, we might have fetched too much or too little.
-        // But 50 is a safe upper bound for context window usually.
-        // If we really need strict limit, we can slice the array locally.
-        
-        let effectiveHistory = history;
-        // User Setting: check_conversion (1-50)
-        // If not set, default to 10 to save tokens as per previous feedback.
-        const userHistoryLimit = pagePrompts?.check_conversion ? Number(pagePrompts.check_conversion) : 10;
-        
-        if (effectiveHistory.length > userHistoryLimit) {
-            // Keep only the last N messages
-            // history is already reversed (oldest first? No, dbService reverses it: rows.map().reverse())
-            // Wait, dbService: ORDER BY id DESC LIMIT $2 -> returns [newest, ..., oldest]
-            // .reverse() -> returns [oldest, ..., newest]
-            // So we want the LAST N messages from this array.
-            effectiveHistory = effectiveHistory.slice(effectiveHistory.length - userHistoryLimit);
-        }
-        console.log(`[Context] Using last ${effectiveHistory.length} messages (Limit: ${userHistoryLimit})`);
+    let effectiveHistory = history;
+    // User Setting: History Limit
+    // Default to 10 to save tokens.
+    const userHistoryLimit = 10;
+    
+    if (effectiveHistory.length > userHistoryLimit) {
+        effectiveHistory = effectiveHistory.slice(effectiveHistory.length - userHistoryLimit);
+    }
+    console.log(`[Context] Using last ${effectiveHistory.length} messages (Limit: ${userHistoryLimit})`);
 
         // --- STOP EMOJI CHECK (Dynamic Logic via Graph API) ---
-        const blockEmoji = pagePrompts?.block_emoji;
-        const unblockEmoji = pagePrompts?.unblock_emoji;
-
-        if (blockEmoji) {
-            let lastBlockTime = 0;
-            let lastUnblockTime = 0;
-            
-            for (const msg of fbMessages) {
-                // Check if message is from PAGE (Admin or Bot)
-                if (msg.from && msg.from.id === pageId) {
-                     const content = msg.message || '';
-                     const msgTime = new Date(msg.created_time).getTime();
-                     
-                     if (content.includes(blockEmoji)) {
-                         if (msgTime > lastBlockTime) lastBlockTime = msgTime;
-                     }
-                     
-                     if (unblockEmoji && content.includes(unblockEmoji)) {
-                         if (msgTime > lastUnblockTime) lastUnblockTime = msgTime;
-                     }
-                }
-            }
-            
-            if (lastBlockTime > 0) {
-                 if (lastBlockTime > lastUnblockTime) {
-                          const logMsg = `[Stop Logic] Active Block Emoji (${blockEmoji}) detected from Page. AI Halted.`;
-                          console.log(logMsg);
-                          logToFile(logMsg);
-                          // Log to DB
-                          await dbService.saveFbChat({
-                              page_id: pageId,
-                              sender_id: pageId,
-                              recipient_id: senderId,
-                              message_id: `sys_${Date.now()}`,
-                              text: `[SYSTEM] AI Halted by Stop Emoji (${blockEmoji}).`,
-                              timestamp: Date.now(),
-                              status: 'system_info',
-                              reply_by: 'system'
-                          });
-                          return;
-                     }
-            }
-        }
+        // REMOVED: This is now handled permanently via DB status in the echo handling above.
         // ---------------------------------------
 
         // --- MARK SEEN (Delayed until after Stop Logic) ---
