@@ -1518,6 +1518,31 @@ async function getAllKeys() {
     }
 }
 
+// Add API Key
+async function addApiKey({ provider, api, model = 'default' }) {
+    try {
+        const result = await query(
+            'INSERT INTO api_list (provider, api, model, status) VALUES ($1, $2, $3, $4) RETURNING *',
+            [provider, api, model, 'active']
+        );
+        return result.rows[0];
+    } catch (error) {
+        console.error("[DB] addApiKey Error:", error.message);
+        throw error;
+    }
+}
+
+// Delete API Key
+async function deleteApiKey(id) {
+    try {
+        await query('DELETE FROM api_list WHERE id = $1', [id]);
+        return true;
+    } catch (error) {
+        console.error("[DB] deleteApiKey Error:", error.message);
+        throw error;
+    }
+}
+
 // 26. Calculate Cost for Usage Stats
 function calculateCost(model, tokens) {
     if (!tokens || tokens <= 0) return 0;
@@ -1542,6 +1567,8 @@ function calculateCost(model, tokens) {
 
 module.exports = {
     getAllKeys,
+    addApiKey,
+    deleteApiKey,
     logApiUsage,
     calculateCost,
     getPageConfig,
