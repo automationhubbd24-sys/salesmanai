@@ -731,21 +731,22 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     }
 
     // --- MODEL NAME NORMALIZATION & ALIASES ---
-    // User Request: Map internal names to real models for both global and own API usage.
+    // User Request: Map internal names to real models and SPECIFIC servers.
+    // Pro -> Gemini (Google)
+    // Flash -> OpenRouter
+    // Lite -> Groq
     const INTERNAL_MODEL_MAP = {
-        'salesmanchatbot-pro': 'gemini-2.0-flash', // Pro uses Gemini 2.0 Flash
-        'salesmanchatbot-flash': 'google/gemini-2.0-flash:free', // Flash uses OpenRouter Gemini Free
-        'salesmanchatbot-lite': 'google/gemini-2.0-flash-lite:free', // Lite uses OpenRouter Gemini Lite Free
+        'salesmanchatbot-pro': { model: 'gemini-2.0-flash', provider: 'google' },
+        'salesmanchatbot-flash': { model: 'google/gemini-2.0-flash:free', provider: 'openrouter' },
+        'salesmanchatbot-lite': { model: 'llama-3.1-8b-instant', provider: 'groq' },
     };
 
     if (INTERNAL_MODEL_MAP[defaultModel]) {
-        // If it's one of our internal models, ensure the provider is also correct
-        if (defaultModel === 'salesmanchatbot-flash' || defaultModel === 'salesmanchatbot-lite') {
-            if (defaultProvider === 'salesmanchatbot') defaultProvider = 'openrouter';
-        } else if (defaultModel === 'salesmanchatbot-pro') {
-            if (defaultProvider === 'salesmanchatbot') defaultProvider = 'google';
+        const mapping = INTERNAL_MODEL_MAP[defaultModel];
+        if (defaultProvider === 'salesmanchatbot' || defaultProvider === 'system') {
+            defaultProvider = mapping.provider;
         }
-        defaultModel = INTERNAL_MODEL_MAP[defaultModel];
+        defaultModel = mapping.model;
     }
 
     console.log(`[AI] Final Engine Config: ${defaultProvider} / ${defaultModel}`);
