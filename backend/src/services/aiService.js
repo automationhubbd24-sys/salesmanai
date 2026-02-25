@@ -1591,7 +1591,8 @@ Rules:
         } else {
              // Free User: Default to 1.5-flash or configured Gemini
              const userModel = pageConfig.chat_model || pageConfig.chatmodel;
-             model = (userModel && userModel.includes('gemini')) ? userModel : 'gemini-1.5-flash';
+             // Fix: Use stable model names for Google Vision
+             model = (userModel && userModel.includes('gemini')) ? userModel : 'gemini-1.5-flash-latest';
              
              // Use System Key for Google
              const keyData = await keyService.getSmartKey(provider, model);
@@ -1720,12 +1721,12 @@ Rules:
         }
     }
 
-    // ATTEMPT 3: OpenRouter (Qwen 2.5 VL - Free)
+    // ATTEMPT 3: OpenRouter (Gemini 2.0 Flash - Lite)
     // ONLY for Free Users
     if (pageConfig.cheap_engine !== false) {
         try {
             const provider = 'openrouter';
-            const model = 'qwen/qwen-2.5-vl-7b-instruct:free';
+            const model = 'google/gemini-2.0-flash-lite-001';
             console.log(`[Vision] Attempt 3: ${model} (${provider})`);
 
             let keyData = await keyService.getSmartKey(provider, model);
@@ -1768,8 +1769,8 @@ Rules:
 
         } catch (error) {
             const errMsg = error.response?.data?.error?.message || error.message;
-            console.warn(`[Vision] Attempt 3 (${'qwen/qwen-2.5-vl-7b-instruct:free'}) Failed: ${errMsg}`);
-            errors.push(`OpenRouter Qwen: ${errMsg}`);
+            console.warn(`[Vision] Attempt 3 (${'google/gemini-2.0-flash-001'}) Failed: ${errMsg}`);
+            errors.push(`OpenRouter Gemini: ${errMsg}`);
         }
     }
 
