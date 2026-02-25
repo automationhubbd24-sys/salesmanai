@@ -455,8 +455,11 @@ async function getSmartKey(provider, model) {
 
     if (model) {
         validKeys = keysByModel.get(model) || [];
-        // REMOVED: Automatic provider fallback if model keys are empty.
-        // User wants strictness. If a specific model is requested, we only use keys for that model.
+        // Fallback: If no keys found for specific model, try 'default' model keys for the same provider
+        if (validKeys.length === 0 && provider) {
+            const providerKeys = keysByProvider.get(provider) || [];
+            validKeys = providerKeys.filter(k => !k.model || k.model === 'default');
+        }
     } else if (provider) {
         validKeys = keysByProvider.get(provider) || [];
     } else {
@@ -473,6 +476,11 @@ async function getSmartKey(provider, model) {
             // Try again after refresh
             if (model) {
                 validKeys = keysByModel.get(model) || [];
+                // Fallback after refresh
+                if (validKeys.length === 0 && provider) {
+                    const providerKeys = keysByProvider.get(provider) || [];
+                    validKeys = providerKeys.filter(k => !k.model || k.model === 'default');
+                }
             } else if (provider) {
                 validKeys = keysByProvider.get(provider) || [];
             }
