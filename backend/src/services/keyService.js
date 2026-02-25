@@ -503,7 +503,7 @@ async function getSmartKey(provider, model) {
             
             // Try again after refresh
             if (model) {
-                validKeys = keysByModel.get(model) || (provider ? keysByProvider.get(provider) : []);
+                validKeys = keysByModel.get(model) || [];
             } else if (provider) {
                 validKeys = keysByProvider.get(provider) || [];
             }

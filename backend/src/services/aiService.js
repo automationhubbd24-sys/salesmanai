@@ -618,17 +618,19 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
 
     // IF User did NOT specify a model (null), pick a smart default based on the Provider
     if (!defaultModel) {
-        if (defaultProvider === 'gemini') {
-            defaultModel = 'gemini-2.0-flash'; // Safer default (User Request: Avoid 1.5 Flash)
+        if (defaultProvider === 'salesmanchatbot') {
+            defaultModel = 'salesmanchatbot-pro';
         } else if (defaultProvider === 'openrouter') {
             defaultModel = useCheapEngine ? dynamicModel : 'arcee-ai/trinity-large-preview';
         } else if (defaultProvider === 'groq') {
             defaultModel = 'llama-3.3-70b-versatile';
-        } else if (defaultProvider === 'salesmanchatbot') {
-            defaultModel = 'salesmanchatbot-pro';
-        } else {
-            defaultModel = useCheapEngine ? dynamicModel : 'gemini-2.0-flash'; 
+        } else if (defaultProvider === 'gemini') {
+            defaultModel = 'gemini-1.5-flash'; // Minimal fallback
         }
+    }
+
+    if (!defaultModel) {
+        defaultModel = useCheapEngine ? dynamicModel : 'salesmanchatbot-pro';
     }
 
     // Force free model for OpenRouter if using default
@@ -1082,10 +1084,10 @@ INSTRUCTIONS:
 
     // 2. Resolve Engine Config (Global Provider Config)
     // User Request: Fetch models from Global Engine Config based on provider
-    const targetProvider = defaultProvider || 'google';
-    let engineTextModel = defaultModel || 'gemini-1.5-flash';
-    let engineVisionModel = 'gemini-1.5-flash';
-    let engineVoiceModel = 'gemini-1.5-flash-lite';
+    const targetProvider = defaultProvider || 'salesmanchatbot';
+    let engineTextModel = defaultModel || 'salesmanchatbot-pro';
+    let engineVisionModel = defaultModel || 'salesmanchatbot-pro';
+    let engineVoiceModel = defaultModel || 'salesmanchatbot-pro';
     
     let textProvider = targetProvider;
     let visionProvider = targetProvider;
