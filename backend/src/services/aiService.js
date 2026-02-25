@@ -8,6 +8,28 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
+// --- CPU CONCURRENCY CONTROL ---
+// Limits simultaneous AI calls to prevent CPU spikes during bursts
+let activeAiCalls = 0;
+const MAX_CONCURRENT_AI_CALLS = process.env.MAX_CONCURRENT_AI_CALLS ? parseInt(process.env.MAX_CONCURRENT_AI_CALLS) : 8;
+const AI_QUEUE_TIMEOUT = 15000; // 15 seconds wait time
+
+async function acquireAiSlot() {
+    const start = Date.now();
+    while (activeAiCalls >= MAX_CONCURRENT_AI_CALLS) {
+        if (Date.now() - start > AI_QUEUE_TIMEOUT) {
+            throw new Error("AI Server is too busy. Please try again in a few seconds.");
+        }
+        await new Promise(resolve => setTimeout(resolve, 500)); // Wait 500ms
+    }
+    activeAiCalls++;
+}
+
+function releaseAiSlot() {
+    activeAiCalls = Math.max(0, activeAiCalls - 1);
+}
+// -------------------------------
+
 // --- NEW: AUTOMATIC KEY FAILURE HANDLING ---
 /**
  * Handles API errors by marking keys as dead or quota exceeded.
@@ -465,9 +487,14 @@ function extractReplyFromText(text) {
 
 // Step 2: Business Logic / AI Brain
 async function generateReply(userMessage, pageConfig, pagePrompts, history = [], senderName = 'Customer', ownerName = 'Automation Hub BD', senderGender = null, imageUrls = [], audioUrls = [], extraTokenUsage = 0) {
-    
+    // Acquire Slot to prevent CPU Spikes
+    await acquireAiSlot();
+
     // 0. Unified Logger Helper (Defined at top to avoid Hoisting/Initialization errors)
     const finalize = async (result) => {
+        // Release slot before finishing
+        releaseAiSlot();
+
         if (!result) return null;
         
         // --- 1. Log to AI Usage Logs (ai_usage_logs table) ---
@@ -935,12 +962,12 @@ You must output valid JSON only.
             const errorMsg = error.response?.data?.error?.message || error.message;
             console.warn(`[AI] SalesmanChatbot Own API Error (${statusCode}):`, errorMsg);
             
-            return { 
+            return finalize({ 
                 reply: null, 
                 error: `[AI Error - Silent] Strict Domain Control (Null Reply) | AI Provider Error: ${statusCode} ${errorMsg}`,
                 token_usage: 0,
                 model: pageConfig.chat_model || 'salesmanchatbot-pro'
-            };
+            });
         }
     }
 
@@ -1078,7 +1105,7 @@ INSTRUCTIONS:
                         // 3. Final Image List
                         parsed2.images = mentionedImages;
                         
-                        return { ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: modelToUse, foundProducts: products };
+                        return finalize({ ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: modelToUse, foundProducts: products });
                             } catch (aiError) {
                                 console.error(`[AI] Phase 1 Tool Re-generation Failed: ${aiError.message}`);
                                 dbService.logError(aiError, 'AI Service - Tool Re-generation', { model: modelToUse, messages: messages.length });
@@ -1148,14 +1175,17 @@ INSTRUCTIONS:
         }
     };
 
-    // --- PHASE 2: SALESMANCHATBOT ENGINE (SMART ROUTING) ---
+    // PHASE 2: SALESMANCHATBOT ENGINE (SMART ROUTING) ---
+    // User Request: If User provided their own key and it was attempted, STOP HERE.
+    // "ami emr facebook page er jonno api ta lagaisilam then 3 ta kaj kore to 4 ta দুঃখিত... ei error ase"
+    // This happens because it falls back to Phase 2 when Phase 1 fails.
     if (userKeyAttempted) {
         console.warn(`[AI] Phase 1 was attempted but failed or was invalid. Strict Isolation Active: Blocking Cloud API fallback.`);
         return finalize({ 
             reply: null, 
-            error: "Your API Provider settings are incorrect or the key has expired. Please check your dashboard.",
+            error: "আপনার দেওয়া এপিআই কী-তে সমস্যা দেখা দিয়েছে অথবা লিমিট শেষ হয়ে গেছে। দয়া করে ড্যাশবোর্ড থেকে আপনার কী চেক করুন।",
             token_usage: 0,
-            model: defaultModel
+            model: pageConfig.chat_model || defaultModel
         });
     }
 

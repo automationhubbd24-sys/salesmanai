@@ -197,46 +197,50 @@ const verifyWebhook = (req, res) => {
 // Queue Message for Debounce
 async function queueMessage(event) {
     // --- ECHO HANDLING (Admin Replies & Bot Confirmations) ---
-    if (event.message && event.message.is_echo) {
+    if (event.message && (event.message.is_echo || event.sender.id === event.recipient.id)) {
         const pageId = event.sender.id; // Sender is Page
         const recipientId = event.recipient.id; // Recipient is User
         const messageId = event.message.mid;
         const text = event.message.text || '';
         
-        // --- PERMANENT HANDOVER LOGIC (Admin Action) ---
-        // Fetch prompts to get block/unblock emojis
-        const pagePrompts = await dbService.getPagePrompts(pageId);
-        if (pagePrompts && text) {
-            const blockEmoji = pagePrompts.block_emoji;
-            const unblockEmoji = pagePrompts.unblock_emoji;
-
-            if (blockEmoji && text.includes(blockEmoji)) {
-                await dbService.toggleFbLock(pageId, recipientId, true);
-                console.log(`[Handover] Admin blocked AI for ${recipientId} using emoji ${blockEmoji}`);
-            } else if (unblockEmoji && text.includes(unblockEmoji)) {
-                await dbService.toggleFbLock(pageId, recipientId, false);
-                console.log(`[Handover] Admin unblocked AI for ${recipientId} using emoji ${unblockEmoji}`);
-            }
-        }
-        // ------------------------------------------------
+        console.log(`[Echo] Admin/Bot Message Detected for User: ${recipientId} on Page: ${pageId}. Text: ${text.substring(0, 20)}...`);
 
         // Save to fb_chats (Upsert handles duplicates)
-        // This ensures Admin replies from Inbox are saved.
-        await dbService.saveFbChat({
-            page_id: pageId,
-            sender_id: pageId,
-            recipient_id: recipientId,
-            message_id: messageId,
-            text: text,
-            timestamp: Date.now(),
-            status: 'sent', // Mark as sent by page
-            reply_by: 'page'
-        });
+        // This ensures Admin replies from Inbox are saved immediately.
+        try {
+            await dbService.saveFbChat({
+                page_id: pageId,
+                sender_id: pageId,
+                recipient_id: recipientId,
+                message_id: messageId,
+                text: text,
+                timestamp: Date.now(),
+                status: 'sent',
+                reply_by: 'page'
+            });
 
-        // Save to Context History (Deduplicated by messageId in dbService)
-        // This ensures the AI remembers what the Page (Admin/Bot) said.
-        const sessionId = `${pageId}_${recipientId}`;
-        await dbService.saveChatMessage(sessionId, 'assistant', text, messageId);
+            // Save to Context History (Assistant role)
+            const sessionId = `${pageId}_${recipientId}`;
+            await dbService.saveChatMessage(sessionId, 'assistant', text, messageId);
+
+            // --- PERMANENT HANDOVER LOGIC (Admin Action) ---
+            // Process AFTER saving to ensure sequential logic
+            const pagePrompts = await dbService.getPagePrompts(pageId);
+            if (pagePrompts && text) {
+                const blockEmoji = pagePrompts.block_emoji;
+                const unblockEmoji = pagePrompts.unblock_emoji;
+
+                if (blockEmoji && text.includes(blockEmoji)) {
+                    await dbService.toggleFbLock(pageId, recipientId, true);
+                    console.log(`[Handover] 🔒 ADMIN LOCK: ${recipientId} | Emoji: ${blockEmoji}`);
+                } else if (unblockEmoji && text.includes(unblockEmoji)) {
+                    await dbService.toggleFbLock(pageId, recipientId, false);
+                    console.log(`[Handover] 🔓 ADMIN UNLOCK: ${recipientId} | Emoji: ${unblockEmoji}`);
+                }
+            }
+        } catch (err) {
+            console.error(`[Echo] Error processing admin reply:`, err.message);
+        }
 
         return; // STOP Processing (Don't trigger AI for echoes)
     }

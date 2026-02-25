@@ -9,8 +9,9 @@ function getPool() {
         }
         pool = new Pool({
             connectionString: process.env.DATABASE_URL,
-            max: parseInt(process.env.DB_MAX_CONNECTIONS) || 10,
-            idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT) || 30000,
+            max: parseInt(process.env.DB_MAX_CONNECTIONS) || 50, // Increased to 50 for high traffic (10k/min)
+            idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT) || 10000, // Faster timeout
+            connectionTimeoutMillis: 5000, // 5s wait for connection
         });
     }
     return pool;

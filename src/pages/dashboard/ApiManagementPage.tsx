@@ -161,10 +161,30 @@ export default function ApiManagementPage() {
     return (
         <div className="container mx-auto p-6 space-y-6">
             <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10 shadow-[0_18px_40px_rgba(0,0,0,0.35)]">
-                <CardHeader>
+                <CardHeader className="flex flex-row items-center justify-between">
                     <CardTitle className="text-2xl font-bold bg-gradient-to-r from-white to-white/60 bg-clip-text text-transparent">
                         API Engine Management
                     </CardTitle>
+                    <Button 
+                        onClick={async () => {
+                            try {
+                                const token = localStorage.getItem("auth_token");
+                                const res = await fetch(`${BACKEND_URL}/api/api-list/refresh-cache`, {
+                                    method: "POST",
+                                    headers: { Authorization: `Bearer ${token}` }
+                                });
+                                const data = await res.json();
+                                if (data.success) toast.success("API Cache refreshed successfully!");
+                                else toast.error("Failed to refresh cache");
+                            } catch (e) {
+                                toast.error("Refresh failed");
+                            }
+                        }}
+                        variant="outline"
+                        className="border-[#00ff88]/50 text-[#00ff88] hover:bg-[#00ff88]/10"
+                    >
+                        <RefreshCw className="mr-2 h-4 w-4" /> Refresh Engine Cache
+                    </Button>
                 </CardHeader>
                 <CardContent className="space-y-6">
                     {/* Add Key Section - ONLY PROVIDER AND KEY */}

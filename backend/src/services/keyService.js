@@ -7,7 +7,7 @@ let keyCacheMap = new Map(); // NEW: Key lookup Map (apiKey -> object) for O(1) 
 let keysByProvider = new Map();
 let keysByModel = new Map();
 let lastCacheUpdate = 0;
-const CACHE_TTL = 10 * 60 * 1000; // Increased to 10 Minutes for lower CPU
+const CACHE_TTL = 30 * 60 * 1000; // Updated to 30 Minutes as per User Request for lower CPU usage
 
 const DAILY_USAGE_LIMIT = 18; // Strict limit: 18 requests per 24h
 const STATUS_ACTIVE = 'active';
@@ -29,15 +29,15 @@ const modelDailyUsage = new Map(); // Key: modelName, Value: { date: string, cou
 const modelIndexMap = new Map();
 
 const pendingUpdates = new Set();
-// Flush Interval (Increased to 10 Seconds to save CPU)
-setInterval(flushUsageStats, 10 * 1000);
+// Flush Interval (Increased to 30 Seconds to save CPU)
+setInterval(flushUsageStats, 30 * 1000);
 
-// --- Background Cache Refresh (Increased to 10 Minutes) ---
+// --- Background Cache Refresh (30 Minutes) ---
 // Proactively fetches new keys/limits from DB to keep memory fresh
 setInterval(() => {
     // console.log("[KeyService] Background cache refresh triggered.");
     updateKeyCache(true); // force = true
-}, 10 * 60 * 1000);
+}, 30 * 60 * 1000);
 // --------------------------------------------------
 
 // --- Default Limits Map (Fallback if DB values are null) ---
