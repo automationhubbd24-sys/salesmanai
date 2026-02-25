@@ -147,9 +147,9 @@ Return ONLY valid JSON:
 }
 
 // Schedule: Run every 2 hours
-setInterval(updateBestFreeModels, 2 * 60 * 60 * 1000);
+// setInterval(updateBestFreeModels, 2 * 60 * 60 * 1000);
 // Run immediately on startup
-updateBestFreeModels();
+// updateBestFreeModels();
 // -----------------------------------------------------
 
 function logDebug(msg) {

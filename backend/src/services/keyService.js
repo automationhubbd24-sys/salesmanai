@@ -257,141 +257,62 @@ function isKeyAlive(key) {
     return false;
 }
 
-// Check if Key is within Limits (RPM, RPD)
-function isKeyWithinLimits(keyDbObject) {
-    if (isModelLocked(keyDbObject.model)) {
+// 4. Rate Limit Verification (STRICT MODE)
+function isKeyWithinLimits(keyData) {
+    // Check if the entire model is locked (due to repeated 429s)
+    if (isModelLocked(keyData.model)) {
         return false;
     }
 
     const now = Date.now();
     const today = new Date().toISOString().split('T')[0];
 
-    if (keyDbObject.status && keyDbObject.status !== STATUS_ACTIVE) {
-        if (keyDbObject.status === STATUS_DISABLED && keyDbObject.last_used_at) {
-            const disabledAt = new Date(keyDbObject.last_used_at).getTime();
-            if (!Number.isNaN(disabledAt) && now - disabledAt >= DISABLE_DURATION_MS) {
-                keyDbObject.status = STATUS_ACTIVE;
-                keyDbObject.usage_today = 0;
-                keyDbObject.last_date_checked = today;
-                pendingUpdates.add(keyDbObject.api);
-            } else {
-                return false;
+    // --- 1. KEY-LEVEL LIMITS (STRICT) ---
+    // User Requirement: RPM and RPD must be followed strictly.
+    const rpmLimit = parseInt(keyData.rpm_limit) || 3;
+    const rpdLimit = parseInt(keyData.rpd_limit) || 1000; // Large default if not set
+
+    // Check RPD (Requests Per Day)
+    if (keyData.last_date_checked === today && (keyData.usage_today || 0) >= rpdLimit) {
+        // console.log(`[KeyService] Key ${keyData.api.substring(0,8)}... hit RPD limit (${rpdLimit})`);
+        return false;
+    }
+
+    // Check RPM (Requests Per Minute)
+    const timestamps = keyUsageTimestamps.get(keyData.api) || [];
+    const oneMinuteAgo = now - 60000;
+    const validTimestamps = timestamps.filter(ts => ts > oneMinuteAgo);
+    
+    // Cleanup old timestamps
+    if (validTimestamps.length !== timestamps.length) {
+        keyUsageTimestamps.set(keyData.api, validTimestamps);
+    }
+
+    if (validTimestamps.length >= rpmLimit) {
+        // console.log(`[KeyService] Key ${keyData.api.substring(0,8)}... hit RPM limit (${rpmLimit})`);
+        return false;
+    }
+
+    // --- 2. MODEL-LEVEL LIMITS (STRICT) ---
+    if (keyData.model) {
+        const manual = dynamicLimits.get(keyData.model);
+        if (manual) {
+            // Strict Model RPD
+            if (manual.rpd) {
+                const daily = modelDailyUsage.get(keyData.model) || { date: today, count: 0 };
+                if (daily.date === today && daily.count >= manual.rpd) {
+                    return false;
+                }
             }
-        } else {
-            return false;
+            // Strict Model RPM
+            if (manual.rpm) {
+                const mTimestamps = modelUsageTimestamps.get(keyData.model) || [];
+                const mValid = mTimestamps.filter(ts => ts > oneMinuteAgo);
+                if (mValid.length >= manual.rpm) {
+                    return false;
+                }
+            }
         }
-    }
-    
-    const dbDate = keyDbObject.last_date_checked;
-    const usageToday = (dbDate === today) ? (keyDbObject.usage_today || 0) : 0;
-
-    if ((keyDbObject.provider === 'google' || keyDbObject.provider === 'gemini') && usageToday >= DAILY_USAGE_LIMIT) {
-        if (keyDbObject.status !== STATUS_DISABLED) {
-            keyDbObject.status = STATUS_DISABLED;
-            keyDbObject.last_used_at = new Date().toISOString();
-            pendingUpdates.add(keyDbObject.api);
-        }
-        return false;
-    }
-    
-    // Determine Limits (Manual/Dynamic > DB > Default Map > Safe Fallback)
-    const dyn = dynamicLimits.get(keyDbObject.model);
-    
-    let rpdLimit = (dyn && dyn.rpd) ? dyn.rpd : keyDbObject.rpd_limit;
-    let rpmLimit = (dyn && dyn.rpm) ? dyn.rpm : keyDbObject.rpm_limit;
-
-    if (keyDbObject.provider === 'google' || keyDbObject.provider === 'gemini') {
-        // For Google, we use strict global constants unless manual limit is LOWER
-        rpdLimit = Math.min(GEMINI_RPD_LIMIT, rpdLimit || GEMINI_RPD_LIMIT);
-        rpmLimit = Math.min(GEMINI_RPM_LIMIT, rpmLimit || GEMINI_RPM_LIMIT);
-    } else if (!rpdLimit || !rpmLimit) {
-        let fallbackDefault = DEFAULT_LIMITS['default'];
-        if (keyDbObject.model && keyDbObject.model.endsWith(':free')) {
-            fallbackDefault = { rpm: 20, rpd: 50 }; // Official OpenRouter Free Tier Limits
-        }
-        const modelDefaults = DEFAULT_LIMITS[keyDbObject.model] || fallbackDefault;
-        
-        if (!rpdLimit) rpdLimit = modelDefaults.rpd;
-        if (!rpmLimit) rpmLimit = modelDefaults.rpm;
-    }
-
-    // Remove old dynamic Gemini limit logic as we now have strict constants
-    /*
-    if (keyDbObject.provider === 'google' || keyDbObject.provider === 'gemini') {
-        if (!keyDbObject.rpd_limit || keyDbObject.rpd_limit > 20) {
-            rpdLimit = 20;
-        }
-
-        const modelName = (keyDbObject.model || '').toLowerCase();
-        const isLite = modelName.includes('lite');
-        const targetRpm = isLite ? 10 : 5;
-
-        if (!keyDbObject.rpm_limit || keyDbObject.rpm_limit > targetRpm) {
-            rpmLimit = targetRpm;
-        }
-    }
-    */
-
-    if (usageToday >= rpdLimit) {
-        if (keyDbObject.provider === 'google' && keyDbObject.api) {
-            markKeyAsQuotaExceeded(keyDbObject.api);
-        }
-        return false;
-    }
-
-    // --- NEW: Global Model-Wide RPD Check ---
-    // User Requirement: Total daily requests for a model must not exceed the limit set in Admin Config
-    if (dyn && dyn.rpd) {
-        const daily = modelDailyUsage.get(keyDbObject.model);
-        if (daily && daily.date === today && daily.count >= dyn.rpd) {
-            // console.log(`[KeyService] 🚫 Model-Wide RPD Limit Reached for ${keyDbObject.model} (${daily.count}/${dyn.rpd})`);
-            return false;
-        }
-    }
-
-    // --- NEW: Strict RPM Check (Sliding Window) ---
-    // User Requirement: RPM limit MUST NOT be exceeded, even by one request.
-    const timestamps = keyUsageTimestamps.get(keyDbObject.api) || [];
-    
-    // Clean up timestamps older than 60 seconds
-    const minuteAgo = now - 60000;
-    const recentTimestamps = timestamps.filter(ts => ts > minuteAgo);
-    keyUsageTimestamps.set(keyDbObject.api, recentTimestamps);
-
-    if (recentTimestamps.length >= rpmLimit) {
-        // console.log(`[KeyService] 🚫 RPM Limit Reached for ${keyDbObject.api.substring(0,8)}... (${recentTimestamps.length}/${rpmLimit})`);
-        return false;
-    }
-
-    // --- NEW: Global Model-Wide RPM Check ---
-    // User Requirement: Total RPM for a model must not exceed the limit set in Admin Config
-    if (dyn && dyn.rpm) {
-        const modelTs = modelUsageTimestamps.get(keyDbObject.model) || [];
-        const recentModelTs = modelTs.filter(ts => ts > minuteAgo);
-        modelUsageTimestamps.set(keyDbObject.model, recentModelTs);
-        
-        if (recentModelTs.length >= dyn.rpm) {
-            // console.log(`[KeyService] 🚫 Model-Wide RPM Limit Reached for ${keyDbObject.model} (${recentModelTs.length}/${dyn.rpm})`);
-            return false;
-        }
-    }
-
-    // 3. Check TPM (Tokens Per Minute)
-    const tpmLimit = keyDbObject.tpm_limit || 0; // 0 means unchecked/unlimited by default for now
-    if (tpmLimit > 0) {
-        // Simple approximate check: If usageToday * avg_tokens > tpm? 
-        // No, TPM requires a sliding window of actual token counts.
-        // For now, we will skip complex TPM sliding window in memory to save RAM.
-        // We will implement RPD (Requests) and TPD (Tokens Per Day) first.
-    }
-
-    // 4. Check TPD (Tokens Per Day)
-    const tpdLimit = keyDbObject.tpd_limit || 0;
-    const tokensToday = (dbDate === today) ? (keyDbObject.usage_tokens_today || 0) : 0;
-    
-    if (tpdLimit > 0 && tokensToday >= tpdLimit) {
-        // console.log(`Key ${keyDbObject.api.substring(0,6)}... hit TPD limit (${tokensToday}/${tpdLimit})`);
-        return false;
     }
 
     return true;
@@ -414,35 +335,36 @@ async function recordKeyUsage(apiKey, tokenUsage = 0) {
     }
 
     // 2. Update In-Memory Cache Object (Immediate Reflection for RPD/TPD)
-    let newUsage = 1;
-    let newTokens = tokenUsage;
-
     if (cachedKey) {
+        // --- ATOMIC USAGE INCREMENT ---
+        // Increment usage count and today's usage ONLY on success
+        cachedKey.usage_count = (cachedKey.usage_count || 0) + 1;
+
         if (cachedKey.last_date_checked === today) {
-            // usage_today is already incremented in getSmartKey (Optimistic)
-            // We only update tokens here.
-            // cachedKey.usage_today = (cachedKey.usage_today || 0) + 1; 
+            cachedKey.usage_today = (cachedKey.usage_today || 0) + 1;
             cachedKey.usage_tokens_today = (cachedKey.usage_tokens_today || 0) + tokenUsage;
-            newUsage = cachedKey.usage_today;
-            newTokens = cachedKey.usage_tokens_today;
         } else {
-            // Date changed between getSmartKey and here? Unlikely but possible.
             cachedKey.last_date_checked = today;
-            cachedKey.usage_today = 1; // Reset + 1 for this call? Or just 1 (from getSmartKey)? 
-            // If getSmartKey was called yesterday, and this finishes today...
-            // Safest to just set tokens.
+            cachedKey.usage_today = 1;
             cachedKey.usage_tokens_today = tokenUsage;
-            newUsage = 1;
-            newTokens = tokenUsage;
         }
         cachedKey.last_used_at = new Date().toISOString();
         
-        // Mark for batch update
+        // --- MODEL-WIDE RPD INCREMENT ---
+        if (cachedKey.model) {
+            const daily = modelDailyUsage.get(cachedKey.model) || { date: today, count: 0 };
+            if (daily.date === today) {
+                daily.count++;
+            } else {
+                daily.date = today;
+                daily.count = 1;
+            }
+            modelDailyUsage.set(cachedKey.model, daily);
+        }
+
+        // Mark for batch update to DB
         pendingUpdates.add(apiKey);
     }
-
-    // 3. Update Database (Buffered/Batched)
-    // Removed immediate DB call to prevent Supabase overload
 }
 
 // Flush Usage Stats to Database (Called periodically)
@@ -564,10 +486,8 @@ async function getSmartKey(provider, model) {
 
     if (model) {
         validKeys = keysByModel.get(model) || [];
-        // If still no keys, try provider generic keys
-        if (validKeys.length === 0 && provider) {
-            validKeys = keysByProvider.get(provider) || [];
-        }
+        // REMOVED: Automatic provider fallback if model keys are empty.
+        // User wants strictness. If a specific model is requested, we only use keys for that model.
     } else if (provider) {
         validKeys = keysByProvider.get(provider) || [];
     } else {
@@ -606,44 +526,24 @@ async function getSmartKey(provider, model) {
         const candidateKey = validKeys[currentIndex];
 
         if (isKeyAlive(candidateKey.api) && isKeyWithinLimits(candidateKey)) {
-            const today = new Date().toISOString().split('T')[0];
-            if (candidateKey.last_date_checked !== today) {
-                candidateKey.last_date_checked = today;
-                candidateKey.usage_today = 1;
-                candidateKey.usage_tokens_today = 0;
-            } else {
-                candidateKey.usage_today = (candidateKey.usage_today || 0) + 1;
-            }
-            candidateKey.last_used_at = new Date().toISOString();
-            
-            // --- ATOMIC TIMESTAMP RECORDING ---
-            // Record timestamp IMMEDIATELY before returning to prevent race condition
+            // --- ATOMIC TIMESTAMP RECORDING (RPM Check) ---
+            // Record timestamp IMMEDIATELY before returning to block concurrent requests
             const now = Date.now();
             
-            // Per Key
+            // Per Key RPM
             const tsList = keyUsageTimestamps.get(candidateKey.api) || [];
             tsList.push(now);
             keyUsageTimestamps.set(candidateKey.api, tsList);
 
-            // Per Model (Global)
+            // Per Model RPM (Global)
             if (candidateKey.model) {
-                // RPM
                 const modelTs = modelUsageTimestamps.get(candidateKey.model) || [];
                 modelTs.push(now);
                 modelUsageTimestamps.set(candidateKey.model, modelTs);
-
-                // RPD
-                const daily = modelDailyUsage.get(candidateKey.model) || { date: today, count: 0 };
-                if (daily.date === today) {
-                    daily.count++;
-                } else {
-                    daily.date = today;
-                    daily.count = 1;
-                }
-                modelDailyUsage.set(candidateKey.model, daily);
             }
 
-            pendingUpdates.add(candidateKey.api);
+            // NOTE: usage_today and usage_count are now incremented ONLY in recordKeyUsage()
+            // to ensure 1 successful request = 1 usage count.
             
             modelIndexMap.set(mapKey, (currentIndex + 1) % validKeys.length);
 
@@ -655,18 +555,6 @@ async function getSmartKey(provider, model) {
         }
         
         currentIndex = (currentIndex + 1) % validKeys.length;
-    }
-
-    // Final fallback (Try any generic provider key if specific model failed)
-    if (model && provider) {
-        const genericKeys = keysByProvider.get(provider) || [];
-        // Already tried some of these if they were in the specific list, 
-        // but this ensures we try all keys for the provider if model-specific fails.
-        // To keep it fast, we only do this if validKeys was specifically filtered by model.
-        if (validKeys !== genericKeys) {
-             // Recursive call with model=null to try provider generic keys
-             return getSmartKey(provider, null);
-        }
     }
 
     return null;
