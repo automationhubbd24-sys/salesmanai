@@ -690,7 +690,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         userModel = bestFreeModels.text;
     }
 
-    const userProvider = pageConfig.ai || pageConfig.operator; 
+    const userProvider = pageConfig.ai || pageConfig.operator || pageConfig.ai_provider; 
 
     let defaultProvider = userProvider || (useCheapEngine ? dynamicProvider : 'gemini');
     let defaultModel = userModel;
@@ -1165,10 +1165,11 @@ INSTRUCTIONS:
     // User Request: Fetch models from Global Engine Config based on provider
     let targetProvider = defaultProvider || 'salesmanchatbot';
     
-    // Map internal 'salesmanchatbot' provider to 'google' for config lookup
-    // unless the user has specifically created a 'salesmanchatbot' config entry.
-    if (targetProvider === 'salesmanchatbot') {
-        const hasCustomConfig = await getGlobalEngineConfig('salesmanchatbot');
+    // Map internal aliases to actual database provider names
+    // salesmanchatbot -> google
+    // gemini -> google
+    if (targetProvider === 'salesmanchatbot' || targetProvider === 'gemini') {
+        const hasCustomConfig = await getGlobalEngineConfig(targetProvider);
         if (!hasCustomConfig) {
             targetProvider = 'google';
         }

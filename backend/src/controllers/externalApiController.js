@@ -207,8 +207,9 @@ exports.handleChatCompletion = async (req, res) => {
             userMessage,
             { 
                 user_id: userConfig.user_id,
-                ai_provider: 'system', 
-                chat_model: model || 'default', 
+                page_id: 'ExternalAPI', // Set a default page_id for logging
+                ai_provider: 'salesmanchatbot', // Default to salesmanchatbot for better routing
+                chat_model: model || 'salesmanchatbot-pro', 
                 is_external_api: true 
             }, 
             prompts, 
