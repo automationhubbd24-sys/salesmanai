@@ -272,34 +272,44 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
     const now = Date.now();
     const today = new Date().toISOString().split('T')[0];
 
-    // --- 1. KEY-LEVEL LIMITS (STRICT) ---
-    // User Requirement: RPM and RPD must be followed strictly.
-    const rpmLimit = parseInt(keyData.rpm_limit) || 3;
-    const rpdLimit = parseInt(keyData.rpd_limit) || 1000; // Large default if not set
-
-    // Check RPD (Requests Per Day)
+    // --- 1. KEY-LEVEL LIMITS (STRICT & UNIFIED) ---
+    // User Requirement: "ekta api er rate limit rpm 2 rdp 18 tahole 3 ta model er modde text request hoise 1 ta voice hoise 1 ta tahole oi api er rate limit rpm ses"
+    // Solution: We track usage by API KEY, not by model.
+    // If key 'AIza...' is used for Text, then Voice, then Vision -> Count = 3.
+    
+    // RPD (Requests Per Day) - Unified
+    const rpdLimit = parseInt(keyData.rpd_limit) || 1000; 
+    
+    // We use the key's total daily usage (regardless of model)
     if (keyData.last_date_checked === today && (keyData.usage_today || 0) >= rpdLimit) {
-        console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPD limit (${rpdLimit})`);
+        // console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPD limit (${rpdLimit})`);
         return false;
     }
 
-    // Check RPM (Requests Per Minute)
+    // RPM (Requests Per Minute) - Unified
+    const rpmLimit = parseInt(keyData.rpm_limit) || 3;
+    
+    // Check global timestamps for this KEY
     const timestamps = keyUsageTimestamps.get(keyData.api) || [];
     const oneMinuteAgo = now - 60000;
+    
+    // Filter valid timestamps (clean up old ones)
     const validTimestamps = timestamps.filter(ts => ts > oneMinuteAgo);
     
-    // Cleanup old timestamps
+    // Update cache if needed
     if (validTimestamps.length !== timestamps.length) {
         keyUsageTimestamps.set(keyData.api, validTimestamps);
     }
 
+    // STRICT CHECK: If total requests in last minute >= Limit
     if (validTimestamps.length >= rpmLimit) {
-        console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPM limit (${rpmLimit})`);
+        // console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPM limit (${rpmLimit})`);
         return false;
     }
 
-    // --- 2. MODEL-LEVEL LIMITS (STRICT) ---
-    // Check limits for the requested model (e.g. from Global Config)
+    // --- 2. MODEL-LEVEL LIMITS (OPTIONAL/SECONDARY) ---
+    // Only check model-specific limits if the key itself is fine.
+    // This is useful if you want to limit "Gemini Vision" specifically to 1 RPM, but allow "Gemini Flash" 10 RPM.
     if (modelToCheck) {
         const manual = dynamicLimits.get(modelToCheck);
         if (manual) {
