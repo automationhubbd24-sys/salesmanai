@@ -62,7 +62,7 @@ export default function WhatsAppConversionPage() {
       const params = new URLSearchParams();
       params.set("session_name", sessionName);
 
-      const res = await fetch(`${BACKEND_URL}/whatsapp/contacts?${params.toString()}`, {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/contacts?${params.toString()}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -172,7 +172,7 @@ export default function WhatsAppConversionPage() {
       const token = localStorage.getItem("auth_token");
       if (!token) return;
 
-      const res = await fetch(`${BACKEND_URL}/whatsapp/session-name/${id}`, {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/session-name/${id}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -253,7 +253,7 @@ export default function WhatsAppConversionPage() {
       const params = new URLSearchParams();
       params.set("session_name", sessionName);
 
-      const res = await fetch(`${BACKEND_URL}/whatsapp/stats?${params.toString()}`, {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/stats?${params.toString()}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },

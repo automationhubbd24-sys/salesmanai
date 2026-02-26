@@ -137,7 +137,7 @@ export default function WhatsAppSettingsPage() {
         return;
       }
 
-      const res = await fetch(`${BACKEND_URL}/whatsapp/config/${configId}`, {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${configId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -296,7 +296,7 @@ export default function WhatsAppSettingsPage() {
         body.image_prompt = currentImage;
       }
 
-      const res = await fetch(`${BACKEND_URL}/whatsapp/config/${dbId}`, {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${dbId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -335,7 +335,7 @@ export default function WhatsAppSettingsPage() {
       const token = localStorage.getItem("auth_token");
       if (!token) throw new Error("Please login again");
 
-      const res = await fetch(`${BACKEND_URL}/whatsapp/config/${dbId}`, {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${dbId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -383,7 +383,7 @@ export default function WhatsAppSettingsPage() {
       const token = localStorage.getItem("auth_token");
       if (!token) throw new Error("Please login again");
 
-      const res = await fetch(`${BACKEND_URL}/whatsapp/config/${dbId}`, {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${dbId}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -601,6 +601,7 @@ export default function WhatsAppSettingsPage() {
                               </FormControl>
                               <SelectContent>
                                 <SelectItem value="salesmanchatbot-pro">SalesmanChatbot Pro</SelectItem>
+                                <SelectItem value="salesmanchatbot-flash">SalesmanChatbot Flash</SelectItem>
                                 <SelectItem value="salesmanchatbot-lite">SalesmanChatbot Lite</SelectItem>
                               </SelectContent>
                             </Select>

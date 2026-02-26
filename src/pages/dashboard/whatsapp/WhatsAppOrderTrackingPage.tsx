@@ -32,6 +32,7 @@ export default function WhatsAppOrderTrackingPage() {
   const [dateFilter, setDateFilter] = useState<'today' | 'yesterday' | 'custom' | 'all'>('today');
   const [date, setDate] = useState<Date | undefined>(new Date());
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [activeSessionName, setActiveSessionName] = useState<string | null>(null);
 
   const handleCopy = (order: any) => {
     const textToCopy = `Product: ${order.product_name || 'N/A'}
@@ -48,7 +49,21 @@ Phone: ${order.number || 'N/A'}`;
   };
 
   useEffect(() => {
-    if (!currentSession) return;
+    if (currentSession?.name) {
+      setActiveSessionName(currentSession.name);
+      localStorage.setItem("active_wa_session_id", currentSession.name);
+      return;
+    }
+    const storedSession = localStorage.getItem("active_wa_session_id");
+    if (storedSession) {
+      setActiveSessionName(storedSession);
+    } else {
+      setActiveSessionName(null);
+    }
+  }, [currentSession]);
+
+  useEffect(() => {
+    if (!activeSessionName) return;
 
     const fetchOrders = async () => {
       setOrderLoading(true);
@@ -60,7 +75,7 @@ Phone: ${order.number || 'N/A'}`;
         }
 
         const params = new URLSearchParams();
-        params.set("session_name", currentSession.name);
+        params.set("session_name", activeSessionName);
 
         const today = new Date();
         today.setHours(0, 0, 0, 0);
@@ -93,7 +108,9 @@ Phone: ${order.number || 'N/A'}`;
         });
 
         if (!res.ok) {
-          throw new Error("Failed to fetch orders");
+          const errBody = await res.json().catch(() => ({}));
+          const msg = errBody.error || "Failed to fetch orders";
+          throw new Error(msg);
         }
 
         const data = await res.json();
@@ -107,9 +124,9 @@ Phone: ${order.number || 'N/A'}`;
     };
 
     fetchOrders();
-  }, [dateFilter, date, currentSession]);
+  }, [dateFilter, date, activeSessionName]);
 
-  if (!currentSession) {
+  if (!activeSessionName) {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] space-y-4">
         <AlertCircle className="h-16 w-16 text-muted-foreground" />
