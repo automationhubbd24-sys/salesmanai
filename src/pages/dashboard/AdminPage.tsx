@@ -152,6 +152,7 @@ export default function AdminPage() {
   const [engineFilter, setEngineFilter] = useState("all");
   const [enginePage, setEnginePage] = useState(1);
   const [engineTotal, setEngineTotal] = useState(0);
+  const [engineSearch, setEngineSearch] = useState("");
 
   const [geminiModel, setGeminiModel] = useState("gemini-2.5-flash-lite");
   const [geminiMessage, setGeminiMessage] = useState("hi from SalesmanChatbot key test");
@@ -336,6 +337,29 @@ export default function AdminPage() {
       }
     } catch (error) {
       toast.error("Failed to save configuration");
+    }
+  };
+
+  const refreshGlobalConfigCache = async () => {
+    try {
+      const token = localStorage.getItem("auth_token");
+      const res = await fetch(`${BACKEND_URL}/api/api-list/refresh-global-config-cache`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ provider: selectedConfigProvider })
+      });
+      const body = await res.json();
+      if (res.ok && body.success) {
+        toast.success("Config cache refreshed");
+        fetchGlobalConfigs();
+      } else {
+        toast.error(body.error || "Failed to refresh cache");
+      }
+    } catch (error) {
+      toast.error("Failed to refresh cache");
     }
   };
 
@@ -1550,43 +1574,48 @@ export default function AdminPage() {
                   <Cpu className="h-5 w-5" />
                   Global Provider Models Configuration
                 </div>
-                <div className="w-[180px]">
-                  <Select 
-                    value={selectedConfigProvider} 
-                    onValueChange={(val) => {
-                      setSelectedConfigProvider(val);
-                      const current = globalConfigs.find(c => c.provider === val);
-                      if (current) {
-                        setConfigValues(current);
-                      } else {
-                        setConfigValues({
-                          provider: val,
-                          text_model: val === 'google' ? 'gemini-2.0-flash' : '',
-                          vision_model: val === 'google' ? 'gemini-2.0-flash' : '',
-                          voice_model: val === 'google' ? 'gemini-2.0-flash-lite' : '',
-                          text_provider_override: null,
-                          vision_provider_override: null,
-                          voice_provider_override: null,
-                          text_rpm: 0,
-                          text_rpd: 0,
-                          vision_rpm: 0,
-                          vision_rpd: 0,
-                          voice_rpm: 0,
-                          voice_rpd: 0
-                        });
-                      }
-                    }}
-                  >
-                    <SelectTrigger className="bg-black/40 border-white/10 h-8">
-                      <SelectValue placeholder="Select Provider" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="google">Google Gemini</SelectItem>
-                      <SelectItem value="groq">Groq (Llama)</SelectItem>
-                      <SelectItem value="openrouter">OpenRouter</SelectItem>
-                      <SelectItem value="openai">OpenAI</SelectItem>
-                    </SelectContent>
-                  </Select>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={refreshGlobalConfigCache}>
+                    <RefreshCw className="mr-2 h-4 w-4" /> Refresh Cache
+                  </Button>
+                  <div className="w-[180px]">
+                    <Select 
+                      value={selectedConfigProvider} 
+                      onValueChange={(val) => {
+                        setSelectedConfigProvider(val);
+                        const current = globalConfigs.find(c => c.provider === val);
+                        if (current) {
+                          setConfigValues(current);
+                        } else {
+                          setConfigValues({
+                            provider: val,
+                            text_model: val === 'google' ? 'gemini-2.0-flash' : '',
+                            vision_model: val === 'google' ? 'gemini-2.0-flash' : '',
+                            voice_model: val === 'google' ? 'gemini-2.0-flash-lite' : '',
+                            text_provider_override: null,
+                            vision_provider_override: null,
+                            voice_provider_override: null,
+                            text_rpm: 0,
+                            text_rpd: 0,
+                            vision_rpm: 0,
+                            vision_rpd: 0,
+                            voice_rpm: 0,
+                            voice_rpd: 0
+                          });
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="bg-black/40 border-white/10 h-8">
+                        <SelectValue placeholder="Select Provider" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="google">Google Gemini</SelectItem>
+                        <SelectItem value="groq">Groq (Llama)</SelectItem>
+                        <SelectItem value="openrouter">OpenRouter</SelectItem>
+                        <SelectItem value="openai">OpenAI</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
               </CardTitle>
               <CardDescription>
@@ -1812,6 +1841,12 @@ export default function AdminPage() {
                 <CardDescription>Keys currently being used by the API Engine (Showing top 10).</CardDescription>
               </div>
               <div className="flex items-center gap-2 w-full md:w-auto">
+                <Input
+                  placeholder="Search key or provider..."
+                  value={engineSearch}
+                  onChange={(e) => setEngineSearch(e.target.value)}
+                  className="w-full md:w-[220px]"
+                />
                 <Select value={engineFilter} onValueChange={setEngineFilter}>
                   <SelectTrigger className="w-[150px]">
                     <SelectValue placeholder="Filter Provider" />
@@ -1841,8 +1876,13 @@ export default function AdminPage() {
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
-                  <TableBody>
-                    {engineKeys.map((k) => (
+                <TableBody>
+                  {engineKeys.filter((k) => {
+                    const q = engineSearch.trim().toLowerCase();
+                    if (!q) return true;
+                    const keyPreview = `${k.api.substring(0, 8)}...${k.api.substring(k.api.length - 4)}`.toLowerCase();
+                    return k.provider.toLowerCase().includes(q) || k.api.toLowerCase().includes(q) || keyPreview.includes(q);
+                  }).map((k) => (
                       <TableRow key={k.id}>
                         <TableCell className="capitalize font-medium">{k.provider}</TableCell>
                         <TableCell className="font-mono text-xs text-muted-foreground">
@@ -1861,7 +1901,7 @@ export default function AdminPage() {
                         </TableCell>
                       </TableRow>
                     ))}
-                    {engineKeys.length === 0 && (
+                  {engineKeys.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
                           No API keys found in rotation pool.

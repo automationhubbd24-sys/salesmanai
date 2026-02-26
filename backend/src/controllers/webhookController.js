@@ -42,6 +42,18 @@ function escapeRegExp(str) {
     return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function shouldBlockOutgoingReply(text) {
+    const trimmed = String(text || '').trim();
+    if (!trimmed) return false;
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+        try {
+            JSON.parse(trimmed);
+            return true;
+        } catch (e) {}
+    }
+    return false;
+}
+
 function extractProductNamesFromPrompt(promptText) {
     if (!promptText || typeof promptText !== 'string') return [];
     const regex = /##PRODUCT\s+"([^"]+)"/gi;
@@ -1051,6 +1063,22 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             });
 
             replyText = ''; // Ensure it stays empty so no message is sent
+        }
+        
+        if (replyText && shouldBlockOutgoingReply(replyText)) {
+            await dbService.saveFbChat({
+                page_id: pageId,
+                sender_id: pageId,
+                recipient_id: senderId,
+                message_id: `fail_${Date.now()}`,
+                text: `[AI Error - Silent] JSON reply blocked`,
+                timestamp: Date.now(),
+                status: 'ai_ignored',
+                reply_by: 'bot'
+            });
+
+            replyText = '';
+            aiResponse.images = [];
         }
 
         // --- SMART IMAGE EXTRACTION & CLEANING ---

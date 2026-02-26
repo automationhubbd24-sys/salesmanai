@@ -100,6 +100,18 @@ async function getGlobalEngineConfig(provider) {
     }
 }
 
+async function refreshGlobalEngineConfigCache(provider = null) {
+    if (provider) {
+        globalEngineConfigCache.delete(provider);
+        lastConfigFetch.delete(provider);
+        return getGlobalEngineConfig(provider);
+    }
+
+    globalEngineConfigCache.clear();
+    lastConfigFetch.clear();
+    return true;
+}
+
 async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio) {
     let targetProvider = defaultProvider || 'salesmanchatbot';
     let targetEngineName = defaultModel || 'salesmanchatbot-pro';
@@ -2001,5 +2013,6 @@ module.exports = {
     generateResponse,
     fetchOgImage,
     processImageWithVision,
-    transcribeAudio
+    transcribeAudio,
+    refreshGlobalEngineConfigCache
 };

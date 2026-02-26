@@ -83,6 +83,18 @@ const normalizeText = (text) => {
     return (text || '').toLowerCase().replace(/[\s\p{P}]/gu, '');
 };
 
+function shouldBlockOutgoingReply(text) {
+    const trimmed = String(text || '').trim();
+    if (!trimmed) return false;
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+        try {
+            JSON.parse(trimmed);
+            return true;
+        } catch (e) {}
+    }
+    return false;
+}
+
 // Step 1: Webhook Trigger
 const handleWebhook = async (req, res) => {
     logDebug("Webhook Hit!");
@@ -1623,10 +1635,24 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
         }
 
         const replyText = aiResponse.reply || aiResponse.text;
-        finalReplyText = replyText;
+        finalReplyText = replyText == null ? '' : String(replyText);
+        
+        if (finalReplyText && shouldBlockOutgoingReply(finalReplyText)) {
+            await dbService.saveWhatsAppChat({
+                session_name: sessionName,
+                sender_id: pageId || sessionName,
+                recipient_id: senderId,
+                message_id: `fail_${Date.now()}`,
+                text: `[AI Error - Silent] JSON reply blocked`,
+                timestamp: Date.now(),
+                status: 'ai_ignored',
+                reply_by: 'bot'
+            });
+            return;
+        }
         
         // 5. Send Reply
-        console.log(`[WA] Sending Reply: "${replyText.substring(0, 50)}..."`);
+        console.log(`[WA] Sending Reply: "${finalReplyText.substring(0, 50)}..."`);
         
         // Mark as Seen (User Experience)
         await whatsappService.sendSeen(sessionName, senderId);
