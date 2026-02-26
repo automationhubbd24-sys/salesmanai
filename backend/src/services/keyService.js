@@ -513,19 +513,86 @@ async function getSmartKey(provider, model) {
         return null;
     }
 
-    // --- KEY ROTATION LOGIC (Shuffle) ---
-    // User Request: "ek api teke hut kore loop e onek request gele api block kore dibe"
-    // Solution: Shuffle keys to distribute load randomly instead of round-robin always starting from 0.
+// 5. Smart Key Selection (Sequential Round-Robin)
+// User Requirement: "total api jodi 1 - 100 ta take tahole 100 cross kore then 1 e asbe kintu 1 e ase jodi deke 24 er rate limit reset hoi ni engine work korbe na"
+// Solution: Sequential Global Rotation.
+// We maintain a global index for each Model/Provider combo.
+
+const globalKeyPointers = new Map(); // Stores last used index for each "provider:model"
+
+async function getSmartKey(provider, model = 'default') {
+    await updateKeyCache();
     
-    // Fisher-Yates Shuffle for better randomness
-    for (let i = validKeys.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [validKeys[i], validKeys[j]] = [validKeys[j], validKeys[i]];
+    // Check Global Model Lock
+    if (isModelLocked(model)) {
+        console.warn(`[KeyService] Model ${model} is globally LOCKED due to repeated failures.`);
+        return null;
     }
 
-    for (const candidateKey of validKeys) {
-        if (isKeyAlive(candidateKey.api) && isKeyWithinLimits(candidateKey, model)) {
-            // --- ATOMIC TIMESTAMP RECORDING (RPM Check) ---
+    // 1. Get Candidate Keys
+    let candidates = [];
+    if (model !== 'default' && keysByModel.has(model)) {
+        candidates = keysByModel.get(model);
+    } else if (keysByProvider.has(provider)) {
+        candidates = keysByProvider.get(provider);
+    }
+    
+    if (!candidates || candidates.length === 0) {
+        // Fallback: If specific model keys not found, try provider generic keys
+        if (keysByProvider.has(provider)) {
+             candidates = keysByProvider.get(provider);
+        }
+        
+        if (!candidates || candidates.length === 0) {
+            console.warn(`[KeyService] No keys found for ${provider}/${model}`);
+            return null;
+        }
+    }
+
+    // Filter dead keys
+    const validKeys = candidates.filter(k => isKeyAlive(k.api));
+
+    if (validKeys.length === 0) {
+        console.warn(`[KeyService] All keys dead for ${provider}/${model}`);
+        return null;
+    }
+
+    // 2. SEQUENTIAL ROTATION LOGIC
+    // Sort keys by ID to ensure consistent order (1, 2, 3...)
+    // This is crucial for the "1-100 then back to 1" requirement.
+    validKeys.sort((a, b) => a.id - b.id);
+
+    const mapKey = `${provider}:${model}`;
+    let currentIndex = globalKeyPointers.get(mapKey) || 0;
+    
+    // If index out of bounds (e.g. new keys added or removed), reset to 0
+    if (currentIndex >= validKeys.length) {
+        currentIndex = 0;
+    }
+
+    // Iterate through keys starting from Last Index
+    // We check exactly ONCE through the list.
+    for (let i = 0; i < validKeys.length; i++) {
+        // Circular Index: (Start + i) % Length
+        const actualIndex = (currentIndex + i) % validKeys.length;
+        const candidateKey = validKeys[actualIndex];
+
+        // Check if Key is usable (RPM/RPD)
+        if (isKeyWithinLimits(candidateKey, model)) {
+            
+            // --- 24-HOUR RESET CHECK (Loop Back Safety) ---
+            // User Requirement: "1 e ase jodi deke 24 er rate limit reset hoi ni engine work korbe na"
+            // If we wrapped around (actualIndex < currentIndex), it means we finished the list.
+            // We should be extra careful about reuse.
+            
+            // For now, isKeyWithinLimits handles the 24h check via RPD.
+            // If RPD limit is reached, isKeyWithinLimits returns false.
+            // So we don't need extra logic here, just ensure RPD limit is set correctly.
+            
+            // Update Pointer for next time (Next Key)
+            globalKeyPointers.set(mapKey, (actualIndex + 1) % validKeys.length);
+
+            // --- ATOMIC TIMESTAMP RECORDING ---
             const now = Date.now();
             const today = new Date().toISOString().split('T')[0];
             
@@ -534,15 +601,7 @@ async function getSmartKey(provider, model) {
             tsList.push(now);
             keyUsageTimestamps.set(candidateKey.api, tsList);
 
-            // Per Model RPM (Global)
-            const modelToIncrement = model || candidateKey.model;
-            if (modelToIncrement) {
-                const modelTs = modelUsageTimestamps.get(modelToIncrement) || [];
-                modelTs.push(now);
-                modelUsageTimestamps.set(modelToIncrement, modelTs);
-            }
-
-            // --- USAGE COUNTING (Every Call Attempt) ---
+            // Usage Counting
             candidateKey.usage_count = (candidateKey.usage_count || 0) + 1;
             if (candidateKey.last_date_checked === today) {
                 candidateKey.usage_today = (candidateKey.usage_today || 0) + 1;
@@ -552,29 +611,17 @@ async function getSmartKey(provider, model) {
             }
             candidateKey.last_used_at = new Date().toISOString();
 
-            // --- MODEL-WIDE RPD INCREMENT ---
-            if (modelToIncrement) {
-                const daily = modelDailyUsage.get(modelToIncrement) || { date: today, count: 0 };
-                if (daily.date === today) {
-                    daily.count++;
-                } else {
-                    daily.date = today;
-                    daily.count = 1;
-                }
-                modelDailyUsage.set(modelToIncrement, daily);
-            }
-
             pendingUpdates.add(candidateKey.api);
             
-            // Return immediately once a valid key is found (Random selection due to shuffle)
             return {
                 key: candidateKey.api,
                 provider: candidateKey.provider,
-                model: candidateKey.model
+                model: candidateKey.model || model
             };
         }
     }
 
+    console.warn(`[KeyService] ⚠️ All ${validKeys.length} keys exhausted (Rate Limited) for ${provider}/${model}`);
     return null;
 }
 
