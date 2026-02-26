@@ -273,21 +273,23 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
     const today = new Date().toISOString().split('T')[0];
 
     // --- 1. KEY-LEVEL LIMITS (STRICT & UNIFIED) ---
-    // User Requirement: "ekta api er rate limit rpm 2 rdp 18 tahole 3 ta model er modde text request hoise 1 ta voice hoise 1 ta tahole oi api er rate limit rpm ses"
-    // Solution: We track usage by API KEY, not by model.
-    // If key 'AIza...' is used for Text, then Voice, then Vision -> Count = 3.
+    // User Requirement: "agula to fronted e select korbo defualt e kono limit takbe na"
+    // Solution: REMOVE DEFAULT LIMITS.
+    // Only enforce limits if explicitly set in DB (keyData.rpd_limit / rpm_limit).
+    // If not set (null/0), assume UNLIMITED.
     
     // RPD (Requests Per Day) - Unified
-    const rpdLimit = parseInt(keyData.rpd_limit) || 18; 
+    const rpdLimit = parseInt(keyData.rpd_limit); 
     
     // We use the key's total daily usage (regardless of model)
-    if (keyData.last_date_checked === today && (keyData.usage_today || 0) >= rpdLimit) {
+    // Only check if rpdLimit is a valid positive number
+    if (rpdLimit > 0 && keyData.last_date_checked === today && (keyData.usage_today || 0) >= rpdLimit) {
         // console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPD limit (${rpdLimit})`);
         return false;
     }
 
     // RPM (Requests Per Minute) - Unified
-    const rpmLimit = parseInt(keyData.rpm_limit) || 2;
+    const rpmLimit = parseInt(keyData.rpm_limit);
     
     // Check global timestamps for this KEY
     const timestamps = keyUsageTimestamps.get(keyData.api) || [];
@@ -302,7 +304,8 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
     }
 
     // STRICT CHECK: If total requests in last minute >= Limit
-    if (validTimestamps.length >= rpmLimit) {
+    // Only check if rpmLimit is a valid positive number
+    if (rpmLimit > 0 && validTimestamps.length >= rpmLimit) {
         // console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPM limit (${rpmLimit})`);
         return false;
     }
