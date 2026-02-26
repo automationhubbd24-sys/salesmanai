@@ -1730,15 +1730,30 @@ async function transcribeAudio(audioUrl, config) {
         const userModel = config.chat_model || config.chatmodel || 'gemini-2.0-flash';
 
         if (userKey) {
-            if (userKey.startsWith('sk-') && !userKey.startsWith('sk-or')) {
-                // OpenAI Key -> Use Whisper (Standard for OpenAI Audio)
-                priorityChain.push({ provider: 'openai', model: 'whisper-1', name: 'OpenAI Whisper (User Key)', key: userKey });
-            } else if (userKey.startsWith('gsk_')) {
-                // Groq Key -> Use Groq Whisper
-                priorityChain.push({ provider: 'groq', model: 'whisper-large-v3', name: 'Groq Whisper (User Key)', key: userKey });
-            } else if (userKey.startsWith('AIza')) {
-                // Gemini Key -> STRICTLY Use User's Selected Model
-                priorityChain.push({ provider: 'google', model: userModel, name: `Gemini (${userModel}) (User Key)`, key: userKey });
+            // FIX: Check if this is a SALESMANCHATBOT KEY or a REAL USER KEY
+            // SalesmanChatbot keys usually start with 'sk-' but are longer or specific format?
+            // Actually, the user provided 'sk-f835...' which looks like a Salesman Key but starts with 'sk-'.
+            // If it's a Salesman Key, we should NOT treat it as an OpenAI User Key.
+            // But how to distinguish?
+            
+            // Logic: If userProvider is 'salesmanchatbot', then the key is likely a Salesman Key.
+            // If userProvider is 'openai', then it's an OpenAI Key.
+            const userProvider = config.ai || config.operator || config.ai_provider;
+            
+            if (userProvider === 'salesmanchatbot') {
+                console.log(`[Audio] User Key is a SalesmanChatbot Key. Skipping User Key logic to use System Routing.`);
+                userKey = null; // Force Phase 2 (System Keys / Smart Routing)
+            } else {
+                if (userKey.startsWith('sk-') && !userKey.startsWith('sk-or')) {
+                    // OpenAI Key -> Use Whisper (Standard for OpenAI Audio)
+                    priorityChain.push({ provider: 'openai', model: 'whisper-1', name: 'OpenAI Whisper (User Key)', key: userKey });
+                } else if (userKey.startsWith('gsk_')) {
+                    // Groq Key -> Use Groq Whisper
+                    priorityChain.push({ provider: 'groq', model: 'whisper-large-v3', name: 'Groq Whisper (User Key)', key: userKey });
+                } else if (userKey.startsWith('AIza')) {
+                    // Gemini Key -> STRICTLY Use User's Selected Model
+                    priorityChain.push({ provider: 'google', model: userModel, name: `Gemini (${userModel}) (User Key)`, key: userKey });
+                }
             }
         }
     }
