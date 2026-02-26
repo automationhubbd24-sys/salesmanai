@@ -179,7 +179,7 @@ router.get('/config/:id', async (req, res) => {
         const configResult = await pgClient.query(
             `SELECT w.*, u.message_credit 
              FROM whatsapp_message_database w
-             LEFT JOIN user_configs u ON w.user_id = u.user_id
+             LEFT JOIN user_configs u ON u.user_id::text = w.user_id::text
              WHERE w.id = $1`,
             [parseInt(id, 10)]
         );
