@@ -1778,15 +1778,21 @@ async function transcribeAudio(audioUrl, config) {
              
              if (provider === 'salesmanchatbot' || provider === 'openrouter') {
                  // Try to guess based on model name if provider is generic
+                 // User Correction: If global config sets a specific model (like gemini-2.5-flash-lite), we must respect it.
+                 // We don't default to Groq Whisper anymore.
                  if (voiceModel.includes('whisper')) targetProvider = 'groq';
                  else if (voiceModel.includes('gemini')) targetProvider = 'google';
                  else if (voiceModel.includes('openai')) targetProvider = 'openai';
+                 // If provider override is set in global config, use that (it is already handled in 'provider' variable above)
              } else {
                  targetProvider = provider;
              }
              
              // Explicit overrides
              if (config.ai === 'groq' || config.ai_provider === 'groq') targetProvider = 'groq';
+             
+             // IMPORTANT: If model is Gemini, force provider to Google (to avoid routing Gemini models to OpenAI/Groq)
+             if (voiceModel.includes('gemini')) targetProvider = 'google';
              
              priorityChain.push({ provider: targetProvider, model: voiceModel, name: `Configured (${voiceModel})` });
         } else {
