@@ -1105,16 +1105,22 @@ INSTRUCTIONS:
 
     if (gConfig) {
         // STRICT RULE: Use models from Global Engine Config
+        // User Request: "se voice dile set taka voice model work korbe"
         engineTextModel = gConfig.text_model || engineTextModel;
         engineVisionModel = gConfig.vision_model || engineVisionModel;
         engineVoiceModel = gConfig.voice_model || engineVoiceModel;
         
         // Apply Provider Overrides if set
-        if (gConfig.text_provider_override) textProvider = gConfig.text_provider_override;
-        if (gConfig.vision_provider_override) visionProvider = gConfig.vision_provider_override;
-        if (gConfig.voice_provider_override) voiceProvider = gConfig.voice_provider_override;
+        if (gConfig.text_provider_override && gConfig.text_provider_override !== 'default') 
+            textProvider = gConfig.text_provider_override;
+        
+        if (gConfig.vision_provider_override && gConfig.vision_provider_override !== 'default') 
+            visionProvider = gConfig.vision_provider_override;
+        
+        if (gConfig.voice_provider_override && gConfig.voice_provider_override !== 'default') 
+            voiceProvider = gConfig.voice_provider_override;
 
-        // Apply Rate Limits to KeyService
+        // Apply Rate Limits to KeyService (RPM/RPD per Modality)
         if (keyService.setManualLimit) {
             if (gConfig.text_rpm || gConfig.text_rpd) 
                 keyService.setManualLimit(engineTextModel, { rpm: gConfig.text_rpm, rpd: gConfig.text_rpd });
@@ -1126,15 +1132,20 @@ INSTRUCTIONS:
     }
 
     // 3. Resolve Final Model and Provider based on Modality
+    // User Request: "ete mixxed hoye cost komabo and service valo dibo"
     let finalModel = engineTextModel;
     let finalProvider = textProvider;
 
     if (isAudio) {
         finalModel = engineVoiceModel;
         finalProvider = voiceProvider;
+        console.log(`[AI] Smart Routing (Voice): Using ${finalProvider}/${finalModel}`);
     } else if (isVision) {
         finalModel = engineVisionModel;
         finalProvider = visionProvider;
+        console.log(`[AI] Smart Routing (Vision): Using ${finalProvider}/${finalModel}`);
+    } else {
+        console.log(`[AI] Smart Routing (Text): Using ${finalProvider}/${finalModel}`);
     }
 
     // --- PROVIDER ALIAS FIXES (User Request: 100% Correct Mappings) ---
