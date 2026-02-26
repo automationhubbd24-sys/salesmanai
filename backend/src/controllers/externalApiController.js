@@ -386,7 +386,7 @@ exports.regenerateApiKey = async (req, res) => {
             return res.status(401).json({ error: 'Unauthorized' });
         }
 
-        const newKey = 'sk-' + crypto.randomBytes(24).toString('hex');
+        const newKey = 'salesmanchatbot-' + crypto.randomBytes(24).toString('hex');
         console.log(`[KeyGen] Generating new key for user: ${userId}`);
 
         const pgClient = require('../services/pgClient');

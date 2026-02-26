@@ -1510,6 +1510,10 @@ Rules:
                  if (userKeys.length > 0) apiKey = userKeys[0];
              }
 
+            if (apiKey && apiKey.startsWith('salesmanchatbot-')) {
+                apiKey = null;
+            }
+
              // Detect Provider from Key or Config
              if (apiKey) {
                  if (apiKey.startsWith('sk-or-v1')) provider = 'openrouter';
