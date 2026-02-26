@@ -1731,7 +1731,18 @@ async function transcribeAudio(audioUrl, config) {
     // User Requirement: "own api er modde defualt chatmodel defualt api asob kisui use kora jabe na"
     if (!userKey) {
         // User Update: Use configured voice model if available
-        const voiceModel = config.voice_model || config.audio_model;
+        let voiceModel = config.voice_model || config.audio_model;
+        
+        // --- SALESMANCHATBOT ENGINE LOGIC ---
+        // If provider is 'salesmanchatbot', we need to map it to a REAL backend provider.
+        // SalesmanChatbot Engine behaves like a meta-provider.
+        if (config.ai === 'salesmanchatbot' || config.operator === 'salesmanchatbot') {
+            // Default SalesmanChatbot Voice Model -> Groq Whisper (Best for Bengali)
+            if (!voiceModel || voiceModel === 'default' || voiceModel === 'salesmanchatbot-pro') {
+                voiceModel = 'whisper-large-v3';
+                console.log("[Audio] SalesmanChatbot Engine: Auto-selected 'whisper-large-v3' for voice.");
+            }
+        }
         
         if (voiceModel) {
              console.log(`[Audio] Using Configured Voice Model: ${voiceModel}`);
