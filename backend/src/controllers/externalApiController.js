@@ -4,20 +4,18 @@ const liteEngineService = require('../services/liteEngineService');
 const openrouterEngineService = require('../services/openrouterEngineService');
 const crypto = require('crypto');
 
-// Pricing per 1 Million Tokens (in BDT)
 const PRICING = {
-    PRO: 250,
+    PRO: 150,
     FLASH: 100,
-    LITE: 40
+    LITE: 80
 };
 
-// Helper to get cost per single token
-const getCostPerToken = (modelName) => {
-    let rate = PRICING.PRO; // Default
+const getCostPerRequest = (modelName) => {
+    let rate = PRICING.PRO;
     if (modelName.includes('flash')) rate = PRICING.FLASH;
     else if (modelName.includes('lite')) rate = PRICING.LITE;
     
-    return rate / 1000000;
+    return rate / 1000;
 };
 
 // Helper to validate API Key and return user config
@@ -211,6 +209,8 @@ exports.handleChatCompletion = async (req, res) => {
                 ai_provider: 'salesmanchatbot', // Default to salesmanchatbot for better routing
                 chat_model: model || 'salesmanchatbot-pro', 
                 is_external_api: true,
+                display_model: model || 'salesmanchatbot-pro',
+                billing_mode: 'request',
                 cheap_engine: false // Disable cheap engine logic for branded API calls
             }, 
             prompts, 
@@ -250,7 +250,7 @@ exports.handleChatCompletion = async (req, res) => {
 
         // 5. Calculate Cost & Deduct Balance
         // Cost calculation moved to centralized dbService
-        const finalCost = dbService.calculateCost(responseModelName, totalTokens);
+        const finalCost = getCostPerRequest(model || 'salesmanchatbot-pro');
 
         if (!freeTierActive) {
             await dbService.deductUserBalance(userConfig.user_id, finalCost, `${billingLabel} (${totalTokens} tokens)`);
@@ -332,7 +332,7 @@ exports.transcribeAudio = async (req, res) => {
         // Since Groq Whisper is very cheap/free currently, we charge minimal or 0.
         // Let's charge 0.01 BDT per minute? Or fixed per request?
         // Let's charge 0.005 BDT per request for now.
-        const cost = 0.005;
+        const cost = getCostPerRequest('salesmanchatbot-lite');
 
         let transcription = "";
         try {
@@ -346,8 +346,7 @@ exports.transcribeAudio = async (req, res) => {
         await dbService.deductUserBalance(userConfig.user_id, cost, `Audio Transcription`);
         
         // Log Usage
-        // We log "1" as token count for audio request tracking
-        await dbService.logApiUsage(userConfig.user_id, 'whisper-large-v3', 1, cost);
+        await dbService.logApiUsage(userConfig.user_id, 'salesmanchatbot-lite', 1, cost);
 
         res.json({ text: transcription });
 

@@ -1688,6 +1688,26 @@ function calculateCost(model, tokens) {
     return tokens * costPerToken;
 }
 
+function calculateRequestCost(model, requests = 1) {
+    const req = Number(requests) || 0;
+    if (req <= 0) return 0;
+
+    const PRICING = {
+        PRO: 150,
+        FLASH: 100,
+        LITE: 80
+    };
+
+    let rate = PRICING.PRO;
+    const modelLower = (model || '').toLowerCase();
+    
+    if (modelLower.includes('flash')) rate = PRICING.FLASH;
+    else if (modelLower.includes('lite')) rate = PRICING.LITE;
+    
+    const costPerRequest = rate / 1000;
+    return req * costPerRequest;
+}
+
 module.exports = {
     getAllKeys,
     addApiKey,
@@ -1695,6 +1715,7 @@ module.exports = {
     logApiUsage,
     logAiUsage,
     calculateCost,
+    calculateRequestCost,
     getPageConfig,
     getPagePrompts,
     saveLead,

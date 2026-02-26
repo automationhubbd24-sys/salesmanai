@@ -507,14 +507,21 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             // Debug: Log incoming data to console to see what we're sending to DB
             console.log(`[AI Logger] Finalizing response for User: ${pageConfig.user_id}, Page: ${pageConfig.page_id}`);
             
+            const isRequestBilling = pageConfig.billing_mode === 'request' || pageConfig.is_external_api === true;
+            const displayModel = pageConfig.display_model || pageConfig.chat_model || result.model || finalModel || 'unknown';
+            const usageTokens = isRequestBilling ? 1 : (result.token_usage || 0);
+            const cost = isRequestBilling
+                ? dbService.calculateRequestCost(displayModel, 1)
+                : dbService.calculateCost(displayModel, usageTokens);
+            
             const logData = {
                 user_id: pageConfig.user_id,
                 page_id: pageConfig.page_id,
-                model: result.model || finalModel || 'unknown',
+                model: displayModel,
                 prompt_tokens: 0, // We usually have total_tokens in token_usage
                 completion_tokens: 0,
-                total_tokens: result.token_usage || 0,
-                cost: dbService.calculateCost(result.model || finalModel, result.token_usage || 0),
+                total_tokens: usageTokens,
+                cost: cost,
                 status: result.error ? 'error' : 'success',
                 error_message: result.error || null,
                 sender_name: senderName || 'Customer',
@@ -535,10 +542,15 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         }
 
         // --- 2. Log to API Usage Stats (api_usage_stats table) ---
-        if (pageConfig.user_id && result.token_usage > 0) {
-            const cost = dbService.calculateCost(result.model || finalModel, result.token_usage);
+        if (pageConfig.user_id && (result.token_usage > 0 || pageConfig.is_external_api === true || pageConfig.billing_mode === 'request')) {
+            const isRequestBilling = pageConfig.billing_mode === 'request' || pageConfig.is_external_api === true;
+            const displayModel = pageConfig.display_model || pageConfig.chat_model || result.model || finalModel || 'unknown';
+            const usageTokens = isRequestBilling ? 1 : (result.token_usage || 0);
+            const cost = isRequestBilling
+                ? dbService.calculateRequestCost(displayModel, 1)
+                : dbService.calculateCost(displayModel, usageTokens);
             // Fire and forget (don't await to keep response fast)
-            dbService.logApiUsage(pageConfig.user_id, result.model || finalModel, result.token_usage, cost);
+            dbService.logApiUsage(pageConfig.user_id, displayModel, usageTokens, cost);
         }
 
         // --- 3. Force Flush Key Stats to DB ---
@@ -1212,10 +1224,13 @@ INSTRUCTIONS:
         });
 
         try {
+            const isFreeModel = typeof currentModel === 'string' && currentModel.includes(':free');
+            const effectiveResponseFormat = isFreeModel ? undefined : responseFormat;
+
             const completion = await openai.chat.completions.create({
                 model: currentModel,
                 messages: messages,
-                response_format: responseFormat
+                response_format: effectiveResponseFormat
             });
             
             const rawContent = completion.choices[0].message.content || '';
@@ -1229,6 +1244,17 @@ INSTRUCTIONS:
             
             try {
                 const parsed = extractJsonFromAiResponse(rawContent);
+                
+                if (!parsed && isFreeModel) {
+                    const relaxedReply = extractReplyFromText(rawContent);
+                    return finalize({ 
+                        reply: relaxedReply, 
+                        sentiment: 'neutral', 
+                        model: currentModel, 
+                        token_usage: tokenUsage + totalTokenUsage, 
+                        foundProducts
+                    });
+                }
                 
                 if (parsed && parsed.tool === 'search_products' && parsed.query) {
                     console.log(`[AI] Tool Call: Searching products for "${parsed.query}"...`);
@@ -1258,7 +1284,7 @@ INSTRUCTIONS:
                     const completion2 = await openai2.chat.completions.create({
                         model: currentModel,
                         messages: messages,
-                        response_format: { type: "json_object" }
+                        response_format: isFreeModel ? undefined : { type: "json_object" }
                     });
                     
                     const rawContent2 = completion2.choices[0].message.content || '';
@@ -1267,6 +1293,10 @@ INSTRUCTIONS:
                     keyService.recordKeyUsage(apiKey2, tokenUsage2);
                     
                     const parsed2 = extractJsonFromAiResponse(rawContent2);
+                    if (isFreeModel && (!parsed2 || !parsed2.reply)) {
+                        const relaxedReply = extractReplyFromText(rawContent2);
+                        if (parsed2) parsed2.reply = relaxedReply;
+                    }
                     if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text;
 
                     if (!parsed2.reply && products.length > 0) {
@@ -1325,6 +1355,9 @@ INSTRUCTIONS:
                     return finalize({ ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: currentModel, foundProducts: products });
                 }
 
+                if (!parsed.reply && isFreeModel) {
+                    parsed.reply = extractReplyFromText(rawContent);
+                }
                 if (!parsed.reply) parsed.reply = parsed.response || parsed.text;
                 return finalize({ ...parsed, model: currentModel, token_usage: tokenUsage + totalTokenUsage, foundProducts });
             } catch (e) {
