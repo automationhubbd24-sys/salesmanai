@@ -1006,7 +1006,14 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
             const chatKey = `${sessionName}_${senderId}`;
 
             if (shouldStop) {
-                console.log(`[WA] Blocking Label Found at Start (${senderId}). Stopping Workflow.`);
+                const blockingLabels = latestLabels
+                    .filter(l => {
+                        const name = (typeof l === 'string' ? l : l.name || '').toLowerCase();
+                        return hardcodedStops.includes(name);
+                    })
+                    .map(l => (typeof l === 'string' ? l : l.name));
+
+                console.log(`[WA] Blocking Label Found at Start (${senderId}): [${blockingLabels.join(', ')}]. Stopping Workflow.`);
                 handoverMap.set(chatKey, Date.now() + 60 * 60 * 1000); // Ensure Memory Lock
                 // Optional: Ensure DB Lock too? 
                 // await dbService.toggleWhatsAppLock(sessionName, senderId, true); 
