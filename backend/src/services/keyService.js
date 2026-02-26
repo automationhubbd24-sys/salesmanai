@@ -278,7 +278,7 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
     // If key 'AIza...' is used for Text, then Voice, then Vision -> Count = 3.
     
     // RPD (Requests Per Day) - Unified
-    const rpdLimit = parseInt(keyData.rpd_limit) || 1000; 
+    const rpdLimit = parseInt(keyData.rpd_limit) || 18; 
     
     // We use the key's total daily usage (regardless of model)
     if (keyData.last_date_checked === today && (keyData.usage_today || 0) >= rpdLimit) {
@@ -287,7 +287,7 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
     }
 
     // RPM (Requests Per Minute) - Unified
-    const rpmLimit = parseInt(keyData.rpm_limit) || 3;
+    const rpmLimit = parseInt(keyData.rpm_limit) || 2;
     
     // Check global timestamps for this KEY
     const timestamps = keyUsageTimestamps.get(keyData.api) || [];
