@@ -200,7 +200,7 @@ export default function IntegrationPage() {
     if (qrSession && qrSession.status !== 'WORKING' && qrSession.status !== 'STOPPED') {
       const fetchQr = async () => {
           try {
-              const res = await fetch(`${BACKEND_URL}/whatsapp/session/qr/${qrSession.session_name}`);
+              const res = await fetch(`${BACKEND_URL}/api/whatsapp/session/qr/${qrSession.session_name}`);
               const data = await res.json();
               
               if (data.qr_code === 'SESSION_FAILED') {
@@ -367,7 +367,7 @@ export default function IntegrationPage() {
       setPairingLoading(true);
       setPairingCode(null);
       try {
-          const res = await fetch(`${BACKEND_URL}/whatsapp/session/pairing-code`, {
+          const res = await fetch(`${BACKEND_URL}/api/whatsapp/session/pairing-code`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ sessionName: qrSession.session_name, phoneNumber: fullPhoneNumber })
@@ -407,7 +407,7 @@ export default function IntegrationPage() {
       setSessions(prev => prev.filter(s => s.session_name !== sessionName));
       
       try {
-        await fetch(`${BACKEND_URL}/whatsapp/session/${action}`, {
+        await fetch(`${BACKEND_URL}/api/whatsapp/session/${action}`, {
           method: 'POST',
           headers: { 
               'Content-Type': 'application/json',
@@ -428,7 +428,7 @@ export default function IntegrationPage() {
          setRestartingId(sessionName);
       }
       
-      const res = await fetch(`${BACKEND_URL}/whatsapp/session/${action}`, {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/session/${action}`, {
         method: 'POST',
         headers: { 
             'Content-Type': 'application/json',
