@@ -1421,7 +1421,7 @@ Rules:
     let resolved = null;
     const providerHint = pageConfig.ai_provider || pageConfig.ai || pageConfig.operator;
     const modelHint = pageConfig.chat_model || pageConfig.chatmodel;
-    if ((providerHint === 'salesmanchatbot' || modelHint === 'salesmanchatbot-pro' || modelHint === 'salesmanchatbot-flash' || modelHint === 'salesmanchatbot-lite') && !pageConfig.api_key) {
+    if (providerHint === 'salesmanchatbot' || modelHint === 'salesmanchatbot-pro' || modelHint === 'salesmanchatbot-flash' || modelHint === 'salesmanchatbot-lite') {
         resolved = await resolveSalesmanchatbotEngine(pageConfig, providerHint, modelHint, true, false);
     }
 
@@ -1505,11 +1505,15 @@ Rules:
                  return { text: "Error: No Vision/Chat Model selected in configuration for Own API.", usage: 0 };
              }
 
-             if (pageConfig.api_key) {
-                 const userKeys = pageConfig.api_key.split(',').map(k => k.trim()).filter(k => k);
-                 if (userKeys.length > 0) apiKey = userKeys[0];
-             }
+            if (pageConfig.api_key) {
+                const userKeys = pageConfig.api_key.split(',').map(k => k.trim()).filter(k => k);
+                if (userKeys.length > 0) apiKey = userKeys[0];
+            }
 
+            if (providerHint === 'salesmanchatbot') {
+                apiKey = null;
+            }
+            
             if (apiKey && apiKey.startsWith('salesmanchatbot-')) {
                 apiKey = null;
             }
@@ -1521,7 +1525,7 @@ Rules:
                  else if (apiKey.startsWith('gsk_')) provider = 'groq';
              }
 
-             if (!apiKey && resolved) {
+            if (!apiKey && resolved) {
                  provider = resolved.finalProvider;
                  model = resolved.finalModel;
                  let keyData = await keyService.getSmartKey(provider, model);
