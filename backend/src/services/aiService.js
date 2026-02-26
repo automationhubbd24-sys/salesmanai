@@ -1723,6 +1723,8 @@ async function transcribeAudio(audioUrl, config) {
 
     // PHASE 1: OWN API (If User Provided Key)
     if (config && config.api_key && config.cheap_engine === false) {
+        console.log(`[Audio Debug] Checking User Key logic. Config Provider: ${config.ai || config.operator}`);
+        
         const userKeys = config.api_key.split(',').map(k => k.trim()).filter(k => k);
         userKey = userKeys[0]; // Use first key for simplicity in audio
         
@@ -1731,14 +1733,8 @@ async function transcribeAudio(audioUrl, config) {
 
         if (userKey) {
             // FIX: Check if this is a SALESMANCHATBOT KEY or a REAL USER KEY
-            // SalesmanChatbot keys usually start with 'sk-' but are longer or specific format?
-            // Actually, the user provided 'sk-f835...' which looks like a Salesman Key but starts with 'sk-'.
-            // If it's a Salesman Key, we should NOT treat it as an OpenAI User Key.
-            // But how to distinguish?
-            
-            // Logic: If userProvider is 'salesmanchatbot', then the key is likely a Salesman Key.
-            // If userProvider is 'openai', then it's an OpenAI Key.
             const userProvider = config.ai || config.operator || config.ai_provider;
+            console.log(`[Audio Debug] User Key Found: ${userKey.substring(0, 8)}... Provider: ${userProvider}`);
             
             if (userProvider === 'salesmanchatbot') {
                 console.log(`[Audio] User Key is a SalesmanChatbot Key. Skipping User Key logic to use System Routing.`);
@@ -1753,6 +1749,9 @@ async function transcribeAudio(audioUrl, config) {
                 } else if (userKey.startsWith('AIza')) {
                     // Gemini Key -> STRICTLY Use User's Selected Model
                     priorityChain.push({ provider: 'google', model: userModel, name: `Gemini (${userModel}) (User Key)`, key: userKey });
+                } else {
+                    console.log(`[Audio Debug] Unknown Key Prefix. Defaulting to System Routing.`);
+                    userKey = null;
                 }
             }
         }
