@@ -95,7 +95,7 @@ export default function WhatsAppConversionPage() {
 
       setLockedContacts(prev => ({ ...prev, [phoneNumber]: newStatus }));
 
-      const res = await fetch(`${BACKEND_URL}/whatsapp/contacts/lock`, {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/contacts/lock`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -109,8 +109,9 @@ export default function WhatsAppConversionPage() {
       });
 
       if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
         setLockedContacts(prev => ({ ...prev, [phoneNumber]: currentStatus }));
-        toast.error("Failed to update lock status");
+        toast.error(errData.error || "Failed to update lock status");
         return;
       }
 
@@ -224,7 +225,15 @@ export default function WhatsAppConversionPage() {
       });
 
       if (!res.ok) {
-        throw new Error("Failed to fetch messages");
+        if (res.status === 403 || res.status === 404) {
+            const storedDbId = localStorage.getItem("active_wp_db_id");
+            if (storedDbId) {
+                await fetchSessionNameFromId(storedDbId);
+                return;
+            }
+        }
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to fetch messages");
       }
 
       const data = await res.json();
@@ -259,7 +268,11 @@ export default function WhatsAppConversionPage() {
         },
       });
 
-      if (!res.ok) return;
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        console.error("Stats fetch error:", errData.error || res.statusText);
+        return;
+      }
 
       const data = await res.json();
       setAllTimeBotReplies(data.allTimeBotReplies || 0);

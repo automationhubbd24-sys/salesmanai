@@ -150,9 +150,9 @@ Phone: ${order.number || 'N/A'}`;
 
         const data = await res.json();
         setOrders(Array.isArray(data) ? data : []);
-      } catch (error) {
+      } catch (error: any) {
         console.error("Error fetching orders:", error);
-        toast.error("Failed to fetch orders");
+        toast.error(error.message || "Failed to fetch orders");
       } finally {
         setOrderLoading(false);
       }
