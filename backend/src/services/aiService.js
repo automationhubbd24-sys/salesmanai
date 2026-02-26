@@ -1721,19 +1721,22 @@ async function transcribeAudio(audioUrl, config) {
     const priorityChain = [];
     let userKey = null;
 
+    // Ensure config exists to prevent crashes
+    const safeConfig = config || {};
+
     // PHASE 1: OWN API (If User Provided Key)
-    if (config && config.api_key && config.cheap_engine === false) {
-        console.log(`[Audio Debug] Checking User Key logic. Config Provider: ${config.ai || config.operator}`);
+    if (safeConfig.api_key && safeConfig.cheap_engine === false) {
+        console.log(`[Audio Debug] Checking User Key logic. Config Provider: ${safeConfig.ai || safeConfig.operator}`);
         
-        const userKeys = config.api_key.split(',').map(k => k.trim()).filter(k => k);
+        const userKeys = safeConfig.api_key.split(',').map(k => k.trim()).filter(k => k);
         userKey = userKeys[0]; // Use first key for simplicity in audio
         
         // Strict Model Selection
-        const userModel = config.chat_model || config.chatmodel || 'gemini-2.0-flash';
+        const userModel = safeConfig.chat_model || safeConfig.chatmodel || 'gemini-2.0-flash';
 
         if (userKey) {
             // FIX: Check if this is a SALESMANCHATBOT KEY or a REAL USER KEY
-            const userProvider = config.ai || config.operator || config.ai_provider;
+            const userProvider = safeConfig.ai || safeConfig.operator || safeConfig.ai_provider;
             console.log(`[Audio Debug] User Key Found: ${userKey.substring(0, 8)}... Provider: ${userProvider}`);
             
             if (userProvider === 'salesmanchatbot') {
@@ -1758,13 +1761,12 @@ async function transcribeAudio(audioUrl, config) {
     }
 
     // PHASE 2: SYSTEM KEYS (Cheap Engine / Fallback)
-    // PHASE 2: SYSTEM KEYS (Cheap Engine / Fallback)
     // ONLY add system keys if NO User Key was provided.
     // User Requirement: "own api er modde defualt chatmodel defualt api asob kisui use kora jabe na"
     if (!userKey) {
         // User Update: Use configured voice model if available
-        let voiceModel = config.voice_model || config.audio_model;
-        let provider = config.ai || config.operator || 'google';
+        let voiceModel = safeConfig.voice_model || safeConfig.audio_model;
+        let provider = safeConfig.ai || safeConfig.operator || 'google';
 
         // --- GLOBAL CONFIG LOOKUP (Fix for SalesmanChatbot/Admin Config) ---
         // If provider is SalesmanChatbot, we MUST look up the REAL provider (Google/Groq) from DB
@@ -1774,21 +1776,25 @@ async function transcribeAudio(audioUrl, config) {
             targetProvider = 'google'; // Default to Google for SalesmanChatbot if not overridden
         }
 
-        const gConfig = await getGlobalEngineConfig(targetProvider);
-        if (gConfig) {
-            // Apply Global Voice Model if set
-            if (gConfig.voice_model) {
-                voiceModel = gConfig.voice_model;
-                console.log(`[Audio] Loaded Global Voice Model for ${targetProvider}: ${voiceModel}`);
+        try {
+            const gConfig = await getGlobalEngineConfig(targetProvider);
+            if (gConfig) {
+                // Apply Global Voice Model if set
+                if (gConfig.voice_model) {
+                    voiceModel = gConfig.voice_model;
+                    console.log(`[Audio] Loaded Global Voice Model for ${targetProvider}: ${voiceModel}`);
+                }
+                
+                // Apply Provider Override if set (e.g., switch Google -> Groq)
+                if (gConfig.voice_provider_override && gConfig.voice_provider_override !== 'default') {
+                    targetProvider = gConfig.voice_provider_override;
+                    provider = targetProvider;
+                } else {
+                    provider = targetProvider;
+                }
             }
-            
-            // Apply Provider Override if set (e.g., switch Google -> Groq)
-            if (gConfig.voice_provider_override && gConfig.voice_provider_override !== 'default') {
-                targetProvider = gConfig.voice_provider_override;
-                provider = targetProvider;
-            } else {
-                provider = targetProvider;
-            }
+        } catch (err) {
+            console.error(`[Audio] Global Config Lookup Failed: ${err.message}. Proceeding with defaults.`);
         }
         
         if (voiceModel) {
