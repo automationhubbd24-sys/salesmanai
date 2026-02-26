@@ -54,6 +54,16 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     currentSessionRef.current = currentSession;
+    
+    // Sync current session to local storage for other pages
+    if (currentSession) {
+      const dbId = (currentSession as any).wp_db_id;
+      if (dbId) {
+          localStorage.setItem("active_wp_db_id", String(dbId));
+      }
+      localStorage.setItem("active_wa_session_id", currentSession.name);
+      window.dispatchEvent(new Event("db-connection-changed"));
+    }
   }, [currentSession]);
 
   const refreshSessions = React.useCallback(async () => {

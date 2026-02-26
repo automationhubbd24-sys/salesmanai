@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Database, Search, CheckCircle, XCircle, Loader2, LogOut } from "lucide-react";
 import { toast } from "sonner";
 import { BACKEND_URL } from "@/config";
+import { useWhatsApp } from "@/context/WhatsAppContext";
 
 interface WhatsAppDbConfig {
   id: number;
@@ -16,6 +17,7 @@ interface WhatsAppDbConfig {
 }
 
 export default function DatabasePage() {
+  const { currentSession } = useWhatsApp();
   const [searchId, setSearchId] = useState("");
   const [loading, setLoading] = useState(false);
   const [connectedDb, setConnectedDb] = useState<WhatsAppDbConfig | null>(null);
@@ -28,6 +30,16 @@ export default function DatabasePage() {
         setSearchId(storedId);
         fetchDatabase(storedId);
       } else {
+        // If no stored ID, try to auto-connect from current session
+        if (currentSession) {
+          const dbId = (currentSession as any).wp_db_id;
+          if (dbId) {
+            const dbIdStr = String(dbId);
+            setSearchId(dbIdStr);
+            fetchDatabase(dbIdStr);
+            return;
+          }
+        }
         setConnectedDb(null);
         setSearchId("");
       }
@@ -43,7 +55,7 @@ export default function DatabasePage() {
       window.removeEventListener("storage", checkConnection);
       window.removeEventListener("db-connection-changed", checkConnection);
     };
-  }, []);
+  }, [currentSession]);
 
   const fetchDatabase = async (id: string) => {
     setLoading(true);
@@ -95,8 +107,8 @@ export default function DatabasePage() {
   };
 
   const handleConnect = () => {
-    if (!searchId || searchId.length < 6) {
-      toast.error("Please enter a valid 6-digit ID");
+    if (!searchId || searchId.length < 1) {
+      toast.error("Please enter a valid Database ID");
       return;
     }
     fetchDatabase(searchId);
@@ -187,7 +199,7 @@ export default function DatabasePage() {
           <CardDescription>
             {connectedDb 
                 ? `Connected to ID: ${connectedDb.id}` 
-                : "Enter the 6-digit Database ID provided during session creation."}
+                : "Enter the Database ID provided during session creation."}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -198,7 +210,7 @@ export default function DatabasePage() {
                 <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                 <Input 
                     id="db-id" 
-                    placeholder="e.g. 123456" 
+                    placeholder="e.g. 123" 
                     className="pl-9" 
                     value={searchId}
                     onChange={(e) => setSearchId(e.target.value)}
