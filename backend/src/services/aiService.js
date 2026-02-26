@@ -1727,40 +1727,62 @@ async function transcribeAudio(audioUrl, config) {
     }
 
     // PHASE 2: SYSTEM KEYS (Cheap Engine / Fallback)
+    // PHASE 2: SYSTEM KEYS (Cheap Engine / Fallback)
     // ONLY add system keys if NO User Key was provided.
     // User Requirement: "own api er modde defualt chatmodel defualt api asob kisui use kora jabe na"
     if (!userKey) {
         // User Update: Use configured voice model if available
         let voiceModel = config.voice_model || config.audio_model;
-        
-        // --- SALESMANCHATBOT ENGINE LOGIC ---
-        // If provider is 'salesmanchatbot', we need to map it to a REAL backend provider.
-        // SalesmanChatbot Engine behaves like a meta-provider.
-        if (config.ai === 'salesmanchatbot' || config.operator === 'salesmanchatbot') {
-            // Default SalesmanChatbot Voice Model -> Groq Whisper (Best for Bengali)
-            if (!voiceModel || voiceModel === 'default' || voiceModel === 'salesmanchatbot-pro') {
-                voiceModel = 'whisper-large-v3';
-                console.log("[Audio] SalesmanChatbot Engine: Auto-selected 'whisper-large-v3' for voice.");
+        let provider = config.ai || config.operator || 'google';
+
+        // --- GLOBAL CONFIG LOOKUP (Fix for SalesmanChatbot/Admin Config) ---
+        // If voice model is missing in pageConfig, look it up in Global Engine Configs
+        if (!voiceModel) {
+            let targetProvider = provider;
+            // Map aliases to real providers for config lookup
+            if (targetProvider === 'salesmanchatbot' || targetProvider === 'gemini') {
+                // If it's SalesmanChatbot, it might be mapped to Google or OpenRouter in DB
+                // But for now, let's check if there is a config for 'salesmanchatbot' directly, or default to 'google'
+                // Actually, the log showed "Engine Resolved: google/gemini...", so we should probably look up 'google' if 'salesmanchatbot' has no config
+                const hasConfig = await getGlobalEngineConfig(targetProvider);
+                if (!hasConfig) targetProvider = 'google';
+            }
+
+            const gConfig = await getGlobalEngineConfig(targetProvider);
+            if (gConfig && gConfig.voice_model) {
+                voiceModel = gConfig.voice_model;
+                console.log(`[Audio] Loaded Global Voice Model for ${targetProvider}: ${voiceModel}`);
+                
+                // Also apply provider override from global config if exists
+                if (gConfig.voice_provider_override) {
+                    provider = gConfig.voice_provider_override;
+                }
             }
         }
         
         if (voiceModel) {
              console.log(`[Audio] Using Configured Voice Model: ${voiceModel}`);
              // Add logic to determine provider from model name or config
-             let provider = 'google'; // Default
-             if (voiceModel.includes('whisper')) provider = 'groq';
-             else if (voiceModel.includes('gemini')) provider = 'google';
-             else if (voiceModel.includes('openai')) provider = 'openai';
+             let targetProvider = 'google'; // Default base
              
-             // If user explicitly set a provider for voice (e.g. via separate field if exists, or global ai_provider)
-             if (config.ai === 'groq' || config.ai_provider === 'groq') provider = 'groq';
+             if (provider === 'salesmanchatbot' || provider === 'openrouter') {
+                 // Try to guess based on model name if provider is generic
+                 if (voiceModel.includes('whisper')) targetProvider = 'groq';
+                 else if (voiceModel.includes('gemini')) targetProvider = 'google';
+                 else if (voiceModel.includes('openai')) targetProvider = 'openai';
+             } else {
+                 targetProvider = provider;
+             }
              
-             priorityChain.push({ provider, model: voiceModel, name: `Configured (${voiceModel})` });
+             // Explicit overrides
+             if (config.ai === 'groq' || config.ai_provider === 'groq') targetProvider = 'groq';
+             
+             priorityChain.push({ provider: targetProvider, model: voiceModel, name: `Configured (${voiceModel})` });
         } else {
              // Fallback if NO voice model configured (but we shouldn't really reach here if frontend is set up right)
              // User Request: "best model ta amr motabek kono engine e nijer teke defult e work korbe na"
              // Solution: NO DEFAULT FALLBACKS.
-             console.error("[Audio] No Voice Model configured. Skipping transcription.");
+             console.error("[Audio] No Voice Model configured in Page or Global settings. Skipping transcription.");
         }
     }
 
