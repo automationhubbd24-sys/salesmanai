@@ -1813,6 +1813,12 @@ async function transcribeAudio(audioUrl, config) {
             
             // OPENAI WHISPER API (User Key)
             if (option.provider === 'openai') {
+                // Fix: Verify Key format for OpenAI. SalesmanChatbot keys should NOT be sent to OpenAI.
+                if (!apiKey.startsWith('sk-') && !apiKey.startsWith('sess-')) {
+                     console.warn(`[Audio] Skipping OpenAI attempt: Invalid Key format for OpenAI (Key: ${apiKey.substring(0,5)}...)`);
+                     continue;
+                }
+
                 const formData = new FormData();
                 const bufferStream = new (require('stream').PassThrough)();
                 bufferStream.end(audioBuffer);
