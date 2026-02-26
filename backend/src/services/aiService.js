@@ -72,21 +72,27 @@ function handleAiError(error, apiKey, model) {
 
 // --- GLOBAL ENGINE CONFIG CACHE ---
 let globalEngineConfigCache = new Map();
-let lastConfigFetch = 0;
-const CONFIG_CACHE_TTL = 10 * 60 * 1000; // 10 Minutes
+let lastConfigFetch = new Map(); // Store fetch time per provider
+const CONFIG_CACHE_TTL = 60 * 60 * 1000; // 1 Hour TTL
 
 async function getGlobalEngineConfig(provider) {
     const now = Date.now();
-    if (globalEngineConfigCache.has(provider) && (now - lastConfigFetch < CONFIG_CACHE_TTL)) {
+    const lastFetch = lastConfigFetch.get(provider) || 0;
+
+    // Check Cache
+    if (globalEngineConfigCache.has(provider) && (now - lastFetch < CONFIG_CACHE_TTL)) {
         return globalEngineConfigCache.get(provider);
     }
 
     try {
+        console.log(`[AI] Refreshing Global Engine Config for ${provider}...`);
         const pgClient = require('./pgClient');
         const res = await pgClient.query('SELECT * FROM api_engine_configs WHERE provider = $1', [provider]);
         const config = res.rows[0] || null;
+        
         globalEngineConfigCache.set(provider, config);
-        lastConfigFetch = now;
+        lastConfigFetch.set(provider, now);
+        
         return config;
     } catch (err) {
         console.warn(`[AI] Failed to fetch global engine config for ${provider}:`, err.message);
@@ -1778,21 +1784,15 @@ async function transcribeAudio(audioUrl, config) {
              
              if (provider === 'salesmanchatbot' || provider === 'openrouter') {
                  // Try to guess based on model name if provider is generic
-                 // User Correction: If global config sets a specific model (like gemini-2.5-flash-lite), we must respect it.
-                 // We don't default to Groq Whisper anymore.
                  if (voiceModel.includes('whisper')) targetProvider = 'groq';
                  else if (voiceModel.includes('gemini')) targetProvider = 'google';
                  else if (voiceModel.includes('openai')) targetProvider = 'openai';
-                 // If provider override is set in global config, use that (it is already handled in 'provider' variable above)
              } else {
                  targetProvider = provider;
              }
              
              // Explicit overrides
              if (config.ai === 'groq' || config.ai_provider === 'groq') targetProvider = 'groq';
-             
-             // IMPORTANT: If model is Gemini, force provider to Google (to avoid routing Gemini models to OpenAI/Groq)
-             if (voiceModel.includes('gemini')) targetProvider = 'google';
              
              priorityChain.push({ provider: targetProvider, model: voiceModel, name: `Configured (${voiceModel})` });
         } else {
