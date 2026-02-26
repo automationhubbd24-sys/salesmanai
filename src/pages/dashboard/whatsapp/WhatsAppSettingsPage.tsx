@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
+import { useWhatsApp } from "@/context/WhatsAppContext";
 import { BACKEND_URL } from "@/config";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -63,6 +64,7 @@ type PromptProduct = {
 };
 
 export default function WhatsAppSettingsPage() {
+  const { currentSession } = useWhatsApp();
   const { id } = useParams();
   const [loading, setLoading] = useState(true);
   const [dbId, setDbId] = useState<string | null>(null);
@@ -197,11 +199,17 @@ export default function WhatsAppSettingsPage() {
   }, [form]);
 
   useEffect(() => {
-    if (id) {
-      setDbId(id);
-      fetchConfig(id);
+    const sessionDbId = (currentSession as any)?.wp_db_id;
+    const storedId = localStorage.getItem("active_wp_db_id");
+    const resolvedId = id || (sessionDbId ? String(sessionDbId) : storedId);
+
+    if (resolvedId) {
+      setDbId(resolvedId);
+      fetchConfig(resolvedId);
+    } else {
+      setLoading(false);
     }
-  }, [id, fetchConfig]);
+  }, [id, fetchConfig, currentSession]);
 
   const fetchProductsForPrompt = async () => {
     setProductLoading(true);
