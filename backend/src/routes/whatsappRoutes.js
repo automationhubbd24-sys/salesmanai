@@ -263,8 +263,27 @@ router.get('/orders', authMiddleware, async (req, res) => {
             ORDER BY created_at DESC
         `;
 
-        const result = await pgClient.query(queryText, values);
-        res.json(result.rows);
+        try {
+            const result = await pgClient.query(queryText, values);
+            res.json(result.rows);
+        } catch (err) {
+            if (err && err.code === '42703') {
+                const fallbackQuery = `
+                    SELECT id, number, location, product_quantity, price, created_at
+                    FROM whatsapp_order_tracking
+                    WHERE ${where}
+                    ORDER BY created_at DESC
+                `;
+                const fallbackResult = await pgClient.query(fallbackQuery, values);
+                const rows = (fallbackResult.rows || []).map(row => ({
+                    ...row,
+                    product_name: null
+                }));
+                res.json(rows);
+                return;
+            }
+            throw err;
+        }
     } catch (err) {
         console.error('Get WhatsApp orders error:', err);
         res.status(500).json({ error: err.message });
@@ -293,19 +312,43 @@ router.get('/messages', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'from and to (ms) are required' });
         }
 
-        const result = await pgClient.query(
-            `
-            SELECT id, message_id, timestamp, sender_id, recipient_id, text, reply_by, status, token_usage, model_used
-            FROM whatsapp_chats
-            WHERE session_name = $1
-              AND timestamp >= $2
-              AND timestamp <= $3
-            ORDER BY timestamp DESC
-            `,
-            [sessionName, from, to]
-        );
+        try {
+            const result = await pgClient.query(
+                `
+                SELECT id, message_id, timestamp, sender_id, recipient_id, text, reply_by, status, token_usage, model_used
+                FROM whatsapp_chats
+                WHERE session_name = $1
+                  AND timestamp >= $2
+                  AND timestamp <= $3
+                ORDER BY timestamp DESC
+                `,
+                [sessionName, from, to]
+            );
 
-        res.json(result.rows);
+            res.json(result.rows);
+        } catch (err) {
+            if (err && err.code === '42703') {
+                const fallbackResult = await pgClient.query(
+                    `
+                    SELECT id, message_id, timestamp, sender_id, recipient_id, text, reply_by, status
+                    FROM whatsapp_chats
+                    WHERE session_name = $1
+                      AND timestamp >= $2
+                      AND timestamp <= $3
+                    ORDER BY timestamp DESC
+                    `,
+                    [sessionName, from, to]
+                );
+                const rows = (fallbackResult.rows || []).map(row => ({
+                    ...row,
+                    token_usage: 0,
+                    model_used: null
+                }));
+                res.json(rows);
+                return;
+            }
+            throw err;
+        }
     } catch (err) {
         console.error('Get WhatsApp messages error:', err);
         res.status(500).json({ error: err.message });
@@ -338,15 +381,22 @@ router.get('/stats', authMiddleware, async (req, res) => {
             [sessionName]
         );
 
-        const tokenResult = await pgClient.query(
-            `
-            SELECT COALESCE(SUM(token_usage), 0)::int AS total_tokens
-            FROM whatsapp_chats
-            WHERE session_name = $1
-              AND token_usage > 0
-            `,
-            [sessionName]
-        );
+        let tokenResult = { rows: [{ total_tokens: 0 }] };
+        try {
+            tokenResult = await pgClient.query(
+                `
+                SELECT COALESCE(SUM(token_usage), 0)::int AS total_tokens
+                FROM whatsapp_chats
+                WHERE session_name = $1
+                  AND token_usage > 0
+                `,
+                [sessionName]
+            );
+        } catch (err) {
+            if (!(err && err.code === '42703')) {
+                throw err;
+            }
+        }
 
         const allTimeBotReplies = countResult.rows[0]?.count || 0;
         const allTimeTokenCount = tokenResult.rows[0]?.total_tokens || 0;
