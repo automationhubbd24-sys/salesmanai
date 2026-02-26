@@ -100,6 +100,99 @@ async function getGlobalEngineConfig(provider) {
     }
 }
 
+async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio) {
+    let targetProvider = defaultProvider || 'salesmanchatbot';
+    let targetEngineName = defaultModel || 'salesmanchatbot-pro';
+
+    if (targetEngineName === 'salesmanchatbot-pro') {
+        targetProvider = 'google';
+    } else if (targetEngineName === 'salesmanchatbot-flash') {
+        targetProvider = 'openrouter';
+    } else if (targetEngineName === 'salesmanchatbot-lite') {
+        targetProvider = 'groq';
+    }
+
+    if (targetProvider === 'salesmanchatbot' || targetProvider === 'gemini') {
+        const hasCustomConfig = await getGlobalEngineConfig(targetProvider);
+        if (!hasCustomConfig) {
+            targetProvider = 'google';
+        }
+    }
+
+    const gConfig = await getGlobalEngineConfig(targetProvider);
+
+    let engineTextModel = targetEngineName;
+    let engineVisionModel = targetEngineName;
+    let engineVoiceModel = targetEngineName;
+
+    let textProvider = targetProvider;
+    let visionProvider = targetProvider;
+    let voiceProvider = targetProvider;
+
+    if (gConfig) {
+        engineTextModel = gConfig.text_model || engineTextModel;
+        engineVisionModel = gConfig.vision_model || engineVisionModel;
+        engineVoiceModel = gConfig.voice_model || engineVoiceModel;
+
+        if (gConfig.text_provider_override && gConfig.text_provider_override !== 'default') 
+            textProvider = gConfig.text_provider_override;
+        
+        if (gConfig.vision_provider_override && gConfig.vision_provider_override !== 'default') 
+            visionProvider = gConfig.vision_provider_override;
+        
+        if (gConfig.voice_provider_override && gConfig.voice_provider_override !== 'default') 
+            voiceProvider = gConfig.voice_provider_override;
+
+        if (keyService.setManualLimit) {
+            if (gConfig.text_rpm || gConfig.text_rpd) 
+                keyService.setManualLimit(engineTextModel, { rpm: gConfig.text_rpm, rpd: gConfig.text_rpd });
+            if (gConfig.vision_rpm || gConfig.vision_rpd) 
+                keyService.setManualLimit(engineVisionModel, { rpm: gConfig.vision_rpm, rpd: gConfig.vision_rpd });
+            if (gConfig.voice_rpm || gConfig.voice_rpd) 
+                keyService.setManualLimit(engineVoiceModel, { rpm: gConfig.voice_rpm, rpd: gConfig.voice_rpd });
+        }
+    }
+
+    let finalModel = engineTextModel;
+    let finalProvider = textProvider;
+
+    if (isAudio) {
+        finalModel = engineVoiceModel;
+        finalProvider = voiceProvider;
+        console.log(`[AI] Smart Routing (Voice): Using ${finalProvider}/${finalModel}`);
+    } else if (isVision) {
+        finalModel = engineVisionModel;
+        finalProvider = visionProvider;
+        console.log(`[AI] Smart Routing (Vision): Using ${finalProvider}/${finalModel}`);
+    } else {
+        console.log(`[AI] Smart Routing (Text): Using ${finalProvider}/${finalModel}`);
+    }
+
+    if (finalProvider === 'openrouter' && finalModel.includes(',')) {
+        finalModel = finalModel.split(',')[0].trim();
+    }
+
+    if (isAudio && voiceProvider === 'groq') {
+        finalProvider = 'groq';
+    }
+
+    console.log(`[AI] Engine Resolved: ${finalProvider}/${finalModel} (Audio: ${isAudio}, Vision: ${isVision})`);
+
+    return { 
+        finalProvider,
+        finalModel,
+        targetProvider,
+        targetEngineName,
+        engineTextModel,
+        engineVisionModel,
+        engineVoiceModel,
+        textProvider,
+        visionProvider,
+        voiceProvider,
+        gConfig
+    };
+}
+
 // --- DYNAMIC FREE MODEL OPTIMIZER (OpenRouter) ---
 // User Request: "automatic na ami fronted e set korbo segulai pradanno pabe tumi nijer teke backend e kono model takbe na"
 // Solution: Removed ALL backend default/verified model lists. 
@@ -1076,102 +1169,10 @@ INSTRUCTIONS:
     if (imageUrls && imageUrls.length > 0) isVision = true;
     if (audioUrls && audioUrls.length > 0) isAudio = true;
 
-    // 2. Resolve Engine Config (Global Provider Config)
-    let targetProvider = defaultProvider || 'salesmanchatbot';
-    let targetEngineName = defaultModel || 'salesmanchatbot-pro';
+    const resolved = await resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio);
+    let finalProvider = resolved.finalProvider;
+    let finalModel = resolved.finalModel;
 
-    // --- SALESMANCHATBOT UNIFIED ENGINE MAPPING ---
-    // User Request: Map branded model names to their respective backend engines
-    if (targetEngineName === 'salesmanchatbot-pro') {
-        targetProvider = 'google';
-    } else if (targetEngineName === 'salesmanchatbot-flash') {
-        targetProvider = 'openrouter';
-    } else if (targetEngineName === 'salesmanchatbot-lite') {
-        targetProvider = 'groq';
-    }
-    
-    // Map internal aliases to actual database provider names
-    if (targetProvider === 'salesmanchatbot' || targetProvider === 'gemini') {
-        const hasCustomConfig = await getGlobalEngineConfig(targetProvider);
-        if (!hasCustomConfig) {
-            targetProvider = 'google';
-        }
-    }
-
-    // Load Global Engine Config based on resolved provider
-    const gConfig = await getGlobalEngineConfig(targetProvider);
-
-    let engineTextModel = targetEngineName;
-    let engineVisionModel = targetEngineName;
-    let engineVoiceModel = targetEngineName;
-    
-    let textProvider = targetProvider;
-    let visionProvider = targetProvider;
-    let voiceProvider = targetProvider;
-
-    if (gConfig) {
-        // STRICT RULE: Use models from Global Engine Config
-        // User Request: "se voice dile set taka voice model work korbe"
-        engineTextModel = gConfig.text_model || engineTextModel;
-        engineVisionModel = gConfig.vision_model || engineVisionModel;
-        engineVoiceModel = gConfig.voice_model || engineVoiceModel;
-        
-        // Apply Provider Overrides if set
-        if (gConfig.text_provider_override && gConfig.text_provider_override !== 'default') 
-            textProvider = gConfig.text_provider_override;
-        
-        if (gConfig.vision_provider_override && gConfig.vision_provider_override !== 'default') 
-            visionProvider = gConfig.vision_provider_override;
-        
-        if (gConfig.voice_provider_override && gConfig.voice_provider_override !== 'default') 
-            voiceProvider = gConfig.voice_provider_override;
-
-        // Apply Rate Limits to KeyService (RPM/RPD per Modality)
-        if (keyService.setManualLimit) {
-            if (gConfig.text_rpm || gConfig.text_rpd) 
-                keyService.setManualLimit(engineTextModel, { rpm: gConfig.text_rpm, rpd: gConfig.text_rpd });
-            if (gConfig.vision_rpm || gConfig.vision_rpd) 
-                keyService.setManualLimit(engineVisionModel, { rpm: gConfig.vision_rpm, rpd: gConfig.vision_rpd });
-            if (gConfig.voice_rpm || gConfig.voice_rpd) 
-                keyService.setManualLimit(engineVoiceModel, { rpm: gConfig.voice_rpm, rpd: gConfig.voice_rpd });
-        }
-    }
-
-    // 3. Resolve Final Model and Provider based on Modality
-    // User Request: "ete mixxed hoye cost komabo and service valo dibo"
-    let finalModel = engineTextModel;
-    let finalProvider = textProvider;
-
-    if (isAudio) {
-        finalModel = engineVoiceModel;
-        finalProvider = voiceProvider;
-        console.log(`[AI] Smart Routing (Voice): Using ${finalProvider}/${finalModel}`);
-    } else if (isVision) {
-        finalModel = engineVisionModel;
-        finalProvider = visionProvider;
-        console.log(`[AI] Smart Routing (Vision): Using ${finalProvider}/${finalModel}`);
-    } else {
-        console.log(`[AI] Smart Routing (Text): Using ${finalProvider}/${finalModel}`);
-    }
-
-    // --- PROVIDER ALIAS FIXES (User Request: 100% Correct Mappings) ---
-    // Fix: Ensure 'google' provider correctly maps to 'gemini' logic if needed, or vice-versa
-    // Fix: Ensure 'groq' provider maps correctly
-    
-    // Normalization for OpenRouter (if user put commas, take the first one)
-    if (finalProvider === 'openrouter' && finalModel.includes(',')) {
-        finalModel = finalModel.split(',')[0].trim();
-    }
-
-    // Special Case: OpenRouter Voice Override to Groq (if configured)
-    // If user set Voice Provider Override to 'groq', ensure we switch base URL and key logic
-    if (isAudio && voiceProvider === 'groq') {
-        finalProvider = 'groq';
-    }
-
-    console.log(`[AI] Engine Resolved: ${finalProvider}/${finalModel} (Audio: ${isAudio}, Vision: ${isVision})`);
-
-    // 4. Execution Loop (STRICT SINGLE ATTEMPT)
     const currentModel = finalModel;
     
     let keyData = null;
@@ -1417,6 +1418,13 @@ Rules:
 - Do not add extra words.
 - Single line output only.`;
 
+    let resolved = null;
+    const providerHint = pageConfig.ai_provider || pageConfig.ai || pageConfig.operator;
+    const modelHint = pageConfig.chat_model || pageConfig.chatmodel;
+    if ((providerHint === 'salesmanchatbot' || modelHint === 'salesmanchatbot-pro' || modelHint === 'salesmanchatbot-flash' || modelHint === 'salesmanchatbot-lite') && !pageConfig.api_key) {
+        resolved = await resolveSalesmanchatbotEngine(pageConfig, providerHint, modelHint, true, false);
+    }
+
     // --- PRIORITY ATTEMPT (Custom Options) ---
     if (customOptions?.provider === 'openrouter' && customOptions?.model) {
         try {
@@ -1509,6 +1517,14 @@ Rules:
                  else if (apiKey.startsWith('gsk_')) provider = 'groq';
              }
 
+             if (!apiKey && resolved) {
+                 provider = resolved.finalProvider;
+                 model = resolved.finalModel;
+                 let keyData = await keyService.getSmartKey(provider, model);
+                 if (!keyData || !keyData.key) keyData = await keyService.getSmartKey(provider, 'default');
+                 if (keyData && keyData.key) apiKey = keyData.key;
+             }
+
              if (!apiKey) {
                  return { text: "Error: Own API Mode enabled but no valid API Key found.", usage: 0 };
              }
@@ -1517,10 +1533,16 @@ Rules:
              // Free User: Default to configured Vision Model or Chat Model
              const userModel = pageConfig.vision_model || pageConfig.chat_model || pageConfig.chatmodel;
              // Fix: Use stable model names for Google Vision
-             model = (userModel && userModel.includes('gemini')) ? userModel : 'gemini-1.5-flash-latest';
+             if (resolved) {
+                 provider = resolved.finalProvider;
+                 model = resolved.finalModel;
+             } else {
+                 model = (userModel && userModel.includes('gemini')) ? userModel : 'gemini-1.5-flash-latest';
+             }
              
-             // Use System Key for Google
-             const keyData = await keyService.getSmartKey(provider, model);
+             // Use System Key for Provider
+             let keyData = await keyService.getSmartKey(provider, model);
+             if (!keyData || !keyData.key) keyData = await keyService.getSmartKey(provider, 'default');
              if (keyData && keyData.key) apiKey = keyData.key;
         }
 
@@ -1723,6 +1745,12 @@ async function transcribeAudio(audioUrl, config) {
 
     // Ensure config exists to prevent crashes
     const safeConfig = config || {};
+    const providerHint = safeConfig.ai_provider || safeConfig.ai || safeConfig.operator;
+    const modelHint = safeConfig.chat_model || safeConfig.chatmodel;
+    let resolved = null;
+    if ((providerHint === 'salesmanchatbot' || modelHint === 'salesmanchatbot-pro' || modelHint === 'salesmanchatbot-flash' || modelHint === 'salesmanchatbot-lite') && !safeConfig.api_key) {
+        resolved = await resolveSalesmanchatbotEngine(safeConfig, providerHint, modelHint, false, true);
+    }
 
     // PHASE 1: OWN API (If User Provided Key)
     if (safeConfig.api_key && safeConfig.cheap_engine === false) {
@@ -1768,33 +1796,34 @@ async function transcribeAudio(audioUrl, config) {
         let voiceModel = safeConfig.voice_model || safeConfig.audio_model;
         let provider = safeConfig.ai || safeConfig.operator || 'google';
 
-        // --- GLOBAL CONFIG LOOKUP (Fix for SalesmanChatbot/Admin Config) ---
-        // If provider is SalesmanChatbot, we MUST look up the REAL provider (Google/Groq) from DB
-        let targetProvider = provider;
-        
-        if (targetProvider === 'salesmanchatbot' || targetProvider === 'gemini') {
-            targetProvider = 'google'; // Default to Google for SalesmanChatbot if not overridden
-        }
-
-        try {
-            const gConfig = await getGlobalEngineConfig(targetProvider);
-            if (gConfig) {
-                // Apply Global Voice Model if set
-                if (gConfig.voice_model) {
-                    voiceModel = gConfig.voice_model;
-                    console.log(`[Audio] Loaded Global Voice Model for ${targetProvider}: ${voiceModel}`);
-                }
-                
-                // Apply Provider Override if set (e.g., switch Google -> Groq)
-                if (gConfig.voice_provider_override && gConfig.voice_provider_override !== 'default') {
-                    targetProvider = gConfig.voice_provider_override;
-                    provider = targetProvider;
-                } else {
-                    provider = targetProvider;
-                }
+        if (resolved) {
+            voiceModel = resolved.finalModel;
+            provider = resolved.finalProvider;
+        } else {
+            let targetProvider = provider;
+            
+            if (targetProvider === 'salesmanchatbot' || targetProvider === 'gemini') {
+                targetProvider = 'google';
             }
-        } catch (err) {
-            console.error(`[Audio] Global Config Lookup Failed: ${err.message}. Proceeding with defaults.`);
+
+            try {
+                const gConfig = await getGlobalEngineConfig(targetProvider);
+                if (gConfig) {
+                    if (gConfig.voice_model) {
+                        voiceModel = gConfig.voice_model;
+                        console.log(`[Audio] Loaded Global Voice Model for ${targetProvider}: ${voiceModel}`);
+                    }
+                    
+                    if (gConfig.voice_provider_override && gConfig.voice_provider_override !== 'default') {
+                        targetProvider = gConfig.voice_provider_override;
+                        provider = targetProvider;
+                    } else {
+                        provider = targetProvider;
+                    }
+                }
+            } catch (err) {
+                console.error(`[Audio] Global Config Lookup Failed: ${err.message}. Proceeding with defaults.`);
+            }
         }
         
         if (voiceModel) {
@@ -1802,9 +1831,9 @@ async function transcribeAudio(audioUrl, config) {
              
              // Ensure Provider matches Model Family
              if (voiceModel.includes('whisper') && provider !== 'groq' && provider !== 'openai') {
-                 provider = 'groq'; // Whisper usually means Groq in our context
+                 provider = 'groq';
              } else if (voiceModel.includes('gemini') && provider !== 'google') {
-                 provider = 'google'; // Gemini MUST be Google
+                 provider = 'google';
              }
              
              priorityChain.push({ provider: provider, model: voiceModel, name: `Configured (${voiceModel})` });
