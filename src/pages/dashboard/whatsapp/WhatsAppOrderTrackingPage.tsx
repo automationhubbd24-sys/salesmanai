@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useWhatsApp } from "@/context/WhatsAppContext";
 import { Button } from "@/components/ui/button";
 import {
@@ -34,6 +34,30 @@ export default function WhatsAppOrderTrackingPage() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [activeSessionName, setActiveSessionName] = useState<string | null>(null);
 
+  const fetchSessionNameFromDbId = useCallback(async (dbId: string) => {
+    try {
+      const token = localStorage.getItem("auth_token");
+      if (!token) return;
+
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/session-name/${dbId}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) return;
+
+      const data = await res.json();
+      if (data && data.session_name) {
+        const sName = String(data.session_name);
+        setActiveSessionName(sName);
+        localStorage.setItem("active_wa_session_id", sName);
+      }
+    } catch (e) {
+      console.error("Error recovering session name", e);
+    }
+  }, []);
+
   const handleCopy = (order: any) => {
     const textToCopy = `Product: ${order.product_name || 'N/A'}
 Qty: ${order.product_quantity || '1'}
@@ -59,8 +83,12 @@ Phone: ${order.number || 'N/A'}`;
       setActiveSessionName(storedSession);
     } else {
       setActiveSessionName(null);
+      const storedDbId = localStorage.getItem("active_wp_db_id");
+      if (storedDbId) {
+        fetchSessionNameFromDbId(storedDbId);
+      }
     }
-  }, [currentSession]);
+  }, [currentSession, fetchSessionNameFromDbId]);
 
   useEffect(() => {
     if (!activeSessionName) return;
@@ -108,6 +136,13 @@ Phone: ${order.number || 'N/A'}`;
         });
 
         if (!res.ok) {
+          if (res.status === 403 || res.status === 404) {
+            const storedDbId = localStorage.getItem("active_wp_db_id");
+            if (storedDbId) {
+              await fetchSessionNameFromDbId(storedDbId);
+              return;
+            }
+          }
           const errBody = await res.json().catch(() => ({}));
           const msg = errBody.error || "Failed to fetch orders";
           throw new Error(msg);
@@ -124,7 +159,7 @@ Phone: ${order.number || 'N/A'}`;
     };
 
     fetchOrders();
-  }, [dateFilter, date, activeSessionName]);
+  }, [dateFilter, date, activeSessionName, fetchSessionNameFromDbId]);
 
   if (!activeSessionName) {
     return (
