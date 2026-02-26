@@ -1753,48 +1753,41 @@ async function transcribeAudio(audioUrl, config) {
         let provider = config.ai || config.operator || 'google';
 
         // --- GLOBAL CONFIG LOOKUP (Fix for SalesmanChatbot/Admin Config) ---
-        // If voice model is missing in pageConfig, look it up in Global Engine Configs
-        if (!voiceModel) {
-            let targetProvider = provider;
-            // Map aliases to real providers for config lookup
-            if (targetProvider === 'salesmanchatbot' || targetProvider === 'gemini') {
-                // If it's SalesmanChatbot, it might be mapped to Google or OpenRouter in DB
-                // But for now, let's check if there is a config for 'salesmanchatbot' directly, or default to 'google'
-                // Actually, the log showed "Engine Resolved: google/gemini...", so we should probably look up 'google' if 'salesmanchatbot' has no config
-                const hasConfig = await getGlobalEngineConfig(targetProvider);
-                if (!hasConfig) targetProvider = 'google';
-            }
+        // If provider is SalesmanChatbot, we MUST look up the REAL provider (Google/Groq) from DB
+        let targetProvider = provider;
+        
+        if (targetProvider === 'salesmanchatbot' || targetProvider === 'gemini') {
+            targetProvider = 'google'; // Default to Google for SalesmanChatbot if not overridden
+        }
 
-            const gConfig = await getGlobalEngineConfig(targetProvider);
-            if (gConfig && gConfig.voice_model) {
+        const gConfig = await getGlobalEngineConfig(targetProvider);
+        if (gConfig) {
+            // Apply Global Voice Model if set
+            if (gConfig.voice_model) {
                 voiceModel = gConfig.voice_model;
                 console.log(`[Audio] Loaded Global Voice Model for ${targetProvider}: ${voiceModel}`);
-                
-                // Also apply provider override from global config if exists
-                if (gConfig.voice_provider_override) {
-                    provider = gConfig.voice_provider_override;
-                }
+            }
+            
+            // Apply Provider Override if set (e.g., switch Google -> Groq)
+            if (gConfig.voice_provider_override && gConfig.voice_provider_override !== 'default') {
+                targetProvider = gConfig.voice_provider_override;
+                provider = targetProvider;
+            } else {
+                provider = targetProvider;
             }
         }
         
         if (voiceModel) {
-             console.log(`[Audio] Using Configured Voice Model: ${voiceModel}`);
-             // Add logic to determine provider from model name or config
-             let targetProvider = 'google'; // Default base
+             console.log(`[Audio] Using Configured Voice Model: ${voiceModel} (Provider: ${provider})`);
              
-             if (provider === 'salesmanchatbot' || provider === 'openrouter') {
-                 // Try to guess based on model name if provider is generic
-                 if (voiceModel.includes('whisper')) targetProvider = 'groq';
-                 else if (voiceModel.includes('gemini')) targetProvider = 'google';
-                 else if (voiceModel.includes('openai')) targetProvider = 'openai';
-             } else {
-                 targetProvider = provider;
+             // Ensure Provider matches Model Family
+             if (voiceModel.includes('whisper') && provider !== 'groq' && provider !== 'openai') {
+                 provider = 'groq'; // Whisper usually means Groq in our context
+             } else if (voiceModel.includes('gemini') && provider !== 'google') {
+                 provider = 'google'; // Gemini MUST be Google
              }
              
-             // Explicit overrides
-             if (config.ai === 'groq' || config.ai_provider === 'groq') targetProvider = 'groq';
-             
-             priorityChain.push({ provider: targetProvider, model: voiceModel, name: `Configured (${voiceModel})` });
+             priorityChain.push({ provider: provider, model: voiceModel, name: `Configured (${voiceModel})` });
         } else {
              // Fallback if NO voice model configured (but we shouldn't really reach here if frontend is set up right)
              // User Request: "best model ta amr motabek kono engine e nijer teke defult e work korbe na"
@@ -1853,7 +1846,13 @@ async function transcribeAudio(audioUrl, config) {
                 // It can handle Text, Image, and Audio in the SAME model.
                 // So if you select 'gemini-2.0-flash', it will work for everything.
                 
-                const url = `${baseUrl}/${option.model}:generateContent?key=${apiKey}`;
+                // Fix: Google API needs 'models/' prefix sometimes, but v1beta/models/{model} usually works.
+                // However, the model name from config might not have 'models/'.
+                // Let's ensure clean URL.
+                let modelName = option.model;
+                if (modelName.startsWith('models/')) modelName = modelName.replace('models/', '');
+                
+                const url = `${baseUrl}/${modelName}:generateContent?key=${apiKey}`;
                 
                 const payload = {
                     contents: [{
