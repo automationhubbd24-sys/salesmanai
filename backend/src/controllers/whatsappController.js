@@ -1115,15 +1115,64 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
         console.warn(`[WA] Failed to check DB lock: ${err.message}`);
     }
 
+    let hasReplyTo = false;
+    let hasText = false;
+    let hasImages = false;
+    let hasAudios = false;
+
     for (const msg of messages) {
-        if (msg.text) combinedText += msg.text + "\n";
+        if (msg.text) {
+            combinedText += msg.text + "\n";
+            if (String(msg.text).trim()) hasText = true;
+        }
         if (msg.reply_to) {
             replyToId = msg.reply_to; 
+            hasReplyTo = true;
             if (msg.quoted_text) replyToTextFallback = msg.quoted_text;
         }
-        if (msg.images && msg.images.length > 0) allImages.push(...msg.images);
-        if (msg.audios && msg.audios.length > 0) allAudios.push(...msg.audios);
+        if (msg.images && msg.images.length > 0) {
+            allImages.push(...msg.images);
+            hasImages = true;
+        }
+        if (msg.audios && msg.audios.length > 0) {
+            allAudios.push(...msg.audios);
+            hasAudios = true;
+        }
         if (msg.sender_name && msg.sender_name !== 'Unknown') senderName = msg.sender_name;
+    }
+
+    if (pageConfig) {
+        if (hasReplyTo && pageConfig.swipe_reply === false) {
+            const logMsg = `[WA] Swipe Reply disabled (swipe_reply=false) for session ${sessionName}. Ignoring.`;
+            console.log(logMsg);
+            await dbService.saveWhatsAppChat({
+                session_name: sessionName,
+                sender_id: sessionName,
+                recipient_id: senderId,
+                message_id: `sys_${Date.now()}`,
+                text: `[SYSTEM] Swipe Reply Disabled in Settings.`,
+                timestamp: Date.now(),
+                status: 'system_info',
+                reply_by: 'system'
+            });
+            return;
+        }
+
+        if (!hasReplyTo && pageConfig.reply_message === false) {
+            const logMsg = `[WA] Reply Message disabled (reply_message=false) for session ${sessionName}. Ignoring.`;
+            console.log(logMsg);
+            await dbService.saveWhatsAppChat({
+                session_name: sessionName,
+                sender_id: sessionName,
+                recipient_id: senderId,
+                message_id: `sys_${Date.now()}`,
+                text: `[SYSTEM] Reply Message Disabled in Settings.`,
+                timestamp: Date.now(),
+                status: 'system_info',
+                reply_by: 'system'
+            });
+            return;
+        }
     }
     // --- MERGE LOGIC (Messenger Style) ---
     // User Update: Use simple concatenation like Messenger to fix "merge message not working"
@@ -1161,65 +1210,71 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
     let audioTranscriptText = null;
     let totalAudioTokens = 0; // Track Audio Tokens
 
-    if (messages.some(m => m.audios && m.audios.length > 0)) {
-        logDebug(`[WA] Found audio messages. Starting transcription...`);
-        let collectedTranscripts = [];
-        
-        // Fetch Config for API Keys (needed for Transcription)
-        // const pageConfig = await dbService.getWhatsAppConfig(sessionName); // Optim: Already loaded
+    if (hasAudios) {
+        const audioEnabled = pageConfig && pageConfig.audio_detection === true;
+        if (audioEnabled) {
+            logDebug(`[WA] Found audio messages. Starting transcription...`);
+            let collectedTranscripts = [];
 
-        for (const msg of messages) {
-            if (msg.audios && msg.audios.length > 0) {
-                for (const audioUrl of msg.audios) {
-                    try {
-                        // Transcribe
-                        const transcriptData = await aiService.transcribeAudio(audioUrl, pageConfig || {});
-                        
-                        let transcript = "";
-                        let usage = 0;
-
-                        if (typeof transcriptData === 'object') {
-                            transcript = transcriptData.text;
-                            usage = transcriptData.usage || 0;
-                        } else {
-                            transcript = transcriptData; // Fallback for legacy string return
-                        }
-
-                        logDebug(`[WA] Transcribed msg ${msg.id}: ${transcript} (Tokens: ${usage})`);
-                        
-                        if (transcript) {
-                            collectedTranscripts.push(transcript);
-                            totalAudioTokens += usage;
+            for (const msg of messages) {
+                if (msg.audios && msg.audios.length > 0) {
+                    for (const audioUrl of msg.audios) {
+                        try {
+                            const transcriptData = await aiService.transcribeAudio(audioUrl, pageConfig || {});
                             
-                            // SAVE Transcription to DB (Critical for Swipe Reply)
-                            await dbService.saveWhatsAppChat({
-                                session_name: sessionName,
-                                sender_id: senderId,
-                                recipient_id: pageId || sessionName,
-                                message_id: msg.id,
-                                text: transcript, // Update text in DB
-                                timestamp: Date.now(),
-                                status: 'received',
-                                reply_by: 'user',
-                                is_group: isGroup,
-                                group_id: null,
-                                group_name: null
-                            });
+                            let transcript = "";
+                            let usage = 0;
+
+                            if (typeof transcriptData === 'object') {
+                                transcript = transcriptData.text;
+                                usage = transcriptData.usage || 0;
+                            } else {
+                                transcript = transcriptData;
+                            }
+
+                            logDebug(`[WA] Transcribed msg ${msg.id}: ${transcript} (Tokens: ${usage})`);
+                            
+                            if (transcript) {
+                                collectedTranscripts.push(transcript);
+                                totalAudioTokens += usage;
+                                
+                                await dbService.saveWhatsAppChat({
+                                    session_name: sessionName,
+                                    sender_id: senderId,
+                                    recipient_id: pageId || sessionName,
+                                    message_id: msg.id,
+                                    text: transcript,
+                                    timestamp: Date.now(),
+                                    status: 'received',
+                                    reply_by: 'user',
+                                    is_group: isGroup,
+                                    group_id: null,
+                                    group_name: null
+                                });
+                            }
+                        } catch (e) {
+                            console.error(`[WA] Transcription failed for ${msg.id}:`, e.message);
+                            logDebug(`[WA] Transcription error: ${e.message}`);
                         }
-                    } catch (e) {
-                        console.error(`[WA] Transcription failed for ${msg.id}:`, e.message);
-                        logDebug(`[WA] Transcription error: ${e.message}`);
                     }
                 }
             }
+            audioTranscriptText = collectedTranscripts.join("\n").trim();
+        } else {
+            console.log(`[WA] Audio detection disabled for session ${sessionName}. Skipping transcription.`);
+            audioTranscriptText = `[System Note: User sent ${allAudios.length} voice messages. Audio detection is disabled, so they were not transcribed. Ask the user to type instead.]`;
         }
-        audioTranscriptText = collectedTranscripts.join("\n").trim();
     }
 
     // --- IMAGE ANALYSIS (Per-Message) ---
     let imageAnalyzeText = null;
     let totalVisionTokens = 0;
-    if (messages.some(m => m.images && m.images.length > 0)) {
+    let imageDetectionEnabled = false;
+    if (hasImages) {
+        imageDetectionEnabled = pageConfig && pageConfig.image_detection === true;
+        if (!imageDetectionEnabled) {
+            imageAnalyzeText = `[System Note: User sent ${allImages.length} images. Image detection is disabled, so they were not analyzed. Ask the user to describe what they want.]`;
+        } else {
         let productAnalysisPrompt = "";
         try {
             // Use WhatsApp Config which includes page_prompts
@@ -1282,6 +1337,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
         if (imageAnalyzeText) {
             console.log(`[WA] Image Analysis Result (collected): ${imageAnalyzeText.substring(0,50)}... Total Tokens: ${totalVisionTokens}`);
         }
+        }
     }
 
     // --- MERGE LOGIC (n8n Style) ---
@@ -1294,19 +1350,22 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
     }
 
     // 2. Image Analysis
-    if (messages.some(m => m.images && m.images.length > 0) && (!imageAnalyzeText || imageAnalyzeText.trim() === "")) {
+    if (hasImages && (!imageAnalyzeText || imageAnalyzeText.trim() === "")) {
          imageAnalyzeText = "[Image Message]"; 
     }
 
     if (imageAnalyzeText && imageAnalyzeText.trim() !== "") {
         if (finalOutput) finalOutput += "\n\n";
-        // Wrap with [Image Analysis Result] tag to match System Prompt instructions
-        finalOutput += `[Image Analysis Result]\n${imageAnalyzeText}`;
+        if (imageDetectionEnabled) {
+            finalOutput += `[Image Analysis Result]\n${imageAnalyzeText}`;
+        } else {
+            finalOutput += imageAnalyzeText;
+        }
     }
 
     // 3. Audio Transcripts (Critical for Voice Notes)
     // Fallback: If audio exists but transcription failed/empty, add placeholder
-    if (messages.some(m => m.audios && m.audios.length > 0) && (!audioTranscriptText || audioTranscriptText.trim() === "")) {
+    if (hasAudios && (!audioTranscriptText || audioTranscriptText.trim() === "")) {
         audioTranscriptText = "[Audio Message]"; 
     }
 
@@ -1612,7 +1671,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
         }
         
         // If we already analyzed images and replaced the text, don't pass images again to avoid double-processing
-        const imagesToPass = (imageAnalyzeText && imageAnalyzeText.trim() !== "") ? [] : allImages;
+        const imagesToPass = imageDetectionEnabled && (!imageAnalyzeText || imageAnalyzeText.trim() === "") ? allImages : [];
 
         const aiResponse = await aiService.generateResponse({
             pageId: pageId, 
@@ -1883,17 +1942,19 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
         }
 
         // Send Images
-        for (const img of extractedImages) {
-            console.log(`[WA] Sending Extracted Image: ${img.title} -> ${img.url}`);
-            
-            // Register Image Caption for Echo Guard
-            if (img.title && img.title.trim()) {
-                 const existing = recentBotReplies.get(senderId) || [];
-                 existing.push({ text: normalizeText(img.title), timestamp: Date.now() });
-                 recentBotReplies.set(senderId, existing);
-            }
+        const allowImageSend = pageConfig ? pageConfig.image_send !== false : true;
+        if (allowImageSend) {
+            for (const img of extractedImages) {
+                console.log(`[WA] Sending Extracted Image: ${img.title} -> ${img.url}`);
+                
+                if (img.title && img.title.trim()) {
+                     const existing = recentBotReplies.get(senderId) || [];
+                     existing.push({ text: normalizeText(img.title), timestamp: Date.now() });
+                     recentBotReplies.set(senderId, existing);
+                }
 
-            await whatsappService.sendImage(sessionName, senderId, img.url, img.title);
+                await whatsappService.sendImage(sessionName, senderId, img.url, img.title);
+            }
         }
 
         // 6. Deduct Credit (If not Own API)
@@ -1924,7 +1985,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
         });
 
         // Save Image Memory (system note) so AI can see previously sent product images for this chat
-        if (aiResponse.images && Array.isArray(aiResponse.images) && aiResponse.images.length > 0) {
+        if (allowImageSend && aiResponse.images && Array.isArray(aiResponse.images) && aiResponse.images.length > 0) {
             const summary = aiResponse.images
                 .map(img => `${img.title || 'Image'} | ${img.url}`)
                 .join(' ; ');
