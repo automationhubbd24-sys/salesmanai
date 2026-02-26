@@ -235,6 +235,17 @@ function markKeyAsDead(key, duration = DEFAULT_COOLDOWN, reason = 'unknown') {
     deadKeys.set(key, { expiry, reason });
 }
 
+function markKeyAsSuspended(key, reason = 'suspended') {
+    if (!key) return;
+    const cachedKey = keyCacheMap.get(key);
+    if (cachedKey) {
+        cachedKey.status = 'suspended';
+        cachedKey.last_used_at = new Date().toISOString();
+        pendingUpdates.add(key);
+    }
+    console.warn(`[KeyService] Marked key ${key.substring(0, 8)}... as suspended. Reason: ${reason}`);
+}
+
 function markKeyAsQuotaExceeded(key) {
     if (!key) return;
     // Calculate time until next midnight (UTC)
@@ -623,6 +634,7 @@ module.exports = {
     getAllManagedKeys: () => [], 
     getSmartKey, 
     markKeyAsDead,
+    markKeyAsSuspended,
     markKeyAsQuotaExceeded,
     recordKeyUsage,
     updateKeyStatusFromHeaders,

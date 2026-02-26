@@ -1160,6 +1160,10 @@ INSTRUCTIONS:
     // HELPER: Error Handler for Rate Limits
     const handleAiError = (error, apiKey, modelName) => {
         const status = error.status || (error.response ? error.response.status : null);
+        const responseError = error.response?.data?.error || {};
+        const responseMessage = `${responseError.message || ''} ${responseError.status || ''}`.toLowerCase();
+        const rawMessage = `${error.message || ''}`.toLowerCase();
+        const isSuspended = responseMessage.includes('consumer_suspended') || responseMessage.includes('suspended') || rawMessage.includes('consumer_suspended') || rawMessage.includes('suspended');
         if (status === 429 || error.message.includes('429') || error.message.includes('quota') || error.message.includes('Too Many Requests')) {
             if (error.message.toLowerCase().includes('quota')) {
                 keyService.markKeyAsQuotaExceeded(apiKey);
@@ -1167,7 +1171,11 @@ INSTRUCTIONS:
                 keyService.markKeyAsDead(apiKey, 60 * 1000, `rate_limit_${modelName}`);
             }
         } else if (status === 401 || status === 403) {
-            keyService.markKeyAsDead(apiKey, 24 * 60 * 60 * 1000, 'auth_error');
+            if (isSuspended) {
+                keyService.markKeyAsSuspended(apiKey, 'consumer_suspended');
+            } else {
+                keyService.markKeyAsDead(apiKey, 24 * 60 * 60 * 1000, 'auth_error');
+            }
         } else if (status >= 500) {
             keyService.markKeyAsDead(apiKey, 60 * 1000, 'server_error');
         }
