@@ -8,7 +8,7 @@ const axios = require('axios');
 // --- 1. ENGINE STATS & DASHBOARD ---
 router.get('/stats', authMiddleware, async (req, res) => {
     try {
-        const { provider, page, limit } = req.query; // Get filter and pagination
+        const { provider, page, limit, q } = req.query; // Get filter and pagination
         
         const allKeys = await dbService.getAllKeys();
         const active = allKeys.filter(k => k.status === 'active').length;
@@ -17,7 +17,7 @@ router.get('/stats', authMiddleware, async (req, res) => {
         // Use smart rotation pool logic for the displayed keys with pagination
         const pageNum = parseInt(page) || 1;
         const limitNum = parseInt(limit) || 10;
-        const poolData = keyService.getActiveRotationPool(provider, pageNum, limitNum);
+        const poolData = keyService.getActiveRotationPool(provider, pageNum, limitNum, q);
         
         res.json({
             engine_status: 'online',

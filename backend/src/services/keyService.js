@@ -657,7 +657,7 @@ module.exports = {
     },
     
     // NEW: Get filtered keys for Active Rotation Pool display with pagination
-    getActiveRotationPool: (providerFilter = null, page = 1, limit = 10) => {
+    getActiveRotationPool: (providerFilter = null, page = 1, limit = 10, searchQuery = '') => {
         let keys = [];
         
         if (providerFilter && providerFilter !== 'all') {
@@ -672,9 +672,18 @@ module.exports = {
             keys = keyCache;
         }
 
-        const total = keys.length;
+        const query = String(searchQuery || '').trim().toLowerCase();
+        const filteredKeys = query
+            ? keys.filter(k => {
+                const provider = (k.provider || '').toLowerCase();
+                const api = (k.api || '').toLowerCase();
+                return provider.includes(query) || api.includes(query);
+            })
+            : keys;
+
+        const total = filteredKeys.length;
         const offset = (page - 1) * limit;
-        const paginatedKeys = keys.slice(offset, offset + limit);
+        const paginatedKeys = filteredKeys.slice(offset, offset + limit);
 
         return {
             total,

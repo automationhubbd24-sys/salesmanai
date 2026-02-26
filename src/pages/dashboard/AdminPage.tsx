@@ -221,6 +221,9 @@ export default function AdminPage() {
       if (engineFilter !== "all") {
         statsUrl += `&provider=${engineFilter}`;
       }
+      if (engineSearch.trim()) {
+        statsUrl += `&q=${encodeURIComponent(engineSearch.trim())}`;
+      }
 
       const statsRes = await fetch(statsUrl, {
         headers: { Authorization: `Bearer ${token}` }
@@ -279,6 +282,15 @@ export default function AdminPage() {
       fetchEngineData(1);
     }
   }, [engineFilter]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const timer = setTimeout(() => {
+      setEnginePage(1);
+      fetchEngineData(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [engineSearch, isAuthenticated]);
 
   const updateEngineConfig = async (name: string, config: Partial<EngineConfig>) => {
     try {
@@ -1877,12 +1889,7 @@ export default function AdminPage() {
                     </TableRow>
                   </TableHeader>
                 <TableBody>
-                  {engineKeys.filter((k) => {
-                    const q = engineSearch.trim().toLowerCase();
-                    if (!q) return true;
-                    const keyPreview = `${k.api.substring(0, 8)}...${k.api.substring(k.api.length - 4)}`.toLowerCase();
-                    return k.provider.toLowerCase().includes(q) || k.api.toLowerCase().includes(q) || keyPreview.includes(q);
-                  }).map((k) => (
+                  {engineKeys.map((k) => (
                       <TableRow key={k.id}>
                         <TableCell className="capitalize font-medium">{k.provider}</TableCell>
                         <TableCell className="font-mono text-xs text-muted-foreground">
