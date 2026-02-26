@@ -466,53 +466,6 @@ function updateKeyStatusFromHeaders(apiKey, headers) {
     }
 }
 
-// Smart Key Rotation (Serial Round Robin + Health Check)
-async function getSmartKey(provider, model) {
-    // 1. Ensure Cache is Fresh
-    await updateKeyCache();
-
-    // 2. USE PRE-INDEXED MAPS FOR O(1) LOOKUP (Fast selection)
-    let validKeys = [];
-
-    if (model) {
-        validKeys = keysByModel.get(model) || [];
-        // Fallback: If no keys found for specific model, try 'default' model keys for the same provider
-        if (validKeys.length === 0 && provider) {
-            const providerKeys = keysByProvider.get(provider) || [];
-            validKeys = providerKeys.filter(k => !k.model || k.model === 'default');
-        }
-    } else if (provider) {
-        validKeys = keysByProvider.get(provider) || [];
-    } else {
-        validKeys = keyCache; // Fallback to all (unlikely)
-    }
-
-    if (validKeys.length === 0) {
-        // RETRY LOGIC: If no keys found in cache, FORCE REFRESH from DB and try again
-        // Prevent excessive DB hammering: Only force refresh if cache is older than 10 seconds
-        if (Date.now() - lastCacheUpdate > 10000) {
-            // console.log(`[KeyService] No local keys found for ${provider}/${model}. Forcing DB refresh...`);
-            await updateKeyCache(true);
-            
-            // Try again after refresh
-            if (model) {
-                validKeys = keysByModel.get(model) || [];
-                // Fallback after refresh
-                if (validKeys.length === 0 && provider) {
-                    const providerKeys = keysByProvider.get(provider) || [];
-                    validKeys = providerKeys.filter(k => !k.model || k.model === 'default');
-                }
-            } else if (provider) {
-                validKeys = keysByProvider.get(provider) || [];
-            }
-        }
-    }
-
-    if (validKeys.length === 0) {
-        // console.warn(`[KeyService] No keys found for ${provider} (Specific or Generic). Returning null.`);
-        return null;
-    }
-
 // 5. Smart Key Selection (Sequential Round-Robin)
 // User Requirement: "total api jodi 1 - 100 ta take tahole 100 cross kore then 1 e asbe kintu 1 e ase jodi deke 24 er rate limit reset hoi ni engine work korbe na"
 // Solution: Sequential Global Rotation.
