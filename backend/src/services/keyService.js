@@ -549,10 +549,25 @@ async function getSmartKey(provider, model = 'default') {
             const now = Date.now();
             const today = new Date().toISOString().split('T')[0];
             
+            const modelName = model || candidateKey.model || 'default';
+
             // Per Key RPM
             const tsList = keyUsageTimestamps.get(candidateKey.api) || [];
             tsList.push(now);
             keyUsageTimestamps.set(candidateKey.api, tsList);
+
+            const modelTs = modelUsageTimestamps.get(modelName) || [];
+            modelTs.push(now);
+            modelUsageTimestamps.set(modelName, modelTs);
+
+            const modelDaily = modelDailyUsage.get(modelName) || { date: today, count: 0 };
+            if (modelDaily.date === today) {
+                modelDaily.count += 1;
+            } else {
+                modelDaily.date = today;
+                modelDaily.count = 1;
+            }
+            modelDailyUsage.set(modelName, modelDaily);
 
             // Usage Counting
             candidateKey.usage_count = (candidateKey.usage_count || 0) + 1;
