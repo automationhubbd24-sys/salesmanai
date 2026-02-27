@@ -161,7 +161,6 @@ export default function AdminPage() {
   const [engineTotal, setEngineTotal] = useState(0);
   const [engineSearch, setEngineSearch] = useState("");
   const [engineRevealedKeys, setEngineRevealedKeys] = useState<Record<number, string>>({});
-  const [engineRphInputs, setEngineRphInputs] = useState<Record<number, string>>({});
 
   const [geminiModel, setGeminiModel] = useState("");
   const [geminiMessage, setGeminiMessage] = useState("hi from SalesmanChatbot key test");
@@ -246,11 +245,6 @@ export default function AdminPage() {
         // Use the filtered keys from the stats response
         if (data.keys) {
           setEngineKeys(data.keys);
-          const rphMap: Record<number, string> = {};
-          data.keys.forEach((k: ApiKey) => {
-            rphMap[k.id] = String(k.rph_limit ?? 0);
-          });
-          setEngineRphInputs(rphMap);
           setEngineTotal(data.total || 0);
           setEnginePage(data.page || 1);
         }
@@ -340,32 +334,6 @@ export default function AdminPage() {
     }
   };
 
-  const updateEngineKeyRph = async (id: number) => {
-    try {
-      const token = localStorage.getItem("auth_token");
-      if (!token) return;
-      const raw = engineRphInputs[id];
-      const value = Math.max(0, parseInt(String(raw)) || 0);
-      const res = await fetch(`${BACKEND_URL}/api/api-engine/keys/${id}/limits`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ rph_limit: value })
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        toast.error(data.error || "Failed to update RPH");
-        return;
-      }
-      setEngineKeys((prev) => prev.map((k) => (k.id === id ? { ...k, rph_limit: value } : k)));
-      setEngineRphInputs((prev) => ({ ...prev, [id]: String(value) }));
-      toast.success("RPH updated");
-    } catch {
-      toast.error("Failed to update RPH");
-    }
-  };
 
   // Re-fetch when filter changes
   useEffect(() => {
@@ -2005,7 +1973,6 @@ export default function AdminPage() {
                       <TableHead>Key (Preview)</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Usage (Today)</TableHead>
-                      <TableHead>RPH (Req/Hour)</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -2024,19 +1991,6 @@ export default function AdminPage() {
                           </Badge>
                         </TableCell>
                         <TableCell>{k.usage_today || 0}</TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Input
-                              type="number"
-                              value={engineRphInputs[k.id] ?? "0"}
-                              onChange={(e) => setEngineRphInputs((prev) => ({ ...prev, [k.id]: e.target.value }))}
-                              className="w-[100px] h-8 bg-black/40 border-white/10"
-                            />
-                            <Button variant="outline" size="sm" onClick={() => updateEngineKeyRph(k.id)}>
-                              Save
-                            </Button>
-                          </div>
-                        </TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-2">
                             <Button variant="outline" size="sm" onClick={() => toggleRevealKey(k.id)}>
