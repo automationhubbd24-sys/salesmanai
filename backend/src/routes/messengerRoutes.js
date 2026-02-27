@@ -454,6 +454,7 @@ router.put('/config/:id', async (req, res) => {
         const apiKey = req.body.api_key;
         const pageAccessToken = req.body.page_access_token_message || req.body.page_access_token;
         const cheapEngine = req.body.cheap_engine;
+        const customBaseUrl = req.body.custom_base_url;
 
         console.log(`[PUT /config/:id] Token Updates - API Key: ${apiKey ? 'Provided' : 'Missing'}, Provider: ${aiProvider}, Model: ${chatModel}`);
 
@@ -481,6 +482,12 @@ router.put('/config/:id', async (req, res) => {
             tokenUpdates.push(`cheap_engine = $${tIdx}`);
             tokenValues.push(cheapEngine);
             tIdx++;
+        }
+        // Always update custom_base_url (can be null)
+        if (customBaseUrl !== undefined) {
+             tokenUpdates.push(`custom_base_url = $${tIdx}`);
+             tokenValues.push(customBaseUrl);
+             tIdx++;
         }
 
         if (tokenUpdates.length > 0) {

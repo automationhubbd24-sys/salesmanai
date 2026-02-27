@@ -52,6 +52,7 @@ const formSchema = z.object({
   api_key: z.string().optional(),
   chatmodel: z.string().min(1, "Model name is required"),
   text_prompt: z.string().optional(),
+  base_url: z.string().optional(),
 }).refine(data => {
     // If we can access mode here it would be great, but we can't easily.
     // We'll handle validation logic loosely here and rely on component state or just let it pass if empty for now
@@ -224,6 +225,7 @@ export default function MessengerSettingsPage() {
             api_key: isManaged ? "" : apiKey,
             chatmodel: displayModel,
             text_prompt: dbRow.text_prompt || "",
+            base_url: pageRow.custom_base_url || "",
           });
 
           setWait(dbRow.wait || 8);
@@ -531,6 +533,7 @@ export default function MessengerSettingsPage() {
         ai: values.provider,
         api_key: values.api_key,
         chat_model: values.chatmodel,
+        custom_base_url: values.provider === 'custom' ? values.base_url : null,
         cheap_engine: mode === "managed" 
       };
 
@@ -838,6 +841,7 @@ export default function MessengerSettingsPage() {
                             <SelectItem value="gemini">Google Gemini</SelectItem>
                             <SelectItem value="mistral">Mistral Cloud</SelectItem>
                             <SelectItem value="openrouter">OpenRouter (Recommended)</SelectItem>
+                            <SelectItem value="custom">Custom Provider</SelectItem>
                           </SelectContent>
                         </Select>
                         <FormDescription>
@@ -847,6 +851,25 @@ export default function MessengerSettingsPage() {
                       </FormItem>
                     )}
                   />
+
+                  {form.watch("provider") === "custom" && (
+                    <FormField
+                      control={form.control}
+                      name="base_url"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Base URL</FormLabel>
+                          <FormControl>
+                            <Input placeholder="https://api.example.com/v1" {...field} />
+                          </FormControl>
+                          <FormDescription>
+                            Enter the custom API Base URL.
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
 
                   <FormField
                     control={form.control}

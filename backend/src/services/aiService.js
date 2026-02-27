@@ -989,6 +989,7 @@ You must output valid JSON only.
             else if (currentKey.startsWith('AIzaSy')) currentProvider = 'google';
             else if (currentKey.startsWith('gsk_')) currentProvider = 'groq';
             else if (currentKey.startsWith('xai-')) currentProvider = 'xai';
+            else if (defaultProvider === 'custom') currentProvider = 'custom';
 
             let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
             if (currentProvider.includes('openrouter')) baseURL = 'https://openrouter.ai/api/v1';
@@ -996,6 +997,10 @@ You must output valid JSON only.
             else if (currentProvider.includes('groq')) baseURL = 'https://api.groq.com/openai/v1';
             else if (currentProvider.includes('xai')) baseURL = 'https://api.x.ai/v1';
             else if (currentProvider.includes('mistral')) baseURL = 'https://api.mistral.ai/v1';
+            else if (currentProvider === 'custom' && pageConfig.custom_base_url) {
+                 baseURL = pageConfig.custom_base_url;
+                 console.log(`[AI] Using Custom Base URL: ${baseURL}`);
+            }
 
             try {
                 const openai = new OpenAI({ 

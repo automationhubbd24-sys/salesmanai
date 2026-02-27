@@ -243,6 +243,16 @@ async function initTables() {
             CREATE INDEX IF NOT EXISTS idx_fb_contacts_page_sender ON fb_contacts(page_id, sender_id);
         `);
 
+        // Ensure 'custom_base_url' column exists
+        await query(`
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='page_access_token_message' AND column_name='custom_base_url') THEN
+                    ALTER TABLE page_access_token_message ADD COLUMN custom_base_url TEXT;
+                END IF;
+            END $$;
+        `);
+
         // Ensure 'is_locked' column exists (for backward compatibility)
         await query(`
             DO $$ 
