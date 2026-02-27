@@ -25,6 +25,7 @@ const keyUsageMap = new Map();
 const keyUsageTimestamps = new Map(); // Key: apiKey, Value: Array of timestamps in the last 60 seconds
 const keyUsageHourTimestamps = new Map(); // Key: apiKey, Value: Array of timestamps in the last 60 minutes
 const modelUsageTimestamps = new Map(); // Key: modelName, Value: Array of timestamps in the last 60 seconds
+const modelUsageHourTimestamps = new Map(); // Key: modelName, Value: Array of timestamps in the last 60 minutes
 const modelDailyUsage = new Map(); // Key: modelName, Value: { date: string, count: number }
 
 const modelIndexMap = new Map();
@@ -358,6 +359,15 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
                     return false;
                 }
             }
+            if (manual.rph) {
+                const oneHourAgo = now - 60 * 60 * 1000;
+                const mHour = modelUsageHourTimestamps.get(modelToCheck) || [];
+                const mHourValid = mHour.filter(ts => ts > oneHourAgo);
+                if (mHourValid.length >= manual.rph) {
+                    console.warn(`[KeyService] ⛔ Model ${modelToCheck} hit GLOBAL RPH limit (${manual.rph})`);
+                    return false;
+                }
+            }
         }
     }
 
@@ -589,6 +599,10 @@ async function getSmartKey(provider, model = 'default') {
             modelTs.push(now);
             modelUsageTimestamps.set(modelName, modelTs);
 
+            const modelHourTs = modelUsageHourTimestamps.get(modelName) || [];
+            modelHourTs.push(now);
+            modelUsageHourTimestamps.set(modelName, modelHourTs);
+
             const modelDaily = modelDailyUsage.get(modelName) || { date: today, count: 0 };
             if (modelDaily.date === today) {
                 modelDaily.count += 1;
@@ -641,7 +655,7 @@ module.exports = {
         console.log(`[KeyService] 📉 Adjusting RPM limit for ${modelId} from UNKNOWN to ${newLimit}`);
 
         // 3. Store in Memory
-        dynamicLimits.set(modelId, { rpm: newLimit, rpd: 10000 }); // Keep RPD high, focus on RPM
+        dynamicLimits.set(modelId, { rpm: newLimit, rpd: 10000, rph: 0 }); // Keep RPD high, focus on RPM
 
         // 4. (Optional) Persist to DB? 
         // For now, in-memory is safer to avoid thrashing DB on every 429. 
@@ -664,8 +678,9 @@ module.exports = {
         if (!modelId || !limits) return;
         const rpm = parseInt(limits.rpm) || 1000;
         const rpd = parseInt(limits.rpd) || 10000;
-        console.log(`[KeyService] ⚙️ Manually Setting Limits for ${modelId}: RPM=${rpm}, RPD=${rpd}`);
-        dynamicLimits.set(modelId, { rpm, rpd, source: 'manual' });
+        const rph = parseInt(limits.rph) || 0;
+        console.log(`[KeyService] ⚙️ Manually Setting Limits for ${modelId}: RPM=${rpm}, RPD=${rpd}, RPH=${rph}`);
+        dynamicLimits.set(modelId, { rpm, rpd, rph, source: 'manual' });
     },
     getLimitForModel: (modelId) => {
         const dyn = dynamicLimits.get(modelId);

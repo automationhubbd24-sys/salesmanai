@@ -63,7 +63,7 @@ exports.saveGlobalConfig = async (req, res) => {
         const { 
             provider, text_model, vision_model, voice_model,
             text_provider_override, vision_provider_override, voice_provider_override,
-            text_rpm, text_rpd, vision_rpm, vision_rpd, voice_rpm, voice_rpd
+            text_rpm, text_rpd, text_rph, vision_rpm, vision_rpd, vision_rph, voice_rpm, voice_rpd, voice_rph
         } = req.body;
         
         if (!provider) {
@@ -74,10 +74,10 @@ exports.saveGlobalConfig = async (req, res) => {
             `INSERT INTO api_engine_configs (
                 provider, text_model, vision_model, voice_model,
                 text_provider_override, vision_provider_override, voice_provider_override,
-                text_rpm, text_rpd, vision_rpm, vision_rpd, voice_rpm, voice_rpd,
+                text_rpm, text_rpd, text_rph, vision_rpm, vision_rpd, vision_rph, voice_rpm, voice_rpd, voice_rph,
                 updated_at
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
              ON CONFLICT (provider) 
              DO UPDATE SET 
                 text_model = EXCLUDED.text_model,
@@ -88,16 +88,21 @@ exports.saveGlobalConfig = async (req, res) => {
                 voice_provider_override = EXCLUDED.voice_provider_override,
                 text_rpm = EXCLUDED.text_rpm,
                 text_rpd = EXCLUDED.text_rpd,
+                text_rph = EXCLUDED.text_rph,
                 vision_rpm = EXCLUDED.vision_rpm,
                 vision_rpd = EXCLUDED.vision_rpd,
+                vision_rph = EXCLUDED.vision_rph,
                 voice_rpm = EXCLUDED.voice_rpm,
                 voice_rpd = EXCLUDED.voice_rpd,
+                voice_rph = EXCLUDED.voice_rph,
                 updated_at = NOW()
              RETURNING *`,
             [
                 provider, text_model, vision_model, voice_model,
                 text_provider_override, vision_provider_override, voice_provider_override,
-                text_rpm || 0, text_rpd || 0, vision_rpm || 0, vision_rpd || 0, voice_rpm || 0, voice_rpd || 0
+                text_rpm || 0, text_rpd || 0, text_rph || 0,
+                vision_rpm || 0, vision_rpd || 0, vision_rph || 0,
+                voice_rpm || 0, voice_rpd || 0, voice_rph || 0
             ]
         );
 

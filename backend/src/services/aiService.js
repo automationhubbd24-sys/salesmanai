@@ -156,12 +156,12 @@ async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, default
             voiceProvider = gConfig.voice_provider_override;
 
         if (keyService.setManualLimit) {
-            if (gConfig.text_rpm || gConfig.text_rpd) 
-                keyService.setManualLimit(engineTextModel, { rpm: gConfig.text_rpm, rpd: gConfig.text_rpd });
-            if (gConfig.vision_rpm || gConfig.vision_rpd) 
-                keyService.setManualLimit(engineVisionModel, { rpm: gConfig.vision_rpm, rpd: gConfig.vision_rpd });
-            if (gConfig.voice_rpm || gConfig.voice_rpd) 
-                keyService.setManualLimit(engineVoiceModel, { rpm: gConfig.voice_rpm, rpd: gConfig.voice_rpd });
+            if (gConfig.text_rpm || gConfig.text_rpd || gConfig.text_rph) 
+                keyService.setManualLimit(engineTextModel, { rpm: gConfig.text_rpm, rpd: gConfig.text_rpd, rph: gConfig.text_rph });
+            if (gConfig.vision_rpm || gConfig.vision_rpd || gConfig.vision_rph) 
+                keyService.setManualLimit(engineVisionModel, { rpm: gConfig.vision_rpm, rpd: gConfig.vision_rpd, rph: gConfig.vision_rph });
+            if (gConfig.voice_rpm || gConfig.voice_rpd || gConfig.voice_rph) 
+                keyService.setManualLimit(engineVoiceModel, { rpm: gConfig.voice_rpm, rpd: gConfig.voice_rpd, rph: gConfig.voice_rph });
         }
     }
 

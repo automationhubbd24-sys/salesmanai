@@ -60,10 +60,13 @@ interface GlobalEngineConfig {
   voice_provider_override?: string | null;
   text_rpm?: number;
   text_rpd?: number;
+  text_rph?: number;
   vision_rpm?: number;
   vision_rpd?: number;
+  vision_rph?: number;
   voice_rpm?: number;
   voice_rpd?: number;
+  voice_rph?: number;
 }
 
 type Transaction = {
@@ -142,10 +145,13 @@ export default function AdminPage() {
     voice_provider_override: null,
     text_rpm: 0,
     text_rpd: 0,
+    text_rph: 0,
     vision_rpm: 0,
     vision_rpd: 0,
+    vision_rph: 0,
     voice_rpm: 0,
-    voice_rpd: 0
+    voice_rpd: 0,
+    voice_rph: 0
   });
   const [newApi, setNewApi] = useState("");
   const [engineProvider, setEngineProvider] = useState("google");
@@ -1693,10 +1699,13 @@ export default function AdminPage() {
                             voice_provider_override: null,
                             text_rpm: 0,
                             text_rpd: 0,
+                            text_rph: 0,
                             vision_rpm: 0,
                             vision_rpd: 0,
+                            vision_rph: 0,
                             voice_rpm: 0,
-                            voice_rpd: 0
+                            voice_rpd: 0,
+                            voice_rph: 0
                           });
                         }
                       }}
@@ -1724,7 +1733,7 @@ export default function AdminPage() {
                 <div className="flex items-center gap-2 text-sm font-bold text-[#00ff88]">
                    Text Modality
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
                   <div className="space-y-2">
                     <Label className="text-xs">Model Name</Label>
                     <Input 
@@ -1762,6 +1771,15 @@ export default function AdminPage() {
                     />
                   </div>
                   <div className="space-y-2">
+                    <Label className="text-xs">RPH (Req/Hour)</Label>
+                    <Input 
+                      type="number"
+                      value={configValues.text_rph} 
+                      onChange={(e) => setConfigValues({...configValues, text_rph: parseInt(e.target.value) || 0})}
+                      className="bg-black/40 border-white/10 h-9"
+                    />
+                  </div>
+                  <div className="space-y-2">
                     <Label className="text-xs">RPD (Req/Day)</Label>
                     <Input 
                       type="number"
@@ -1778,7 +1796,7 @@ export default function AdminPage() {
                 <div className="flex items-center gap-2 text-sm font-bold text-orange-400">
                    Vision Modality
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
                   <div className="space-y-2">
                     <Label className="text-xs">Model Name</Label>
                     <Input 
@@ -1816,6 +1834,15 @@ export default function AdminPage() {
                     />
                   </div>
                   <div className="space-y-2">
+                    <Label className="text-xs">RPH (Req/Hour)</Label>
+                    <Input 
+                      type="number"
+                      value={configValues.vision_rph} 
+                      onChange={(e) => setConfigValues({...configValues, vision_rph: parseInt(e.target.value) || 0})}
+                      className="bg-black/40 border-white/10 h-9"
+                    />
+                  </div>
+                  <div className="space-y-2">
                     <Label className="text-xs">RPD (Req/Day)</Label>
                     <Input 
                       type="number"
@@ -1832,7 +1859,7 @@ export default function AdminPage() {
                 <div className="flex items-center gap-2 text-sm font-bold text-blue-400">
                    Voice Modality
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
                   <div className="space-y-2">
                     <Label className="text-xs">Model Name</Label>
                     <Input 
@@ -1866,6 +1893,15 @@ export default function AdminPage() {
                       type="number"
                       value={configValues.voice_rpm} 
                       onChange={(e) => setConfigValues({...configValues, voice_rpm: parseInt(e.target.value) || 0})}
+                      className="bg-black/40 border-white/10 h-9"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs">RPH (Req/Hour)</Label>
+                    <Input 
+                      type="number"
+                      value={configValues.voice_rph} 
+                      onChange={(e) => setConfigValues({...configValues, voice_rph: parseInt(e.target.value) || 0})}
                       className="bg-black/40 border-white/10 h-9"
                     />
                   </div>

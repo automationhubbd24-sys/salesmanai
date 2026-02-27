@@ -7,6 +7,15 @@ CREATE TABLE IF NOT EXISTS public.api_engine_configs (
   text_model text DEFAULT 'gemini-1.5-flash',
   vision_model text DEFAULT 'gemini-1.5-flash',
   voice_model text DEFAULT 'gemini-1.5-flash-lite',
+  text_rpm int DEFAULT 0,
+  text_rpd int DEFAULT 0,
+  text_rph int DEFAULT 0,
+  vision_rpm int DEFAULT 0,
+  vision_rpd int DEFAULT 0,
+  vision_rph int DEFAULT 0,
+  voice_rpm int DEFAULT 0,
+  voice_rpd int DEFAULT 0,
+  voice_rph int DEFAULT 0,
   updated_at timestamp with time zone DEFAULT now()
 );
 
