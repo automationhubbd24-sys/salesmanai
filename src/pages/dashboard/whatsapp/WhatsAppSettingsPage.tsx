@@ -563,6 +563,7 @@ export default function WhatsAppSettingsPage() {
                             <SelectItem value="openai">OpenAI (GPT-4)</SelectItem>
                             <SelectItem value="anthropic">Anthropic (Claude)</SelectItem>
                             <SelectItem value="gemini">Google Gemini</SelectItem>
+                            <SelectItem value="mistral">Mistral Cloud</SelectItem>
                             <SelectItem value="openrouter">OpenRouter (Recommended)</SelectItem>
                           </SelectContent>
                         </Select>

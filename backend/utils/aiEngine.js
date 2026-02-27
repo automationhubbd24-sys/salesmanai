@@ -24,6 +24,9 @@ async function generateAIResponse(config, history, userMessage) {
       case 'groq':
         baseURL = 'https://api.groq.com/openai/v1';
         break;
+      case 'mistral':
+        baseURL = 'https://api.mistral.ai/v1';
+        break;
       case 'openrouter':
       default:
         baseURL = 'https://openrouter.ai/api/v1';

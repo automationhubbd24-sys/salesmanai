@@ -987,6 +987,7 @@ You must output valid JSON only.
             else if (currentProvider.includes('openai')) baseURL = 'https://api.openai.com/v1';
             else if (currentProvider.includes('groq')) baseURL = 'https://api.groq.com/openai/v1';
             else if (currentProvider.includes('xai')) baseURL = 'https://api.x.ai/v1';
+            else if (currentProvider.includes('mistral')) baseURL = 'https://api.mistral.ai/v1';
 
             try {
                 const openai = new OpenAI({ 
