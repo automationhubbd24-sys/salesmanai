@@ -1018,10 +1018,20 @@ You must output valid JSON only.
 
                 console.log(`[AI] Phase 1: Calling User Key (${currentProvider}/${modelToUse}) BaseURL: ${baseURL}...`);
 
+                // --- CUSTOM PROVIDER FIX ---
+                // Many custom providers / proxies do not support 'response_format: { type: "json_object" }'
+                // and will return 400 Bad Request if it's sent.
+                // We only send it for OpenAI, OpenRouter, and official providers known to support it.
+                let effectiveResponseFormat = responseFormat;
+                if (currentProvider === 'custom') {
+                    effectiveResponseFormat = undefined; 
+                    console.log(`[AI] Custom Provider detected: Disabling strict response_format to prevent 400 errors.`);
+                }
+
                 const completion = await openai.chat.completions.create({
                     model: modelToUse,
                     messages: messages,
-                    response_format: responseFormat
+                    response_format: effectiveResponseFormat
                 });
 
                 if (completion.choices && completion.choices.length > 0) {
