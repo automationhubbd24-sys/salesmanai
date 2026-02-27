@@ -161,7 +161,7 @@ const handleWebhook = async (req, res) => {
                     if (entry.messaging) {
                         for (const webhookEvent of entry.messaging) {
                             if (webhookEvent) {
-                                await queueMessage(webhookEvent);
+                                await queueMessage(webhookEvent, pageId);
                             }
                         }
                     }
@@ -207,7 +207,7 @@ const verifyWebhook = (req, res) => {
 };
 
 // Queue Message for Debounce
-async function queueMessage(event) {
+async function queueMessage(event, entryPageId = null) {
     // --- DEBUG: Log Incoming Event to see why echoes fail ---
     if (event.message && event.message.is_echo) {
         console.log(`[Echo Debug] RAW PAYLOAD:`, JSON.stringify(event));
@@ -216,18 +216,35 @@ async function queueMessage(event) {
     // --- ECHO HANDLING (Admin Replies & Bot Confirmations) ---
     const senderIdRaw = event.sender?.id;
     const recipientIdRaw = event.recipient?.id;
+    
+    // Robust Admin Detection:
+    // 1. Explicit Echo flag
+    // 2. Sender is the Page itself (matched against Entry ID)
+    // 3. Sender same as Recipient (Self-message case)
+    // 4. Sender is a known Page in DB (Fallback)
+    
     let isAdminSender = false;
-    if (event.message && !event.message.is_echo && senderIdRaw && recipientIdRaw && senderIdRaw !== recipientIdRaw) {
+    
+    // Check 1 & 2 & 3
+    if (event.message?.is_echo || senderIdRaw === entryPageId || senderIdRaw === recipientIdRaw) {
+        isAdminSender = true;
+    } 
+    // Check 4 (Fallback DB Check) - Only if not already identified
+    else if (event.message && senderIdRaw && recipientIdRaw) {
         try {
-            const senderPageConfig = await dbService.getPageConfig(senderIdRaw);
-            if (senderPageConfig) {
-                isAdminSender = true;
-            }
-        } catch (e) {
-        }
+             // Optimization: If senderIdRaw matches the page_id passed from webhook entry, avoid DB call
+             if (entryPageId && senderIdRaw === entryPageId) {
+                 isAdminSender = true;
+             } else {
+                 const senderPageConfig = await dbService.getPageConfig(senderIdRaw);
+                 if (senderPageConfig) {
+                     isAdminSender = true;
+                 }
+             }
+        } catch (e) {}
     }
 
-    if (event.message && (event.message.is_echo || senderIdRaw === recipientIdRaw || isAdminSender)) {
+    if (event.message && isAdminSender) {
         // IMPORTANT: In Echo, Sender = Page, Recipient = User
         const pageId = senderIdRaw; 
         const messageRecipientId = recipientIdRaw; 
@@ -265,30 +282,37 @@ async function queueMessage(event) {
             const pagePrompts = await dbService.getPagePrompts(pageId);
             if (pagePrompts && text) {
                 const normalizeEmojiText = (str) => (str || '').replace(/\uFE0F/g, '').normalize('NFC');
+                const cleanText = normalizeEmojiText(text);
+
+                // Build Lock List
                 const lockList = [
                     pagePrompts.block_emoji,
                     pagePrompts.lock_emojis,
                     pagePrompts.block_emojis
-                ].filter(Boolean).join(',').split(/[, ]+/).map(e => e.trim()).filter(e => e);
+                ].filter(Boolean).join(',').split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
+
+                // Build Unlock List
                 const unlockList = [
                     pagePrompts.unblock_emoji,
                     pagePrompts.unlock_emojis,
                     pagePrompts.unblock_emojis
-                ].filter(Boolean).join(',').split(/[, ]+/).map(e => e.trim()).filter(e => e);
+                ].filter(Boolean).join(',').split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
 
-                const cleanText = normalizeEmojiText(text);
                 let isLocked = false;
                 let isUnlocked = false;
 
+                // Check Lock
                 for (const e of lockList) {
-                    if (cleanText.includes(normalizeEmojiText(e))) {
+                    if (cleanText.includes(e)) {
                         isLocked = true;
                         break;
                     }
                 }
+
+                // Check Unlock (Only if not locking)
                 if (!isLocked) {
                     for (const e of unlockList) {
-                        if (cleanText.includes(normalizeEmojiText(e))) {
+                        if (cleanText.includes(e)) {
                             isUnlocked = true;
                             break;
                         }
