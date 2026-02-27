@@ -153,6 +153,7 @@ export default function AdminPage() {
   const [enginePage, setEnginePage] = useState(1);
   const [engineTotal, setEngineTotal] = useState(0);
   const [engineSearch, setEngineSearch] = useState("");
+  const [engineRevealedKeys, setEngineRevealedKeys] = useState<Record<number, string>>({});
 
   const [geminiModel, setGeminiModel] = useState("gemini-2.5-flash-lite");
   const [geminiMessage, setGeminiMessage] = useState("hi from SalesmanChatbot key test");
@@ -272,6 +273,55 @@ export default function AdminPage() {
       toast.error("Failed to load engine data");
     } finally {
       setEngineStatsLoading(false);
+    }
+  };
+
+  const fetchEngineKeyValue = async (id: number) => {
+    try {
+      const token = localStorage.getItem("auth_token");
+      if (!token) return null;
+      const res = await fetch(`${BACKEND_URL}/api/api-engine/keys/${id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        toast.error(data.error || "Failed to load key");
+        return null;
+      }
+      return data.api as string;
+    } catch {
+      toast.error("Failed to load key");
+      return null;
+    }
+  };
+
+  const toggleRevealKey = async (id: number) => {
+    if (engineRevealedKeys[id]) {
+      setEngineRevealedKeys((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      return;
+    }
+    const value = await fetchEngineKeyValue(id);
+    if (value) {
+      setEngineRevealedKeys((prev) => ({ ...prev, [id]: value }));
+    }
+  };
+
+  const copyEngineKey = async (id: number) => {
+    let value = engineRevealedKeys[id];
+    if (!value) {
+      value = await fetchEngineKeyValue(id);
+    }
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      setEngineRevealedKeys((prev) => ({ ...prev, [id]: value }));
+      toast.success("Key copied");
+    } catch {
+      toast.error("Copy failed");
     }
   };
 
@@ -1889,11 +1939,13 @@ export default function AdminPage() {
                     </TableRow>
                   </TableHeader>
                 <TableBody>
-                  {engineKeys.map((k) => (
+                  {engineKeys.map((k) => {
+                    const revealedKey = engineRevealedKeys[k.id];
+                    return (
                       <TableRow key={k.id}>
                         <TableCell className="capitalize font-medium">{k.provider}</TableCell>
                         <TableCell className="font-mono text-xs text-muted-foreground">
-                          {k.api.substring(0, 8)}...{k.api.substring(k.api.length - 4)}
+                          {revealedKey || k.api}
                         </TableCell>
                         <TableCell>
                           <Badge variant={k.status === 'active' ? 'default' : 'destructive'} className={k.status === 'active' ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' : ''}>
@@ -1902,12 +1954,21 @@ export default function AdminPage() {
                         </TableCell>
                         <TableCell>{k.usage_today || 0}</TableCell>
                         <TableCell className="text-right">
-                          <Button variant="ghost" size="icon" onClick={() => deleteEngineKey(k.id)} className="text-red-400 hover:text-red-300 hover:bg-red-900/20">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                          <div className="flex items-center justify-end gap-2">
+                            <Button variant="outline" size="sm" onClick={() => toggleRevealKey(k.id)}>
+                              {engineRevealedKeys[k.id] ? "Hide" : "Show"}
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => copyEngineKey(k.id)}>
+                              Copy
+                            </Button>
+                            <Button variant="ghost" size="icon" onClick={() => deleteEngineKey(k.id)} className="text-red-400 hover:text-red-300 hover:bg-red-900/20">
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
-                    ))}
+                    );
+                  })}
                   {engineKeys.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">

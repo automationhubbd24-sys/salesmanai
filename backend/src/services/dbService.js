@@ -1666,6 +1666,16 @@ async function deleteApiKey(id) {
     }
 }
 
+async function getApiKeyById(id) {
+    try {
+        const result = await query('SELECT id, api, provider, status FROM api_list WHERE id = $1 LIMIT 1', [id]);
+        return result.rows[0] || null;
+    } catch (error) {
+        console.error("[DB] getApiKeyById Error:", error.message);
+        return null;
+    }
+}
+
 // 26. Calculate Cost for Usage Stats
 function calculateCost(model, tokens) {
     if (!tokens || tokens <= 0) return 0;
@@ -1712,6 +1722,7 @@ module.exports = {
     getAllKeys,
     addApiKey,
     deleteApiKey,
+    getApiKeyById,
     logApiUsage,
     logAiUsage,
     calculateCost,

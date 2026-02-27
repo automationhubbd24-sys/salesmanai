@@ -51,6 +51,24 @@ router.post('/keys', async (req, res) => {
     }
 });
 
+router.get('/keys/:id', authMiddleware, async (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        if (!id || Number.isNaN(id)) {
+            return res.status(400).json({ success: false, error: 'Invalid id' });
+        }
+
+        const keyData = await dbService.getApiKeyById(id);
+        if (!keyData) {
+            return res.status(404).json({ success: false, error: 'Key not found' });
+        }
+
+        res.json({ success: true, api: keyData.api });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 router.delete('/keys/:id', async (req, res) => {
     try {
         const { id } = req.params;
