@@ -1016,7 +1016,7 @@ You must output valid JSON only.
                      throw new Error("No model selected for Own API. Please select a model in your settings.");
                 }
 
-                console.log(`[AI] Phase 1: Calling User Key (${currentProvider}/${modelToUse})...`);
+                console.log(`[AI] Phase 1: Calling User Key (${currentProvider}/${modelToUse}) BaseURL: ${baseURL}...`);
 
                 const completion = await openai.chat.completions.create({
                     model: modelToUse,
