@@ -23,6 +23,7 @@ interface ApiKey {
   status: string;
   usage_today: number;
   last_used_at: string;
+  rph_limit?: number;
 }
 
 interface EngineStats {
@@ -154,9 +155,12 @@ export default function AdminPage() {
   const [engineTotal, setEngineTotal] = useState(0);
   const [engineSearch, setEngineSearch] = useState("");
   const [engineRevealedKeys, setEngineRevealedKeys] = useState<Record<number, string>>({});
+  const [engineRphInputs, setEngineRphInputs] = useState<Record<number, string>>({});
 
-  const [geminiModel, setGeminiModel] = useState("gemini-2.5-flash-lite");
+  const [geminiModel, setGeminiModel] = useState("");
   const [geminiMessage, setGeminiMessage] = useState("hi from SalesmanChatbot key test");
+  const [geminiProviderFilter, setGeminiProviderFilter] = useState("all");
+  const [geminiMarkDead, setGeminiMarkDead] = useState(true);
   const [geminiLoading, setGeminiLoading] = useState(false);
   const [geminiResults, setGeminiResults] = useState<GeminiKeyTestResult[]>([]);
   const [geminiError, setGeminiError] = useState<string | null>(null);
@@ -236,6 +240,11 @@ export default function AdminPage() {
         // Use the filtered keys from the stats response
         if (data.keys) {
           setEngineKeys(data.keys);
+          const rphMap: Record<number, string> = {};
+          data.keys.forEach((k: ApiKey) => {
+            rphMap[k.id] = String(k.rph_limit ?? 0);
+          });
+          setEngineRphInputs(rphMap);
           setEngineTotal(data.total || 0);
           setEnginePage(data.page || 1);
         }
@@ -322,6 +331,33 @@ export default function AdminPage() {
       toast.success("Key copied");
     } catch {
       toast.error("Copy failed");
+    }
+  };
+
+  const updateEngineKeyRph = async (id: number) => {
+    try {
+      const token = localStorage.getItem("auth_token");
+      if (!token) return;
+      const raw = engineRphInputs[id];
+      const value = Math.max(0, parseInt(String(raw)) || 0);
+      const res = await fetch(`${BACKEND_URL}/api/api-engine/keys/${id}/limits`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ rph_limit: value })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        toast.error(data.error || "Failed to update RPH");
+        return;
+      }
+      setEngineKeys((prev) => prev.map((k) => (k.id === id ? { ...k, rph_limit: value } : k)));
+      setEngineRphInputs((prev) => ({ ...prev, [id]: String(value) }));
+      toast.success("RPH updated");
+    } catch {
+      toast.error("Failed to update RPH");
     }
   };
 
@@ -930,33 +966,31 @@ export default function AdminPage() {
   };
 
   const handleRunGeminiTest = async () => {
-    if (!geminiModel) {
-      toast.error("Model name is required");
-      return;
-    }
-
     setGeminiLoading(true);
     setGeminiError(null);
     setGeminiResults([]);
-    setGeminiLog([`Starting Gemini pool test with model "${geminiModel}"...`]);
+    const modelLabel = geminiModel ? `model "${geminiModel}"` : "default models";
+    setGeminiLog([`Starting API pool test with ${modelLabel}...`]);
     setGeminiSelectedIds([]);
 
     try {
-      const response = await fetch(`${BACKEND_URL}/api/openrouter/gemini/test-keys`, {
+      const response = await fetch(`${BACKEND_URL}/api/openrouter/pool/test-keys`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
           model: geminiModel,
-          message: geminiMessage
+          message: geminiMessage,
+          provider: geminiProviderFilter,
+          mark_failed: geminiMarkDead
         })
       });
 
       const data = await response.json();
 
       if (!response.ok || !data.success) {
-        const errorMessage = data?.error || "Failed to run Gemini test";
+        const errorMessage = data?.error || "Failed to run API pool test";
         setGeminiError(errorMessage);
         setGeminiLog((prev) => [...prev, `Error: ${errorMessage}`]);
         toast.error(errorMessage);
@@ -987,7 +1021,7 @@ export default function AdminPage() {
         return base;
       });
       setGeminiLog((prev) => [...prev, ...logLines]);
-      toast.success("Gemini pool test completed");
+      toast.success("API pool test completed");
     } catch (error: any) {
       const message = error?.message || "Unexpected error while testing Gemini keys";
       setGeminiError(message);
@@ -1105,7 +1139,7 @@ export default function AdminPage() {
     if (!confirmDelete) return;
 
     try {
-      const response = await fetch(`${BACKEND_URL}/api/openrouter/gemini/delete-keys`, {
+      const response = await fetch(`${BACKEND_URL}/api/openrouter/pool/delete-keys`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1116,11 +1150,11 @@ export default function AdminPage() {
       const data = await response.json();
 
       if (!response.ok || !data?.success) {
-        throw new Error(data?.error || "Failed to delete Gemini keys");
+        throw new Error(data?.error || "Failed to delete API keys");
       }
 
       const deletedCount = data.deleted ?? failedIds.length;
-      toast.success(`Deleted ${deletedCount} failed Gemini keys`);
+      toast.success(`Deleted ${deletedCount} failed keys`);
 
       setGeminiResults((prev) => prev.filter((r) => !failedIds.includes(r.id)));
       setGeminiSelectedIds((prev) => prev.filter((id) => !failedIds.includes(id)));
@@ -1935,6 +1969,7 @@ export default function AdminPage() {
                       <TableHead>Key (Preview)</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Usage (Today)</TableHead>
+                      <TableHead>RPH (Req/Hour)</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -1953,6 +1988,19 @@ export default function AdminPage() {
                           </Badge>
                         </TableCell>
                         <TableCell>{k.usage_today || 0}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Input
+                              type="number"
+                              value={engineRphInputs[k.id] ?? "0"}
+                              onChange={(e) => setEngineRphInputs((prev) => ({ ...prev, [k.id]: e.target.value }))}
+                              className="w-[100px] h-8 bg-black/40 border-white/10"
+                            />
+                            <Button variant="outline" size="sm" onClick={() => updateEngineKeyRph(k.id)}>
+                              Save
+                            </Button>
+                          </div>
+                        </TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-2">
                             <Button variant="outline" size="sm" onClick={() => toggleRevealKey(k.id)}>
@@ -2034,23 +2082,37 @@ export default function AdminPage() {
           </Card>
         </TabsContent>
 
-        {/* Users Tab (Placeholder) */}
         <TabsContent value="gemini" className="space-y-4">
           <Card className="bg-card border-border">
             <CardHeader>
-              <CardTitle>Gemini API Pool Monitor</CardTitle>
+              <CardTitle>API Pool Monitor</CardTitle>
               <CardDescription>
-                Test all Gemini keys from api_list with a sample message and see which ones failed.
+                Test all keys from api_list and auto‑mark failed keys as dead if enabled.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="grid gap-4 md:grid-cols-3">
                 <div className="space-y-2">
-                  <Label>Model Name</Label>
+                  <Label>Provider</Label>
+                  <Select value={geminiProviderFilter} onValueChange={setGeminiProviderFilter}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="All Providers" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Providers</SelectItem>
+                      <SelectItem value="google">Google Gemini</SelectItem>
+                      <SelectItem value="openrouter">OpenRouter</SelectItem>
+                      <SelectItem value="groq">Groq</SelectItem>
+                      <SelectItem value="openai">OpenAI</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Model Override (Optional)</Label>
                   <Input
                     value={geminiModel}
                     onChange={(e) => setGeminiModel(e.target.value)}
-                    placeholder="gemini-2.5-flash-lite"
+                    placeholder="leave empty for per‑key model"
                   />
                 </div>
                 <div className="space-y-2">
@@ -2062,11 +2124,19 @@ export default function AdminPage() {
                   />
                 </div>
               </div>
-              <div className="flex items-center gap-4">
+              <div className="flex flex-wrap items-center gap-4">
                 <Button onClick={handleRunGeminiTest} disabled={geminiLoading}>
                   {geminiLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Run Gemini Test
+                  Run API Pool Test
                 </Button>
+                <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={geminiMarkDead}
+                    onChange={(e) => setGeminiMarkDead(e.target.checked)}
+                  />
+                  Mark failed keys as dead
+                </label>
                 {geminiResults.length > 0 && (
                   <div className="text-sm text-muted-foreground">
                     Total: {geminiResults.length} | Failed: {geminiResults.filter(r => !r.success).length}

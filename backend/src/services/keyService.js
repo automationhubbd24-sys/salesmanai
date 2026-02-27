@@ -713,7 +713,8 @@ module.exports = {
                 api: k.api.substring(0, 12) + '***', // Mask key for safety
                 status: k.status,
                 usage_today: k.usage_today,
-                last_used_at: k.last_used_at
+                last_used_at: k.last_used_at,
+                rph_limit: k.rph_limit
             }))
         };
     }

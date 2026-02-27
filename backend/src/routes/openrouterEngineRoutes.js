@@ -12,5 +12,7 @@ router.post('/config', openrouterConfigController.saveConfig);
 router.post('/test-model', openrouterConfigController.testModel);
 router.post('/gemini/test-keys', openrouterConfigController.testGeminiPool);
 router.post('/gemini/delete-keys', openrouterConfigController.deleteGeminiKeys);
+router.post('/pool/test-keys', openrouterConfigController.testApiPool);
+router.post('/pool/delete-keys', openrouterConfigController.deleteApiKeys);
 
 module.exports = router;

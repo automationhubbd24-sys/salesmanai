@@ -305,6 +305,140 @@ exports.testGeminiPool = async (req, res) => {
     }
 };
 
+exports.testApiPool = async (req, res) => {
+    const { model, message, provider, mark_failed } = req.body || {};
+    const testMessage = message || 'hi from SalesmanChatbot key test';
+    const providerFilter = provider && provider !== 'all' ? [provider] : null;
+
+    const providerDefaults = {
+        google: 'gemini-2.0-flash',
+        gemini: 'gemini-2.0-flash',
+        openrouter: 'google/gemini-2.0-flash-001',
+        groq: 'llama-3.3-70b-versatile',
+        openai: 'gpt-4o-mini'
+    };
+
+    try {
+        const pgClient = require('../services/pgClient');
+        const dbService = require('../services/dbService');
+        const result = providerFilter
+            ? await pgClient.query('SELECT * FROM api_list WHERE provider = ANY($1::text[])', [providerFilter])
+            : await pgClient.query('SELECT * FROM api_list');
+
+        const keys = Array.isArray(result.rows) ? result.rows : [];
+
+        if (keys.length === 0) {
+            return res.json({ success: false, error: 'No keys found in api_list', results: [] });
+        }
+
+        const results = [];
+        const failedIds = [];
+
+        for (const k of keys) {
+            const providerKey = (k.provider || '').toLowerCase();
+            let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
+            let defaultModel = providerDefaults[providerKey] || 'gemini-2.0-flash';
+
+            if (providerKey === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
+            else if (providerKey === 'groq') baseURL = 'https://api.groq.com/openai/v1';
+            else if (providerKey === 'openai') baseURL = 'https://api.openai.com/v1';
+
+            const client = new OpenAI({
+                apiKey: k.api,
+                baseURL: baseURL,
+                defaultHeaders: providerKey === 'openrouter'
+                    ? { 'HTTP-Referer': 'https://orderly-conversations.com', 'X-Title': 'SalesmanChatbot Test' }
+                    : undefined
+            });
+
+            const testModel = model || k.model || defaultModel;
+
+            const item = {
+                id: k.id,
+                provider: k.provider,
+                model: testModel,
+                original_model: k.model || null,
+                success: false,
+                error: null
+            };
+
+            try {
+                const completion = await client.chat.completions.create({
+                    model: testModel,
+                    messages: [{ role: 'user', content: testMessage }],
+                    max_tokens: 8
+                });
+                if (completion && completion.choices && completion.choices.length > 0) {
+                    item.success = true;
+                } else {
+                    item.success = false;
+                    item.error = 'Empty response';
+                }
+            } catch (e) {
+                item.success = false;
+                item.error = e.message || 'Request failed';
+            }
+
+            if (!item.success) {
+                failedIds.push(k.id);
+            }
+
+            results.push(item);
+        }
+
+        if (mark_failed && failedIds.length > 0) {
+            for (const id of failedIds) {
+                await dbService.updateApiKeyStatus(id, 'disabled');
+            }
+            if (keyService.updateKeyCache) {
+                await keyService.updateKeyCache(true);
+            }
+        }
+
+        const failed = results.filter(r => !r.success).length;
+
+        res.json({
+            success: true,
+            total: results.length,
+            failed,
+            results
+        });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+};
+
+exports.deleteApiKeys = async (req, res) => {
+    try {
+        const { ids } = req.body || {};
+
+        if (!Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({ success: false, error: 'No ids provided' });
+        }
+
+        const numericIds = ids
+            .map((id) => Number(id))
+            .filter((id) => Number.isFinite(id) && id > 0);
+
+        if (numericIds.length === 0) {
+            return res.status(400).json({ success: false, error: 'Invalid id list' });
+        }
+
+        const pgClient = require('../services/pgClient');
+
+        const result = await pgClient.query(
+            'DELETE FROM api_list WHERE id = ANY($1::bigint[])',
+            [numericIds]
+        );
+
+        const deleted = result.rowCount || 0;
+
+        res.json({ success: true, deleted });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+};
+
 exports.deleteGeminiKeys = async (req, res) => {
     try {
         const { ids } = req.body || {};

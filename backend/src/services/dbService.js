@@ -1676,6 +1676,34 @@ async function getApiKeyById(id) {
     }
 }
 
+async function updateApiKeyRphLimit(id, rphLimit) {
+    try {
+        const limitValue = Math.max(0, parseInt(rphLimit) || 0);
+        const result = await query(
+            'UPDATE api_list SET rph_limit = $2 WHERE id = $1 RETURNING id, rph_limit',
+            [id, limitValue]
+        );
+        return result.rows[0] || null;
+    } catch (error) {
+        console.error("[DB] updateApiKeyRphLimit Error:", error.message);
+        return null;
+    }
+}
+
+async function updateApiKeyStatus(id, status) {
+    try {
+        const statusValue = String(status || '').trim() || 'disabled';
+        const result = await query(
+            'UPDATE api_list SET status = $2, last_used_at = NOW() WHERE id = $1 RETURNING id, status',
+            [id, statusValue]
+        );
+        return result.rows[0] || null;
+    } catch (error) {
+        console.error("[DB] updateApiKeyStatus Error:", error.message);
+        return null;
+    }
+}
+
 // 26. Calculate Cost for Usage Stats
 function calculateCost(model, tokens) {
     if (!tokens || tokens <= 0) return 0;
@@ -1723,6 +1751,8 @@ module.exports = {
     addApiKey,
     deleteApiKey,
     getApiKeyById,
+    updateApiKeyRphLimit,
+    updateApiKeyStatus,
     logApiUsage,
     logAiUsage,
     calculateCost,
