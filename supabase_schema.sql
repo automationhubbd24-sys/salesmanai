@@ -543,6 +543,7 @@ CREATE TABLE IF NOT EXISTS public.api_list (
 -- Update api_list table for Rate Limiting (RPM, RPD)
 alter table api_list add column if not exists rpm_limit int default 5; -- Requests Per Minute
 alter table api_list add column if not exists rpd_limit int default 20; -- Requests Per Day
+alter table api_list add column if not exists rph_limit int default 0;
 alter table api_list add column if not exists usage_today int default 0;
 alter table api_list add column if not exists last_used_at timestamp with time zone;
 alter table api_list add column if not exists last_date_checked date default CURRENT_DATE;

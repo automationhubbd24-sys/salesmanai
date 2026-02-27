@@ -23,6 +23,7 @@ const DEFAULT_COOLDOWN = 60 * 1000; // 1 Minute default for RPM/TPM
 const keyUsageMap = new Map(); 
 
 const keyUsageTimestamps = new Map(); // Key: apiKey, Value: Array of timestamps in the last 60 seconds
+const keyUsageHourTimestamps = new Map(); // Key: apiKey, Value: Array of timestamps in the last 60 minutes
 const modelUsageTimestamps = new Map(); // Key: modelName, Value: Array of timestamps in the last 60 seconds
 const modelDailyUsage = new Map(); // Key: modelName, Value: { date: string, count: number }
 
@@ -321,6 +322,19 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
         return false;
     }
 
+    const rphLimit = parseInt(keyData.rph_limit);
+    const hourTimestamps = keyUsageHourTimestamps.get(keyData.api) || [];
+    const oneHourAgo = now - 60 * 60 * 1000;
+    const validHourTimestamps = hourTimestamps.filter(ts => ts > oneHourAgo);
+
+    if (validHourTimestamps.length !== hourTimestamps.length) {
+        keyUsageHourTimestamps.set(keyData.api, validHourTimestamps);
+    }
+
+    if (rphLimit > 0 && validHourTimestamps.length >= rphLimit) {
+        return false;
+    }
+
     // --- 2. MODEL-LEVEL LIMITS (OPTIONAL/SECONDARY) ---
     // Only check model-specific limits if the key itself is fine.
     // This is useful if you want to limit "Gemini Vision" specifically to 1 RPM, but allow "Gemini Flash" 10 RPM.
@@ -566,6 +580,10 @@ async function getSmartKey(provider, model = 'default') {
             const tsList = keyUsageTimestamps.get(candidateKey.api) || [];
             tsList.push(now);
             keyUsageTimestamps.set(candidateKey.api, tsList);
+
+            const hourList = keyUsageHourTimestamps.get(candidateKey.api) || [];
+            hourList.push(now);
+            keyUsageHourTimestamps.set(candidateKey.api, hourList);
 
             const modelTs = modelUsageTimestamps.get(modelName) || [];
             modelTs.push(now);
