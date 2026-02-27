@@ -832,7 +832,7 @@ export default function MessengerSettingsPage() {
                                   </SelectTrigger>
                                 </FormControl>
                           <SelectContent>
-                            <SelectItem value="salesmanchatbot">SalesmanChatbot API (Pro)</SelectItem>
+                            <SelectItem value="salesmanchatbot">SalesmanChatbot 2.0</SelectItem>
                             <SelectItem value="openai">OpenAI (GPT-4)</SelectItem>
                             <SelectItem value="anthropic">Anthropic (Claude)</SelectItem>
                             <SelectItem value="gemini">Google Gemini</SelectItem>
@@ -859,7 +859,7 @@ export default function MessengerSettingsPage() {
                         </FormControl>
                         <FormDescription>
                           {form.watch("provider") === "salesmanchatbot" 
-                            ? "Enter your SalesmanChatbot API Key from the Developer API page."
+                            ? "Enter your SalesmanChatbot 2.0 API Key from the Developer API page."
                             : "Your secret API key from the provider dashboard."}
                         </FormDescription>
                         <FormMessage />
@@ -882,9 +882,9 @@ export default function MessengerSettingsPage() {
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
-                                <SelectItem value="salesmanchatbot-pro">SalesmanChatbot Pro (Fast & Accurate)</SelectItem>
-                                <SelectItem value="salesmanchatbot-flash">SalesmanChatbot Flash (Ultra Fast)</SelectItem>
-                                <SelectItem value="salesmanchatbot-lite">SalesmanChatbot Lite (Simple Tasks)</SelectItem>
+                                <SelectItem value="salesmanchatbot-pro">SalesmanChatbot 2.0 Pro (Fast & Accurate)</SelectItem>
+                                <SelectItem value="salesmanchatbot-flash">SalesmanChatbot 2.0 Flash (Ultra Fast)</SelectItem>
+                                <SelectItem value="salesmanchatbot-lite">SalesmanChatbot 2.0 Lite (Simple Tasks)</SelectItem>
                               </SelectContent>
                             </Select>
                           ) : (
@@ -893,7 +893,7 @@ export default function MessengerSettingsPage() {
                         </FormControl>
                         <FormDescription>
                           {form.watch("provider") === "salesmanchatbot" 
-                            ? "Choose your preferred SalesmanChatbot model."
+                            ? "Choose your preferred SalesmanChatbot 2.0 model."
                             : "Specific model ID to use (e.g., gpt-4, claude-3-opus)."}
                         </FormDescription>
                         <FormMessage />

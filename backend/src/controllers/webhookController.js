@@ -214,10 +214,23 @@ async function queueMessage(event) {
     }
 
     // --- ECHO HANDLING (Admin Replies & Bot Confirmations) ---
-    if (event.message && (event.message.is_echo || event.sender.id === event.recipient.id)) {
+    const senderId = event.sender?.id;
+    const recipientId = event.recipient?.id;
+    let isAdminSender = false;
+    if (event.message && !event.message.is_echo && senderId && recipientId && senderId !== recipientId) {
+        try {
+            const senderPageConfig = await dbService.getPageConfig(senderId);
+            if (senderPageConfig) {
+                isAdminSender = true;
+            }
+        } catch (e) {
+        }
+    }
+
+    if (event.message && (event.message.is_echo || senderId === recipientId || isAdminSender)) {
         // IMPORTANT: In Echo, Sender = Page, Recipient = User
-        const pageId = event.sender.id; 
-        const recipientId = event.recipient.id; 
+        const pageId = senderId; 
+        const messageRecipientId = recipientId; 
         const messageId = event.message.mid;
         const text = event.message.text || '';
 
@@ -230,13 +243,13 @@ async function queueMessage(event) {
                 return; 
             }
 
-            console.log(`[Echo] ADMIN ACTION DETECTED: Page ${pageId} -> User ${recipientId}. Text: ${text.substring(0, 20)}...`);
+            console.log(`[Echo] ADMIN ACTION DETECTED: Page ${pageId} -> User ${messageRecipientId}. Text: ${text.substring(0, 20)}...`);
 
             // Save Admin Reply to DB
             await dbService.saveFbChat({
                 page_id: pageId,
                 sender_id: pageId, // Page is sender
-                recipient_id: recipientId, // User is recipient
+                recipient_id: messageRecipientId, // User is recipient
                 message_id: messageId,
                 text: text,
                 timestamp: Date.now(),
@@ -245,7 +258,7 @@ async function queueMessage(event) {
             });
 
             // Save to AI Context Memory
-            const sessionId = `${pageId}_${recipientId}`;
+            const sessionId = `${pageId}_${messageRecipientId}`;
             await dbService.saveChatMessage(sessionId, 'assistant', text, messageId);
 
             // --- INSTANT EMOJI LOCK CHECK ---
@@ -283,11 +296,11 @@ async function queueMessage(event) {
                 }
 
                 if (isLocked) {
-                    await dbService.toggleFbLock(pageId, recipientId, true);
-                    console.log(`[Handover] 🔒 ADMIN LOCK: ${recipientId} via Emoji`);
+                    await dbService.toggleFbLock(pageId, messageRecipientId, true);
+                    console.log(`[Handover] 🔒 ADMIN LOCK: ${messageRecipientId} via Emoji`);
                 } else if (isUnlocked) {
-                    await dbService.toggleFbLock(pageId, recipientId, false);
-                    console.log(`[Handover] 🔓 ADMIN UNLOCK: ${recipientId} via Emoji`);
+                    await dbService.toggleFbLock(pageId, messageRecipientId, false);
+                    console.log(`[Handover] 🔓 ADMIN UNLOCK: ${messageRecipientId} via Emoji`);
                 }
             }
         } catch (err) {

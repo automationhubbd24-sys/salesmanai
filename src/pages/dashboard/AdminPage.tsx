@@ -1381,9 +1381,9 @@ export default function AdminPage() {
         <TabsContent value="engine" className="space-y-4">
           <Card className="bg-card border-border">
             <CardHeader>
-              <CardTitle>SalesmanChatbot Engine Test</CardTitle>
+              <CardTitle>SalesmanChatbot 2.0 Engine Test</CardTitle>
               <CardDescription>
-                Send a test message to salesmanchatbot-pro, -flash, and -lite using a Service API key.
+                Send a test message to SalesmanChatbot 2.0 (salesmanchatbot-pro/flash/lite) using a Service API key.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -1416,7 +1416,7 @@ export default function AdminPage() {
                       setEngineModels((prev) => ({ ...prev, pro: Boolean(checked) }))
                     }
                   />
-                  <span className="text-sm">salesmanchatbot-pro</span>
+                  <span className="text-sm">SalesmanChatbot 2.0 Pro</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <Switch
@@ -1425,7 +1425,7 @@ export default function AdminPage() {
                       setEngineModels((prev) => ({ ...prev, flash: Boolean(checked) }))
                     }
                   />
-                  <span className="text-sm">salesmanchatbot-flash</span>
+                  <span className="text-sm">SalesmanChatbot 2.0 Flash</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <Switch
@@ -1434,7 +1434,7 @@ export default function AdminPage() {
                       setEngineModels((prev) => ({ ...prev, lite: Boolean(checked) }))
                     }
                   />
-                  <span className="text-sm">salesmanchatbot-lite</span>
+                  <span className="text-sm">SalesmanChatbot 2.0 Lite</span>
                 </div>
               </div>
 
@@ -1510,9 +1510,9 @@ export default function AdminPage() {
                 <CardHeader className="pb-3">
                   <CardTitle className="text-lg flex items-center gap-2">
                     <Cpu className="h-5 w-5 text-primary" />
-                    {config.name === 'salesmanchatbot-pro' ? 'Pro Engine (Google)' : 
-                     config.name === 'salesmanchatbot-flash' ? 'Flash Engine (OpenRouter)' : 
-                     'Lite Engine (Groq)'}
+                    {config.name === 'salesmanchatbot-pro' ? 'SalesmanChatbot 2.0 Pro Engine (Google)' : 
+                     config.name === 'salesmanchatbot-flash' ? 'SalesmanChatbot 2.0 Flash Engine (OpenRouter)' : 
+                     'SalesmanChatbot 2.0 Lite Engine (Groq)'}
                   </CardTitle>
                   <CardDescription>Configure models for {config.name}</CardDescription>
                 </CardHeader>
@@ -1554,9 +1554,9 @@ export default function AdminPage() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="none">Default (Same Engine)</SelectItem>
-                          <SelectItem value="salesmanchatbot-pro">Use Pro (Google)</SelectItem>
-                          <SelectItem value="salesmanchatbot-flash">Use Flash (OpenRouter)</SelectItem>
-                          <SelectItem value="salesmanchatbot-lite">Use Lite (Groq)</SelectItem>
+                          <SelectItem value="salesmanchatbot-pro">Use 2.0 Pro (Google)</SelectItem>
+                          <SelectItem value="salesmanchatbot-flash">Use 2.0 Flash (OpenRouter)</SelectItem>
+                          <SelectItem value="salesmanchatbot-lite">Use 2.0 Lite (Groq)</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -1571,9 +1571,9 @@ export default function AdminPage() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="none">Default (Same Engine)</SelectItem>
-                          <SelectItem value="salesmanchatbot-pro">Use Pro (Google)</SelectItem>
-                          <SelectItem value="salesmanchatbot-flash">Use Flash (OpenRouter)</SelectItem>
-                          <SelectItem value="salesmanchatbot-lite">Use Lite (Groq)</SelectItem>
+                          <SelectItem value="salesmanchatbot-pro">Use 2.0 Pro (Google)</SelectItem>
+                          <SelectItem value="salesmanchatbot-flash">Use 2.0 Flash (OpenRouter)</SelectItem>
+                          <SelectItem value="salesmanchatbot-lite">Use 2.0 Lite (Groq)</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>

@@ -559,7 +559,7 @@ export default function WhatsAppSettingsPage() {
                                   </SelectTrigger>
                                 </FormControl>
                           <SelectContent>
-                            <SelectItem value="salesmanchatbot">SalesmanChatbot API (Pro)</SelectItem>
+                            <SelectItem value="salesmanchatbot">SalesmanChatbot 2.0</SelectItem>
                             <SelectItem value="openai">OpenAI (GPT-4)</SelectItem>
                             <SelectItem value="anthropic">Anthropic (Claude)</SelectItem>
                             <SelectItem value="gemini">Google Gemini</SelectItem>
@@ -586,7 +586,7 @@ export default function WhatsAppSettingsPage() {
                         </FormControl>
                         <FormDescription>
                           {form.watch("provider") === "salesmanchatbot" 
-                            ? "Enter your SalesmanChatbot API Key from the Developer API page."
+                            ? "Enter your SalesmanChatbot 2.0 API Key from the Developer API page."
                             : "Your secret API key from the provider dashboard."}
                         </FormDescription>
                         <FormMessage />
@@ -609,9 +609,9 @@ export default function WhatsAppSettingsPage() {
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
-                                <SelectItem value="salesmanchatbot-pro">SalesmanChatbot Pro</SelectItem>
-                                <SelectItem value="salesmanchatbot-flash">SalesmanChatbot Flash</SelectItem>
-                                <SelectItem value="salesmanchatbot-lite">SalesmanChatbot Lite</SelectItem>
+                                <SelectItem value="salesmanchatbot-pro">SalesmanChatbot 2.0 Pro</SelectItem>
+                                <SelectItem value="salesmanchatbot-flash">SalesmanChatbot 2.0 Flash</SelectItem>
+                                <SelectItem value="salesmanchatbot-lite">SalesmanChatbot 2.0 Lite</SelectItem>
                               </SelectContent>
                             </Select>
                           ) : (
