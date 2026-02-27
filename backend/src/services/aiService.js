@@ -985,11 +985,17 @@ You must output valid JSON only.
 
         for (const currentKey of userKeys) {
             let currentProvider = defaultProvider;
-            if (currentKey.startsWith('sk-or-v1')) currentProvider = 'openrouter';
-            else if (currentKey.startsWith('AIzaSy')) currentProvider = 'google';
-            else if (currentKey.startsWith('gsk_')) currentProvider = 'groq';
-            else if (currentKey.startsWith('xai-')) currentProvider = 'xai';
-            else if (defaultProvider === 'custom') currentProvider = 'custom';
+            
+            // Priority: If user explicitly selected 'custom' provider in UI, force it regardless of key format
+            if (defaultProvider === 'custom') {
+                currentProvider = 'custom';
+            } else {
+                // Auto-detect based on key format only if not custom
+                if (currentKey.startsWith('sk-or-v1')) currentProvider = 'openrouter';
+                else if (currentKey.startsWith('AIzaSy')) currentProvider = 'google';
+                else if (currentKey.startsWith('gsk_')) currentProvider = 'groq';
+                else if (currentKey.startsWith('xai-')) currentProvider = 'xai';
+            }
 
             let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
             if (currentProvider.includes('openrouter')) baseURL = 'https://openrouter.ai/api/v1';
