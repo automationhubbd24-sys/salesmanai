@@ -214,12 +214,12 @@ async function queueMessage(event) {
     }
 
     // --- ECHO HANDLING (Admin Replies & Bot Confirmations) ---
-    const senderId = event.sender?.id;
-    const recipientId = event.recipient?.id;
+    const senderIdRaw = event.sender?.id;
+    const recipientIdRaw = event.recipient?.id;
     let isAdminSender = false;
-    if (event.message && !event.message.is_echo && senderId && recipientId && senderId !== recipientId) {
+    if (event.message && !event.message.is_echo && senderIdRaw && recipientIdRaw && senderIdRaw !== recipientIdRaw) {
         try {
-            const senderPageConfig = await dbService.getPageConfig(senderId);
+            const senderPageConfig = await dbService.getPageConfig(senderIdRaw);
             if (senderPageConfig) {
                 isAdminSender = true;
             }
@@ -227,10 +227,10 @@ async function queueMessage(event) {
         }
     }
 
-    if (event.message && (event.message.is_echo || senderId === recipientId || isAdminSender)) {
+    if (event.message && (event.message.is_echo || senderIdRaw === recipientIdRaw || isAdminSender)) {
         // IMPORTANT: In Echo, Sender = Page, Recipient = User
-        const pageId = senderId; 
-        const messageRecipientId = recipientId; 
+        const pageId = senderIdRaw; 
+        const messageRecipientId = recipientIdRaw; 
         const messageId = event.message.mid;
         const text = event.message.text || '';
 
