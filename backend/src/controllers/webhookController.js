@@ -281,6 +281,7 @@ async function queueMessage(event, entryPageId = null) {
             // --- INSTANT EMOJI LOCK CHECK ---
             const pagePrompts = await dbService.getPagePrompts(pageId);
             if (pagePrompts && text) {
+                // Normalize Emoji: remove Variation Selector-16 (\uFE0F) and Normalize to NFC
                 const normalizeEmojiText = (str) => (str || '').replace(/\uFE0F/g, '').normalize('NFC');
                 const cleanText = normalizeEmojiText(text);
 
@@ -301,7 +302,7 @@ async function queueMessage(event, entryPageId = null) {
                 let isLocked = false;
                 let isUnlocked = false;
 
-                // Check Lock
+                // Check Lock (Iterate through list)
                 for (const e of lockList) {
                     if (cleanText.includes(e)) {
                         isLocked = true;
