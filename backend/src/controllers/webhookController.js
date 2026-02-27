@@ -251,13 +251,41 @@ async function queueMessage(event) {
             // --- INSTANT EMOJI LOCK CHECK ---
             const pagePrompts = await dbService.getPagePrompts(pageId);
             if (pagePrompts && text) {
-                const blockEmoji = pagePrompts.block_emoji;
-                const unblockEmoji = pagePrompts.unblock_emoji;
+                const normalizeEmojiText = (str) => (str || '').replace(/\uFE0F/g, '').normalize('NFC');
+                const lockList = [
+                    pagePrompts.block_emoji,
+                    pagePrompts.lock_emojis,
+                    pagePrompts.block_emojis
+                ].filter(Boolean).join(',').split(/[, ]+/).map(e => e.trim()).filter(e => e);
+                const unlockList = [
+                    pagePrompts.unblock_emoji,
+                    pagePrompts.unlock_emojis,
+                    pagePrompts.unblock_emojis
+                ].filter(Boolean).join(',').split(/[, ]+/).map(e => e.trim()).filter(e => e);
 
-                if (blockEmoji && text.includes(blockEmoji)) {
+                const cleanText = normalizeEmojiText(text);
+                let isLocked = false;
+                let isUnlocked = false;
+
+                for (const e of lockList) {
+                    if (cleanText.includes(normalizeEmojiText(e))) {
+                        isLocked = true;
+                        break;
+                    }
+                }
+                if (!isLocked) {
+                    for (const e of unlockList) {
+                        if (cleanText.includes(normalizeEmojiText(e))) {
+                            isUnlocked = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (isLocked) {
                     await dbService.toggleFbLock(pageId, recipientId, true);
                     console.log(`[Handover] 🔒 ADMIN LOCK: ${recipientId} via Emoji`);
-                } else if (unblockEmoji && text.includes(unblockEmoji)) {
+                } else if (isUnlocked) {
                     await dbService.toggleFbLock(pageId, recipientId, false);
                     console.log(`[Handover] 🔓 ADMIN UNLOCK: ${recipientId} via Emoji`);
                 }

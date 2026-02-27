@@ -41,6 +41,8 @@ function handleAiError(error, apiKey, model) {
     if (!apiKey) return;
     
     const errorMsg = (error.message || '').toLowerCase();
+    const responseError = error.response?.data?.error || {};
+    const errorCode = `${responseError.code || responseError.type || responseError.status || ''}`.toLowerCase();
     const statusCode = error.status || (error.response ? error.response.status : null);
 
     console.error(`[AI Error Handler] Handling error for key ${apiKey.substring(0, 8)}... | Status: ${statusCode} | Msg: ${errorMsg}`);
@@ -56,6 +58,12 @@ function handleAiError(error, apiKey, model) {
 
     // 2. Invalid Key / Auth (401 / 403)
     if (statusCode === 401 || statusCode === 403 || errorMsg.includes('401') || errorMsg.includes('403') || errorMsg.includes('invalid') || errorMsg.includes('key') || errorMsg.includes('authentication')) {
+        if (errorCode.includes('consumer_suspended')) {
+            if (keyService.markKeyAsSuspended) {
+                keyService.markKeyAsSuspended(apiKey, 'consumer_suspended');
+            }
+            return;
+        }
         console.error(`[AI] 💀 Invalid Key detected: ${apiKey.substring(0, 8)}... marking as DEAD (30 days).`);
         if (keyService.markKeyAsDead) {
             keyService.markKeyAsDead(apiKey, 30 * 24 * 60 * 60 * 1000, 'invalid_key'); // 30 days cooldown
@@ -1164,9 +1172,10 @@ INSTRUCTIONS:
         const responseError = error.response?.data?.error || {};
         const responseMessage = `${responseError.message || ''} ${responseError.status || ''}`.toLowerCase();
         const rawMessage = `${error.message || ''}`.toLowerCase();
-        const isSuspended = responseMessage.includes('consumer_suspended') || responseMessage.includes('suspended') || rawMessage.includes('consumer_suspended') || rawMessage.includes('suspended');
-        if (status === 429 || error.message.includes('429') || error.message.includes('quota') || error.message.includes('Too Many Requests')) {
-            if (error.message.toLowerCase().includes('quota')) {
+        const errorCode = `${responseError.code || responseError.type || responseError.status || ''}`.toLowerCase();
+        const isSuspended = errorCode.includes('consumer_suspended') || responseMessage.includes('consumer_suspended') || rawMessage.includes('consumer_suspended');
+        if (status === 429 || rawMessage.includes('429') || rawMessage.includes('quota') || rawMessage.includes('too many requests')) {
+            if (rawMessage.includes('quota')) {
                 keyService.markKeyAsQuotaExceeded(apiKey);
             } else {
                 keyService.markKeyAsDead(apiKey, 60 * 1000, `rate_limit_${modelName}`);
@@ -1236,6 +1245,7 @@ INSTRUCTIONS:
         if (finalProvider === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
         else if (finalProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
         else if (finalProvider === 'openai') baseURL = 'https://api.openai.com/v1';
+        else if (finalProvider === 'mistral') baseURL = 'https://api.mistral.ai/v1';
         else if (finalProvider === 'google' || finalProvider === 'gemini') baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
         
         const openai = new OpenAI({ 

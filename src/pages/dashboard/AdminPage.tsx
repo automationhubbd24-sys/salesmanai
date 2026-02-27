@@ -36,6 +36,7 @@ interface EngineStats {
     openai: number;
     groq: number;
     openrouter: number;
+    mistral: number;
   };
 }
 
@@ -1631,6 +1632,7 @@ export default function AdminPage() {
                   <Badge variant="outline" className="bg-orange-500/10 text-orange-400">O: {engineStats?.providers?.openai || 0}</Badge>
                   <Badge variant="outline" className="bg-purple-500/10 text-purple-400">Gq: {engineStats?.providers?.groq || 0}</Badge>
                   <Badge variant="outline" className="bg-cyan-500/10 text-cyan-400">OR: {engineStats?.providers?.openrouter || 0}</Badge>
+                  <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400">M: {engineStats?.providers?.mistral || 0}</Badge>
                 </div>
               </CardContent>
             </Card>
@@ -1659,9 +1661,9 @@ export default function AdminPage() {
                         } else {
                           setConfigValues({
                             provider: val,
-                            text_model: val === 'google' ? 'gemini-2.0-flash' : '',
-                            vision_model: val === 'google' ? 'gemini-2.0-flash' : '',
-                            voice_model: val === 'google' ? 'gemini-2.0-flash-lite' : '',
+                            text_model: val === 'google' ? 'gemini-2.0-flash' : val === 'mistral' ? 'mistral-small-latest' : '',
+                            vision_model: val === 'google' ? 'gemini-2.0-flash' : val === 'mistral' ? 'mistral-small-latest' : '',
+                            voice_model: val === 'google' ? 'gemini-2.0-flash-lite' : val === 'mistral' ? 'mistral-small-latest' : '',
                             text_provider_override: null,
                             vision_provider_override: null,
                             voice_provider_override: null,
@@ -1686,6 +1688,7 @@ export default function AdminPage() {
                         <SelectItem value="groq">Groq (Llama)</SelectItem>
                         <SelectItem value="openrouter">OpenRouter</SelectItem>
                         <SelectItem value="openai">OpenAI</SelectItem>
+                        <SelectItem value="mistral">Mistral</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -1726,6 +1729,7 @@ export default function AdminPage() {
                         <SelectItem value="groq">Groq (Llama)</SelectItem>
                         <SelectItem value="openrouter">OpenRouter</SelectItem>
                         <SelectItem value="openai">OpenAI</SelectItem>
+                        <SelectItem value="mistral">Mistral</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -1789,6 +1793,7 @@ export default function AdminPage() {
                         <SelectItem value="groq">Groq (Llama)</SelectItem>
                         <SelectItem value="openrouter">OpenRouter</SelectItem>
                         <SelectItem value="openai">OpenAI</SelectItem>
+                        <SelectItem value="mistral">Mistral</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -1852,6 +1857,7 @@ export default function AdminPage() {
                         <SelectItem value="groq">Groq (Llama)</SelectItem>
                         <SelectItem value="openrouter">OpenRouter</SelectItem>
                         <SelectItem value="openai">OpenAI</SelectItem>
+                        <SelectItem value="mistral">Mistral</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -1913,6 +1919,7 @@ export default function AdminPage() {
                         <SelectItem value="groq">Groq (Llama)</SelectItem>
                         <SelectItem value="openrouter">OpenRouter</SelectItem>
                         <SelectItem value="openai">OpenAI</SelectItem>
+                        <SelectItem value="mistral">Mistral</SelectItem>
                     </SelectContent>
                     </Select>
                 </div>
@@ -1957,6 +1964,7 @@ export default function AdminPage() {
                     <SelectItem value="openrouter">OpenRouter</SelectItem>
                     <SelectItem value="groq">Groq</SelectItem>
                     <SelectItem value="openai">OpenAI</SelectItem>
+                    <SelectItem value="mistral">Mistral</SelectItem>
                   </SelectContent>
                 </Select>
                 <Button variant="outline" size="sm" onClick={() => fetchEngineData(enginePage)}>

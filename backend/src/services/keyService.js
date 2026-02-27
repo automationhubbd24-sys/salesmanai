@@ -19,6 +19,8 @@ const GEMINI_RPD_LIMIT = 18; // Strict limit: 18 requests per 24h
 
 const deadKeys = new Map();
 const DEFAULT_COOLDOWN = 60 * 1000; // 1 Minute default for RPM/TPM
+const KEY_MIN_GAP_MS = process.env.KEY_MIN_GAP_MS ? parseInt(process.env.KEY_MIN_GAP_MS, 10) : 900;
+const KEY_MIN_GAP_JITTER_MS = process.env.KEY_MIN_GAP_JITTER_MS ? parseInt(process.env.KEY_MIN_GAP_JITTER_MS, 10) : 400;
 
 const keyUsageMap = new Map(); 
 
@@ -558,12 +560,22 @@ async function getSmartKey(provider, model = 'default') {
         currentIndex = 0;
     }
 
+    const minGapMs = KEY_MIN_GAP_MS > 0 ? (KEY_MIN_GAP_MS + Math.floor(Math.random() * (KEY_MIN_GAP_JITTER_MS + 1))) : 0;
+    const now = Date.now();
+
     // Iterate through keys starting from Last Index
     // We check exactly ONCE through the list.
     for (let i = 0; i < validKeys.length; i++) {
         // Circular Index: (Start + i) % Length
         const actualIndex = (currentIndex + i) % validKeys.length;
         const candidateKey = validKeys[actualIndex];
+
+        if (minGapMs > 0 && candidateKey.last_used_at) {
+            const lastUsedMs = new Date(candidateKey.last_used_at).getTime();
+            if (!Number.isNaN(lastUsedMs) && now - lastUsedMs < minGapMs) {
+                continue;
+            }
+        }
 
         // Check if Key is usable (RPM/RPD)
         if (isKeyWithinLimits(candidateKey, model)) {
@@ -581,7 +593,6 @@ async function getSmartKey(provider, model = 'default') {
             globalKeyPointers.set(mapKey, (actualIndex + 1) % validKeys.length);
 
             // --- ATOMIC TIMESTAMP RECORDING ---
-            const now = Date.now();
             const today = new Date().toISOString().split('T')[0];
             
             const modelName = model || candidateKey.model || 'default';

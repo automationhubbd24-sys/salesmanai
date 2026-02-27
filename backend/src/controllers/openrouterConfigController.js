@@ -315,7 +315,8 @@ exports.testApiPool = async (req, res) => {
         gemini: 'gemini-2.0-flash',
         openrouter: 'google/gemini-2.0-flash-001',
         groq: 'llama-3.3-70b-versatile',
-        openai: 'gpt-4o-mini'
+        openai: 'gpt-4o-mini',
+        mistral: 'mistral-small-latest'
     };
 
     try {
@@ -342,6 +343,7 @@ exports.testApiPool = async (req, res) => {
             if (providerKey === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
             else if (providerKey === 'groq') baseURL = 'https://api.groq.com/openai/v1';
             else if (providerKey === 'openai') baseURL = 'https://api.openai.com/v1';
+            else if (providerKey === 'mistral') baseURL = 'https://api.mistral.ai/v1';
 
             const client = new OpenAI({
                 apiKey: k.api,

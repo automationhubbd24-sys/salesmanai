@@ -28,7 +28,8 @@ router.get('/stats', authMiddleware, async (req, res) => {
                 google: allKeys.filter(k => k.provider === 'google' || k.provider === 'gemini').length,
                 openai: allKeys.filter(k => k.provider === 'openai').length,
                 groq: allKeys.filter(k => k.provider === 'groq').length,
-                openrouter: allKeys.filter(k => k.provider === 'openrouter').length
+                openrouter: allKeys.filter(k => k.provider === 'openrouter').length,
+                mistral: allKeys.filter(k => k.provider === 'mistral').length
             },
             ...poolData // total, page, limit, keys
         });
@@ -106,6 +107,7 @@ router.post('/v1/chat/completions', async (req, res) => {
     // Auto-Detect Provider if not specified via header (Internal Logic)
     let provider = 'google';
     if (model.includes('gpt')) provider = 'openai';
+    else if (model.includes('mistral')) provider = 'mistral';
     else if (model.includes('llama') || model.includes('mixtral')) provider = 'groq';
     else if (model.includes('/') || model.includes(':free')) provider = 'openrouter';
 
@@ -130,6 +132,7 @@ router.post('/v1/chat/completions', async (req, res) => {
     if (provider === 'openai') targetUrl = 'https://api.openai.com/v1/chat/completions';
     else if (provider === 'groq') targetUrl = 'https://api.groq.com/openai/v1/chat/completions';
     else if (provider === 'openrouter') targetUrl = 'https://openrouter.ai/api/v1/chat/completions';
+    else if (provider === 'mistral') targetUrl = 'https://api.mistral.ai/v1/chat/completions';
 
     try {
         // Forward Request

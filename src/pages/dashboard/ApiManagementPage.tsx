@@ -88,9 +88,9 @@ export default function ApiManagementPage() {
         } else {
             setConfigValues({
                 provider: newProvider,
-                text_model: "gemini-2.0-flash",
-                vision_model: "gemini-2.0-flash",
-                voice_model: "gemini-2.0-flash-lite"
+                text_model: newProvider === "mistral" ? "mistral-small-latest" : "gemini-2.0-flash",
+                vision_model: newProvider === "mistral" ? "mistral-small-latest" : "gemini-2.0-flash",
+                voice_model: newProvider === "mistral" ? "mistral-small-latest" : "gemini-2.0-flash-lite"
             });
         }
     };
@@ -204,6 +204,7 @@ export default function ApiManagementPage() {
                                         <SelectItem value="openai">OpenAI</SelectItem>
                                         <SelectItem value="openrouter">OpenRouter</SelectItem>
                                         <SelectItem value="groq">Groq</SelectItem>
+                                        <SelectItem value="mistral">Mistral</SelectItem>
                                     </SelectContent>
                                 </Select>
                             </div>
@@ -245,6 +246,7 @@ export default function ApiManagementPage() {
                                         <SelectItem value="openai">OpenAI</SelectItem>
                                         <SelectItem value="openrouter">OpenRouter</SelectItem>
                                         <SelectItem value="groq">Groq</SelectItem>
+                                        <SelectItem value="mistral">Mistral</SelectItem>
                                     </SelectContent>
                                 </Select>
                             </div>
