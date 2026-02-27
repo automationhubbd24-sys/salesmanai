@@ -1531,31 +1531,14 @@ async function checkFbLockStatus(pageId, senderId) {
 async function toggleFbLock(pageId, senderId, isLocked) {
     try {
         // Upsert logic: ensure the contact exists and update its lock status
-        // Handle updated_at carefully - use NOW() if column exists, else ignore?
-        // Better: We added column creation in initTables, so we assume it exists OR catch error and fallback.
-        
-        try {
-            await query(
-                `INSERT INTO fb_contacts (page_id, sender_id, is_locked, updated_at)
-                 VALUES ($1, $2, $3, NOW())
-                 ON CONFLICT (page_id, sender_id) 
-                 DO UPDATE SET is_locked = EXCLUDED.is_locked, updated_at = NOW()`,
-                [pageId, senderId, isLocked]
-            );
-        } catch (colError) {
-            if (colError.message.includes('updated_at')) {
-                 // Fallback for old schema without migration
-                 await query(
-                    `INSERT INTO fb_contacts (page_id, sender_id, is_locked)
-                     VALUES ($1, $2, $3)
-                     ON CONFLICT (page_id, sender_id) 
-                     DO UPDATE SET is_locked = EXCLUDED.is_locked`,
-                    [pageId, senderId, isLocked]
-                );
-            } else {
-                throw colError;
-            }
-        }
+        // Simplified: We removed 'updated_at' to prevent schema mismatch errors during deployment
+        await query(
+            `INSERT INTO fb_contacts (page_id, sender_id, is_locked)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (page_id, sender_id) 
+             DO UPDATE SET is_locked = EXCLUDED.is_locked`,
+            [pageId, senderId, isLocked]
+        );
         
         console.log(`[DB] FB Chat ${isLocked ? 'LOCKED' : 'UNLOCKED'} for ${senderId} on Page ${pageId}`);
         return true;
