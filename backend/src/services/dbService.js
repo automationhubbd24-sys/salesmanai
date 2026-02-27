@@ -250,6 +250,10 @@ async function initTables() {
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_contacts' AND column_name='is_locked') THEN
                     ALTER TABLE fb_contacts ADD COLUMN is_locked BOOLEAN DEFAULT FALSE;
                 END IF;
+                
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_contacts' AND column_name='updated_at') THEN
+                    ALTER TABLE fb_contacts ADD COLUMN updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+                END IF;
             END $$;
         `);
         console.log("[DB] 'fb_contacts' table/column checked.");
@@ -1527,13 +1531,32 @@ async function checkFbLockStatus(pageId, senderId) {
 async function toggleFbLock(pageId, senderId, isLocked) {
     try {
         // Upsert logic: ensure the contact exists and update its lock status
-        await query(
-            `INSERT INTO fb_contacts (page_id, sender_id, is_locked, updated_at)
-             VALUES ($1, $2, $3, NOW())
-             ON CONFLICT (page_id, sender_id) 
-             DO UPDATE SET is_locked = EXCLUDED.is_locked, updated_at = NOW()`,
-            [pageId, senderId, isLocked]
-        );
+        // Handle updated_at carefully - use NOW() if column exists, else ignore?
+        // Better: We added column creation in initTables, so we assume it exists OR catch error and fallback.
+        
+        try {
+            await query(
+                `INSERT INTO fb_contacts (page_id, sender_id, is_locked, updated_at)
+                 VALUES ($1, $2, $3, NOW())
+                 ON CONFLICT (page_id, sender_id) 
+                 DO UPDATE SET is_locked = EXCLUDED.is_locked, updated_at = NOW()`,
+                [pageId, senderId, isLocked]
+            );
+        } catch (colError) {
+            if (colError.message.includes('updated_at')) {
+                 // Fallback for old schema without migration
+                 await query(
+                    `INSERT INTO fb_contacts (page_id, sender_id, is_locked)
+                     VALUES ($1, $2, $3)
+                     ON CONFLICT (page_id, sender_id) 
+                     DO UPDATE SET is_locked = EXCLUDED.is_locked`,
+                    [pageId, senderId, isLocked]
+                );
+            } else {
+                throw colError;
+            }
+        }
+        
         console.log(`[DB] FB Chat ${isLocked ? 'LOCKED' : 'UNLOCKED'} for ${senderId} on Page ${pageId}`);
         return true;
     } catch (error) {
