@@ -1174,14 +1174,32 @@ INSTRUCTIONS:
             } catch (error) {
                 console.warn(`[AI] Phase 1 Key Failed:`, error.message);
                 
+                // --- TOKEN TRACKING FOR FAILED REQUESTS ---
+                // Even if it failed, we likely consumed input tokens or at least attempted a request.
+                // We should log this as a "failed" attempt but count it towards usage if possible.
+                // Since we don't have exact usage from error, we estimate based on input messages.
+                const estimatedInputTokens = estimateTokenUsage(messages, '', 0);
+                try {
+                    // Record usage with 0 output tokens. Status will be handled by caller if needed.
+                    // We use a special flag or just log it.
+                    // For now, let's just log it to DB so it appears in dashboard.
+                    await dbService.saveAIUsageLog({
+                        user_id: pageConfig.user_id,
+                        model: modelToUse || 'unknown',
+                        tokens: estimatedInputTokens,
+                        cost: 0, // Maybe charge for input? For now 0 to be safe.
+                        context: 'failed_attempt'
+                    });
+                } catch(e) {}
+
                 // STRICT OWN API LOCK: If we are here, it means the User provided their own API key.
                 // If it fails (invalid key, quota exceeded, etc.), we MUST NOT fallback to our Cloud API.
                 console.error(`[AI] Strict Own API Failed. Blocking Cloud API fallback for security & isolation.`);
                 return finalize({ 
                     reply: null, // Returning null ensures the controller knows the request failed strictly.
                     error: `AI Provider Error: ${error.message}. Please check your API settings in the dashboard.`,
-                    token_usage: 0,
-                    model: pageConfig.chatmodel || defaultModel // FIX: Use pageConfig value directly if modelToUse is not in scope or undefined
+                    token_usage: estimatedInputTokens, // Return estimated usage
+                    model: pageConfig.chatmodel || defaultModel 
                 });
             }
         }
@@ -2056,3 +2074,4 @@ module.exports = {
     transcribeAudio,
     refreshGlobalEngineConfigCache
 };
+
