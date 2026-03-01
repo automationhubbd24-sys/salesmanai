@@ -304,6 +304,18 @@ async function initTables() {
             END $$;
         `);
 
+        await query(`
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_chats' AND column_name='phone_number') THEN
+                    ALTER TABLE whatsapp_chats ADD COLUMN phone_number TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_chats' AND column_name='is_locked') THEN
+                    ALTER TABLE whatsapp_chats ADD COLUMN is_locked BOOLEAN DEFAULT FALSE;
+                END IF;
+            END $$;
+        `);
+
         // Ensure 'custom_base_url' column exists
         await query(`
             DO $$ 
