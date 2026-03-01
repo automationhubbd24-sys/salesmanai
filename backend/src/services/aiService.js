@@ -3,10 +3,49 @@ const dbService = require('./dbService'); // Added for Product Search Tool
 const commandApiService = require('./commandApiService'); // Command API Table Strategy
 const axios = require('axios');
 const OpenAI = require('openai');
+const { HttpsProxyAgent } = require('https-proxy-agent');
 const FormData = require('form-data');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+
+const GEMINI_PROXY_POOL = process.env.GEMINI_PROXY_POOL || '';
+const GEMINI_PROXY_URL = process.env.GEMINI_PROXY_URL || '';
+const geminiProxyList = GEMINI_PROXY_POOL.split(',').map((item) => item.trim()).filter(Boolean);
+let geminiProxyIndex = 0;
+
+function normalizeProxyUrl(url) {
+    if (!url) return null;
+    if (url.includes('://')) return url;
+    return `http://${url}`;
+}
+
+function getNextGeminiProxyUrl() {
+    if (geminiProxyList.length > 0) {
+        const url = geminiProxyList[geminiProxyIndex % geminiProxyList.length];
+        geminiProxyIndex = (geminiProxyIndex + 1) % geminiProxyList.length;
+        return normalizeProxyUrl(url);
+    }
+    if (GEMINI_PROXY_URL) return normalizeProxyUrl(GEMINI_PROXY_URL);
+    return null;
+}
+
+function isGeminiBaseUrl(baseURL) {
+    return typeof baseURL === 'string' && baseURL.includes('generativelanguage.googleapis.com');
+}
+
+function getGeminiProxyAgent(baseURL, useProxy = true) {
+    if (!useProxy) return null;
+    if (!isGeminiBaseUrl(baseURL)) return null;
+    const proxyUrl = getNextGeminiProxyUrl();
+    if (!proxyUrl) return null;
+    try {
+        return new HttpsProxyAgent(proxyUrl);
+    } catch (error) {
+        console.warn(`[AI] Gemini proxy init failed: ${error.message}`);
+        return null;
+    }
+}
 
 // --- CPU CONCURRENCY CONTROL ---
 // Limits simultaneous AI calls to prevent CPU spikes during bursts
@@ -1009,10 +1048,12 @@ You must output valid JSON only.
             }
 
             try {
+                const geminiProxyAgent = getGeminiProxyAgent(baseURL, false);
                 const openai = new OpenAI({ 
                     apiKey: currentKey, 
                     baseURL: baseURL,
-                    timeout: 25000 // 25s Timeout for User Keys
+                    timeout: 25000,
+                    ...(geminiProxyAgent ? { httpAgent: geminiProxyAgent } : {})
                 });
                 // Normalize Model Name for User Keys
                 // User Requirement: Use EXACTLY what user typed. No mapping.
@@ -1287,10 +1328,12 @@ INSTRUCTIONS:
         else if (finalProvider === 'mistral') baseURL = 'https://api.mistral.ai/v1';
         else if (finalProvider === 'google' || finalProvider === 'gemini') baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
         
+        const geminiProxyAgent = getGeminiProxyAgent(baseURL, true);
         const openai = new OpenAI({ 
             apiKey: apiKey, 
             baseURL: baseURL,
-            timeout: 60000 // Increased timeout for slower models/images
+            timeout: 60000,
+            ...(geminiProxyAgent ? { httpAgent: geminiProxyAgent } : {})
         });
 
         try {
@@ -1350,7 +1393,13 @@ INSTRUCTIONS:
                     }
                     const apiKey2 = keyData2.key;
 
-                    const openai2 = new OpenAI({ apiKey: apiKey2, baseURL: baseURL, timeout: 20000 });
+                    const geminiProxyAgent2 = getGeminiProxyAgent(baseURL, true);
+                    const openai2 = new OpenAI({ 
+                        apiKey: apiKey2, 
+                        baseURL: baseURL, 
+                        timeout: 20000,
+                        ...(geminiProxyAgent2 ? { httpAgent: geminiProxyAgent2 } : {})
+                    });
                     const completion2 = await openai2.chat.completions.create({
                         model: currentModel,
                         messages: messages,
@@ -1704,10 +1753,12 @@ Rules:
                     ]
                 }]
             };
-
+            const useGeminiProxy = pageConfig?.cheap_engine !== false;
+            const geminiProxyAgent = getGeminiProxyAgent(url, useGeminiProxy);
             const visionResponse = await axios.post(url, payload, {
                 headers: { 'Content-Type': 'application/json' },
-                timeout: 20000
+                timeout: 20000,
+                ...(geminiProxyAgent ? { httpsAgent: geminiProxyAgent, proxy: false } : {})
             });
 
             result = visionResponse.data?.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -2023,7 +2074,10 @@ async function transcribeAudio(audioUrl, config) {
                     }]
                 };
                 
-                const res = await axios.post(url, payload);
+                const geminiProxyAgent = getGeminiProxyAgent(url, !option.key);
+                const res = await axios.post(url, payload, {
+                    ...(geminiProxyAgent ? { httpsAgent: geminiProxyAgent, proxy: false } : {})
+                });
                 const text = res.data?.candidates?.[0]?.content?.parts?.[0]?.text;
                 // Gemini audio tokens are roughly 1 per second? Let's trust usageMetadata
                 const usage = res.data?.usageMetadata?.totalTokenCount || 0;

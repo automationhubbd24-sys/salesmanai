@@ -34,11 +34,41 @@ async function getPageConfig(pageId) {
       if (creditResult.rows.length > 0) {
         data.message_credit = creditResult.rows[0].message_credit || 0;
         data.credit_source = 'shared_user_balance';
+      } else {
+        await query(
+          'INSERT INTO user_configs (user_id, email, message_credit, balance) VALUES ($1, $2, $3, $4) ON CONFLICT (user_id) DO NOTHING',
+          [data.user_id, data.email || null, 100, 0]
+        );
+        data.message_credit = 100;
+        data.credit_source = 'shared_user_balance';
       }
     }
 
     if (!data.credit_source) {
       data.credit_source = 'page_balance';
+    }
+
+    const defaultProvider = 'google';
+    const defaultModel = 'gemini-2.5-flash';
+
+    let needsAiUpdate = false;
+    if (!data.ai) {
+      data.ai = defaultProvider;
+      needsAiUpdate = true;
+    }
+    if (!data.chat_model) {
+      data.chat_model = defaultModel;
+      needsAiUpdate = true;
+    }
+    if (data.cheap_engine === undefined || data.cheap_engine === null) {
+      data.cheap_engine = true;
+      needsAiUpdate = true;
+    }
+    if (needsAiUpdate) {
+      await query(
+        'UPDATE page_access_token_message SET ai = $1, chat_model = $2, cheap_engine = $3 WHERE page_id = $4',
+        [data.ai, data.chat_model, data.cheap_engine, pageId]
+      );
     }
 
     return data;
@@ -241,6 +271,37 @@ async function initTables() {
                 UNIQUE(page_id, sender_id)
             );
             CREATE INDEX IF NOT EXISTS idx_fb_contacts_page_sender ON fb_contacts(page_id, sender_id);
+        `);
+
+        await query(`
+            CREATE TABLE IF NOT EXISTS whatsapp_contacts (
+                id SERIAL PRIMARY KEY,
+                session_name TEXT NOT NULL,
+                phone_number TEXT NOT NULL,
+                name TEXT,
+                is_locked BOOLEAN DEFAULT FALSE,
+                last_interaction TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                UNIQUE(session_name, phone_number)
+            );
+            CREATE INDEX IF NOT EXISTS idx_whatsapp_contacts_session_phone ON whatsapp_contacts(session_name, phone_number);
+        `);
+
+        await query(`
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='phone_number') THEN
+                    ALTER TABLE whatsapp_contacts ADD COLUMN phone_number TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='name') THEN
+                    ALTER TABLE whatsapp_contacts ADD COLUMN name TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='is_locked') THEN
+                    ALTER TABLE whatsapp_contacts ADD COLUMN is_locked BOOLEAN DEFAULT FALSE;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='last_interaction') THEN
+                    ALTER TABLE whatsapp_contacts ADD COLUMN last_interaction TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+                END IF;
+            END $$;
         `);
 
         // Ensure 'custom_base_url' column exists
@@ -557,12 +618,12 @@ async function createWhatsAppEntry(sessionName, userId, planDays = 30, initialSt
 
     const insertResult = await query(
         `INSERT INTO whatsapp_message_database
-            (session_name, user_id, email, active, status, reply_message, order_tracking, subscription_status, text_prompt, expires_at, plan_days)
+            (session_name, user_id, email, active, status, reply_message, order_tracking, subscription_status, text_prompt, expires_at, plan_days, ai_provider, chat_model, cheap_engine)
          VALUES ($1,$2,$3,true,$4,true,true,'active',
                  'You are a helpful assistant for this store. Reply in a friendly manner.',
-                 $5,$6)
+                 $5,$6,$7,$8,$9)
          RETURNING *`,
-        [sessionName, userId, userEmail, initialStatus, expiresAt.toISOString(), parseInt(planDays)]
+        [sessionName, userId, userEmail, initialStatus, expiresAt.toISOString(), parseInt(planDays), 'google', 'gemini-2.5-flash', true]
     );
 
     const row = insertResult.rows[0];
@@ -633,10 +694,45 @@ async function getWhatsAppConfig(sessionName) {
         );
         if (creditResult.rows.length > 0) {
             data.message_credit = creditResult.rows[0].message_credit;
+        } else {
+            await query(
+                'INSERT INTO user_configs (user_id, email, message_credit, balance) VALUES ($1, $2, $3, $4) ON CONFLICT (user_id) DO NOTHING',
+                [data.user_id, data.email || null, 100, 0]
+            );
+            data.message_credit = 100;
         }
     }
 
     if (data.message_credit === undefined) data.message_credit = 0;
+
+    const defaultProvider = 'google';
+    const defaultModel = 'gemini-2.5-flash';
+
+    let needsAiUpdate = false;
+    if (!data.ai_provider && !data.ai) {
+        data.ai_provider = defaultProvider;
+        data.ai = defaultProvider;
+        needsAiUpdate = true;
+    } else if (!data.ai_provider && data.ai) {
+        data.ai_provider = data.ai;
+        needsAiUpdate = true;
+    } else if (!data.ai && data.ai_provider) {
+        data.ai = data.ai_provider;
+    }
+    if (!data.chat_model) {
+        data.chat_model = defaultModel;
+        needsAiUpdate = true;
+    }
+    if (data.cheap_engine === undefined || data.cheap_engine === null) {
+        data.cheap_engine = true;
+        needsAiUpdate = true;
+    }
+    if (needsAiUpdate) {
+        await query(
+            'UPDATE whatsapp_message_database SET ai_provider = $1, chat_model = $2, cheap_engine = $3 WHERE session_name = $4',
+            [data.ai_provider || data.ai, data.chat_model, data.cheap_engine, sessionName]
+        );
+    }
 
     const labelResult = await query(
         'SELECT label_name, ai_action FROM label_actions WHERE page_id = $1',

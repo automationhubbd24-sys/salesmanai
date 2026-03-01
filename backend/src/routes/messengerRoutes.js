@@ -33,7 +33,10 @@ router.get('/pages', async (req, res) => {
         let myPages = [];
         if (!requestedOwner || requestedOwner === userEmail) {
             const { rows } = await pgClient.query(
-                'SELECT * FROM page_access_token_message WHERE email = $1',
+                `SELECT p.*, u.message_credit AS user_message_credit
+                 FROM page_access_token_message p
+                 LEFT JOIN user_configs u ON u.user_id::text = p.user_id::text
+                 WHERE p.email = $1`,
                 [userEmail]
             );
             myPages = rows;
@@ -69,7 +72,10 @@ router.get('/pages', async (req, res) => {
         let sharedPages = [];
         if (sharedPageIds.length > 0) {
             const { rows: sharedData } = await pgClient.query(
-                'SELECT * FROM page_access_token_message WHERE page_id = ANY($1::text[])',
+                `SELECT p.*, u.message_credit AS user_message_credit
+                 FROM page_access_token_message p
+                 LEFT JOIN user_configs u ON u.user_id::text = p.user_id::text
+                 WHERE p.page_id = ANY($1::text[])`,
                 [sharedPageIds]
             );
             sharedPages = sharedData;
@@ -116,6 +122,7 @@ router.get('/pages', async (req, res) => {
             finalPages.push({
                 ...p,
                 ...(dbInfo || {}),
+                message_credit: p.user_message_credit !== null && p.user_message_credit !== undefined ? p.user_message_credit : p.message_credit,
                 is_shared: p.email !== userEmail
             });
         }
@@ -159,13 +166,13 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
         const ownerEmail = email.toLowerCase();
 
         await pgClient.query(
-            `INSERT INTO page_access_token_message (page_id, name, page_access_token, email)
-             VALUES ($1,$2,$3,$4)
+            `INSERT INTO page_access_token_message (page_id, name, page_access_token, email, ai, chat_model, cheap_engine)
+             VALUES ($1,$2,$3,$4,$5,$6,$7)
              ON CONFLICT (page_id) DO UPDATE SET
                 name = EXCLUDED.name,
                 page_access_token = EXCLUDED.page_access_token,
                 email = EXCLUDED.email`,
-            [String(page_id), name, page_access_token, ownerEmail]
+            [String(page_id), name, page_access_token, ownerEmail, 'google', 'gemini-2.5-flash', true]
         );
 
         res.json({ id: dbId });

@@ -5,6 +5,52 @@ const dbService = require('../src/services/dbService');
 const authMiddleware = require('../src/middleware/authMiddleware');
 const axios = require('axios');
 
+function parseStreamError(chunk) {
+    if (!chunk) return null;
+    const text = Buffer.isBuffer(chunk) ? chunk.toString('utf-8') : String(chunk);
+    const cleaned = text.startsWith('data: ') ? text.slice(6) : text;
+    try {
+        const payload = JSON.parse(cleaned);
+        if (payload && payload.error) {
+            return payload.error.message || payload.error || 'stream_error';
+        }
+    } catch (e) {
+        if (text.toLowerCase().includes('"error"')) return 'stream_error';
+    }
+    return null;
+}
+
+function readFirstChunk(stream, timeoutMs = 5000) {
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const onData = (chunk) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(chunk);
+        };
+        const onError = (err) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(err);
+        };
+        const timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(null);
+        }, timeoutMs);
+        const cleanup = () => {
+            clearTimeout(timer);
+            stream.off('data', onData);
+            stream.off('error', onError);
+        };
+        stream.on('data', onData);
+        stream.on('error', onError);
+    });
+}
+
 // --- 1. ENGINE STATS & DASHBOARD ---
 router.get('/stats', authMiddleware, async (req, res) => {
     try {
@@ -113,20 +159,6 @@ router.post('/v1/chat/completions', async (req, res) => {
 
     console.log(`[API Engine] Processing Request: ${provider} / ${model}`);
 
-    // Get Best Key (Smart Rotation)
-    const keyData = await keyService.getSmartKey(provider, model);
-
-    if (!keyData) {
-        console.warn(`[API Engine] ⚠️ No keys available for ${provider}/${model}`);
-        return res.status(429).json({ 
-            error: { 
-                message: "Engine Overload: All API keys are currently rate limited or exhausted.",
-                type: "insufficient_quota",
-                code: 429 
-            } 
-        });
-    }
-
     // Determine Upstream Target
     let targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
     if (provider === 'openai') targetUrl = 'https://api.openai.com/v1/chat/completions';
@@ -135,28 +167,80 @@ router.post('/v1/chat/completions', async (req, res) => {
     else if (provider === 'mistral') targetUrl = 'https://api.mistral.ai/v1/chat/completions';
 
     try {
-        // Forward Request
+        if (stream) {
+            const maxAttempts = 5;
+            let lastError = null;
+            for (let attempt = 0; attempt < maxAttempts; attempt++) {
+                const keyData = await keyService.getSmartKey(provider, model);
+                if (!keyData) break;
+                const response = await axios.post(targetUrl, req.body, {
+                    headers: {
+                        'Authorization': `Bearer ${keyData.key}`,
+                        'Content-Type': 'application/json'
+                    },
+                    responseType: 'stream',
+                    timeout: 60000,
+                    validateStatus: () => true
+                });
+
+                if (response.status >= 400) {
+                    if ([429, 401, 403].includes(response.status)) {
+                        keyService.markKeyAsDead(keyData.key, 60000, `upstream_${response.status}`);
+                    }
+                    lastError = response.data;
+                    if (response.data && response.data.destroy) response.data.destroy();
+                    continue;
+                }
+
+                const firstChunk = await readFirstChunk(response.data);
+                if (provider === 'google' || provider === 'gemini') {
+                    const streamError = parseStreamError(firstChunk);
+                    if (streamError) {
+                        keyService.markKeyAsDead(keyData.key, 60000, 'stream_error');
+                        if (response.data && response.data.destroy) response.data.destroy();
+                        lastError = { error: streamError };
+                        continue;
+                    }
+                }
+
+                if (response.headers && response.headers['content-type']) {
+                    res.setHeader('Content-Type', response.headers['content-type']);
+                }
+                if (firstChunk) res.write(firstChunk);
+                response.data.pipe(res);
+                return;
+            }
+
+            const status = 502;
+            return res.status(status).json({ error: lastError || 'stream_failed' });
+        }
+
+        const keyData = await keyService.getSmartKey(provider, model);
+        if (!keyData) {
+            console.warn(`[API Engine] ⚠️ No keys available for ${provider}/${model}`);
+            return res.status(429).json({ 
+                error: { 
+                    message: "Engine Overload: All API keys are currently rate limited or exhausted.",
+                    type: "insufficient_quota",
+                    code: 429 
+                } 
+            });
+        }
+
         const response = await axios.post(targetUrl, req.body, {
             headers: {
                 'Authorization': `Bearer ${keyData.key}`,
-                'Content-Type': 'application/json',
-                // Add optional headers if needed
+                'Content-Type': 'application/json'
             },
-            responseType: stream ? 'stream' : 'json',
-            timeout: 60000 // 60s Timeout
+            responseType: 'json',
+            timeout: 60000
         });
 
-        // Track Usage (If not stream)
-        if (!stream && response.data?.usage) {
+        if (response.data?.usage) {
             keyService.recordKeyUsage(keyData.key, response.data.usage.total_tokens);
         }
 
-        // Return Response
-        if (stream) {
-            response.data.pipe(res);
-        } else {
-            res.json(response.data);
-        }
+        res.json(response.data);
 
     } catch (error) {
         // Handle Upstream Errors (Block Bad Keys)
@@ -164,8 +248,14 @@ router.post('/v1/chat/completions', async (req, res) => {
         console.warn(`[API Engine] Upstream Error (${status}): ${error.message}`);
 
         if (status === 429 || status === 401 || status === 403) {
-            console.warn(`[API Engine] Blocking Key ${keyData.key.substring(0,8)}...`);
-            keyService.markKeyAsDead(keyData.key, 60000, `upstream_${status}`);
+            if (error.config?.headers?.Authorization) {
+                const authHeader = error.config.headers.Authorization;
+                const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+                if (token) {
+                    console.warn(`[API Engine] Blocking Key ${token.substring(0,8)}...`);
+                    keyService.markKeyAsDead(token, 60000, `upstream_${status}`);
+                }
+            }
         }
 
         res.status(status).json(error.response?.data || { error: error.message });

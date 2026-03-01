@@ -1147,6 +1147,50 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             aiResponse.images = [];
         }
 
+        if (replyText && pagePrompts) {
+            const normalizeEmojiText = (str) => (str || '').replace(/\uFE0F/g, '').normalize('NFC');
+            const cleanText = normalizeEmojiText(replyText);
+
+            const lockList = [
+                pagePrompts.block_emoji,
+                pagePrompts.lock_emojis,
+                pagePrompts.block_emojis
+            ].filter(Boolean).join(',').split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
+
+            const unlockList = [
+                pagePrompts.unblock_emoji,
+                pagePrompts.unlock_emojis,
+                pagePrompts.unblock_emojis
+            ].filter(Boolean).join(',').split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
+
+            let isLocked = false;
+            let isUnlocked = false;
+
+            for (const e of lockList) {
+                if (cleanText.includes(e)) {
+                    isLocked = true;
+                    break;
+                }
+            }
+
+            if (!isLocked) {
+                for (const e of unlockList) {
+                    if (cleanText.includes(e)) {
+                        isUnlocked = true;
+                        break;
+                    }
+                }
+            }
+
+            if (isLocked) {
+                await dbService.toggleFbLock(pageId, senderId, true);
+                console.log(`[Handover] 🔒 BOT LOCK: ${senderId} via Emoji`);
+            } else if (isUnlocked) {
+                await dbService.toggleFbLock(pageId, senderId, false);
+                console.log(`[Handover] 🔓 BOT UNLOCK: ${senderId} via Emoji`);
+            }
+        }
+
         // --- SMART IMAGE EXTRACTION & CLEANING ---
         if (!aiResponse.images) aiResponse.images = [];
         

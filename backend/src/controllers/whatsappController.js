@@ -936,10 +936,24 @@ async function queueMessage(session, messagePayload) {
          pushName = messagePayload.sender.pushname || messagePayload.sender.name || messagePayload.sender.shortName;
     }
 
+    let replyToId = messagePayload.replyTo?.id || null;
+    if (replyToId && typeof replyToId === 'object') {
+        replyToId = replyToId._serialized || replyToId.id || null;
+    }
+    if (!replyToId && messagePayload.replyTo && typeof messagePayload.replyTo === 'string') {
+        replyToId = messagePayload.replyTo;
+    }
+    if (!replyToId && messagePayload._data?.quotedMsgId) {
+        replyToId = messagePayload._data.quotedMsgId;
+    }
+    if (!replyToId && messagePayload._data?.message?.extendedTextMessage?.contextInfo?.stanzaId) {
+        replyToId = messagePayload._data.message.extendedTextMessage.contextInfo.stanzaId;
+    }
+
     sessionData.messages.push({
         id: messageId,
         text: messageText,
-        reply_to: messagePayload.replyTo?.id || null, // WAHA reply info
+        reply_to: replyToId,
         quoted_text: quotedContent, // <-- NEW: Store quoted text from webhook
         sender_name: pushName || 'Unknown', // <-- NEW: Store sender name
         images: imageUrls,
@@ -1136,6 +1150,9 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
             replyToId = msg.reply_to; 
             hasReplyTo = true;
             if (msg.quoted_text) replyToTextFallback = msg.quoted_text;
+        } else if (msg.quoted_text) {
+            replyToTextFallback = msg.quoted_text;
+            hasReplyTo = true;
         }
         if (msg.images && msg.images.length > 0) {
             allImages.push(...msg.images);
@@ -1210,6 +1227,8 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
             console.warn(`[WA] Failed to fetch quoted message ${replyToId}: ${e.message}`);
             logDebug(`[Swipe] Error fetching context: ${e.message}`);
         }
+    } else if (replyToTextFallback && replyToTextFallback.trim()) {
+        combinedText = `[Replying to: "${replyToTextFallback.trim()}"]\n${combinedText}`;
     }
 
     // --- AUDIO TRANSCRIPTION (Per-Message) ---
@@ -1511,23 +1530,21 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
         // Checks for admin emojis to lock/unlock AI
         try {
             const prompts = pageConfig.page_prompts || {};
-            
-            // Normalize inputs from both sources (page_prompts & whatsapp_message_database)
-            // Combine all lock signals into one list
+            const normalizeEmojiText = (str) => (str || '').replace(/\uFE0F/g, '').normalize('NFC');
+
             const lockList = [
                 prompts.block_emoji, 
                 prompts.lock_emojis, 
                 pageConfig.lock_emojis,
                 pageConfig.block_emoji
-            ].filter(Boolean).join(',').split(',').map(e => e.trim()).filter(Boolean);
+            ].filter(Boolean).join(' ').split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
 
-            // Combine all unlock signals into one list
             const unlockList = [
                 prompts.unblock_emoji, 
                 prompts.unlock_emojis, 
                 pageConfig.unlock_emojis,
                 pageConfig.unblock_emoji
-            ].filter(Boolean).join(',').split(',').map(e => e.trim()).filter(Boolean);
+            ].filter(Boolean).join(' ').split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
 
             if (lockList.length > 0 || unlockList.length > 0) {
                  const checkCount = parseInt(pageConfig.emoji_check_count) || 50;
@@ -1556,16 +1573,17 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                      for (const msg of rawHistory) {
                          // Only check Admin/System/Page messages
                          if (msg.reply_by === 'admin' || msg.reply_by === 'system' || msg.reply_by === 'api') {
-                             const content = (msg.text || '').trim();
+                            const content = (msg.text || '').trim();
+                            const cleanContent = normalizeEmojiText(content);
                              const msgTime = new Date(msg.timestamp).getTime();
 
                              // Check Block/Lock
-                             if (lockList.some(e => content.includes(e))) {
+                            if (lockList.some(e => cleanContent.includes(e))) {
                                  if (msgTime > lastBlockTime) lastBlockTime = msgTime;
                              }
 
                              // Check Unblock/Unlock
-                             if (unlockList.some(e => content.includes(e))) {
+                            if (unlockList.some(e => cleanContent.includes(e))) {
                                  if (msgTime > lastUnblockTime) lastUnblockTime = msgTime;
                              }
                          }
@@ -1890,21 +1908,35 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
 
         // --- EMOJI HANDOVER LOGIC (AI Reply) ---
         {
+            const normalizeEmojiText = (str) => (str || '').replace(/\uFE0F/g, '').normalize('NFC');
             let LOCK_EMOJIS = ['🛑', '🔒', '⛔'];
             let UNLOCK_EMOJIS = ['🟢', '🔓', '✅'];
 
             if (pageConfig) {
-                if (pageConfig.lock_emojis && pageConfig.lock_emojis.trim()) {
-                    LOCK_EMOJIS = pageConfig.lock_emojis.split(',').map(e => e.trim()).filter(e => e);
-                }
-                if (pageConfig.unlock_emojis && pageConfig.unlock_emojis.trim()) {
-                    UNLOCK_EMOJIS = pageConfig.unlock_emojis.split(',').map(e => e.trim()).filter(e => e);
-                }
+                const prompts = pageConfig.page_prompts || {};
+                const lockCandidates = [
+                    prompts.block_emoji,
+                    prompts.lock_emojis,
+                    pageConfig.block_emoji,
+                    pageConfig.lock_emojis
+                ].filter(Boolean).join(' ');
+                const unlockCandidates = [
+                    prompts.unblock_emoji,
+                    prompts.unlock_emojis,
+                    pageConfig.unblock_emoji,
+                    pageConfig.unlock_emojis
+                ].filter(Boolean).join(' ');
+
+                const lockList = lockCandidates.split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
+                const unlockList = unlockCandidates.split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
+                if (lockList.length > 0) LOCK_EMOJIS = lockList;
+                if (unlockList.length > 0) UNLOCK_EMOJIS = unlockList;
             }
 
             let aiCommand = null;
-            for (const e of LOCK_EMOJIS) if (finalReplyText.includes(e)) aiCommand = 'LOCK';
-            for (const e of UNLOCK_EMOJIS) if (finalReplyText.includes(e)) aiCommand = 'UNLOCK';
+            const cleanReply = normalizeEmojiText(finalReplyText);
+            for (const e of LOCK_EMOJIS) if (cleanReply.includes(e)) aiCommand = 'LOCK';
+            for (const e of UNLOCK_EMOJIS) if (cleanReply.includes(e)) aiCommand = 'UNLOCK';
             
             if (aiCommand) {
                  const isLocked = aiCommand === 'LOCK';
