@@ -132,6 +132,15 @@ export default function WhatsAppConversionPage() {
     }
     setExpandedMessageIds(newSet);
   };
+
+  const formatTimestamp = (value: number | string) => {
+    const numeric = typeof value === "string" ? Number(value) : value;
+    if (!Number.isFinite(numeric)) return "-";
+    const normalized = numeric < 1000000000000 ? numeric * 1000 : numeric;
+    const date = new Date(normalized);
+    if (Number.isNaN(date.getTime())) return "-";
+    return date.toLocaleString();
+  };
   
   // Date Filter State
   const [date, setDate] = useState<DateRange | undefined>({
@@ -480,7 +489,7 @@ export default function WhatsAppConversionPage() {
               ) : (
                 messages.map((msg) => (
                   <TableRow key={msg.id || msg.message_id}>
-                    <TableCell>{new Date(msg.timestamp).toLocaleString()}</TableCell>
+                    <TableCell>{formatTimestamp(msg.timestamp)}</TableCell>
                     <TableCell className="font-mono text-xs">{msg.sender_id}</TableCell>
                     <TableCell
                       className={`max-w-[300px] cursor-pointer transition-all text-primary hover:text-primary/80 hover:underline ${

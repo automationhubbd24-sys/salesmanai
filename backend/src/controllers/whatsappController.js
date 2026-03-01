@@ -382,20 +382,32 @@ const handleWebhook = async (req, res) => {
                     try {
                         const config = await dbService.getWhatsAppConfig(sessionName);
                         if (config) {
+                            const prompts = config.page_prompts || {};
                             // Support both Messenger-style (single emoji) and List-style (comma separated)
                             const locks = [];
                             const unlocks = [];
 
                             // 1. Messenger Style (block_emoji / unblock_emoji)
+                            if (prompts.block_emoji) locks.push(prompts.block_emoji);
+                            if (prompts.unblock_emoji) unlocks.push(prompts.unblock_emoji);
                             if (config.block_emoji) locks.push(config.block_emoji);
                             if (config.unblock_emoji) unlocks.push(config.unblock_emoji);
 
                             // 2. List Style (lock_emojis / unlock_emojis)
-                            if (config.lock_emojis && config.lock_emojis.trim()) {
-                                locks.push(...config.lock_emojis.split(/[, ]+/).map(e => e.trim()).filter(e => e));
+                            const lockCandidates = [
+                                prompts.lock_emojis,
+                                config.lock_emojis
+                            ].filter(Boolean).join(' ');
+                            const unlockCandidates = [
+                                prompts.unlock_emojis,
+                                config.unlock_emojis
+                            ].filter(Boolean).join(' ');
+
+                            if (lockCandidates.trim()) {
+                                locks.push(...lockCandidates.split(/[, ]+/).map(e => e.trim()).filter(e => e));
                             }
-                            if (config.unlock_emojis && config.unlock_emojis.trim()) {
-                                unlocks.push(...config.unlock_emojis.split(/[, ]+/).map(e => e.trim()).filter(e => e));
+                            if (unlockCandidates.trim()) {
+                                unlocks.push(...unlockCandidates.split(/[, ]+/).map(e => e.trim()).filter(e => e));
                             }
 
                             // Update if we found any
@@ -1633,14 +1645,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
         */
         // -------------------------------------
 
-        // Fetch History (User + Assistant)
-        // n8n workflow uses 'postgres_chat_memory'
-        // Dynamic History Limit: Check 'check_conversion' (from Behavior Settings) or default to 20
         let historyLimit = 20;
-        if (pageConfig.check_conversion) {
-            const limit = Number(pageConfig.check_conversion);
-            if (limit > 0 && limit <= 50) historyLimit = limit;
-        }
         
         const history = await dbService.getWhatsAppChatHistory(sessionName, senderId, historyLimit);
         

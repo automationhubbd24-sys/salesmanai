@@ -1999,6 +1999,9 @@ async function transcribeAudio(audioUrl, config) {
              }
              
              priorityChain.push({ provider: provider, model: voiceModel, name: `Configured (${voiceModel})` });
+             if (provider === 'groq' && voiceModel.includes('whisper')) {
+                 priorityChain.push({ provider: 'google', model: 'gemini-2.5-flash', name: 'Gemini Audio Fallback' });
+             }
         } else {
              // Fallback if NO voice model configured (but we shouldn't really reach here if frontend is set up right)
              // User Request: "best model ta amr motabek kono engine e nijer teke defult e work korbe na"

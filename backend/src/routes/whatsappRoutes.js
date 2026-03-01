@@ -564,7 +564,6 @@ router.put('/config/:id', async (req, res) => {
             'group_reply',
             'lock_emojis',
             'unlock_emojis',
-            'check_conversion',
             'image_prompt',
             'memory_context_name',
             'order_lock_minutes',

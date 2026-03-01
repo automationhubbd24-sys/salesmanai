@@ -313,6 +313,21 @@ async function initTables() {
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_chats' AND column_name='is_locked') THEN
                     ALTER TABLE whatsapp_chats ADD COLUMN is_locked BOOLEAN DEFAULT FALSE;
                 END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_chats' AND column_name='token_usage') THEN
+                    ALTER TABLE whatsapp_chats ADD COLUMN token_usage INTEGER DEFAULT 0;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_chats' AND column_name='model_used') THEN
+                    ALTER TABLE whatsapp_chats ADD COLUMN model_used TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_chats' AND column_name='is_group') THEN
+                    ALTER TABLE whatsapp_chats ADD COLUMN is_group BOOLEAN DEFAULT FALSE;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_chats' AND column_name='group_id') THEN
+                    ALTER TABLE whatsapp_chats ADD COLUMN group_id TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_chats' AND column_name='group_name') THEN
+                    ALTER TABLE whatsapp_chats ADD COLUMN group_name TEXT;
+                END IF;
             END $$;
         `);
 
@@ -768,13 +783,18 @@ async function saveWhatsAppChat(data) {
     const { query } = require('./pgClient');
     await query(
         `INSERT INTO whatsapp_chats
-            (session_name, sender_id, recipient_id, message_id, text, timestamp, status, reply_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+            (session_name, sender_id, recipient_id, message_id, text, timestamp, status, reply_by, token_usage, model_used, is_group, group_id, group_name)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
          ON CONFLICT (message_id) DO UPDATE SET
             text = EXCLUDED.text,
             timestamp = EXCLUDED.timestamp,
             status = EXCLUDED.status,
-            reply_by = EXCLUDED.reply_by`,
+            reply_by = EXCLUDED.reply_by,
+            token_usage = EXCLUDED.token_usage,
+            model_used = EXCLUDED.model_used,
+            is_group = EXCLUDED.is_group,
+            group_id = EXCLUDED.group_id,
+            group_name = EXCLUDED.group_name`,
         [
             data.session_name,
             data.sender_id,
@@ -783,7 +803,12 @@ async function saveWhatsAppChat(data) {
             data.text,
             data.timestamp,
             data.status,
-            data.reply_by
+            data.reply_by,
+            data.token_usage || 0,
+            data.model_used || null,
+            data.is_group || false,
+            data.group_id || null,
+            data.group_name || null
         ]
     );
 }

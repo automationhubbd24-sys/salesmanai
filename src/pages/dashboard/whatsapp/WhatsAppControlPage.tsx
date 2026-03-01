@@ -21,7 +21,6 @@ interface WhatsAppConfig {
   group_reply: boolean;
   lock_emojis: string;
   unlock_emojis: string;
-  check_conversion: number; // Added check_conversion
   image_prompt: string;
   [key: string]: boolean | string | number | undefined; // Allow index access for updates
 }
@@ -47,7 +46,6 @@ export default function WhatsAppControlPage() {
     group_reply: false,
     lock_emojis: "",
     unlock_emojis: "",
-    check_conversion: 20, // Default 20
     image_prompt: ""
   });
   const [stats, setStats] = useState({
@@ -126,7 +124,6 @@ export default function WhatsAppControlPage() {
         group_reply: row.group_reply ?? false,
         lock_emojis: row.lock_emojis ?? "",
         unlock_emojis: row.unlock_emojis ?? "",
-        check_conversion: row.check_conversion ?? 20,
         image_prompt: row.image_prompt ?? ""
       });
 
@@ -206,7 +203,7 @@ export default function WhatsAppControlPage() {
       const validColumns = [
         'reply_message', 'swipe_reply', 'image_detection', 'image_send', 
         'order_tracking', 'audio_detection', 'file_upload', 'group_reply',
-        'lock_emojis', 'unlock_emojis', 'check_conversion'
+        'lock_emojis', 'unlock_emojis'
       ];
 
       const updates: any = {};
@@ -588,27 +585,6 @@ export default function WhatsAppControlPage() {
                     />
                     <p className="text-xs text-muted-foreground">
                         {t("AI resumes if this emoji is sent after a block.", "ব্লক হওয়ার পর এই ইমোজি পাঠানো হলে এআই পুনরায় শুরু হবে।")}
-                    </p>
-                </div>
-
-                <div className="space-y-2">
-                    <Label className="flex items-center gap-2">
-                        <MessageSquare className="w-4 h-4 text-blue-500" />
-                        {t("Check Conversion Limit", "চেক কনভার্সন লিমিট")}
-                    </Label>
-                    <Input 
-                        type="number" 
-                        min={10}
-                        max={50}
-                        value={config.check_conversion} 
-                        onChange={(e) => {
-                            const raw = parseInt(e.target.value || "10", 10);
-                            const clamped = Math.max(10, Math.min(50, isNaN(raw) ? 10 : raw));
-                            setConfig({...config, check_conversion: clamped});
-                        }}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                        {t("How many recent messages (10–50) will be used as AI memory.", "সর্বশেষ কতগুলো মেসেজ (১০–৫০) এআই মেমরি হিসেবে ব্যবহার করবে।")}
                     </p>
                 </div>
 

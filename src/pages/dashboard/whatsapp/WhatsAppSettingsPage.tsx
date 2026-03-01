@@ -5,7 +5,7 @@ import { BACKEND_URL } from "@/config";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { Save, Bot, Lock, Sparkles, Key, Check, Image } from "lucide-react";
+import { Save, Bot, Sparkles, Key, Check, Image } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -85,7 +85,6 @@ export default function WhatsAppSettingsPage() {
 
   // Behavior Settings
   const [wait, setWait] = useState<number>(8);
-  const [checkConversion, setCheckConversion] = useState<number>(20);
   const [behaviorSaving, setBehaviorSaving] = useState(false);
   
   // Optimization
@@ -180,7 +179,6 @@ export default function WhatsAppSettingsPage() {
 
       // Behavior
       setWait(dbRow.wait || 8);
-      setCheckConversion(dbRow.check_conversion || 20);
 
       // Credits (Joined from user_configs)
       const credits = Number(dbRow.message_credit || 0);
@@ -212,6 +210,11 @@ export default function WhatsAppSettingsPage() {
   }, [id, fetchConfig, currentSession]);
 
   const fetchProductsForPrompt = async () => {
+    const sessionName = String(currentSession?.session_name || localStorage.getItem("active_wa_session_id") || "");
+    if (!sessionName) {
+      toast.error("Active session missing. Please select a session.");
+      return;
+    }
     setProductLoading(true);
     try {
       const token = localStorage.getItem("auth_token");
@@ -221,6 +224,7 @@ export default function WhatsAppSettingsPage() {
       }
       
       const params = new URLSearchParams();
+      params.set("page_id", sessionName);
       params.set("limit", "50");
 
       const mode = localStorage.getItem("whatsapp_view_mode");
@@ -350,8 +354,7 @@ export default function WhatsAppSettingsPage() {
           Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({
-          wait: wait,
-          check_conversion: checkConversion
+          wait: wait
         })
       });
 
@@ -813,28 +816,6 @@ export default function WhatsAppSettingsPage() {
                         </div>
                         <p className="text-sm text-muted-foreground">
                             Wait {wait} seconds to detect multiple messages or human intervention before replying.
-                        </p>
-                    </div>
-
-                    <div className="flex flex-col space-y-2">
-                        <Label>Old Messages in Memory <span className="text-amber-600 dark:text-amber-400 font-normal ml-2">(1–50)</span></Label>
-                        <div className="flex items-center space-x-4">
-                            <Input 
-                                type="number" 
-                                value={checkConversion} 
-                                onChange={(e) => {
-                                    const raw = Number(e.target.value) || 1;
-                                    const clamped = Math.max(1, Math.min(50, raw));
-                                    setCheckConversion(clamped);
-                                }} 
-                                min={1} 
-                                max={50}
-                                className="w-24 font-mono"
-                            />
-                            <span className="text-sm text-muted-foreground">messages</span>
-                        </div>
-                        <p className="text-sm text-muted-foreground">
-                            Controls how many recent messages (1–50) the AI uses as memory context.
                         </p>
                     </div>
 
