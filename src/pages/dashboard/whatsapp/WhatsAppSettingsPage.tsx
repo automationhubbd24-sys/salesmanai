@@ -85,6 +85,7 @@ export default function WhatsAppSettingsPage() {
 
   // Behavior Settings
   const [wait, setWait] = useState<number>(8);
+  const [historyLimit, setHistoryLimit] = useState<number>(20); // Restored State
   const [behaviorSaving, setBehaviorSaving] = useState(false);
   
   // Optimization
@@ -179,6 +180,7 @@ export default function WhatsAppSettingsPage() {
 
       // Behavior
       setWait(dbRow.wait || 8);
+      setHistoryLimit(dbRow.history_limit || 20); // Restored Fetch
 
       // Credits (Joined from user_configs)
       const credits = Number(dbRow.message_credit || 0);
@@ -236,22 +238,26 @@ export default function WhatsAppSettingsPage() {
       const url = `${BACKEND_URL}/api/products?${params.toString()}`;
       
       const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${localStorage.getItem("auth_token")}` },
       });
-      if (!res.ok) {
-        throw new Error("Failed to load products");
-      }
-      const data = await res.json();
+
+      // Handle non-ok but also empty/null gracefully
       let items: PromptProduct[] = [];
-      if (data.data && Array.isArray(data.data)) {
-        items = data.data;
-      } else if (Array.isArray(data)) {
-        items = data;
+      if (res.ok) {
+          const data = await res.json();
+          if (data.data && Array.isArray(data.data)) {
+            items = data.data;
+          } else if (Array.isArray(data)) {
+            items = data;
+          }
+      } else {
+          console.warn("Products endpoint returned non-200. Assuming empty list.");
       }
       setProductList(items);
     } catch (error) {
-      console.error("Failed to load products for prompt:", error);
-      toast.error("Products load korte parlam na");
+      console.error("Failed to load products for prompt (Non-fatal):", error);
+      // Don't show toast error to user, just log and show empty list
+      setProductList([]);
     } finally {
       setProductLoading(false);
     }
@@ -260,9 +266,8 @@ export default function WhatsAppSettingsPage() {
   const handleOpenPrompt = (tab: "text" | "image") => {
     setActiveTab(tab);
     setIsPromptOpen(true);
-    if (!productList.length) {
-      fetchProductsForPrompt();
-    }
+    // Always fetch products fresh to ensure latest list
+    fetchProductsForPrompt();
   };
 
   const handleInsertProductIntoPrompt = (product: PromptProduct) => {
@@ -354,7 +359,8 @@ export default function WhatsAppSettingsPage() {
           Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({
-          wait: wait
+          wait: wait,
+          history_limit: historyLimit // Restored Save
         })
       });
 
@@ -816,6 +822,24 @@ export default function WhatsAppSettingsPage() {
                         </div>
                         <p className="text-sm text-muted-foreground">
                             Wait {wait} seconds to detect multiple messages or human intervention before replying.
+                        </p>
+                    </div>
+
+                    <div className="flex flex-col space-y-2">
+                        <Label>Memory Context Limit <span className="text-muted-foreground font-normal ml-2">(Max previous messages)</span></Label>
+                        <div className="flex items-center space-x-4">
+                            <Input 
+                                type="number" 
+                                value={historyLimit} 
+                                onChange={(e) => setHistoryLimit(Number(e.target.value) || 20)} 
+                                min={1} 
+                                max={50}
+                                className="w-24 font-mono"
+                            />
+                            <span className="text-sm text-muted-foreground">messages</span>
+                        </div>
+                        <p className="text-sm text-muted-foreground">
+                            Controls how many previous messages the AI remembers for context. (Default: 20)
                         </p>
                     </div>
 

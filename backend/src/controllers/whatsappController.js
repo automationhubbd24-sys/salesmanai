@@ -175,11 +175,107 @@ const handleWebhook = async (req, res) => {
         payload.id = messageIdRaw;
     }
 
-    // Acknowledge immediately
-    res.send('OK');
+    // --- CHECK FOR ADMIN MESSAGES (Echo from WAHA) ---
+    // If the message is fromME (sent by bot/admin from phone), we need to check if it contains lock emojis
+    if (messagePayload.fromMe) {
+        console.log(`[WA] Detected Admin/Bot Message: ${messageText}`);
+        // We don't process AI for this, but we MUST check for lock/unlock emojis
+        try {
+            const config = await dbService.getWhatsAppConfig(sessionName);
+            if (config) {
+                const prompts = config.page_prompts || {};
+                const normalizeEmojiText = (str) => (str || '').replace(/\uFE0F/g, '').normalize('NFC');
+                
+                // Simplify Lock System: ANY configured emoji triggers the action
+                const lockList = [
+                    prompts.block_emoji, 
+                    prompts.lock_emojis, 
+                    config.lock_emojis, 
+                    config.block_emoji
+                ].filter(Boolean).join(' ').split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
 
-    if (event === 'message' || event === 'message.any') {
-        // --- n8n-style Backlog Filtering ---
+                const unlockList = [
+                    prompts.unblock_emoji, 
+                    prompts.unlock_emojis, 
+                    config.unlock_emojis, 
+                    config.unblock_emoji
+                ].filter(Boolean).join(' ').split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
+
+                const cleanContent = normalizeEmojiText(messageText);
+                
+                // Recipient ID is the User (since fromMe=true, 'to' is the user)
+                // WAHA payload 'to' is the user ID in this case
+                let targetUserId = messagePayload.to;
+                // If 'to' is missing (rare), try to infer from remote
+                if (!targetUserId && messagePayload._data?.to) targetUserId = messagePayload._data.to.remote || messagePayload._data.to;
+                
+                if (targetUserId) {
+                    // Check Lock
+                    if (lockList.some(e => cleanContent.includes(e))) {
+                        console.log(`[WA] Admin sent LOCK emoji to ${targetUserId}`);
+                        await dbService.toggleWhatsAppLock(sessionName, targetUserId, true);
+                        const chatKey = `${sessionName}_${targetUserId}`;
+                        handoverMap.set(chatKey, Date.now() + 24 * 60 * 60 * 1000); // 24H Lock
+                    }
+                    // Check Unlock
+                    else if (unlockList.some(e => cleanContent.includes(e))) {
+                        console.log(`[WA] Admin sent UNLOCK emoji to ${targetUserId}`);
+                        await dbService.toggleWhatsAppLock(sessionName, targetUserId, false);
+                        const chatKey = `${sessionName}_${targetUserId}`;
+                        handoverMap.delete(chatKey);
+                    }
+                }
+            }
+        } catch (e) {
+            console.error(`[WA] Failed to process Admin Emoji: ${e.message}`);
+        }
+        
+        // Save Admin Message to DB (so it appears in conversation)
+        if (messageText && messageText.trim().length > 0) {
+             await dbService.saveWhatsAppChat({
+                session_name: sessionName,
+                sender_id: sessionName, // Admin/Bot is sender
+                recipient_id: messagePayload.to, // User is recipient
+                message_id: messageId,
+                text: messageText,
+                timestamp: Date.now(),
+                status: 'sent',
+                reply_by: 'admin', // Mark as admin since it's fromMe but not via API
+                is_group: isGroup,
+                group_id: groupId,
+                group_name: groupName
+            });
+        }
+        return; // STOP here, don't trigger AI
+    }
+
+    // --- FAILSAFE ECHO GUARD (Even if fromMe is false) ---
+    // Checks if we just sent this exact text to this user.
+    // Solves "Infinite Loop" if WAHA echoes bot messages as incoming user messages.
+    const sender = payload.from;
+    const recentReplies = recentBotReplies.get(sender);
+    
+    if (recentReplies && Array.isArray(recentReplies)) {
+            const incomingText = normalizeText(payload.body || '');
+            
+            // Check against ALL recent replies
+            const match = recentReplies.find(reply => {
+                const timeDiff = Date.now() - reply.timestamp;
+                if (timeDiff >= 20000) return false;
+                
+                const sentText = reply.text;
+                return incomingText && sentText && (incomingText === sentText || incomingText.includes(sentText) || sentText.includes(incomingText));
+            });
+
+            if (match) {
+                console.log(`[WA] Ignoring INCOMING message (Failsafe Echo Match): "${(payload.body || '').substring(0,30)}..." from ${sender}`);
+                return;
+            }
+    }
+
+    await queueMessage(session, payload);
+
+    } else if (event === 'state.change') {
         // 1. Establish Baseline (Processing Start Time) for this session
         if (!sessionStartTimeMap.has(session)) {
             // Check for x-webhook-timestamp header (if available from WAHA/Reverse Proxy)
@@ -537,7 +633,6 @@ const handleWebhook = async (req, res) => {
              }
         }
 
-        await queueMessage(session, payload);
     } else if (event === 'state.change') {
         // Handle State Changes (WORKING, STOPPED, SCAN_QR_CODE, etc.)
         const status = payload.body || payload.status; // WAHA payload format varies
@@ -2071,23 +2166,28 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
              }
         }
 
-        // 7. Save Bot Reply to DB
+        // 7. Save Bot Reply to DB (Only if not empty)
         let modelLabel = aiResponse.model;
         if (!hasOwnKey && (modelLabel === 'gemini-2.0-flash' || modelLabel === 'gemini-2.0-flash-lite')) {
             modelLabel = 'salesmanchatbot-pro';
         }
-        await dbService.saveWhatsAppChat({
-            session_name: sessionName,
-            sender_id: pageId || sessionName, // Bot (Page) is sender
-            recipient_id: senderId, // User is recipient
-            message_id: sentMessageId,
-            text: finalReplyText, // Save CLEANED text (what was actually sent) to match Webhook Echo Guard
-            timestamp: Date.now(),
-            status: 'sent',
-            reply_by: 'bot',
-            model_used: modelLabel, // Save Model Name
-            token_usage: aiResponse.token_usage // Save Total Token Usage (Vision + Chat)
-        });
+
+        if (finalReplyText && finalReplyText.trim().length > 0) {
+            await dbService.saveWhatsAppChat({
+                session_name: sessionName,
+                sender_id: pageId || sessionName, // Bot (Page) is sender
+                recipient_id: senderId, // User is recipient
+                message_id: sentMessageId,
+                text: finalReplyText, // Save CLEANED text (what was actually sent) to match Webhook Echo Guard
+                timestamp: Date.now(),
+                status: 'sent',
+                reply_by: 'bot',
+                model_used: modelLabel, // Save Model Name
+                token_usage: aiResponse.token_usage // Save Total Token Usage (Vision + Chat)
+            });
+        } else {
+             console.log(`[WA] Skipping save for empty/null bot reply.`);
+        }
 
         // Save Image Memory (system note) so AI can see previously sent product images for this chat
         if (allowImageSend && aiResponse.images && Array.isArray(aiResponse.images) && aiResponse.images.length > 0) {
