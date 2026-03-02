@@ -1037,42 +1037,97 @@ async function deductWhatsAppCredit(sessionName, amount = 1) {
 // 19. Save WhatsApp Contact (Lead)
 async function saveWhatsAppContact(data) {
     const { query } = require('./pgClient');
+    const run = async () => {
+        const existingResult = await query(
+            'SELECT name FROM whatsapp_contacts WHERE session_name = $1 AND phone_number = $2 LIMIT 1',
+            [data.session_name, data.phone_number]
+        );
 
-    const existingResult = await query(
-        'SELECT name FROM whatsapp_contacts WHERE session_name = $1 AND phone_number = $2 LIMIT 1',
-        [data.session_name, data.phone_number]
-    );
+        const updates = {
+            session_name: data.session_name,
+            phone_number: data.phone_number,
+            last_interaction: new Date().toISOString()
+        };
 
-    const updates = {
-        session_name: data.session_name,
-        phone_number: data.phone_number,
-        last_interaction: new Date().toISOString()
+        if (data.lid) {
+            updates.lid = data.lid;
+        }
+
+        if (data.name && data.name !== 'Unknown' && data.name.trim() !== '') {
+            updates.name = data.name;
+        } else if (existingResult.rows.length === 0) {
+            updates.name = 'Unknown';
+        }
+
+        const params = [
+            updates.session_name,
+            updates.phone_number,
+            updates.lid || null,
+            updates.name || null,
+            updates.last_interaction
+        ];
+
+        await query(
+            `INSERT INTO whatsapp_contacts
+                (session_name, phone_number, lid, name, last_interaction)
+             VALUES ($1,$2,$3,$4,$5)
+             ON CONFLICT (session_name, phone_number) DO UPDATE SET
+                name = COALESCE(EXCLUDED.name, whatsapp_contacts.name),
+                lid = COALESCE(EXCLUDED.lid, whatsapp_contacts.lid),
+                last_interaction = EXCLUDED.last_interaction`,
+            params
+        );
     };
 
-    if (data.name && data.name !== 'Unknown' && data.name.trim() !== '') {
-        updates.name = data.name;
-    } else if (existingResult.rows.length === 0) {
-        updates.name = 'Unknown';
+    try {
+        await run();
+    } catch (err) {
+        if (err && (err.code === '42P01' || err.code === '42703')) {
+            await ensureWhatsAppContactsTable();
+            await run();
+            return;
+        }
+        throw err;
     }
-
-    const params = [
-        updates.session_name,
-        updates.phone_number,
-        updates.name || null,
-        updates.last_interaction
-    ];
-
-    await query(
-        `INSERT INTO whatsapp_contacts
-            (session_name, phone_number, name, last_interaction)
-         VALUES ($1,$2,$3,$4)
-         ON CONFLICT (session_name, phone_number) DO UPDATE SET
-            name = COALESCE(EXCLUDED.name, whatsapp_contacts.name),
-            last_interaction = EXCLUDED.last_interaction`,
-        params
-    );
 }
 
+async function ensureWhatsAppContactsTable() {
+    const { query } = require('./pgClient');
+    await query(`
+        CREATE TABLE IF NOT EXISTS whatsapp_contacts (
+            id SERIAL PRIMARY KEY,
+            session_name TEXT NOT NULL,
+            phone_number TEXT NOT NULL,
+            lid TEXT,
+            name TEXT,
+            is_locked BOOLEAN DEFAULT FALSE,
+            last_interaction TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            UNIQUE(session_name, phone_number)
+        );
+        CREATE INDEX IF NOT EXISTS idx_whatsapp_contacts_session_phone ON whatsapp_contacts(session_name, phone_number);
+    `);
+
+    await query(`
+        DO $$ 
+        BEGIN 
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='phone_number') THEN
+                ALTER TABLE whatsapp_contacts ADD COLUMN phone_number TEXT;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='lid') THEN
+                ALTER TABLE whatsapp_contacts ADD COLUMN lid TEXT;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='name') THEN
+                ALTER TABLE whatsapp_contacts ADD COLUMN name TEXT;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='is_locked') THEN
+                ALTER TABLE whatsapp_contacts ADD COLUMN is_locked BOOLEAN DEFAULT FALSE;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='last_interaction') THEN
+                ALTER TABLE whatsapp_contacts ADD COLUMN last_interaction TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+            END IF;
+        END $$;
+    `);
+}
 // 20. Toggle WhatsApp Lock (Handover)
 async function toggleWhatsAppLock(sessionName, phoneNumber, isLocked) {
     const { query } = require('./pgClient');
@@ -1083,7 +1138,7 @@ async function toggleWhatsAppLock(sessionName, phoneNumber, isLocked) {
         return false;
     }
 
-    try {
+    const run = async () => {
         await query(
             `INSERT INTO whatsapp_contacts
                 (session_name, phone_number, is_locked, name, last_interaction)
@@ -1093,9 +1148,24 @@ async function toggleWhatsAppLock(sessionName, phoneNumber, isLocked) {
                 last_interaction = EXCLUDED.last_interaction`,
             [sessionName, phoneNumber, isLocked, new Date().toISOString()]
         );
+    };
+
+    try {
+        await run();
         console.log(`[WA Lock] Upsert successful for ${phoneNumber}`);
         return true;
     } catch (err) {
+        if (err && (err.code === '42P01' || err.code === '42703')) {
+            await ensureWhatsAppContactsTable();
+            try {
+                await run();
+                console.log(`[WA Lock] Upsert successful for ${phoneNumber}`);
+                return true;
+            } catch (inner) {
+                console.error(`[WA Lock] Unexpected error: ${inner.message}`);
+                return false;
+            }
+        }
         console.error(`[WA Lock] Unexpected error: ${err.message}`);
         return false;
     }
@@ -1106,15 +1176,16 @@ async function checkWhatsAppEmojiLock(sessionName, phoneNumber, lockEmojis, unlo
     const { query } = require('./pgClient');
     try {
         // Increase LIMIT to 20 for deeper history scan
+        const numbers = Array.isArray(phoneNumber) ? phoneNumber.filter(Boolean) : [phoneNumber].filter(Boolean);
         const result = await query(
             `SELECT text, reply_by, timestamp
              FROM whatsapp_chats
              WHERE session_name = $1
-               AND recipient_id = $2
+               AND recipient_id = ANY($2)
                AND reply_by IN ('admin','bot')
              ORDER BY timestamp DESC
              LIMIT 20`,
-            [sessionName, phoneNumber]
+            [sessionName, numbers]
         );
 
         if (result.rows.length === 0) return null;
@@ -1159,12 +1230,46 @@ async function checkWhatsAppEmojiLock(sessionName, phoneNumber, lockEmojis, unlo
 // 21. Get WhatsApp Contact (Check Lock Status)
 async function getWhatsAppContact(sessionName, phoneNumber) {
     const { query } = require('./pgClient');
-    const result = await query(
-        'SELECT * FROM whatsapp_contacts WHERE session_name = $1 AND phone_number = $2 LIMIT 1',
-        [sessionName, phoneNumber]
-    );
-    if (result.rows.length === 0) return null;
-    return result.rows[0];
+    const run = async () => {
+        const result = await query(
+            'SELECT * FROM whatsapp_contacts WHERE session_name = $1 AND phone_number = $2 LIMIT 1',
+            [sessionName, phoneNumber]
+        );
+        if (result.rows.length === 0) return null;
+        return result.rows[0];
+    };
+
+    try {
+        return await run();
+    } catch (err) {
+        if (err && (err.code === '42P01' || err.code === '42703')) {
+            await ensureWhatsAppContactsTable();
+            return await run();
+        }
+        throw err;
+    }
+}
+
+async function getWhatsAppContactByLid(sessionName, lid) {
+    const { query } = require('./pgClient');
+    const run = async () => {
+        const result = await query(
+            'SELECT * FROM whatsapp_contacts WHERE session_name = $1 AND lid = $2 LIMIT 1',
+            [sessionName, lid]
+        );
+        if (result.rows.length === 0) return null;
+        return result.rows[0];
+    };
+
+    try {
+        return await run();
+    } catch (err) {
+        if (err && (err.code === '42P01' || err.code === '42703')) {
+            await ensureWhatsAppContactsTable();
+            return await run();
+        }
+        throw err;
+    }
 }
 
 
@@ -1640,15 +1745,35 @@ async function deleteMessengerPage(pageId) {
 // 26. Check WhatsApp Lock Status
 async function checkWhatsAppLockStatus(sessionName, senderId) {
     try {
-        const result = await query(
-            'SELECT is_locked FROM whatsapp_contacts WHERE session_name = $1 AND phone_number = $2 LIMIT 1',
-            [sessionName, senderId]
-        );
-        if (result.rows.length > 0) {
-            return result.rows[0].is_locked === true;
-        }
-        return false;
+        const run = async () => {
+            const result = await query(
+                'SELECT is_locked FROM whatsapp_contacts WHERE session_name = $1 AND phone_number = $2 LIMIT 1',
+                [sessionName, senderId]
+            );
+            if (result.rows.length > 0) {
+                return result.rows[0].is_locked === true;
+            }
+            return false;
+        };
+
+        return await run();
     } catch (error) {
+        if (error && (error.code === '42P01' || error.code === '42703')) {
+            try {
+                await ensureWhatsAppContactsTable();
+                const result = await query(
+                    'SELECT is_locked FROM whatsapp_contacts WHERE session_name = $1 AND phone_number = $2 LIMIT 1',
+                    [sessionName, senderId]
+                );
+                if (result.rows.length > 0) {
+                    return result.rows[0].is_locked === true;
+                }
+                return false;
+            } catch (inner) {
+                console.error("Error checking WhatsApp lock status:", inner);
+                return false;
+            }
+        }
         console.error("Error checking WhatsApp lock status:", error);
         return false;
     }
@@ -1938,6 +2063,7 @@ module.exports = {
     getLastNWhatsAppMessages,
     toggleWhatsAppLock,
     getWhatsAppContact,
+    getWhatsAppContactByLid,
     renewWhatsAppSession,
     getExpiredWhatsAppSessions,
     deductUserBalance,

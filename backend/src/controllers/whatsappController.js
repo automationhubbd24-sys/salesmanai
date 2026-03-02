@@ -3,6 +3,7 @@ const aiService = require('../services/aiService');
 const dbService = require('../services/dbService');
 const fs = require('fs');
 const path = require('path');
+const WAHA_BASE_URL = process.env.WAHA_BASE_URL || 'https://wahubbd.salesmanchatbot.online';
 
 function logDebug(msg) {
     try {
@@ -18,6 +19,30 @@ function logDebug(msg) {
 // Helper to log to file
 function logToFile(message) {
     logDebug(message);
+}
+
+function normalizeMediaUrl(value) {
+    if (!value) return null;
+    let url = String(value).trim();
+    url = url.replace(/^`+|`+$/g, '');
+    url = url.replace(/^"+|"+$/g, '');
+    url = url.replace(/^'+|'+$/g, '');
+    url = url.trim();
+    if (!url) return null;
+    if (!url.startsWith('http') && url.startsWith('/')) {
+        url = `${WAHA_BASE_URL}${url}`;
+    }
+    return url;
+}
+
+function resolveLockUserId(senderId, payload) {
+    if (senderId && senderId.includes('@lid')) {
+        const alt = payload?._data?.key?.remoteJidAlt || payload?._data?.key?.remoteJid;
+        if (alt && !String(alt).includes('@lid')) {
+            return alt;
+        }
+    }
+    return senderId;
 }
 
 // Global Debounce Map (In-Memory)
@@ -451,17 +476,19 @@ const handleWebhook = async (req, res) => {
                         const isLocked = command === 'LOCK';
                         console.log(`[WA] Emoji Command Detected (${command}) from Admin. Updating Lock Status...`);
                         
-                        // Use payload.to (User's Phone Number) for the lock
-                        const targetUser = payload.to; 
-                        await dbService.toggleWhatsAppLock(sessionName, targetUser, isLocked);
+                        const targetUser = payload.to || payload._data?.key?.remoteJidAlt || payload._data?.key?.remoteJid;
+                        if (targetUser && !String(targetUser).includes('@lid') && targetUser !== sessionName) {
+                            await dbService.toggleWhatsAppLock(sessionName, targetUser, isLocked);
                         
-                        // Update Memory Map
-                        const chatKey = `${sessionName}_${targetUser}`;
-                        if (isLocked) {
-                            handoverMap.set(chatKey, Date.now() + 24 * 60 * 60 * 1000); // 24h Lock
-                        } else {
-                            handoverMap.delete(chatKey);
+                            // Update Memory Map
+                            const chatKey = `${sessionName}_${targetUser}`;
+                            if (isLocked) {
+                                handoverMap.set(chatKey, Date.now() + 24 * 60 * 60 * 1000);
+                            } else {
+                                handoverMap.delete(chatKey);
+                            }
                         }
+                        
                     } else {
                         // Default Handover (5 mins) if no command
                         const chatKey = `${sessionName}_${payload.to || payload.chatId || 'unknown'}`;
@@ -601,6 +628,15 @@ const handleWebhook = async (req, res) => {
 async function queueMessage(session, messagePayload) {
     let senderId = messagePayload.from; // e.g., 12345678@c.us
     let messageText = messagePayload.body || '';
+    let lockSenderId = resolveLockUserId(senderId, messagePayload);
+    if (lockSenderId && lockSenderId.includes('@lid')) {
+        try {
+            const mapped = await dbService.getWhatsAppContactByLid(session, lockSenderId);
+            if (mapped && mapped.phone_number) {
+                lockSenderId = mapped.phone_number;
+            }
+        } catch (e) {}
+    }
 
     // Fix for Linked Devices (@lid)
     // User Update: Do NOT convert @lid to @c.us. Use as is.
@@ -681,9 +717,9 @@ async function queueMessage(session, messagePayload) {
              // For 1-on-1, 'to' is usually the user if 'from' is LID (wait, if 'from' is LID, 'to' is me? No.)
              // If I send FROM my phone (LID), 'from' is LID. 'to' is the USER.
              // If Note-to-Self, 'to' is ME. But we handled that above.
-             const lockTarget = messagePayload.to; 
+             const lockTarget = messagePayload.to || messagePayload._data?.key?.remoteJidAlt || messagePayload._data?.key?.remoteJid; 
              
-             if (lockTarget && !lockTarget.includes('@lid')) { 
+             if (lockTarget && !lockTarget.includes('@lid') && lockTarget !== session) { 
                  try {
                      await dbService.toggleWhatsAppLock(session, lockTarget, isLock);
                      const ck = `${session}_${lockTarget}`;
@@ -837,10 +873,19 @@ async function queueMessage(session, messagePayload) {
         
         if (!pushName) pushName = 'Unknown';
 
+        const lidValue = (senderId && senderId.includes('@lid'))
+            ? senderId
+            : (messagePayload._data?.key?.remoteJid && String(messagePayload._data.key.remoteJid).includes('@lid'))
+                ? messagePayload._data.key.remoteJid
+                : (messagePayload._data?.key?.remoteJidAlt && String(messagePayload._data.key.remoteJidAlt).includes('@lid'))
+                    ? messagePayload._data.key.remoteJidAlt
+                    : null;
+
         await dbService.saveWhatsAppContact({
             session_name: sessionName,
-            phone_number: senderId,
-            name: pushName
+            phone_number: lockSenderId,
+            name: pushName,
+            lid: lidValue
         });
 
     } catch (err) {
@@ -848,7 +893,7 @@ async function queueMessage(session, messagePayload) {
     }
 
     // Handover guard: if admin takeover active for this chat, skip
-    const chatKey = `${sessionName}_${senderId}`;
+    const chatKey = `${sessionName}_${lockSenderId}`;
     
     // 1. Check Memory (Fast) - for temporary pauses after admin reply
     // DISABLED: Defer to processBufferedMessages to allow Early Label Check to run (unlocking logic)
@@ -880,7 +925,12 @@ async function queueMessage(session, messagePayload) {
 
     // Initialize buffer if not exists
     if (!debounceMap.has(sessionId)) {
-        debounceMap.set(sessionId, { messages: [], timer: null, pageId: messagePayload.to });
+        debounceMap.set(sessionId, { messages: [], timer: null, pageId: messagePayload.to, lockSenderId });
+    } else {
+        const existing = debounceMap.get(sessionId);
+        if (existing && !existing.lockSenderId) {
+            existing.lockSenderId = lockSenderId;
+        }
     }
 
     const sessionData = debounceMap.get(sessionId);
@@ -890,14 +940,17 @@ async function queueMessage(session, messagePayload) {
     const audioUrls = [];
 
     // Robust Media Extraction
-    let mediaUrl = messagePayload.mediaUrl || messagePayload.media?.url;
+    let mediaUrl = normalizeMediaUrl(messagePayload.mediaUrl || messagePayload.media?.url);
     // If mediaUrl is relative (from WAHA local storage), ensure it's absolute if needed, 
     // but usually WAHA sends full URL or filename. 
     // If it's just filename, we might need to construct URL, but let's assume URL for now.
     
     // Fallback: Check body if it's a URL and hasMedia is true (WAHA behavior sometimes)
-    if (!mediaUrl && messagePayload.hasMedia && messagePayload.body && messagePayload.body.startsWith('http')) {
-        mediaUrl = messagePayload.body;
+    if (!mediaUrl && messagePayload.hasMedia && messagePayload.body) {
+        const bodyUrl = normalizeMediaUrl(messagePayload.body);
+        if (bodyUrl && bodyUrl.startsWith('http')) {
+            mediaUrl = bodyUrl;
+        }
     }
 
     if (mediaUrl) {
@@ -995,15 +1048,17 @@ async function queueMessage(session, messagePayload) {
     sessionData.timer = setTimeout(() => {
         const messagesToProcess = [...sessionData.messages];
         const pageId = sessionData.pageId;
+        const lockSenderId = sessionData.lockSenderId;
         debounceMap.delete(sessionId);
         // Pass config to avoid re-fetching
-        processBufferedMessages(sessionId, sessionName, senderId, messagesToProcess, pageId, config);
+        processBufferedMessages(sessionId, sessionName, senderId, messagesToProcess, pageId, config, lockSenderId);
     }, debounceTime); 
 }
 
 // Core Logic Function (Debounced)
-async function processBufferedMessages(sessionId, sessionName, senderId, messages, pageId = null, preLoadedConfig = null) {
+async function processBufferedMessages(sessionId, sessionName, senderId, messages, pageId = null, preLoadedConfig = null, lockSenderId = null) {
     let finalReplyText = null; // Hoisted to avoid TDZ errors
+    const effectiveSenderId = lockSenderId || senderId;
 
     // 1. Resolve Config EARLY (Optimization)
     let pageConfig = preLoadedConfig;
@@ -1029,7 +1084,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                 return hardcodedStops.includes(name);
             });
 
-            const chatKey = `${sessionName}_${senderId}`;
+            const chatKey = `${sessionName}_${effectiveSenderId}`;
 
             if (shouldStop) {
                 const blockingLabels = latestLabels
@@ -1084,7 +1139,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
 
     // Handover guard (Memory) - Late Check (Race Condition Fix)
     // User Scenario: Admin replies during the buffer delay. We must catch it here.
-    const chatKey = `${sessionName}_${senderId}`;
+    const chatKey = `${sessionName}_${effectiveSenderId}`;
     const handoverUntil = handoverMap.get(chatKey);
     if (handoverUntil && handoverUntil > Date.now()) {
         console.log(`[WA] Handover active (Memory - Late Check) for ${chatKey}. Skipping AI.`);
@@ -1111,20 +1166,20 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
     // Checks last 20 messages for missed Emoji Commands. 
     // This runs BEFORE DB check to catch "Zombie Locks" or "Missed Unlocks".
     try {
-        const historyCheck = await dbService.checkWhatsAppEmojiLock(sessionName, senderId, LOCK_EMOJIS, UNLOCK_EMOJIS);
+        const historyCheck = await dbService.checkWhatsAppEmojiLock(sessionName, [senderId, effectiveSenderId], LOCK_EMOJIS, UNLOCK_EMOJIS);
         
         if (historyCheck) {
             if (historyCheck.locked) {
                  console.log(`[WA Lock] Handover active (History Scan - Layer 3) for ${chatKey}. Found Lock Emoji at ${new Date(Number(historyCheck.timestamp)).toISOString()}`);
                  // Sync DB & Memory
-                 await dbService.toggleWhatsAppLock(sessionName, senderId, true);
+                 await dbService.toggleWhatsAppLock(sessionName, effectiveSenderId, true);
                  handoverMap.set(chatKey, Date.now() + 24 * 60 * 60 * 1000);
                  return; // STOP AI
             } else {
                  // Explicit Unlock Found in History
                  console.log(`[WA Lock] Unlock detected (History Scan - Layer 3). Ensuring DB is Unlocked.`);
                  // Self-Heal: If DB was locked, this fixes it.
-                 await dbService.toggleWhatsAppLock(sessionName, senderId, false);
+                 await dbService.toggleWhatsAppLock(sessionName, effectiveSenderId, false);
                  // Clear Memory Lock too
                  handoverMap.delete(chatKey);
                  // Continue to Layer 2 (which will now see Unlocked) or fall through
@@ -1137,7 +1192,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
     // Layer 2: Database Persistence Check
     // If History was silent (null), we fallback to DB state.
     try {
-        const contact = await dbService.getWhatsAppContact(sessionName, senderId);
+        const contact = await dbService.getWhatsAppContact(sessionName, effectiveSenderId);
         if (contact && contact.is_locked) {
             console.log(`[WA] Handover active (DB Lock - Layer 2) for ${chatKey}. Skipping AI.`);
             // Sync Memory
@@ -1518,7 +1573,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
              }
         }
 
-        const isLocked = await dbService.checkWhatsAppLockStatus(sessionName, senderId);
+        const isLocked = await dbService.checkWhatsAppLockStatus(sessionName, effectiveSenderId);
         if (isLocked) {
             console.log(`[WA] Conversation with ${senderId} locked due to repeated failures.`);
             await dbService.saveWhatsAppChat({
@@ -1574,7 +1629,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                     ORDER BY timestamp DESC
                     LIMIT $4
                     `,
-                    [sessionName, senderId, sessionName, checkCount]
+                    [sessionName, effectiveSenderId, sessionName, checkCount]
                  );
                  const rawHistory = result.rows || [];
 
@@ -1603,12 +1658,12 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
 
                      if (lastBlockTime > lastUnblockTime) {
                         console.log(`[WA] Conversation Locked via Emoji by Admin. (Block: ${lastBlockTime} > Unblock: ${lastUnblockTime})`);
-                        const chatKey = `${sessionName}_${senderId}`;
+                        const chatKey = `${sessionName}_${effectiveSenderId}`;
                         handoverMap.set(chatKey, Date.now() + 60 * 60 * 1000); // 1 Hour Lock
                         
                         // Persist Lock to DB
                         try {
-                            await dbService.toggleWhatsAppLock(sessionName, senderId, true);
+                            await dbService.toggleWhatsAppLock(sessionName, effectiveSenderId, true);
                         } catch (err) {
                             console.warn(`[WA] Failed to persist emoji lock: ${err.message}`);
                         }
@@ -1616,7 +1671,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                         return; 
                     } else if (lastUnblockTime > lastBlockTime) {
                         // Ensure lock is cleared
-                        const chatKey = `${sessionName}_${senderId}`;
+                        const chatKey = `${sessionName}_${effectiveSenderId}`;
                         if (handoverMap.has(chatKey)) {
                             console.log(`[WA] Conversation Unlocked via Emoji by Admin.`);
                             handoverMap.delete(chatKey);
@@ -1624,7 +1679,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
 
                         // Persist Unlock to DB
                         try {
-                            await dbService.toggleWhatsAppLock(sessionName, senderId, false);
+                            await dbService.toggleWhatsAppLock(sessionName, effectiveSenderId, false);
                         } catch (err) {
                             console.warn(`[WA] Failed to persist emoji unlock: ${err.message}`);
                         }
@@ -1659,13 +1714,13 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
             
             if (lastAdminReply) {
                 // Admin has intervened. Apply 20 requests/day limit instead of hard silence.
-                const dailyAICount = await dbService.getWhatsAppDailyAICount(sessionName, senderId);
+                const dailyAICount = await dbService.getWhatsAppDailyAICount(sessionName, effectiveSenderId);
                 
                 if (dailyAICount >= 20) {
                     console.log(`[WA] Admin handover active & daily limit (20) reached for ${senderId}. Skipping AI.`);
                     
                     // Optional: Force Handover Memory Lock to avoid repeated DB calls for this session for a while
-                    const chatKey = `${sessionName}_${senderId}`;
+                    const chatKey = `${sessionName}_${effectiveSenderId}`;
                     handoverMap.set(chatKey, Date.now() + 5 * 60 * 1000); // 5 min buffer
                     
                     return;
@@ -1776,7 +1831,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                 console.log(`[WA] Order Saved. Enforcing 'ordertrack' label and lock.`);
                 await whatsappService.addLabel(sessionName, senderId, 'ordertrack');
                 
-                const chatKey = `${sessionName}_${senderId}`;
+                const chatKey = `${sessionName}_${effectiveSenderId}`;
                 handoverMap.set(chatKey, Date.now() + 60 * 60 * 1000); // Lock for 1 hour
                 
                 // Remove tag from user-facing text
@@ -1809,7 +1864,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                 
                 if (isHardcodedStop || (actionConfig && actionConfig.ai_action === 'stop')) {
                      console.log(`[WA] Blocking Label applied (${labelName}). Locking conversation.`);
-                     const chatKey = `${sessionName}_${senderId}`;
+                     const chatKey = `${sessionName}_${effectiveSenderId}`;
                      handoverMap.set(chatKey, Date.now() + 60 * 60 * 1000);
                 }
 
@@ -1946,9 +2001,9 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
             if (aiCommand) {
                  const isLocked = aiCommand === 'LOCK';
                  console.log(`[WA] Emoji Command Detected (${aiCommand}) from AI. Updating Lock Status...`);
-                 await dbService.toggleWhatsAppLock(sessionName, senderId, isLocked);
+                 await dbService.toggleWhatsAppLock(sessionName, effectiveSenderId, isLocked);
                  
-                 const chatKey = `${sessionName}_${senderId}`;
+                 const chatKey = `${sessionName}_${effectiveSenderId}`;
                  if (isLocked) handoverMap.set(chatKey, Date.now() + 24 * 60 * 60 * 1000);
                  else handoverMap.delete(chatKey);
             }

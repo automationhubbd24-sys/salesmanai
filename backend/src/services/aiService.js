@@ -8,6 +8,14 @@ const FormData = require('form-data');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const { spawn } = require('child_process');
+let ffmpegPath = null;
+try {
+    ffmpegPath = require('ffmpeg-static');
+} catch (e) {
+    ffmpegPath = null;
+}
 
 const GEMINI_PROXY_POOL = process.env.GEMINI_PROXY_POOL || '';
 const GEMINI_PROXY_URL = process.env.GEMINI_PROXY_URL || '';
@@ -44,6 +52,34 @@ function getGeminiProxyAgent(baseURL, useProxy = true) {
     } catch (error) {
         console.warn(`[AI] Gemini proxy init failed: ${error.message}`);
         return null;
+    }
+}
+
+async function convertOggToMp3(inputBuffer) {
+    if (!ffmpegPath) return null;
+    const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'wa-audio-'));
+    const inputPath = path.join(tmpDir, `input-${Date.now()}.ogg`);
+    const outputPath = path.join(tmpDir, `output-${Date.now()}.mp3`);
+    try {
+        await fs.promises.writeFile(inputPath, inputBuffer);
+        await new Promise((resolve, reject) => {
+            const args = ['-y', '-i', inputPath, '-ac', '1', '-ar', '16000', '-vn', '-acodec', 'libmp3lame', outputPath];
+            const proc = spawn(ffmpegPath, args, { windowsHide: true });
+            proc.on('error', reject);
+            proc.on('close', code => {
+                if (code === 0) resolve();
+                else reject(new Error(`ffmpeg_exit_${code}`));
+            });
+        });
+        const outputBuffer = await fs.promises.readFile(outputPath);
+        return outputBuffer;
+    } catch (err) {
+        console.warn(`[Audio] OGG to MP3 conversion failed: ${err.message}`);
+        return null;
+    } finally {
+        try {
+            await fs.promises.rm(tmpDir, { recursive: true, force: true });
+        } catch {}
     }
 }
 
@@ -1896,6 +1932,13 @@ async function transcribeAudio(audioUrl, config) {
              return "[System: Audio file too large to transcribe]";
         }
 
+        if (mimeType === 'audio/ogg') {
+            const converted = await convertOggToMp3(audioBuffer);
+            if (converted && converted.length > 0) {
+                audioBuffer = converted;
+                mimeType = 'audio/mp3';
+            }
+        }
     } catch (e) {
         console.error(`[Audio] Download Failed:`, e.message);
         return "[Audio Download Failed]";
@@ -1904,6 +1947,7 @@ async function transcribeAudio(audioUrl, config) {
     // 2. Priority Chain: Own API -> Gemini 2.5 Flash -> Lite -> Groq (Faster)
     const priorityChain = [];
     let userKey = null;
+    const preferGeminiForOgg = mimeType === 'audio/ogg';
 
     // Ensure config exists to prevent crashes
     const safeConfig = config || {};
@@ -1991,14 +2035,18 @@ async function transcribeAudio(audioUrl, config) {
         if (voiceModel) {
              console.log(`[Audio] Using Configured Voice Model: ${voiceModel} (Provider: ${provider})`);
              
-             // Ensure Provider matches Model Family
              if (voiceModel.includes('whisper') && provider !== 'groq' && provider !== 'openai') {
                  provider = 'groq';
              } else if (voiceModel.includes('gemini') && provider !== 'google') {
                  provider = 'google';
              }
              
-             priorityChain.push({ provider: provider, model: voiceModel, name: `Configured (${voiceModel})` });
+             if (preferGeminiForOgg && voiceModel.includes('whisper')) {
+                 priorityChain.push({ provider: 'google', model: 'gemini-2.5-flash', name: 'Gemini Audio (OGG)' });
+                 priorityChain.push({ provider: provider, model: voiceModel, name: `Configured (${voiceModel})` });
+             } else {
+                 priorityChain.push({ provider: provider, model: voiceModel, name: `Configured (${voiceModel})` });
+             }
              if (provider === 'groq' && voiceModel.includes('whisper')) {
                  priorityChain.push({ provider: 'google', model: 'gemini-2.5-flash', name: 'Gemini Audio Fallback' });
              }
@@ -2116,7 +2164,13 @@ async function transcribeAudio(audioUrl, config) {
             }
             
         } catch (e) {
-             console.warn(`[Audio] ${option.name} Failed:`, e.message);
+             const status = e?.response?.status;
+             const data = e?.response?.data;
+             if (status || data) {
+                 console.warn(`[Audio] ${option.name} Failed:`, status, data);
+             } else {
+                 console.warn(`[Audio] ${option.name} Failed:`, e.message);
+             }
         }
     }
 
