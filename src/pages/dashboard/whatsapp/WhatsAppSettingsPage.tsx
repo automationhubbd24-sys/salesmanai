@@ -374,9 +374,9 @@ export default function WhatsAppSettingsPage() {
     setLoading(true);
 
     if (mode === "managed") {
-        values.provider = "gemini"; 
+        values.provider = "salesmanchatbot"; 
         values.api_key = MANAGED_SECRET_KEY;
-        values.chatmodel = MANAGED_MODEL;
+        values.chatmodel = "salesmanchatbot-pro";
     } else {
         if (!values.api_key) {
             toast.error("API Key is required for own provider");

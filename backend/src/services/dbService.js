@@ -745,6 +745,8 @@ async function getWhatsAppConfig(sessionName) {
         needsAiUpdate = true;
     } else if (!data.ai && data.ai_provider) {
         data.ai = data.ai_provider;
+    } else if (data.ai && data.ai_provider && data.ai !== data.ai_provider) {
+        data.ai = data.ai_provider;
     }
     if (!data.chat_model) {
         data.chat_model = defaultModel;

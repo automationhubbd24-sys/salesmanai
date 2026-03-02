@@ -2015,7 +2015,7 @@ async function transcribeAudio(audioUrl, config) {
     if (!userKey) {
         // User Update: Use configured voice model if available
         let voiceModel = safeConfig.voice_model || safeConfig.audio_model || safeConfig.chat_model;
-        let provider = safeConfig.ai || safeConfig.operator || 'google';
+        let provider = safeConfig.ai_provider || safeConfig.ai || safeConfig.operator || 'google';
 
         if (resolved) {
             voiceModel = resolved.finalModel;
