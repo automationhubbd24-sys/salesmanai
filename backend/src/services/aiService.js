@@ -3,7 +3,7 @@ const dbService = require('./dbService'); // Added for Product Search Tool
 const commandApiService = require('./commandApiService'); // Command API Table Strategy
 const axios = require('axios');
 const OpenAI = require('openai');
-const { HttpsProxyAgent } = require('https-proxy-agent');
+const { GoogleGenerativeAI, GoogleAICacheManager } = require("@google/generative-ai");
 const FormData = require('form-data');
 const crypto = require('crypto');
 const fs = require('fs');
@@ -17,63 +17,12 @@ try {
     ffmpegPath = null;
 }
 
-const GEMINI_PROXY_POOL = process.env.GEMINI_PROXY_POOL || '';
-const GEMINI_PROXY_URL = process.env.GEMINI_PROXY_URL || '';
-const geminiProxyList = GEMINI_PROXY_POOL.split(',').map((item) => item.trim()).filter(Boolean);
-let geminiProxyIndex = 0;
-
-function normalizeProxyUrl(url) {
-    if (!url) return null;
-    if (url.includes('://')) return url;
-    return `http://${url}`;
-}
-
-function getNextGeminiProxyUrl() {
-    if (geminiProxyList.length > 0) {
-        const url = geminiProxyList[geminiProxyIndex % geminiProxyList.length];
-        geminiProxyIndex = (geminiProxyIndex + 1) % geminiProxyList.length;
-        return normalizeProxyUrl(url);
-    }
-    if (GEMINI_PROXY_URL) return normalizeProxyUrl(GEMINI_PROXY_URL);
+function getGeminiProxyAgent(baseURL, useProxy = true) {
     return null;
 }
 
-function isGeminiBaseUrl(baseURL) {
-    return typeof baseURL === 'string' && (
-        baseURL.includes('generativelanguage.googleapis.com') || 
-        baseURL.includes('api.groq.com')
-    );
-}
-
-function getGeminiProxyAgent(baseURL, useProxy = true) {
-    if (!useProxy) return null;
-    if (!isGeminiBaseUrl(baseURL)) return null;
-    
-    const proxyUrl = getNextGeminiProxyUrl();
-    if (!proxyUrl) {
-        // User Requirement: Fail if proxy is missing for system keys
-        throw new Error("[Security] Proxy Required for System Key but No Proxy Available");
-    }
-    try {
-        return new HttpsProxyAgent(proxyUrl);
-    } catch (error) {
-        throw new Error(`[Security] Proxy Init Failed: ${error.message}`);
-    }
-}
-
 function getGroqProxyAgent(useProxy = true) {
-    if (!useProxy) return null;
-    
-    const proxyUrl = getNextGeminiProxyUrl();
-    if (!proxyUrl) {
-        // User Requirement: Fail if proxy is missing for system keys
-        throw new Error("[Security] Proxy Required for Groq but No Proxy Available");
-    }
-    try {
-        return new HttpsProxyAgent(proxyUrl);
-    } catch (error) {
-        throw new Error(`[Security] Groq Proxy Init Failed: ${error.message}`);
-    }
+    return null;
 }
 
 async function convertOggToMp3(inputBuffer) {
@@ -356,6 +305,68 @@ function getCacheKey(pageId, message, senderName) {
     // LEAK FIX: Include senderName in cache key to prevent cross-user data leaks
     return `${pageId}:${senderName}:${normalized}`;
 }
+
+// --- GEMINI CONTEXT CACHING MANAGER ---
+const geminiCacheMap = new Map(); // Key: Hash, Value: { name: string, expirationTime: string }
+
+function computeHash(content) {
+    return crypto.createHash('sha256').update(content).digest('hex');
+}
+
+/**
+ * Creates or retrieves a Gemini Context Cache.
+ * Returns the cache resource name (e.g., 'cachedContents/...') or null if failed.
+ */
+async function getOrCreateGeminiCache(apiKey, modelName, systemInstructionContent) {
+    // Only cache if content is substantial (e.g., > 100 chars) to avoid overhead for tiny prompts
+    if (!systemInstructionContent || systemInstructionContent.length < 100) return null;
+
+    // Ensure model name has 'models/' prefix for SDK
+    const sdkModelName = modelName.includes('/') ? modelName : `models/${modelName}`;
+
+    try {
+        const cacheManager = new GoogleAICacheManager(apiKey);
+        // Include model in hash because cache is bound to model
+        const hash = computeHash(systemInstructionContent + sdkModelName);
+        
+        // 1. Check Local Map
+        if (geminiCacheMap.has(hash)) {
+            const cached = geminiCacheMap.get(hash);
+            // Check if expired (give 5 min buffer)
+            if (new Date(cached.expirationTime).getTime() > Date.now() + 5 * 60 * 1000) {
+                console.log(`[Gemini Cache] Using local cache: ${cached.name}`);
+                return cached.name;
+            } else {
+                geminiCacheMap.delete(hash);
+            }
+        }
+
+        // 2. Create New Cache
+        console.log(`[Gemini Cache] Creating new cache for ${sdkModelName} (Length: ${systemInstructionContent.length})...`);
+        
+        const cacheResult = await cacheManager.create({
+            model: sdkModelName,
+            // We pass the system prompt as the systemInstruction of the CACHE.
+            // This means any model using this cache automatically has this system prompt.
+            systemInstruction: systemInstructionContent,
+            contents: [], // No additional history in cache for now, just system prompt
+            ttlSeconds: 60 * 60, // 1 Hour TTL
+        });
+
+        console.log(`[Gemini Cache] Created: ${cacheResult.name} | Expires: ${cacheResult.expirationTime}`);
+        
+        geminiCacheMap.set(hash, {
+            name: cacheResult.name,
+            expirationTime: cacheResult.expirationTime
+        });
+
+        return cacheResult.name;
+    } catch (e) {
+        console.warn(`[Gemini Cache] Failed to create cache: ${e.message}`);
+        return null;
+    }
+}
+// ------------------------------
 // -------------------------------------
 
 // --- HELPER: Fetch OG Image from Link ---
@@ -1385,30 +1396,74 @@ INSTRUCTIONS:
         else if (finalProvider === 'mistral') baseURL = 'https://api.mistral.ai/v1';
         else if (finalProvider === 'google' || finalProvider === 'gemini') baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
         
-        const geminiProxyAgent = getGeminiProxyAgent(baseURL, true);
-        const openai = new OpenAI({ 
-            apiKey: apiKey, 
-            baseURL: baseURL,
-            timeout: 60000,
-            ...(geminiProxyAgent ? { httpAgent: geminiProxyAgent } : {})
-        });
+        let rawContent = '';
+        let tokenUsage = 0;
+        let usedCache = false;
+        const isFreeModel = typeof currentModel === 'string' && currentModel.includes(':free');
+
+        // --- GEMINI CACHING PATH ---
+        if ((finalProvider === 'google' || finalProvider === 'gemini') && messages.length > 0 && messages[0].role === 'system') {
+            const systemContent = messages[0].content;
+            // Only use cache if system prompt is large enough (>500 chars) to matter
+            if (systemContent.length > 500) {
+                const cacheName = await getOrCreateGeminiCache(apiKey, currentModel, systemContent);
+                if (cacheName) {
+                    try {
+                        console.log(`[AI] Using Gemini Cache: ${cacheName}`);
+                        const genAI = new GoogleGenerativeAI(apiKey);
+                        const model = genAI.getGenerativeModelFromCachedContent(cacheName);
+                        
+                        const geminiHistory = messages.slice(1).map(m => ({
+                            role: m.role === 'assistant' ? 'model' : 'user',
+                            parts: [{ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }]
+                        }));
+
+                        const result = await model.generateContent({
+                            contents: geminiHistory,
+                            generationConfig: { responseMimeType: "application/json" }
+                        });
+
+                        rawContent = result.response.text();
+                        tokenUsage = result.response.usageMetadata ? result.response.usageMetadata.totalTokenCount : 0;
+                        usedCache = true;
+                        console.log(`[AI] Gemini Cache Hit! Tokens: ${tokenUsage}`);
+                    } catch (cacheError) {
+                        console.warn(`[AI] Gemini Cache Execution Failed: ${cacheError.message}. Falling back.`);
+                    }
+                }
+            }
+        }
+
+        // --- STANDARD OPENAI PATH ---
+        if (!usedCache) {
+            const geminiProxyAgent = getGeminiProxyAgent(baseURL, true);
+            const openai = new OpenAI({ 
+                apiKey: apiKey, 
+                baseURL: baseURL,
+                timeout: 60000,
+                ...(geminiProxyAgent ? { httpAgent: geminiProxyAgent } : {})
+            });
+
+            try {
+                const effectiveResponseFormat = isFreeModel ? undefined : responseFormat;
+
+                const completion = await openai.chat.completions.create({
+                    model: currentModel,
+                    messages: messages,
+                    response_format: effectiveResponseFormat
+                });
+                
+                rawContent = completion.choices[0].message.content || '';
+                tokenUsage = completion.usage ? completion.usage.total_tokens : 0;
+            } catch (openaiError) {
+                throw openaiError;
+            }
+        }
 
         try {
-            const isFreeModel = typeof currentModel === 'string' && currentModel.includes(':free');
-            const effectiveResponseFormat = isFreeModel ? undefined : responseFormat;
-
-            const completion = await openai.chat.completions.create({
-                model: currentModel,
-                messages: messages,
-                response_format: effectiveResponseFormat
-            });
-            
-            const rawContent = completion.choices[0].message.content || '';
             if (!rawContent || rawContent.trim() === '') {
                  throw new Error("Empty content from AI");
             }
-
-            let tokenUsage = completion.usage ? completion.usage.total_tokens : 0;
             tokenUsage = estimateTokenUsage(messages, rawContent, tokenUsage);
             keyService.recordKeyUsage(apiKey, tokenUsage);
             

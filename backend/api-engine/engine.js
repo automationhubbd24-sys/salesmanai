@@ -187,7 +187,8 @@ router.post('/v1/chat/completions', async (req, res) => {
                 const keyData = await keyService.getSmartKey(provider, model);
                 if (!keyData) break;
 
-                const proxy = getProxyUrl();
+                const useProxy = provider === 'google' || provider === 'gemini' || provider === 'groq';
+                const proxy = useProxy ? getProxyUrl() : null;
                 const agent = proxy ? new HttpsProxyAgent(proxy) : undefined;
 
                 const response = await axios.post(targetUrl, req.body, {
@@ -247,7 +248,8 @@ router.post('/v1/chat/completions', async (req, res) => {
             });
         }
 
-        const proxy = getProxyUrl();
+        const useProxy = provider === 'google' || provider === 'gemini' || provider === 'groq';
+        const proxy = useProxy ? getProxyUrl() : null;
         const agent = proxy ? new HttpsProxyAgent(proxy) : undefined;
 
         const response = await axios.post(targetUrl, req.body, {
