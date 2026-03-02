@@ -1394,7 +1394,8 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                 try {
                     const perMsgResults = await Promise.all(
                         msg.images.map(img =>
-                            aiService.processImageWithVision(img, {}, { prompt: productAnalysisPrompt || "" })
+                            // Pass pageConfig to processImageWithVision so it can use the correct model/provider
+                            aiService.processImageWithVision(img, pageConfig, { prompt: productAnalysisPrompt || "" })
                         )
                     );
                     const perMsgText = perMsgResults.map(res => {
