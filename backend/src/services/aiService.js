@@ -1943,7 +1943,7 @@ async function transcribeAudio(audioUrl, config) {
             const converted = await convertOggToMp3(audioBuffer);
             if (converted && converted.length > 0) {
                 audioBuffer = converted;
-                mimeType = 'audio/mp3';
+                mimeType = 'audio/mpeg';
             }
         }
     } catch (e) {
@@ -1976,7 +1976,7 @@ async function transcribeAudio(audioUrl, config) {
         userKey = userKeys[0]; // Use first key for simplicity in audio
         
         // Strict Model Selection
-        const userModel = safeConfig.chat_model || safeConfig.chatmodel || 'gemini-2.0-flash';
+        const userModel = safeConfig.chat_model || safeConfig.chatmodel;
 
         if (userKey) {
             // FIX: Check if this is a SALESMANCHATBOT KEY or a REAL USER KEY
@@ -1995,7 +1995,12 @@ async function transcribeAudio(audioUrl, config) {
                     priorityChain.push({ provider: 'groq', model: 'whisper-large-v3', name: 'Groq Whisper (User Key)', key: userKey });
                 } else if (userKey.startsWith('AIza')) {
                     // Gemini Key -> STRICTLY Use User's Selected Model
-                    priorityChain.push({ provider: 'google', model: userModel, name: `Gemini (${userModel}) (User Key)`, key: userKey });
+                    if (!userModel) {
+                        console.log(`[Audio Debug] Missing user model for Gemini key. Skipping user key for audio.`);
+                        userKey = null;
+                    } else {
+                        priorityChain.push({ provider: 'google', model: userModel, name: `Gemini (${userModel}) (User Key)`, key: userKey });
+                    }
                 } else {
                     console.log(`[Audio Debug] Unknown Key Prefix. Defaulting to System Routing.`);
                     userKey = null;
@@ -2159,10 +2164,10 @@ async function transcribeAudio(audioUrl, config) {
                 const formData = new FormData();
                 const bufferStream = new (require('stream').PassThrough)();
                 bufferStream.end(audioBuffer);
-                formData.append('file', bufferStream, { filename: `audio.${mimeType.split('/')[1] || 'mp3'}`, contentType: mimeType });
-                formData.append('model', 'whisper-large-v3'); // Groq supports this model ID
+                const fileExt = mimeType === 'audio/mpeg' ? 'mp3' : (mimeType.split('/')[1] || 'mp3');
+                formData.append('file', bufferStream, { filename: `audio.${fileExt}`, contentType: mimeType });
+                formData.append('model', option.model || 'whisper-large-v3'); // Groq supports this model ID
                 // formData.append('language', 'bn'); // Let it auto-detect for Banglish support
-                formData.append('temperature', '0');
 
                 const res = await axios.post('https://api.groq.com/openai/v1/audio/transcriptions', formData, {
                     headers: {

@@ -1082,7 +1082,8 @@ async function saveWhatsAppContact(data) {
     try {
         await run();
     } catch (err) {
-        if (err && (err.code === '42P01' || err.code === '42703')) {
+        const msg = err && err.message ? String(err.message) : '';
+        if (err && (err.code === '42P01' || err.code === '42703' || msg.includes('last_interaction') || msg.includes('whatsapp_contacts'))) {
             await ensureWhatsAppContactsTable();
             await run();
             return;
