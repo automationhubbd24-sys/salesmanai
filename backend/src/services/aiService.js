@@ -2180,9 +2180,23 @@ async function transcribeAudio(audioUrl, config) {
                 };
                 
                 const geminiProxyAgent = getGeminiProxyAgent(url, !option.key);
-                const res = await axios.post(url, payload, {
-                    ...(geminiProxyAgent ? { httpsAgent: geminiProxyAgent, proxy: false } : {})
-                });
+                
+                let res;
+                try {
+                    // Attempt 1: With Proxy (if configured)
+                    res = await axios.post(url, payload, {
+                        ...(geminiProxyAgent ? { httpsAgent: geminiProxyAgent, proxy: false } : {})
+                    });
+                } catch (proxyError) {
+                    // FALLBACK: Retry Direct Connection if Proxy Fails (e.g. 407 Auth Error)
+                    if (geminiProxyAgent && (proxyError.response?.status === 407 || proxyError.code === 'ECONNRESET' || proxyError.code === 'ETIMEDOUT')) {
+                        console.warn(`[Audio] Gemini Proxy Failed (${proxyError.message}). Retrying Direct Connection...`);
+                        res = await axios.post(url, payload);
+                    } else {
+                        throw proxyError;
+                    }
+                }
+
                 const text = res.data?.candidates?.[0]?.content?.parts?.[0]?.text;
                 // Gemini audio tokens are roughly 1 per second? Let's trust usageMetadata
                 const usage = res.data?.usageMetadata?.totalTokenCount || 0;
@@ -2213,14 +2227,41 @@ async function transcribeAudio(audioUrl, config) {
                 // "groq er test file banao then ... salesmanchatbot er groq diye test deo"
                 // This implies system keys must work behind proxy.
                 
-                const res = await axios.post('https://api.groq.com/openai/v1/audio/transcriptions', formData, {
-                    headers: {
-                        ...formData.getHeaders(),
-                        'Authorization': `Bearer ${apiKey}`
-                    },
-                    timeout: 30000, // 30s timeout for audio
-                    ...(groqProxyAgent ? { httpsAgent: groqProxyAgent, proxy: false } : {})
-                });
+                let res;
+                try {
+                    // Attempt 1: With Proxy
+                    res = await axios.post('https://api.groq.com/openai/v1/audio/transcriptions', formData, {
+                        headers: {
+                            ...formData.getHeaders(),
+                            'Authorization': `Bearer ${apiKey}`
+                        },
+                        timeout: 30000, // 30s timeout for audio
+                        ...(groqProxyAgent ? { httpsAgent: groqProxyAgent, proxy: false } : {})
+                    });
+                } catch (proxyError) {
+                    // FALLBACK: Retry Direct Connection if Proxy Fails (e.g. 407 Auth Error)
+                    if (groqProxyAgent && (proxyError.response?.status === 407 || proxyError.code === 'ECONNRESET' || proxyError.code === 'ETIMEDOUT')) {
+                        console.warn(`[Audio] Groq Proxy Failed (${proxyError.message}). Retrying Direct Connection...`);
+                        // We need to recreate formData because streams might be consumed? 
+                        // Actually buffer is fine. But headers need to be fresh?
+                        const formDataRetry = new FormData();
+                        formDataRetry.append('file', audioBuffer, { 
+                            filename: `audio.${fileExt}`, 
+                            contentType: mimeType 
+                        });
+                        formDataRetry.append('model', option.model || 'whisper-large-v3');
+
+                        res = await axios.post('https://api.groq.com/openai/v1/audio/transcriptions', formDataRetry, {
+                            headers: {
+                                ...formDataRetry.getHeaders(),
+                                'Authorization': `Bearer ${apiKey}`
+                            },
+                            timeout: 30000
+                        });
+                    } else {
+                        throw proxyError;
+                    }
+                }
 
                 const text = res.data.text;
                 if (text) {
