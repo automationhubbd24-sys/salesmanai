@@ -39,31 +39,40 @@ function getNextGeminiProxyUrl() {
 }
 
 function isGeminiBaseUrl(baseURL) {
-    return typeof baseURL === 'string' && baseURL.includes('generativelanguage.googleapis.com');
+    return typeof baseURL === 'string' && (
+        baseURL.includes('generativelanguage.googleapis.com') || 
+        baseURL.includes('api.groq.com')
+    );
 }
 
 function getGeminiProxyAgent(baseURL, useProxy = true) {
     if (!useProxy) return null;
     if (!isGeminiBaseUrl(baseURL)) return null;
+    
     const proxyUrl = getNextGeminiProxyUrl();
-    if (!proxyUrl) return null;
+    if (!proxyUrl) {
+        // User Requirement: Fail if proxy is missing for system keys
+        throw new Error("[Security] Proxy Required for System Key but No Proxy Available");
+    }
     try {
         return new HttpsProxyAgent(proxyUrl);
     } catch (error) {
-        console.warn(`[AI] Gemini proxy init failed: ${error.message}`);
-        return null;
+        throw new Error(`[Security] Proxy Init Failed: ${error.message}`);
     }
 }
 
 function getGroqProxyAgent(useProxy = true) {
     if (!useProxy) return null;
+    
     const proxyUrl = getNextGeminiProxyUrl();
-    if (!proxyUrl) return null;
+    if (!proxyUrl) {
+        // User Requirement: Fail if proxy is missing for system keys
+        throw new Error("[Security] Proxy Required for Groq but No Proxy Available");
+    }
     try {
         return new HttpsProxyAgent(proxyUrl);
     } catch (error) {
-        console.warn(`[AI] Groq proxy init failed: ${error.message}`);
-        return null;
+        throw new Error(`[Security] Groq Proxy Init Failed: ${error.message}`);
     }
 }
 
