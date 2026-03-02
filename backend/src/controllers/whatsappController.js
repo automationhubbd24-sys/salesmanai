@@ -175,7 +175,11 @@ const handleWebhook = async (req, res) => {
         payload.id = messageIdRaw;
     }
 
-    // --- CHECK FOR ADMIN MESSAGES (Echo from WAHA) ---
+    // Acknowledge immediately
+    res.send('OK');
+
+    if (event === 'message' || event === 'message.any') {
+        // --- CHECK FOR ADMIN MESSAGES (Echo from WAHA) ---
     // If the message is fromME (sent by bot/admin from phone), we need to check if it contains lock emojis
     if (messagePayload.fromMe) {
         console.log(`[WA] Detected Admin/Bot Message: ${messageText}`);
@@ -271,10 +275,9 @@ const handleWebhook = async (req, res) => {
                 console.log(`[WA] Ignoring INCOMING message (Failsafe Echo Match): "${(payload.body || '').substring(0,30)}..." from ${sender}`);
                 return;
             }
-    }
+        }
 
-    await queueMessage(session, payload);
-
+        await queueMessage(session, payload);
     } else if (event === 'state.change') {
         // 1. Establish Baseline (Processing Start Time) for this session
         if (!sessionStartTimeMap.has(session)) {
@@ -633,6 +636,7 @@ const handleWebhook = async (req, res) => {
              }
         }
 
+        await queueMessage(session, payload);
     } else if (event === 'state.change') {
         // Handle State Changes (WORKING, STOPPED, SCAN_QR_CODE, etc.)
         const status = payload.body || payload.status; // WAHA payload format varies
