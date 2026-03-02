@@ -2057,13 +2057,18 @@ async function transcribeAudio(audioUrl, config) {
              }
              
              if (preferGeminiForOgg && voiceModel.includes('whisper')) {
-                 priorityChain.push({ provider: 'google', model: 'gemini-2.5-flash', name: 'Gemini Audio (OGG)' });
+                 priorityChain.push({ provider: 'google', model: 'gemini-1.5-flash', name: 'Gemini Audio (OGG)' });
                  priorityChain.push({ provider: provider, model: voiceModel, name: `Configured (${voiceModel})` });
              } else {
                  priorityChain.push({ provider: provider, model: voiceModel, name: `Configured (${voiceModel})` });
              }
-             if (provider === 'groq' && voiceModel.includes('whisper')) {
-                 priorityChain.push({ provider: 'google', model: 'gemini-2.5-flash', name: 'Gemini Audio Fallback' });
+             
+             // Always ensure a strong fallback
+             if (!priorityChain.some(o => o.model.includes('gemini-1.5-flash'))) {
+                 priorityChain.push({ provider: 'google', model: 'gemini-1.5-flash', name: 'Gemini 1.5 Fallback' });
+             }
+             if (!priorityChain.some(o => o.model.includes('gemini-2.0-flash'))) {
+                 priorityChain.push({ provider: 'google', model: 'gemini-2.0-flash', name: 'Gemini 2.0 Fallback' });
              }
         } else {
              // Fallback if NO voice model configured (but we shouldn't really reach here if frontend is set up right)
@@ -2096,16 +2101,19 @@ async function transcribeAudio(audioUrl, config) {
                 }
 
                 const formData = new FormData();
-                const bufferStream = new (require('stream').PassThrough)();
-                bufferStream.end(audioBuffer);
-                formData.append('file', bufferStream, { filename: `audio.${mimeType.split('/')[1] || 'mp3'}`, contentType: mimeType });
+                const fileExt = mimeType === 'audio/mpeg' ? 'mp3' : (mimeType.split('/')[1] || 'mp3');
+                formData.append('file', audioBuffer, { 
+                    filename: `audio.${fileExt}`, 
+                    contentType: mimeType 
+                });
                 formData.append('model', 'whisper-1');
 
                 const res = await axios.post('https://api.openai.com/v1/audio/transcriptions', formData, {
                     headers: {
                         ...formData.getHeaders(),
                         'Authorization': `Bearer ${apiKey}`
-                    }
+                    },
+                    timeout: 30000
                 });
 
                 const text = res.data?.text;
@@ -2162,24 +2170,27 @@ async function transcribeAudio(audioUrl, config) {
             // GROQ WHISPER API (Fastest)
             if (option.provider === 'groq') {
                 const formData = new FormData();
-                const bufferStream = new (require('stream').PassThrough)();
-                bufferStream.end(audioBuffer);
                 const fileExt = mimeType === 'audio/mpeg' ? 'mp3' : (mimeType.split('/')[1] || 'mp3');
-                formData.append('file', bufferStream, { filename: `audio.${fileExt}`, contentType: mimeType });
-                formData.append('model', option.model || 'whisper-large-v3'); // Groq supports this model ID
-                // formData.append('language', 'bn'); // Let it auto-detect for Banglish support
+                
+                // Using Buffer directly is more robust than PassThrough in some axios versions
+                formData.append('file', audioBuffer, { 
+                    filename: `audio.${fileExt}`, 
+                    contentType: mimeType 
+                });
+                formData.append('model', option.model || 'whisper-large-v3');
 
                 const res = await axios.post('https://api.groq.com/openai/v1/audio/transcriptions', formData, {
                     headers: {
                         ...formData.getHeaders(),
                         'Authorization': `Bearer ${apiKey}`
-                    }
+                    },
+                    timeout: 30000 // 30s timeout for audio
                 });
 
                 const text = res.data.text;
                 if (text) {
                     console.log(`[Audio] Success with ${option.name}: "${text.substring(0, 30)}..."`);
-                    return { text: text.trim(), usage: 0 }; // Whisper is cheap/free on Groq usually
+                    return { text: text.trim(), usage: 0 };
                 }
             }
             
