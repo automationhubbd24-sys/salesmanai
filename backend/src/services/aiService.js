@@ -1903,8 +1903,15 @@ async function transcribeAudio(audioUrl, config) {
     // 1. Download Audio
     try {
         const headers = { 'User-Agent': 'Mozilla/5.0' };
-        if (audioUrl.includes(WAHA_BASE_URL)) headers['X-Api-Key'] = WAHA_API_KEY;
-        else if (audioUrl.includes('graph.facebook.com') && config.page_access_token) headers['Authorization'] = `Bearer ${config.page_access_token}`;
+        const isWahaUrl = audioUrl.includes(WAHA_BASE_URL) || 
+                          audioUrl.includes('wahubbd.salesmanchatbot.online') ||
+                          audioUrl.includes('/api/files/');
+        
+        if (isWahaUrl) {
+            headers['X-Api-Key'] = WAHA_API_KEY;
+        } else if (audioUrl.includes('graph.facebook.com') && config.page_access_token) {
+            headers['Authorization'] = `Bearer ${config.page_access_token}`;
+        }
 
         const response = await axios.get(audioUrl, { responseType: 'arraybuffer', headers, validateStatus: s => s === 200 });
         audioBuffer = Buffer.from(response.data);
@@ -1913,13 +1920,13 @@ async function transcribeAudio(audioUrl, config) {
         
         // Map to Gemini-supported MIME types
         if (contentType.includes('opus') || contentType.includes('ogg')) mimeType = 'audio/ogg';
-        else if (contentType.includes('mp3') || contentType.includes('mpeg')) mimeType = 'audio/mp3';
+        else if (contentType.includes('mp3') || contentType.includes('mpeg')) mimeType = 'audio/mpeg';
         else if (contentType.includes('wav')) mimeType = 'audio/wav';
         else if (contentType.includes('aac') || contentType.includes('mp4') || contentType.includes('m4a')) mimeType = 'audio/mp4';
         else {
             // Fallback: Check URL extension if Content-Type is generic/unknown
             if (audioUrl.includes('.mp4') || audioUrl.includes('.aac') || audioUrl.includes('.m4a')) mimeType = 'audio/mp4';
-            else if (audioUrl.includes('.mp3')) mimeType = 'audio/mp3';
+            else if (audioUrl.includes('.mp3')) mimeType = 'audio/mpeg';
             else if (audioUrl.includes('.wav')) mimeType = 'audio/wav';
             else mimeType = 'audio/ogg'; // Default safe assumption
         }
@@ -1940,8 +1947,11 @@ async function transcribeAudio(audioUrl, config) {
             }
         }
     } catch (e) {
-        console.error(`[Audio] Download Failed:`, e.message);
-        return "[Audio Download Failed]";
+        console.error(`[Audio] Download Failed for ${audioUrl}:`, e.message);
+        if (e.response) {
+             console.error(`[Audio] Download Error Data:`, e.response.status, e.response.data?.toString()?.substring(0, 100));
+        }
+        return `[Audio Download Failed: ${e.message}]`;
     }
 
     // 2. Priority Chain: Own API -> Gemini 2.5 Flash -> Lite -> Groq (Faster)
@@ -1999,7 +2009,7 @@ async function transcribeAudio(audioUrl, config) {
     // User Requirement: "own api er modde defualt chatmodel defualt api asob kisui use kora jabe na"
     if (!userKey) {
         // User Update: Use configured voice model if available
-        let voiceModel = safeConfig.voice_model || safeConfig.audio_model;
+        let voiceModel = safeConfig.voice_model || safeConfig.audio_model || safeConfig.chat_model;
         let provider = safeConfig.ai || safeConfig.operator || 'google';
 
         if (resolved) {
@@ -2116,10 +2126,15 @@ async function transcribeAudio(audioUrl, config) {
                 
                 const url = `${baseUrl}/${modelName}:generateContent?key=${apiKey}`;
                 
+                // Determine Voice Prompt
+                let voicePrompt = "Transcribe this audio. Priority languages: Bangla, then English, then Hindi. Output ONLY the transcription text.";
+                if (config.voice_prompt) voicePrompt = config.voice_prompt;
+                else if (config.page_prompts && config.page_prompts.voice_prompt) voicePrompt = config.page_prompts.voice_prompt;
+
                 const payload = {
                     contents: [{
                         parts: [
-                            { text: "Transcribe this audio. Priority languages: Bangla, then English, then Hindi. Output ONLY the transcription text." },
+                            { text: voicePrompt },
                             { inline_data: { mime_type: mimeType, data: audioBuffer.toString('base64') } }
                         ]
                     }]

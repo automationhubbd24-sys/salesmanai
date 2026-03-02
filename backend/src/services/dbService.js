@@ -756,8 +756,8 @@ async function getWhatsAppConfig(sessionName) {
     }
     if (needsAiUpdate) {
         await query(
-            'UPDATE whatsapp_message_database SET ai_provider = $1, chat_model = $2, cheap_engine = $3 WHERE session_name = $4',
-            [data.ai_provider || data.ai, data.chat_model, data.cheap_engine, sessionName]
+            'UPDATE whatsapp_message_database SET ai_provider = $1, chat_model = $2, voice_model = $3, cheap_engine = $4 WHERE session_name = $5',
+            [data.ai_provider || data.ai, data.chat_model, data.voice_model || null, data.cheap_engine, sessionName]
         );
     }
 

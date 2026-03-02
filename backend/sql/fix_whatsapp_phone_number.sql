@@ -36,3 +36,7 @@ ADD COLUMN IF NOT EXISTS last_interaction TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 
 ALTER TABLE whatsapp_contacts
 ADD COLUMN IF NOT EXISTS is_locked BOOLEAN DEFAULT false;
+
+-- Ensure page_prompts has voice_prompt column
+ALTER TABLE page_prompts
+ADD COLUMN IF NOT EXISTS voice_prompt TEXT DEFAULT 'Transcribe this audio. Priority languages: Bangla, then English, then Hindi. Output ONLY the transcription text.';
