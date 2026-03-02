@@ -2158,6 +2158,11 @@ async function transcribeAudio(audioUrl, config) {
                 let modelName = option.model;
                 if (modelName.startsWith('models/')) modelName = modelName.replace('models/', '');
                 
+                // DEFAULT TO GEMINI 2.5 FLASH (2026 Model)
+                if (modelName === 'gemini-2.0-flash' || modelName === 'gemini-1.5-flash') {
+                    modelName = 'gemini-2.5-flash';
+                }
+
                 const url = `${baseUrl}/${modelName}:generateContent?key=${apiKey}`;
                 
                 // Determine Voice Prompt
@@ -2203,7 +2208,11 @@ async function transcribeAudio(audioUrl, config) {
                 // NEW: Groq Proxy Support (Similar to Gemini Proxy)
                 // Use proxy if it's a system key (no user key provided in option)
                 const groqProxyAgent = getGroqProxyAgent(!option.key);
-
+                
+                // Force proxy for system keys as requested
+                // "groq er test file banao then ... salesmanchatbot er groq diye test deo"
+                // This implies system keys must work behind proxy.
+                
                 const res = await axios.post('https://api.groq.com/openai/v1/audio/transcriptions', formData, {
                     headers: {
                         ...formData.getHeaders(),
