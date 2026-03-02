@@ -181,7 +181,9 @@ const handleWebhook = async (req, res) => {
     if (event === 'message' || event === 'message.any') {
         // --- CHECK FOR ADMIN MESSAGES (Echo from WAHA) ---
     // If the message is fromME (sent by bot/admin from phone), we need to check if it contains lock emojis
-    if (messagePayload.fromMe) {
+    if (payload.fromMe) {
+        const messageText = payload.body || '';
+        const sessionName = session;
         console.log(`[WA] Detected Admin/Bot Message: ${messageText}`);
         // We don't process AI for this, but we MUST check for lock/unlock emojis
         try {
@@ -209,9 +211,11 @@ const handleWebhook = async (req, res) => {
                 
                 // Recipient ID is the User (since fromMe=true, 'to' is the user)
                 // WAHA payload 'to' is the user ID in this case
-                let targetUserId = messagePayload.to;
+                let targetUserId = payload.to;
                 // If 'to' is missing (rare), try to infer from remote
-                if (!targetUserId && messagePayload._data?.to) targetUserId = messagePayload._data.to.remote || messagePayload._data.to;
+                if (!targetUserId && payload._data && payload._data.to) {
+                     targetUserId = payload._data.to.remote || payload._data.to;
+                }
                 
                 if (targetUserId) {
                     // Check Lock
@@ -236,18 +240,19 @@ const handleWebhook = async (req, res) => {
         
         // Save Admin Message to DB (so it appears in conversation)
         if (messageText && messageText.trim().length > 0) {
+             const isGroup = (payload.from || '').includes('-');
              await dbService.saveWhatsAppChat({
                 session_name: sessionName,
                 sender_id: sessionName, // Admin/Bot is sender
-                recipient_id: messagePayload.to, // User is recipient
-                message_id: messageId,
+                recipient_id: payload.to, // User is recipient
+                message_id: messageIdRaw,
                 text: messageText,
                 timestamp: Date.now(),
                 status: 'sent',
                 reply_by: 'admin', // Mark as admin since it's fromMe but not via API
                 is_group: isGroup,
-                group_id: groupId,
-                group_name: groupName
+                group_id: isGroup ? payload.from : null,
+                group_name: isGroup ? (payload.notifyName || 'Group') : null
             });
         }
         return; // STOP here, don't trigger AI
