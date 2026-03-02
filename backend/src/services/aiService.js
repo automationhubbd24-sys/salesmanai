@@ -55,6 +55,18 @@ function getGeminiProxyAgent(baseURL, useProxy = true) {
     }
 }
 
+function getGroqProxyAgent(useProxy = true) {
+    if (!useProxy) return null;
+    const proxyUrl = getNextGeminiProxyUrl();
+    if (!proxyUrl) return null;
+    try {
+        return new HttpsProxyAgent(proxyUrl);
+    } catch (error) {
+        console.warn(`[AI] Groq proxy init failed: ${error.message}`);
+        return null;
+    }
+}
+
 async function convertOggToMp3(inputBuffer) {
     if (!ffmpegPath) return null;
     const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'wa-audio-'));
@@ -2179,12 +2191,17 @@ async function transcribeAudio(audioUrl, config) {
                 });
                 formData.append('model', option.model || 'whisper-large-v3');
 
+                // NEW: Groq Proxy Support (Similar to Gemini Proxy)
+                // Use proxy if it's a system key (no user key provided in option)
+                const groqProxyAgent = getGroqProxyAgent(!option.key);
+
                 const res = await axios.post('https://api.groq.com/openai/v1/audio/transcriptions', formData, {
                     headers: {
                         ...formData.getHeaders(),
                         'Authorization': `Bearer ${apiKey}`
                     },
-                    timeout: 30000 // 30s timeout for audio
+                    timeout: 30000, // 30s timeout for audio
+                    ...(groqProxyAgent ? { httpsAgent: groqProxyAgent, proxy: false } : {})
                 });
 
                 const text = res.data.text;

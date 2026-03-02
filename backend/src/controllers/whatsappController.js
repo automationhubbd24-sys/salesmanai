@@ -847,49 +847,54 @@ async function queueMessage(session, messagePayload) {
 
     // --- SAVE USER MESSAGE TO whatsapp_chats (Immediate - Raw) ---
     // User Requirement: Save User Messages even if Locked
-    try {
-        await dbService.saveWhatsAppChat({
-            session_name: sessionName,
-            sender_id: senderId, // User is the sender (Phone Number)
-            recipient_id: messagePayload.to, // Page is the recipient (Page Number)
-            message_id: messageId,
-            text: messageText,
-            timestamp: Date.now(),
-            status: 'received',
-            reply_by: 'user',
-            is_group: isGroup,
-            group_id: groupId,
-            group_name: groupName
-        });
-        
-        // Save Contact/Lead
-        // Enhanced Name Extraction
-        let pushName = messagePayload.pushName || messagePayload._data?.notifyName || messagePayload.notifyName;
-        
-        // Deep search for name in various WAHA payload structures
-        if (!pushName && messagePayload.sender) {
-             pushName = messagePayload.sender.pushname || messagePayload.sender.name || messagePayload.sender.shortName;
+    // FIX: Only save if text is not empty
+    if (messageText && messageText.trim().length > 0) {
+        try {
+            await dbService.saveWhatsAppChat({
+                session_name: sessionName,
+                sender_id: senderId, // User is the sender (Phone Number)
+                recipient_id: messagePayload.to, // Page is the recipient (Page Number)
+                message_id: messageId,
+                text: messageText,
+                timestamp: Date.now(),
+                status: 'received',
+                reply_by: 'user',
+                is_group: isGroup,
+                group_id: groupId,
+                group_name: groupName
+            });
+            
+            // Save Contact/Lead
+            // Enhanced Name Extraction
+            let pushName = messagePayload.pushName || messagePayload._data?.notifyName || messagePayload.notifyName;
+            
+            // Deep search for name in various WAHA payload structures
+            if (!pushName && messagePayload.sender) {
+                 pushName = messagePayload.sender.pushname || messagePayload.sender.name || messagePayload.sender.shortName;
+            }
+            
+            if (!pushName) pushName = 'Unknown';
+
+            const lidValue = (senderId && senderId.includes('@lid'))
+                ? senderId
+                : (messagePayload._data?.key?.remoteJid && String(messagePayload._data.key.remoteJid).includes('@lid'))
+                    ? messagePayload._data.key.remoteJid
+                    : (messagePayload._data?.key?.remoteJidAlt && String(messagePayload._data.key.remoteJidAlt).includes('@lid'))
+                        ? messagePayload._data.key.remoteJidAlt
+                        : null;
+
+            await dbService.saveWhatsAppContact({
+                session_name: sessionName,
+                phone_number: lockSenderId,
+                name: pushName,
+                lid: lidValue
+            });
+
+        } catch (err) {
+            console.error("Error saving to whatsapp_chats:", err.message);
         }
-        
-        if (!pushName) pushName = 'Unknown';
-
-        const lidValue = (senderId && senderId.includes('@lid'))
-            ? senderId
-            : (messagePayload._data?.key?.remoteJid && String(messagePayload._data.key.remoteJid).includes('@lid'))
-                ? messagePayload._data.key.remoteJid
-                : (messagePayload._data?.key?.remoteJidAlt && String(messagePayload._data.key.remoteJidAlt).includes('@lid'))
-                    ? messagePayload._data.key.remoteJidAlt
-                    : null;
-
-        await dbService.saveWhatsAppContact({
-            session_name: sessionName,
-            phone_number: lockSenderId,
-            name: pushName,
-            lid: lidValue
-        });
-
-    } catch (err) {
-        console.error("Error saving to whatsapp_chats:", err.message);
+    } else {
+        console.log(`[WA] Skipping save for empty/null message ID: ${messageId}`);
     }
 
     // Handover guard: if admin takeover active for this chat, skip
