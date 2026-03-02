@@ -4,6 +4,19 @@ const keyService = require('../src/services/keyService');
 const dbService = require('../src/services/dbService');
 const authMiddleware = require('../src/middleware/authMiddleware');
 const axios = require('axios');
+const { HttpsProxyAgent } = require('https-proxy-agent');
+
+// --- Proxy Helper ---
+function getProxyUrl() {
+    const proxyUrl = process.env.BRIGHT_DATA_PROXY_URL;
+    const user = process.env.BRIGHT_DATA_USER;
+    const pass = process.env.BRIGHT_DATA_PASS;
+    if (!proxyUrl || !user || !pass) return null;
+    
+    // Rotation using random session ID
+    const session = `sess_${Math.floor(Math.random() * 99999)}`;
+    return `http://${user}-session-${session}:${pass}@${proxyUrl}`;
+}
 
 function parseStreamError(chunk) {
     if (!chunk) return null;
@@ -173,11 +186,18 @@ router.post('/v1/chat/completions', async (req, res) => {
             for (let attempt = 0; attempt < maxAttempts; attempt++) {
                 const keyData = await keyService.getSmartKey(provider, model);
                 if (!keyData) break;
+
+                const proxy = getProxyUrl();
+                const agent = proxy ? new HttpsProxyAgent(proxy) : undefined;
+
                 const response = await axios.post(targetUrl, req.body, {
                     headers: {
                         'Authorization': `Bearer ${keyData.key}`,
                         'Content-Type': 'application/json'
                     },
+                    httpsAgent: agent,
+                    httpAgent: agent,
+                    proxy: false, // Important for HttpsProxyAgent
                     responseType: 'stream',
                     timeout: 60000,
                     validateStatus: () => true
@@ -227,11 +247,17 @@ router.post('/v1/chat/completions', async (req, res) => {
             });
         }
 
+        const proxy = getProxyUrl();
+        const agent = proxy ? new HttpsProxyAgent(proxy) : undefined;
+
         const response = await axios.post(targetUrl, req.body, {
             headers: {
                 'Authorization': `Bearer ${keyData.key}`,
                 'Content-Type': 'application/json'
             },
+            httpsAgent: agent,
+            httpAgent: agent,
+            proxy: false, // Important for HttpsProxyAgent
             responseType: 'json',
             timeout: 60000
         });
