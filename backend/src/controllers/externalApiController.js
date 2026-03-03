@@ -258,6 +258,11 @@ exports.handleChatCompletion = async (req, res) => {
 
         // Usage is now logged inside aiService.js to unify all consumption tracking.
 
+        // --- SAFETY FILTER: Remove Internal Tags like [SAVE_ORDER] ---
+        if (aiText && typeof aiText === 'string') {
+            aiText = aiText.replace(/\[SAVE_ORDER:[\s\S]*?\]/g, '').trim();
+        }
+
         // 6. Return Response
         const responseId = `chatcmpl-${Date.now()}`;
         const created = Math.floor(Date.now() / 1000);

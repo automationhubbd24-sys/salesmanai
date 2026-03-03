@@ -1102,6 +1102,13 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
 
         // 6. Send Reply (Text + Images)
         let replyText = aiResponse.reply;
+        
+        // --- SAFETY FILTER: Remove Internal Tags like [SAVE_ORDER] ---
+        // This ensures the user never sees technical JSON or internal commands.
+        if (replyText && typeof replyText === 'string') {
+            replyText = replyText.replace(/\[SAVE_ORDER:[\s\S]*?\]/g, '').trim();
+        }
+
         const originalReply = replyText;
 
         if (replyText == null) {

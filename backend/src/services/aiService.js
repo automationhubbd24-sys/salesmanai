@@ -1677,6 +1677,22 @@ Reply naturally in PLAIN TEXT. Use tools when needed.`;
                         parsed2.reply = "আমি আপনার খোঁজা পণ্যগুলো পেয়েছি। নিচে দেখুন:"; 
                     }
 
+                    // --- SAFETY FILTER: REMOVE [SAVE_ORDER] TAG FOR EXTERNAL USERS ---
+                    // This tag is only for internal Controller processing.
+                    // The Controller (externalApiController or webhook) must extract it, process it, and then STRIP it before sending to user.
+                    // However, to be safe, we can leave it here because the Controller is responsible for handling it.
+                    // BUT, the user issue is that the Controller isn't stripping it.
+                    // So we will NOT strip it here in aiService, because aiService returns the raw data for the Controller to use.
+                    // The fix should be in the Controller or Webhook handler.
+                    
+                    // WAIT: If we are using 'salesmanchatbot' model via Own API, this aiService is called directly by externalApiController.
+                    // externalApiController just forwards the reply.
+                    // So we MUST return the tag so externalApiController can see it?
+                    // YES.
+                    // But then externalApiController must remove it.
+                    
+                    // Let's look at externalApiController.js...
+
                     // IMAGE INJECTION LOGIC (STRICT TAG-BASED ONLY)
                     const mentionedImages = [];
                     let replyText = parsed2.reply || "";
