@@ -30,6 +30,10 @@ export default function MessengerOrderTrackingPage() {
   const [date, setDate] = useState<Date | undefined>(new Date());
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const lastFetchParams = useRef("");
+  const lastFetchAt = useRef(0);
+  const ordersRef = useRef<any[]>([]);
+  const requestIdRef = useRef(0);
+  const inFlightRef = useRef<AbortController | null>(null);
 
   const handleCopy = (order: any) => {
     const textToCopy = `Product: ${order.product_name || 'N/A'}
@@ -45,6 +49,10 @@ Phone: ${order.number || 'N/A'}`;
     });
   };
 
+  useEffect(() => {
+    ordersRef.current = orders;
+  }, [orders]);
+
   const fetchOrders = useCallback(async (showLoading = true) => {
     const token = localStorage.getItem("auth_token");
     const activePageId = localStorage.getItem("active_fb_page_id");
@@ -57,6 +65,8 @@ Phone: ${order.number || 'N/A'}`;
 
     if (showLoading) setOrderLoading(true);
     
+    let requestId = 0;
+    let controller: AbortController | null = null;
     try {
       const params = new URLSearchParams();
       params.set("page_id", activePageId);
@@ -86,16 +96,24 @@ Phone: ${order.number || 'N/A'}`;
       }
 
       const currentParams = params.toString();
-      // Skip if params haven't changed
-      if (currentParams === lastFetchParams.current && orders.length > 0) {
+      const now = Date.now();
+      if (currentParams === lastFetchParams.current && ordersRef.current.length > 0 && now - lastFetchAt.current < 1500) {
         setOrderLoading(false);
         return;
       }
+
+      if (inFlightRef.current) {
+        inFlightRef.current.abort();
+      }
+      controller = new AbortController();
+      inFlightRef.current = controller;
+      requestId = ++requestIdRef.current;
 
       const res = await fetch(`${BACKEND_URL}/api/messenger/orders?${currentParams}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
+        signal: controller.signal
       });
 
       if (!res.ok) throw new Error("Failed to fetch orders");
@@ -104,12 +122,19 @@ Phone: ${order.number || 'N/A'}`;
       
       // Update last fetch params after success
       lastFetchParams.current = currentParams;
+      lastFetchAt.current = Date.now();
       setOrders(Array.isArray(data) ? data : []);
     } catch (error) {
+      if ((error as any)?.name === "AbortError") return;
       console.error("Error fetching orders:", error);
       toast.error("Failed to fetch orders");
     } finally {
-      setOrderLoading(false);
+      if (requestIdRef.current === requestId) {
+        setOrderLoading(false);
+        if (inFlightRef.current === controller) {
+          inFlightRef.current = null;
+        }
+      }
     }
   }, [dateFilter, date]);
 

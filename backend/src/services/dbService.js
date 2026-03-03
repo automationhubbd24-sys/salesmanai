@@ -356,6 +356,26 @@ async function initTables() {
         `);
         console.log("[DB] 'fb_contacts' table/column checked.");
 
+        await query(`
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='allow_description') THEN
+                    ALTER TABLE fb_message_database ADD COLUMN allow_description BOOLEAN DEFAULT FALSE;
+                END IF;
+            END $$;
+        `);
+        console.log("[DB] 'fb_message_database.allow_description' column checked.");
+
+        await query(`
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='allow_description') THEN
+                    ALTER TABLE products ADD COLUMN allow_description BOOLEAN DEFAULT FALSE;
+                END IF;
+            END $$;
+        `);
+        console.log("[DB] 'products.allow_description' column checked.");
+
         // Error Logs Table
         await query(`
             CREATE TABLE IF NOT EXISTS error_logs (
@@ -2298,7 +2318,8 @@ async function createProduct(productData) {
         'allowed_page_ids',
         'keywords',
         'is_combo',
-        'combo_items'
+        'combo_items',
+        'allow_description'
     ];
 
     const values = [];
@@ -2598,7 +2619,7 @@ async function searchProducts(userId, queryText, pageId = null) {
         ctx1.params.push(`%${cleanQuery}%`, `%${cleanQuery}%`, `%${cleanQuery}%`, `%${cleanQuery}%`, `%${cleanQuery}%`);
 
         const exactResult = await query(
-            `SELECT name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items
+            `SELECT name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description
              FROM products
              WHERE ${exactWhere}
              LIMIT 5`,
@@ -2640,7 +2661,7 @@ async function searchProducts(userId, queryText, pageId = null) {
             const fuzzyWhere = `${ctx2.where} AND (${cond})`;
 
             const fuzzyResult = await query(
-                `SELECT name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items
+                `SELECT name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description
                  FROM products
                  WHERE ${fuzzyWhere}
                  LIMIT 5`,

@@ -463,7 +463,8 @@ exports.createProduct = async (req, res) => {
             allowed_page_ids: allowedPages ? JSON.stringify(allowedPages) : null,
             keywords,
             is_combo: req.body.is_combo === 'true' || req.body.is_combo === true,
-            combo_items: req.body.combo_items || '[]'
+            combo_items: req.body.combo_items || '[]',
+            allow_description: req.body.allow_description === 'true' || req.body.allow_description === true
         });
 
         res.status(201).json(product);
@@ -706,6 +707,7 @@ exports.updateProduct = async (req, res) => {
         if (req.body.is_active) updates.is_active = req.body.is_active === 'true' || req.body.is_active === true;
         if (imageUrl) updates.image_url = imageUrl;
         if (req.body.is_combo !== undefined) updates.is_combo = req.body.is_combo === 'true' || req.body.is_combo === true;
+        if (req.body.allow_description !== undefined) updates.allow_description = req.body.allow_description === 'true' || req.body.allow_description === true;
         if (req.body.combo_items !== undefined) updates.combo_items = req.body.combo_items;
 
         if (req.body.variants) {

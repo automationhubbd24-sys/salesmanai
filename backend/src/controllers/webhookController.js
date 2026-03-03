@@ -995,9 +995,10 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                     promptProductContext = "\n[Instruction Products]\n";
                     promptProducts.forEach((p, i) => {
                         const priceDisplay = p.price ? `${p.price} ${p.currency || 'BDT'}` : 'N/A';
-                        const descDisplay = p.description ? p.description.replace(/\n/g, ' ').substring(0, 200) : 'N/A';
                         const imgDisplay = p.image_url || 'N/A';
-                        promptProductContext += `Item ${i + 1}: ${p.name} | Price: ${priceDisplay} | Image URL: ${imgDisplay} | Desc: ${descDisplay}\n`;
+                        const descDisplay = p.description ? p.description.replace(/\n/g, ' ').substring(0, 200) : '';
+                        const descPart = p.allow_description && descDisplay ? ` | Desc: ${descDisplay}` : '';
+                        promptProductContext += `Item ${i + 1}: ${p.name} | Price: ${priceDisplay} | Image URL: ${imgDisplay}${descPart}\n`;
                     });
                     promptProductContext += "[End of Instruction Products]\n";
                 }
@@ -1021,7 +1022,8 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 `   - Fill in as much info as you can from the current conversation history (product, price, address).\n` +
                 `   - If any info is missing (e.g. you have the number but not the location), leave those fields empty in the JSON and politely ask the customer for them in your main text.\n` +
                 `3) [IMAGES]: Use the STRICT format for any product images you send: IMAGE: Title | URL. DO NOT use [Image] placeholders.\n` +
-                `4) Always keep the final text natural, human-sounding, and coherent. Never expose raw internal tags to the customer.\n`;
+                `4) [DESC RULE]: Only use Desc when it is explicitly provided in [Instruction Products]. Never repeat internal notes.\n` +
+                `5) Always keep the final text natural, human-sounding, and coherent. Never expose raw internal tags to the customer.\n`;
         }
         // --------------------------------------------------------------------
 

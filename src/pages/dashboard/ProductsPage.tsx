@@ -36,6 +36,7 @@ interface Product {
     allowed_page_ids?: string[];
     is_combo?: boolean;
     combo_items?: string[];
+    allow_description?: boolean;
 }
 
 export default function ProductsPage() {
@@ -110,6 +111,7 @@ export default function ProductsPage() {
     const [isCombo, setIsCombo] = useState(false);
     const [comboItems, setComboItems] = useState<string[]>([]);
     const [comboItemInput, setComboItemInput] = useState("");
+    const [allowDescription, setAllowDescription] = useState(false);
 
     const [variants, setVariants] = useState<Variant[]>([
         { name: "Default", price: "0", currency: "BDT", available: true }
@@ -421,6 +423,7 @@ export default function ProductsPage() {
         setIsCombo(!!product.is_combo);
         setComboItems(Array.isArray(product.combo_items) ? product.combo_items : []);
         setComboItemInput("");
+        setAllowDescription(product.allow_description === true);
         
         if (product.variants && product.variants.length > 0) {
             setVariants(product.variants);
@@ -453,6 +456,7 @@ export default function ProductsPage() {
             formData.append("allowed_page_ids", JSON.stringify(allowedPages));
             formData.append("is_combo", String(isCombo));
             formData.append("combo_items", JSON.stringify(comboItems));
+            formData.append("allow_description", String(allowDescription));
 
             let pageId: string | null = null;
             if (typeof window !== "undefined") {
@@ -616,6 +620,39 @@ export default function ProductsPage() {
         }
     };
 
+    const handleToggleDescription = async (product: Product, enabled: boolean) => {
+        if (!userId) return;
+        try {
+            setIsSubmitting(true);
+            const token = localStorage.getItem("auth_token");
+            const params = new URLSearchParams();
+            params.set("user_id", userId);
+            const formData = new FormData();
+            formData.append("allow_description", String(enabled));
+
+            const res = await fetch(`${BACKEND_URL}/api/products/${product.id}?${params.toString()}`, {
+                method: "PUT",
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
+                body: formData
+            });
+
+            const data = await res.json().catch(() => null);
+            if (!res.ok) {
+                toast.error(data?.error || "Failed to update product");
+                return;
+            }
+
+            setProducts((prev) =>
+                prev.map((p) => (p.id === product.id ? { ...p, allow_description: enabled } : p))
+            );
+        } catch (error) {
+            console.error(error);
+            toast.error("Error updating product");
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
     const resetForm = () => {
         setEditProductId(null);
         setProductName("");
@@ -636,6 +673,7 @@ export default function ProductsPage() {
         setComboItemInput("");
         setVariants([{ name: "Default", price: "0", currency: "USD", available: true }]);
         setShowVariants(false);
+        setAllowDescription(false);
     };
 
     if (loading) {
@@ -805,6 +843,13 @@ export default function ProductsPage() {
                                         value={productDesc}
                                         onChange={(e) => setProductDesc(e.target.value)}
                                     />
+                                </div>
+                                <div className="flex items-center justify-between rounded-md border border-white/10 bg-black/40 px-3 py-2">
+                                    <div className="space-y-0.5">
+                                        <Label className="text-sm font-medium">Allow Description in Chat</Label>
+                                        <p className="text-[10px] text-muted-foreground">Enable to allow this product description to be sent.</p>
+                                    </div>
+                                    <Switch checked={allowDescription} onCheckedChange={setAllowDescription} className="data-[state=checked]:bg-[#00ff88]" />
                                 </div>
                                 <div className="grid gap-2">
                                     <Label htmlFor="keywords">AI Keywords (Label Text)</Label>
@@ -1208,6 +1253,7 @@ export default function ProductsPage() {
                             <TableHead className="w-[80px]">Image</TableHead>
                             <TableHead>Product Name</TableHead>
                             <TableHead className="hidden md:table-cell">Description</TableHead>
+                            <TableHead className="hidden md:table-cell">Desc</TableHead>
                             <TableHead>Price</TableHead>
                             <TableHead>Stock</TableHead>
                             <TableHead className="text-right">Actions</TableHead>
@@ -1216,7 +1262,7 @@ export default function ProductsPage() {
                     <TableBody>
                         {products.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={6} className="text-center py-10 text-muted-foreground">
+                                <TableCell colSpan={7} className="text-center py-10 text-muted-foreground">
                                     No products found. Add your first product or import from WooCommerce.
                                 </TableCell>
                             </TableRow>
@@ -1255,6 +1301,13 @@ export default function ProductsPage() {
                                         <p className="truncate text-muted-foreground text-sm">
                                             {product.description || '-'}
                                         </p>
+                                    </TableCell>
+                                    <TableCell className="hidden md:table-cell">
+                                        <Switch
+                                            checked={product.allow_description === true}
+                                            onCheckedChange={(v) => handleToggleDescription(product, v)}
+                                            className="data-[state=checked]:bg-[#00ff88]"
+                                        />
                                     </TableCell>
                                     <TableCell>
                                         <div className="font-medium">
