@@ -553,6 +553,8 @@ async function getSmartKey(provider, model = 'default') {
 // Let's ensure it's called safely.
 
 if (typeof updateKeyCache === 'function') {
+    // TRIGGER DEPLOYMENT: Added timestamp log
+    console.log(`[KeyService] Initializing Key Cache at ${new Date().toISOString()}...`);
     updateKeyCache(true).catch(err => console.error("Initial key cache update failed:", err));
 } else {
     console.error("CRITICAL: updateKeyCache function is missing!");
