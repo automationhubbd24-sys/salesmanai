@@ -185,14 +185,75 @@ const handleWebhook = async (req, res) => {
         const messageText = payload.body || '';
         const sessionName = session;
         console.log(`[WA] Detected Admin/Bot Message: ${messageText}`);
-        // We don't process AI for this, but we MUST check for lock/unlock emojis
+
+        if (botMessageIds.has(messageIdRaw)) {
+            console.log(`[WA] Ignoring fromMe message (BotID Match): ${messageIdRaw}`);
+            botMessageIds.delete(messageIdRaw);
+            return;
+        }
+
+        const existingChat = await dbService.getWhatsAppChatById(messageIdRaw);
+        if (existingChat && (existingChat.reply_by === 'bot' || existingChat.reply_by === 'system')) {
+            console.log(`[WA] Skipping Admin save (Bot/System Echo): ${messageIdRaw}`);
+            return;
+        }
+
+        let recipientId = payload.to;
+        if (!recipientId && payload._data && payload._data.to) {
+            recipientId = payload._data.to.remote || payload._data.to;
+        }
+        if (!recipientId) {
+            recipientId = payload.from;
+        }
+
+        const normalizedIncoming = normalizeText(messageText);
+        if (recipientId && normalizedIncoming) {
+            const keysToCheck = [recipientId];
+            if (recipientId.includes('@')) keysToCheck.push(recipientId.split('@')[0]);
+            let recentReplies = [];
+            for (const key of keysToCheck) {
+                const found = recentBotReplies.get(key);
+                if (found && Array.isArray(found)) {
+                    recentReplies = found;
+                    break;
+                }
+            }
+            const matchedRecent = recentReplies.find(reply => {
+                const timeDiff = Date.now() - reply.timestamp;
+                if (timeDiff >= 20000) return false;
+                const stored = reply.text;
+                return normalizedIncoming === stored || 
+                       (normalizedIncoming.length > 5 && normalizedIncoming.includes(stored)) || 
+                       (stored.length > 5 && stored.includes(normalizedIncoming));
+            });
+            if (matchedRecent) {
+                console.log(`[WA] Ignoring fromMe message (Text Match): "${messageText.substring(0,30)}..."`);
+                return;
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            try {
+                const lastMessages = await dbService.getLastNWhatsAppMessages(sessionName, recipientId, 20);
+                const isEcho = lastMessages.some(msg => {
+                    if (msg.reply_by !== 'bot') return false;
+                    const dbBody = normalizeText(msg.text);
+                    return dbBody === normalizedIncoming;
+                });
+                if (isEcho) {
+                    console.log(`[WA] Ignoring fromMe message (DB Echo Match): "${messageText.substring(0,30)}..."`);
+                    return;
+                }
+            } catch (err) {
+                console.warn(`[WA] DB Echo check failed: ${err.message}`);
+            }
+        }
+
         try {
             const config = await dbService.getWhatsAppConfig(sessionName);
             if (config) {
                 const prompts = config.page_prompts || {};
                 const normalizeEmojiText = (str) => (str || '').replace(/\uFE0F/g, '').normalize('NFC');
                 
-                // Simplify Lock System: ANY configured emoji triggers the action
                 const lockList = [
                     prompts.block_emoji, 
                     prompts.lock_emojis, 
@@ -209,24 +270,18 @@ const handleWebhook = async (req, res) => {
 
                 const cleanContent = normalizeEmojiText(messageText);
                 
-                // Recipient ID is the User (since fromMe=true, 'to' is the user)
-                // WAHA payload 'to' is the user ID in this case
                 let targetUserId = payload.to;
-                // If 'to' is missing (rare), try to infer from remote
                 if (!targetUserId && payload._data && payload._data.to) {
-                     targetUserId = payload._data.to.remote || payload._data.to;
+                    targetUserId = payload._data.to.remote || payload._data.to;
                 }
                 
                 if (targetUserId) {
-                    // Check Lock
                     if (lockList.some(e => cleanContent.includes(e))) {
                         console.log(`[WA] Admin sent LOCK emoji to ${targetUserId}`);
                         await dbService.toggleWhatsAppLock(sessionName, targetUserId, true);
                         const chatKey = `${sessionName}_${targetUserId}`;
-                        handoverMap.set(chatKey, Date.now() + 24 * 60 * 60 * 1000); // 24H Lock
-                    }
-                    // Check Unlock
-                    else if (unlockList.some(e => cleanContent.includes(e))) {
+                        handoverMap.set(chatKey, Date.now() + 24 * 60 * 60 * 1000);
+                    } else if (unlockList.some(e => cleanContent.includes(e))) {
                         console.log(`[WA] Admin sent UNLOCK emoji to ${targetUserId}`);
                         await dbService.toggleWhatsAppLock(sessionName, targetUserId, false);
                         const chatKey = `${sessionName}_${targetUserId}`;
@@ -239,13 +294,8 @@ const handleWebhook = async (req, res) => {
         }
         
         if (messageText && messageText.trim().length > 0) {
-             const existingChat = await dbService.getWhatsAppChatById(messageIdRaw);
-             if (existingChat && (existingChat.reply_by === 'bot' || existingChat.reply_by === 'system')) {
-                 console.log(`[WA] Skipping Admin save (Bot/System Echo): ${messageIdRaw}`);
-                 return;
-             }
-             const isGroup = (payload.from || '').includes('-');
-             await dbService.saveWhatsAppChat({
+            const isGroup = (payload.from || '').includes('-');
+            await dbService.saveWhatsAppChat({
                 session_name: sessionName,
                 sender_id: sessionName,
                 recipient_id: payload.to,
@@ -259,7 +309,7 @@ const handleWebhook = async (req, res) => {
                 group_name: isGroup ? (payload.notifyName || 'Group') : null
             });
         }
-        return; // STOP here, don't trigger AI
+        return;
     }
 
     // --- FAILSAFE ECHO GUARD (Even if fromMe is false) ---
