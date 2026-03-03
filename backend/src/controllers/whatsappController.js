@@ -1805,8 +1805,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                      let lastUnblockTime = 0;
 
                      for (const msg of rawHistory) {
-                         // Only check Admin/System/Page messages
-                         if (msg.reply_by === 'admin' || msg.reply_by === 'system' || msg.reply_by === 'api') {
+                        if (msg.reply_by === 'admin' || msg.reply_by === 'system' || msg.reply_by === 'api' || msg.reply_by === 'bot') {
                             const content = (msg.text || '').trim();
                             const cleanContent = normalizeEmojiText(content);
                              const msgTime = new Date(msg.timestamp).getTime();
@@ -1962,6 +1961,58 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
             return;
         }
         
+        if (finalReplyText) {
+            try {
+                const prompts = pageConfig.page_prompts || {};
+                const normalizeEmojiText = (str) => (str || '').replace(/\uFE0F/g, '').normalize('NFC');
+                const cleanText = normalizeEmojiText(finalReplyText);
+
+                const lockList = [
+                    prompts.block_emoji, 
+                    prompts.lock_emojis, 
+                    pageConfig.lock_emojis,
+                    pageConfig.block_emoji
+                ].filter(Boolean).join(' ').split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
+
+                const unlockList = [
+                    prompts.unblock_emoji, 
+                    prompts.unlock_emojis, 
+                    pageConfig.unlock_emojis,
+                    pageConfig.unblock_emoji
+                ].filter(Boolean).join(' ').split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
+
+                let isLocked = false;
+                let isUnlocked = false;
+
+                for (const e of lockList) {
+                    if (cleanText.includes(e)) {
+                        isLocked = true;
+                        break;
+                    }
+                }
+
+                if (!isLocked) {
+                    for (const e of unlockList) {
+                        if (cleanText.includes(e)) {
+                            isUnlocked = true;
+                            break;
+                        }
+                    }
+                }
+
+                const chatKey = `${sessionName}_${effectiveSenderId}`;
+                if (isLocked) {
+                    handoverMap.set(chatKey, Date.now() + 60 * 60 * 1000);
+                    await dbService.toggleWhatsAppLock(sessionName, effectiveSenderId, true);
+                } else if (isUnlocked) {
+                    handoverMap.delete(chatKey);
+                    await dbService.toggleWhatsAppLock(sessionName, effectiveSenderId, false);
+                }
+            } catch (e) {
+                console.warn(`[WA] Bot emoji lock check failed: ${e.message}`);
+            }
+        }
+
         // 5. Send Reply
         console.log(`[WA] Sending Reply: "${finalReplyText.substring(0, 50)}..."`);
         
