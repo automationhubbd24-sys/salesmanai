@@ -270,10 +270,7 @@ const handleWebhook = async (req, res) => {
 
                 const cleanContent = normalizeEmojiText(messageText);
                 
-                let targetUserId = payload.to;
-                if (!targetUserId && payload._data && payload._data.to) {
-                    targetUserId = payload._data.to.remote || payload._data.to;
-                }
+                let targetUserId = recipientId;
                 
                 if (targetUserId) {
                     if (lockList.some(e => cleanContent.includes(e))) {
@@ -298,7 +295,7 @@ const handleWebhook = async (req, res) => {
             await dbService.saveWhatsAppChat({
                 session_name: sessionName,
                 sender_id: sessionName,
-                recipient_id: payload.to,
+                recipient_id: recipientId || payload.to || payload.from || null,
                 message_id: messageIdRaw,
                 text: messageText,
                 timestamp: Date.now(),
