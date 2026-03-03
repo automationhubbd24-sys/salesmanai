@@ -155,12 +155,26 @@ function report429(modelName, apiKey = null) {
         }
         
         state.last_429 = now;
-        keyLockState.set(apiKey, state);
-        return; // DONE. Do not lock the whole model.
-    }
+    keyLockState.set(apiKey, state);
+    return; // DONE. Do not lock the whole model.
+}
 
-    // 2. Fallback: If no API Key provided, lock the WHOLE Model (Legacy/Emergency)
-    if (!modelName) return;
+// Check if a model is globally locked
+function isModelLocked(modelName) {
+    if (!modelName) return false;
+    const state = modelLockMap.get(modelName);
+    if (!state) return false;
+    
+    // Check if lock expired
+    if (Date.now() > state.expiry) {
+        modelLockMap.delete(modelName); // Auto-cleanup
+        return false;
+    }
+    return true;
+}
+
+// 2. Fallback: If no API Key provided, lock the WHOLE Model (Legacy/Emergency)
+if (!modelName) return;
     const state = modelLockMap.get(modelName) || { expiry: 0, strikes: 0 };
     
     if (state.strikes === 0) {
