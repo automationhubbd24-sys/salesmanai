@@ -697,10 +697,10 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         // Determine History Limit (User Setting or Default 10)
         // "check_conversion" is the setting for Context Memory Limit (1-50)
         // User Requirement: This limit applies to BOTH text and image memory.
-        let historyLimit = 10; // Default safe limit
+        let historyLimit = 20; // Default safe limit
         if (pagePrompts && pagePrompts.check_conversion) {
             historyLimit = parseInt(pagePrompts.check_conversion, 10);
-            if (isNaN(historyLimit) || historyLimit < 1) historyLimit = 10;
+            if (isNaN(historyLimit) || historyLimit < 1) historyLimit = 20;
         }
         console.log(`[Context] Dynamic History Limit: ${historyLimit} (Source: ${pagePrompts ? 'DB' : 'Default'})`);
 
@@ -922,14 +922,11 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         // -------------------------
         
     let effectiveHistory = history;
-    // User Setting: History Limit
-    // Default to 10 to save tokens.
-    const userHistoryLimit = 10;
-    
-    if (effectiveHistory.length > userHistoryLimit) {
-        effectiveHistory = effectiveHistory.slice(effectiveHistory.length - userHistoryLimit);
+    // Respect the dynamic history limit fetched above
+    if (effectiveHistory.length > historyLimit) {
+        effectiveHistory = effectiveHistory.slice(effectiveHistory.length - historyLimit);
     }
-    console.log(`[Context] Using last ${effectiveHistory.length} messages (Limit: ${userHistoryLimit})`);
+    console.log(`[Context] Using last ${effectiveHistory.length} messages (Limit: ${historyLimit})`);
 
         // --- STOP EMOJI CHECK (Dynamic Logic via Graph API) ---
         // REMOVED: This is now handled permanently via DB status in the echo handling above.

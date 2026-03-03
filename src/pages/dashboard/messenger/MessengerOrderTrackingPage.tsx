@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -29,6 +29,7 @@ export default function MessengerOrderTrackingPage() {
   const [dateFilter, setDateFilter] = useState<'today' | 'yesterday' | 'custom' | 'all'>('today');
   const [date, setDate] = useState<Date | undefined>(new Date());
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const lastFetchParams = useRef("");
 
   const handleCopy = (order: any) => {
     const textToCopy = `Product: ${order.product_name || 'N/A'}
@@ -45,16 +46,18 @@ Phone: ${order.number || 'N/A'}`;
   };
 
   const fetchOrders = useCallback(async (showLoading = true) => {
-    if (showLoading) setOrderLoading(true);
-    try {
-      const token = localStorage.getItem("auth_token");
-      const activePageId = localStorage.getItem("active_fb_page_id");
-      if (!token || !activePageId) {
-        setOrders([]);
-        setOrderLoading(false);
-        return;
-      }
+    const token = localStorage.getItem("auth_token");
+    const activePageId = localStorage.getItem("active_fb_page_id");
+    
+    if (!token || !activePageId) {
+      setOrders([]);
+      setOrderLoading(false);
+      return;
+    }
 
+    if (showLoading) setOrderLoading(true);
+    
+    try {
       const params = new URLSearchParams();
       params.set("page_id", activePageId);
 
@@ -82,17 +85,25 @@ Phone: ${order.number || 'N/A'}`;
         params.set("to", customEnd.getTime().toString());
       }
 
-      const res = await fetch(`${BACKEND_URL}/api/messenger/orders?${params.toString()}`, {
-              headers: {
-                  Authorization: `Bearer ${token}`,
-              },
-          });
-
-      if (!res.ok) {
-        throw new Error("Failed to fetch orders");
+      const currentParams = params.toString();
+      // Skip if params haven't changed
+      if (currentParams === lastFetchParams.current && orders.length > 0) {
+        setOrderLoading(false);
+        return;
       }
 
+      const res = await fetch(`${BACKEND_URL}/api/messenger/orders?${currentParams}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) throw new Error("Failed to fetch orders");
+
       const data = await res.json();
+      
+      // Update last fetch params after success
+      lastFetchParams.current = currentParams;
       setOrders(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error("Error fetching orders:", error);
@@ -102,22 +113,29 @@ Phone: ${order.number || 'N/A'}`;
     }
   }, [dateFilter, date]);
 
+  // Combined effect for initial fetch and filter changes
   useEffect(() => {
-    fetchOrders(orders.length === 0);
+    // Only fetch if we have an active page ID
+    const activePageId = localStorage.getItem("active_fb_page_id");
+    if (activePageId) {
+      fetchOrders(true);
+    }
   }, [fetchOrders]);
 
+  // Separate effect for event listeners to avoid re-adding them unnecessarily
   useEffect(() => {
     const handlePageChange = (e: any) => {
-        if (e.type === 'storage' && e.key !== 'active_fb_page_id') return;
-        fetchOrders(true);
+      // Only trigger if the actual page ID in storage changed
+      if (e.type === 'storage' && e.key !== 'active_fb_page_id') return;
+      fetchOrders(true);
     };
 
     window.addEventListener("storage", handlePageChange);
     window.addEventListener("db-connection-changed", handlePageChange);
 
     return () => {
-        window.removeEventListener("storage", handlePageChange);
-        window.removeEventListener("db-connection-changed", handlePageChange);
+      window.removeEventListener("storage", handlePageChange);
+      window.removeEventListener("db-connection-changed", handlePageChange);
     };
   }, [fetchOrders]);
 
