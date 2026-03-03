@@ -2,6 +2,7 @@ const keyService = require('./keyService');
 const dbService = require('./dbService'); // Added for Product Search Tool
 const commandApiService = require('./commandApiService'); // Command API Table Strategy
 const axios = require('axios');
+const { HttpsProxyAgent } = require('https-proxy-agent');
 const OpenAI = require('openai');
 const { GoogleGenerativeAI, GoogleAICacheManager } = require("@google/generative-ai");
 const FormData = require('form-data');
@@ -17,12 +18,41 @@ try {
     ffmpegPath = null;
 }
 
+function getProxyUrl() {
+    const proxyUrl = process.env.BRIGHT_DATA_PROXY_URL;
+    const user = process.env.BRIGHT_DATA_USER;
+    const pass = process.env.BRIGHT_DATA_PASS;
+    if (!proxyUrl || !user || !pass) return null;
+    
+    // Rotation using random session ID for better stability
+    const session = `sess_${Math.floor(Math.random() * 99999)}`;
+    const url = `http://${user}-session-${session}:${pass}@${proxyUrl}`;
+    // console.log(`[Proxy] Generated session URL: ${user}-session-${session}`);
+    return url;
+}
+
 function getGeminiProxyAgent(baseURL, useProxy = true) {
-    return null;
+    if (!useProxy) return null;
+    const proxy = getProxyUrl();
+    if (!proxy) return null;
+    try {
+        return new HttpsProxyAgent(proxy);
+    } catch (e) {
+        console.warn(`[Proxy] Failed to create Gemini Proxy Agent: ${e.message}`);
+        return null;
+    }
 }
 
 function getGroqProxyAgent(useProxy = true) {
-    return null;
+    if (!useProxy) return null;
+    const proxy = getProxyUrl();
+    if (!proxy) return null;
+    try {
+        return new HttpsProxyAgent(proxy);
+    } catch (e) {
+        console.warn(`[Proxy] Failed to create Groq Proxy Agent: ${e.message}`);
+        return null;
+    }
 }
 
 async function convertOggToMp3(inputBuffer) {
@@ -1950,10 +1980,14 @@ Rules:
             const useGeminiProxy = pageConfig?.cheap_engine !== false;
             const geminiProxyAgent = getGeminiProxyAgent(url, useGeminiProxy);
             const visionResponse = await axios.post(url, payload, {
-                headers: { 'Content-Type': 'application/json' },
-                timeout: 20000,
-                ...(geminiProxyAgent ? { httpsAgent: geminiProxyAgent, proxy: false } : {})
-            });
+                    headers: { 'Content-Type': 'application/json' },
+                    timeout: 20000,
+                    ...(geminiProxyAgent ? { 
+                        httpsAgent: geminiProxyAgent, 
+                        httpAgent: geminiProxyAgent, 
+                        proxy: false 
+                    } : {})
+                });
 
             result = visionResponse.data?.candidates?.[0]?.content?.parts?.[0]?.text;
             usage = visionResponse.data?.usageMetadata?.totalTokenCount || 0;
@@ -2293,7 +2327,11 @@ async function transcribeAudio(audioUrl, config) {
                 const geminiProxyAgent = getGeminiProxyAgent(url, !option.key);
                 
                 const res = await axios.post(url, payload, {
-                    ...(geminiProxyAgent ? { httpsAgent: geminiProxyAgent, proxy: false } : {})
+                    ...(geminiProxyAgent ? { 
+                        httpsAgent: geminiProxyAgent, 
+                        httpAgent: geminiProxyAgent, 
+                        proxy: false 
+                    } : {})
                 });
 
                 const text = res.data?.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -2335,7 +2373,11 @@ async function transcribeAudio(audioUrl, config) {
                         'Authorization': `Bearer ${apiKey}`
                     },
                     timeout: 30000, // 30s timeout for audio
-                    ...(groqProxyAgent ? { httpsAgent: groqProxyAgent, proxy: false } : {})
+                    ...(groqProxyAgent ? { 
+                        httpsAgent: groqProxyAgent, 
+                        httpAgent: groqProxyAgent, 
+                        proxy: false 
+                    } : {})
                 });
 
                 const text = res.data.text;
