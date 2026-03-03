@@ -236,6 +236,7 @@ Phone: ${order.number || 'N/A'}`;
                               <TableHead>Price</TableHead>
                               <TableHead>Location</TableHead>
                               <TableHead>Customer</TableHead>
+                              <TableHead>Sender ID</TableHead>
                               <TableHead className="w-[50px]"></TableHead>
                           </TableRow>
                       </TableHeader>
@@ -264,6 +265,7 @@ Phone: ${order.number || 'N/A'}`;
                                     </Popover>
                                   </TableCell>
                                   <TableCell>{order.number}</TableCell>
+                                  <TableCell>{order.sender_id}</TableCell>
                                   <TableCell>
                                     <Button
                                       variant="ghost"

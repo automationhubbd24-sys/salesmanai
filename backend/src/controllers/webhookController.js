@@ -1091,6 +1091,64 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             }
         };
 
+        const getHistoryText = (historyList) => {
+            if (!Array.isArray(historyList)) return '';
+            return historyList
+                .map(item => {
+                    if (!item) return '';
+                    if (typeof item === 'string') return item;
+                    if (typeof item.content === 'string') return item.content;
+                    if (typeof item.text === 'string') return item.text;
+                    if (item.message && typeof item.message.content === 'string') return item.message.content;
+                    if (item.message && typeof item.message.text === 'string') return item.message.text;
+                    return '';
+                })
+                .filter(Boolean)
+                .join('\n');
+        };
+
+        const extractHistoryOrder = (historyText) => {
+            const cleanedText = String(historyText || '')
+                .replace(/\*\*/g, '')
+                .replace(/[*_`]/g, '')
+                .replace(/[•·]/g, ' ')
+                .trim();
+            const flatText = cleanedText.replace(/\s+/g, ' ').trim();
+            const normalized = normalizeBanglaDigits(cleanedText);
+            const productMatch = flatText.match(/(?:পণ্যের নাম|প্রোডাক্টের নাম|পণ্য|product name|product)\s*[:ঃ-]?\s*([^\n,।]+)/i);
+            const qtyMatch = normalized.match(/(?:কোয়ান্টিটি|quantity|qty|পরিমাণ)\s*[:ঃ-]?\s*([০-৯\d]+|এক|দুই|তিন|চার|পাঁচ|ছয়|সাত|আট|নয়|দশ)\s*(পিস|টা|টি|বোতল)?/i);
+            const unitMatch = normalized.match(/(\d+)\s*(পিস|টা|টি|বোতল)/i);
+            const totalMatch = normalized.match(/(?:মোট মূল্য|total price|total)\s*[:ঃ-]?\s*([\d,]+)\s*(টাকা)?/i);
+            const priceMatch = normalized.match(/(?:পণ্যের মূল্য|price|amount|মূল্য)\s*[:ঃ-]?\s*([\d,]+)\s*(টাকা)?/i);
+            const nameMatch = flatText.match(/(?:নাম|name)\s*[:ঃ-]?\s*([^\n,।]+)/i);
+            const addrKeywords = ['ঠিকানা','জেলা','থানা','গ্রাম','পোস্ট','বাড়ি','রোড','বাসা','উপজেলা','বিভাগ','ইউনিয়ন','বাজার','এলাকা'];
+            const addressLines = cleanedText
+                .split('\n')
+                .map(l => l.trim())
+                .filter(l => l && addrKeywords.some(k => l.includes(k)));
+            const location = addressLines.join(' ').trim();
+            const bnNumberMap = { এক: '1', দুই: '2', তিন: '3', চার: '4', পাঁচ: '5', ছয়: '6', সাত: '7', আট: '8', নয়: '9', দশ: '10' };
+            let qtyValue = '';
+            let qtyUnit = '';
+            if (qtyMatch) {
+                qtyValue = bnNumberMap[qtyMatch[1]] || qtyMatch[1];
+                qtyUnit = qtyMatch[2] || '';
+            } else if (unitMatch) {
+                qtyValue = unitMatch[1];
+                qtyUnit = unitMatch[2] || '';
+            }
+            const quantity = qtyValue ? `${qtyValue}${qtyUnit ? ` ${qtyUnit}` : ''}`.trim() : '';
+            const priceRaw = totalMatch ? totalMatch[1] : (priceMatch ? priceMatch[1] : null);
+            const price = priceRaw ? String(priceRaw).replace(/,/g, '') : null;
+            return {
+                product_name: productMatch ? productMatch[1].trim() : '',
+                quantity,
+                price,
+                location,
+                name: nameMatch ? nameMatch[1].trim() : ''
+            };
+        };
+
         // --- ZERO COST ORDER TRACKING LOGIC ---
         // If AI detects order details, save to DB immediately.
         // This uses the SAME AI call, so ZERO extra cost.
@@ -1105,24 +1163,28 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                  customerNumber = senderId;
              }
              
-             if (customerNumber) {
-                 await dbService.saveOrderTracking({
-                     page_id: pageId,
-                     sender_id: senderId,
-                     product_name: order.product_name,
-                     number: customerNumber, 
-                     location: order.address || order.location || '',
-                     product_quantity: order.quantity || '1',
-                     price: order.price || null
-                 });
-                 orderSaved = true;
-             }
+             // AI detection usually implies a full order attempt. 
+             // Even if no number is found in the current AI response, we still call saveOrderTracking
+             // because it will try to update a previous order for this user (e.g. they provided the number in a previous message).
+             await dbService.saveOrderTracking({
+                 page_id: pageId,
+                 sender_id: senderId,
+                 product_name: order.product_name,
+                 number: customerNumber, 
+                 location: order.address || order.location || '',
+                 product_quantity: order.quantity || '1',
+                 price: order.price || null,
+                 sender_number: senderId
+             });
+             orderSaved = true;
         }
 
         if (!orderSaved) {
             const normalizedCombined = normalizeBanglaDigits(combinedText);
             const phoneMatch = normalizedCombined.match(/(?:\+?88)?(01[3-9]\d{8})/g);
             const fallbackNumber = phoneMatch ? normalizeBdPhone(phoneMatch[0]) : null;
+            const historyText = getHistoryText(effectiveHistory);
+            const historyOrder = extractHistoryOrder(historyText);
             const addrKeywords = ['ঠিকানা','নাম','জেলা','থানা','গ্রাম','পোস্ট','বাড়ি','রোড','বাসা','উপজেলা','বিভাগ','ইউনিয়ন','বাজার','এলাকা'];
             const addressLines = combinedText
                 .split('\n')
@@ -1133,28 +1195,32 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             const fallbackName = nameMatch ? nameMatch[1].trim() : '';
             const qtyMatch = normalizedCombined.match(/(এক|দুই|তিন|চার|পাঁচ|\d+)\s*(বোতল|পিস|টা|টি)/);
             const fallbackQty = qtyMatch ? qtyMatch[0] : '1';
+            const finalName = fallbackName || historyOrder.name || '';
+            const finalAddress = fallbackAddress || historyOrder.location || '';
             const locationParts = [];
-            if (fallbackName) locationParts.push(`নাম: ${fallbackName}`);
-            if (fallbackAddress) locationParts.push(fallbackAddress);
+            if (finalName) locationParts.push(`নাম: ${finalName}`);
+            if (finalAddress) locationParts.push(finalAddress);
             const fallbackLocation = locationParts.join(' | ') || 'N/A';
+            const finalQuantity = fallbackQty !== '1' ? fallbackQty : (historyOrder.quantity || fallbackQty);
+            const finalProduct = historyOrder.product_name || 'Recovered Lead';
+            const finalPrice = historyOrder.price || null;
 
-            if (fallbackNumber) {
-                const exists = await query(
-                    'SELECT id FROM fb_order_tracking WHERE page_id = $1 AND sender_id = $2 AND number = $3 LIMIT 1',
-                    [pageId, senderId, fallbackNumber]
-                );
-                if (exists.rows.length === 0) {
-                    await dbService.saveOrderTracking({
-                        page_id: pageId,
-                        sender_id: senderId,
-                        product_name: 'Recovered Lead',
-                        number: fallbackNumber,
-                        location: fallbackLocation,
-                        product_quantity: fallbackQty,
-                        price: null
-                    });
-                    orderSaved = true;
-                }
+            // NEW: Try to save even if we don't have a number in this message, 
+            // the saveOrderTracking function will try to update a previous row for this user.
+            const hasSignificantInfo = fallbackNumber || (fallbackLocation && fallbackLocation !== 'N/A') || (finalProduct && finalProduct !== 'Recovered Lead');
+
+            if (hasSignificantInfo) {
+                await dbService.saveOrderTracking({
+                    page_id: pageId,
+                    sender_id: senderId,
+                    product_name: finalProduct,
+                    number: fallbackNumber,
+                    location: fallbackLocation,
+                    product_quantity: finalQuantity,
+                    price: finalPrice,
+                    sender_number: senderId
+                });
+                orderSaved = true;
             }
         }
         // --------------------------------------
@@ -1689,15 +1755,17 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         await dbService.saveChatMessage(sessionId, 'user', finalUserMessage);
 
         // Prepare Assistant History Content
-        // MERGE MEMORY INTO ASSISTANT MESSAGE to preserve context flow
-        // Fix: Don't save separate 'system' message for images, as it confuses the AI flow.
+        // Fix: Save Assistant Reply and then save Image Memory as a SYSTEM message to avoid AI hallucination
         let historyReplyText = replyText;
         
+        // Save Assistant Reply (Text ONLY) to AI Context
+        await dbService.saveChatMessage(sessionId, 'assistant', historyReplyText);
+
         if (aiResponse.images && Array.isArray(aiResponse.images) && aiResponse.images.length > 0) {
             let memoryNote = "";
             
             // Priority: Use 'foundProducts' if available to be specific about WHICH product
-            // FIX: Only include products that correspond to the images actually sent!
+            // FIX: Only include product names and URLs. REMOVED descriptions to prevent internal data leak.
             let relevantProducts = [];
             if (aiResponse.foundProducts && Array.isArray(aiResponse.foundProducts) && aiResponse.foundProducts.length > 0) {
                  const sentImages = aiResponse.images.map(img => typeof img === 'string' ? img : img.url);
@@ -1705,21 +1773,19 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             }
 
             if (relevantProducts.length > 0) {
-                 const productDetails = relevantProducts.map(p => 
-                    `${p.name} (Desc: ${p.description ? p.description.substring(0, 100) : 'N/A'})`
-                 ).join(' | ');
+                 const productDetails = relevantProducts.map(p => p.name).join(' | ');
                  const summary = aiResponse.images.map(img => typeof img === 'string' ? img : img.url).join(' ; ');
-                 memoryNote = `[IMAGE MEMORY] Sent product images for: [${productDetails}]. Images: ${summary}`;
+                 memoryNote = `[SYSTEM: Sent product images for: [${productDetails}]. Images: ${summary}]`;
             } else {
-                 // Fallback: Just list titles/urls from images array (No unrelated product descriptions)
+                 // Fallback: Just list titles/urls from images array
                  const summary = aiResponse.images
                     .map(img => typeof img === 'string' ? img : `${img.title || 'Image'} | ${img.url}`)
                     .join(' ; ');
-                 memoryNote = `[IMAGE MEMORY] Sent product images in this reply: ${summary}`;
+                 memoryNote = `[SYSTEM: Sent product images in this reply: ${summary}]`;
             }
             
-            // Append to history text for AI Context
-            historyReplyText += `\n\n${memoryNote}`;
+            // Save to AI Context as a SYSTEM message instead of appending to assistant
+            await dbService.saveChatMessage(sessionId, 'system', memoryNote);
 
             // Save to fb_chats (for Audit/Debugging & User Requirement)
             await dbService.saveFbChat({
@@ -1733,9 +1799,6 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 reply_by: 'system'
             });
         }
-
-        // Save Assistant Reply (Text + Memory) to AI Context
-        await dbService.saveChatMessage(sessionId, 'assistant', historyReplyText);
 
         await dbService.saveLead({
             page_id: pageId,
