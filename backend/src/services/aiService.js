@@ -306,6 +306,41 @@ function getCacheKey(pageId, message, senderName) {
     return `${pageId}:${senderName}:${normalized}`;
 }
 
+const functionTools = [
+    {
+        type: 'function',
+        function: {
+            name: 'search_products',
+            description: 'Search products by user query',
+            parameters: {
+                type: 'object',
+                properties: {
+                    query: { type: 'string' }
+                },
+                required: ['query']
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'create_order',
+            description: 'Create order details when user confirms an order',
+            parameters: {
+                type: 'object',
+                properties: {
+                    product_name: { type: 'string' },
+                    phone: { type: 'string' },
+                    address: { type: 'string' },
+                    quantity: { type: 'string' },
+                    price: { type: 'string' }
+                },
+                required: ['product_name', 'phone', 'address']
+            }
+        }
+    }
+];
+
 // --- GEMINI CONTEXT CACHING MANAGER ---
 const geminiCacheMap = new Map(); // Key: Hash, Value: { name: string, expirationTime: string }
 
@@ -526,7 +561,27 @@ function extractJsonFromAiResponse(rawContent) {
             parsed = JSON.parse(rawContent); // Fallback to original
         } catch (e2) {
             console.warn("[AI] Raw JSON Parse Failed. Returning as reply text.");
-            parsed = { reply: rawContent };
+            // DANGER: Do NOT return raw JSON string as reply, or controller will block it.
+            // If it starts with { or [, assume it's broken JSON and return empty/error.
+            const trimmed = rawContent.trim();
+            if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+                // Try to regex extract the "reply" value even if JSON is broken
+                const match = trimmed.match(/"(?:reply|response|message|answer|text|content|completion)"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+                if (match && match[1]) {
+                    try {
+                        parsed = { reply: JSON.parse(`"${match[1]}"`) };
+                    } catch (e) {
+                        parsed = { reply: match[1] };
+                    }
+                } else {
+                    // Total failure: Return null to prevent raw JSON leak
+                    console.warn("[AI] Failed to rescue broken JSON. Returning NULL.");
+                    parsed = null; 
+                }
+            } else {
+                // It's just plain text (not JSON), so it's safe to return.
+                parsed = { reply: rawContent };
+            }
         }
     }
 
@@ -890,6 +945,8 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     let messages = [];
     // User Update: Default to JSON Object for reliability
     let responseFormat = { type: "json_object" }; 
+    const toolsEnabled = pageConfig.is_external_api ? false : true;
+    const tools = toolsEnabled ? functionTools : undefined;
 
     if (pageConfig.is_external_api) {
         // --- EXTERNAL API MODE (Minimal & White Label) ---
@@ -997,8 +1054,10 @@ ${productContext}
 8. ORDER TRACKING: If a user provides order details (Product Name, Phone Number, and Address), you MUST include an "order_details" object in your JSON response. Explain that you have saved their order human-likely in the "reply" field.
 
 [Response Format]
-You must output valid JSON only.
-- Reply: { "reply": "text" }
+You should generally reply in PLAIN TEXT for normal conversation to act like a human.
+HOWEVER, if you need to use a tool (Search, Order, Silence), you MUST output valid JSON.
+
+- Normal Chat: Just type your reply as text.
 - Silence: { "reply": null }
 - Search: { "tool": "search_products", "query": "..." }
 - Order: { "reply": "...", "order_details": { "product_name": "...", "phone": "...", "address": "...", "quantity": "...", "price": "..." } }`;
@@ -1137,6 +1196,7 @@ You must output valid JSON only.
                 // Many custom providers / proxies do not support 'response_format: { type: "json_object" }'
                 // and will return 400 Bad Request if it's sent.
                 // We only send it for OpenAI, OpenRouter, and official providers known to support it.
+                // User requests Strict JSON Mode to be ENABLED again.
                 let effectiveResponseFormat = responseFormat;
                 if (currentProvider === 'custom') {
                     effectiveResponseFormat = undefined; 
@@ -1146,7 +1206,9 @@ You must output valid JSON only.
                 const completion = await openai.chat.completions.create({
                     model: modelToUse,
                     messages: messages,
-                    response_format: effectiveResponseFormat
+                    response_format: effectiveResponseFormat,
+                    tools: tools,
+                    tool_choice: tools ? "auto" : undefined
                 });
 
                 if (completion.choices && completion.choices.length > 0) {
@@ -1160,92 +1222,90 @@ You must output valid JSON only.
                     try {
                         const parsed = extractJsonFromAiResponse(rawContent);
                         
-                        // --- TOOL HANDLING (Product Search) ---
-                        if (parsed && parsed.tool === 'search_products' && parsed.query) {
-                            console.log(`[AI] Tool Call (Phase 1): Searching products for "${parsed.query}"...`);
+                        // --- TOOL HANDLING (Modern Function Calling & Legacy JSON) ---
+                        // We handle both native tool_calls (from Phase 1) and legacy JSON tool tagging.
+                        const toolCalls = completion.choices[0].message.tool_calls;
+                        let foundProducts = [];
+
+                        if ((toolCalls && toolCalls.length > 0) || (parsed && parsed.tool === 'search_products' && parsed.query)) {
+                            console.log(`[AI] Tool Call Detected (Phase 1)...`);
                             
-                            let products = [];
-                            try {
-                                // Fix: Pass pageId to ensure visibility rules are respected
-                                products = await dbService.searchProducts(pageConfig.user_id, parsed.query, pageConfig.page_id);
-                            } catch (dbError) {
-                                console.error(`[AI] Phase 1 DB Search Failed: ${dbError.message}`);
-                                // Proceed with empty products to allow AI to handle it gracefully
+                            let toolResults = [];
+                            
+                            // Handle Native Tool Calls
+                            if (toolCalls) {
+                                for (const toolCall of toolCalls) {
+                                    if (toolCall.function.name === 'search_products') {
+                                        const args = JSON.parse(toolCall.function.arguments);
+                                        const products = await dbService.searchProducts(pageConfig.user_id, args.query, pageConfig.page_id);
+                                        if (products && products.length > 0) foundProducts.push(...products);
+                                        
+                                        toolResults.push({
+                                            tool_call_id: toolCall.id,
+                                            role: 'tool',
+                                            name: 'search_products',
+                                            content: JSON.stringify(products)
+                                        });
+                                    } else if (toolCall.function.name === 'create_order') {
+                                        const args = JSON.parse(toolCall.function.arguments);
+                                        // We don't actually save to DB here, we just format it for the final reply
+                                        // and add the [SAVE_ORDER: ...] tag which the controller handles.
+                                        toolResults.push({
+                                            tool_call_id: toolCall.id,
+                                            role: 'tool',
+                                            name: 'create_order',
+                                            content: JSON.stringify({ status: "success", message: "Order details captured. Please confirm with user." })
+                                        });
+                                    }
+                                }
+                            } else {
+                                // Handle Legacy JSON Tool Tagging
+                                const products = await dbService.searchProducts(pageConfig.user_id, parsed.query, pageConfig.page_id);
+                                if (products && products.length > 0) foundProducts.push(...products);
+                                
+                                toolResults.push({
+                                    role: 'system',
+                                    content: `[System] Search Results for "${parsed.query}": ${JSON.stringify(products)}`
+                                });
                             }
                             
-                            // Add context and retry
-                            messages.push({ role: 'assistant', content: JSON.stringify(parsed) });
+                            // Add assistant message and tool results to history
+                            messages.push(completion.choices[0].message);
+                            messages.push(...toolResults);
                             
-                            const toolOutputContext = `[System] Search Results for "${parsed.query}": ${JSON.stringify(products)}. 
-INSTRUCTIONS:
-1. Use the search results above to answer the user's question in Bengali.
-2. If the product has an 'image_url', you MUST include it in the 'images' array of your JSON response.
-3. If no products were found, apologize and say you couldn't find it.
-4. Return ONLY a JSON object with 'reply' (string) and 'images' (array of strings).
-   Example: { "reply": "Here is the product...", "images": ["http://..."] }`;
-
-                            messages.push({ role: 'system', content: toolOutputContext });
-                            
-                            console.log(`[AI] Tool Result found. Re-generating answer with User Key...`);
+                            console.log(`[AI] Tool Execution Completed. Re-generating final answer...`);
                             
                             try {
                                 const completion2 = await openai.chat.completions.create({
                                     model: modelToUse,
                                     messages: messages,
-                                    // Remove strict JSON enforcement to avoid errors if model is chatty
                                     // response_format: { type: "json_object" } 
                                 });
                                 
                                 const rawContent2 = completion2.choices[0].message.content || '';
-                                console.log(`[AI] Phase 1 Tool Re-generation Raw Output: ${rawContent2.substring(0, 100)}...`);
-
                                 let tokenUsage2 = completion2.usage ? completion2.usage.total_tokens : 0;
                                 tokenUsage2 = estimateTokenUsage(messages, rawContent2, tokenUsage2);
                                 try { keyService.recordKeyUsage(currentKey, tokenUsage2); } catch(e){}
                                 
                                 const parsed2 = extractJsonFromAiResponse(rawContent2);
                                 
-                                // NULL CHECK
-                                if (!parsed2) {
-                                     throw new Error("AI returned an unparseable response after tool execution.");
-                                }
-
-                                // STRICT MODE: Do not fallback to 'response' or 'text'
-                                // if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text;
+                                if (!parsed2) throw new Error("AI returned an unparseable response after tool execution.");
                                 
-                                // FALLBACK FOR EMPTY REPLY
-                                if (!parsed2.reply && products.length > 0) {
-                                     parsed2.reply = "আমি আপনার খোঁজা পণ্যগুলো পেয়েছি। নিচে দেখুন:"; 
-                                } else if (!parsed2.reply) {
-                                     parsed2.reply = null; // SILENT MODE: Return null instead of error message
+                                // Process tags and images
+                                if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text || "";
+                                
+                                // Auto-inject SAVE_ORDER tag if create_order tool was called
+                                if (toolCalls && toolCalls.some(tc => tc.function.name === 'create_order')) {
+                                    const orderCall = toolCalls.find(tc => tc.function.name === 'create_order');
+                                    const args = JSON.parse(orderCall.function.arguments);
+                                    if (!parsed2.reply.includes('[SAVE_ORDER:')) {
+                                        parsed2.reply += `\n\n[SAVE_ORDER: ${JSON.stringify(args)}]`;
+                                    }
                                 }
 
-                        // IMAGE INJECTION LOGIC (STRICT TAG-BASED ONLY)
-                        const mentionedImages = [];
-                        let replyText = parsed2.reply || "";
-                        
-                        // 1. Tag-Based Extraction (##PRODUCT "Name")
-                        // This is the ONLY way to trigger an image.
-                        const tagRegex = /##PRODUCT\s*["'](.+?)["']/gi;
-                        let tagMatch;
-                        while ((tagMatch = tagRegex.exec(replyText)) !== null) {
-                            const productName = tagMatch[1].toLowerCase();
-                            const product = products.find(p => p.name.toLowerCase() === productName);
-                            if (product && product.image_url && !mentionedImages.includes(product.image_url)) {
-                                mentionedImages.push(product.image_url);
-                            }
-                        }
-
-                        // 2. Clean the Reply (Remove ##PRODUCT tags before sending to user)
-                        parsed2.reply = replyText.replace(tagRegex, '').trim();
-
-                        // 3. Final Image List
-                        parsed2.images = mentionedImages;
-                        
-                        return finalize({ ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: modelToUse, foundProducts: products });
+                                return finalize({ ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: modelToUse, foundProducts: foundProducts });
                             } catch (aiError) {
                                 console.error(`[AI] Phase 1 Tool Re-generation Failed: ${aiError.message}`);
-                                dbService.logError(aiError, 'AI Service - Tool Re-generation', { model: modelToUse, messages: messages.length });
                                 throw aiError;
                             }
                         }
@@ -1450,7 +1510,9 @@ INSTRUCTIONS:
                 const completion = await openai.chat.completions.create({
                     model: currentModel,
                     messages: messages,
-                    response_format: effectiveResponseFormat
+                    response_format: effectiveResponseFormat,
+                    tools: tools,
+                    tool_choice: tools ? "auto" : undefined
                 });
                 
                 rawContent = completion.choices[0].message.content || '';
@@ -1461,7 +1523,7 @@ INSTRUCTIONS:
         }
 
         try {
-            if (!rawContent || rawContent.trim() === '') {
+            if (!rawContent && (!completion.choices[0].message.tool_calls || completion.choices[0].message.tool_calls.length === 0)) {
                  throw new Error("Empty content from AI");
             }
             tokenUsage = estimateTokenUsage(messages, rawContent, tokenUsage);
@@ -1469,32 +1531,52 @@ INSTRUCTIONS:
             
             try {
                 const parsed = extractJsonFromAiResponse(rawContent);
-                
-                if (!parsed && isFreeModel) {
-                    const relaxedReply = extractReplyFromText(rawContent);
-                    return finalize({ 
-                        reply: relaxedReply, 
-                        sentiment: 'neutral', 
-                        model: currentModel, 
-                        token_usage: tokenUsage + totalTokenUsage, 
-                        foundProducts
-                    });
-                }
-                
-                if (parsed && parsed.tool === 'search_products' && parsed.query) {
-                    console.log(`[AI] Tool Call: Searching products for "${parsed.query}"...`);
-                    const products = await dbService.searchProducts(pageConfig.user_id, parsed.query, pageConfig.page_id);
-                    
-                    messages.push({ role: 'assistant', content: JSON.stringify(parsed) });
-                    
-                    const toolOutputContext = `[System] Search Results for "${parsed.query}": ${JSON.stringify(products)}. 
-INSTRUCTIONS:
-1. Use the search results above to answer the user's question in Bengali.
-2. If the product has an 'image_url', you MUST include it in the 'images' array of your JSON response.
-3. If no products were found, apologize and say you couldn't find it.
-4. Return ONLY a JSON object with 'reply' (string) and 'images' (array of strings).`;
+                const toolCalls = completion.choices[0].message.tool_calls;
+                let foundProducts = [];
 
-                    messages.push({ role: 'system', content: toolOutputContext });
+                if ((toolCalls && toolCalls.length > 0) || (parsed && parsed.tool === 'search_products' && parsed.query)) {
+                    console.log(`[AI] Tool Call (Phase 2): Processing...`);
+                    
+                    let toolResults = [];
+                    
+                    if (toolCalls) {
+                         for (const toolCall of toolCalls) {
+                             if (toolCall.function.name === 'search_products') {
+                                 const args = JSON.parse(toolCall.function.arguments);
+                                 const products = await dbService.searchProducts(pageConfig.user_id, args.query, pageConfig.page_id);
+                                 if (products && products.length > 0) foundProducts.push(...products);
+                                 
+                                 toolResults.push({
+                                     tool_call_id: toolCall.id,
+                                     role: 'tool',
+                                     name: 'search_products',
+                                     content: JSON.stringify(products)
+                                 });
+                             } else if (toolCall.function.name === 'create_order') {
+                                 const args = JSON.parse(toolCall.function.arguments);
+                                 toolResults.push({
+                                     tool_call_id: toolCall.id,
+                                     role: 'tool',
+                                     name: 'create_order',
+                                     content: JSON.stringify({ status: "success", message: "Order details captured." })
+                                 });
+                             }
+                         }
+                    } else {
+                        // Legacy JSON Fallback
+                        console.log(`[AI] Legacy Tool Call: Searching products for "${parsed.query}"...`);
+                        const products = await dbService.searchProducts(pageConfig.user_id, parsed.query, pageConfig.page_id);
+                        if (products && products.length > 0) foundProducts.push(...products);
+                        
+                        toolResults.push({
+                            role: 'system',
+                            content: `[System] Search Results for "${parsed.query}": ${JSON.stringify(products)}`
+                        });
+                    }
+
+                    // Append to history
+                    messages.push(completion.choices[0].message);
+                    messages.push(...toolResults);
                     
                     // Second call for tool result is considered a NEW call by AI, so it counts as another usage
                     // To be strict, we call getSmartKey again. If no keys left (limit hit), we fail.
@@ -1512,10 +1594,12 @@ INSTRUCTIONS:
                         timeout: 20000,
                         ...(geminiProxyAgent2 ? { httpAgent: geminiProxyAgent2 } : {})
                     });
+                    
+                    // Call again for final answer
                     const completion2 = await openai2.chat.completions.create({
                         model: currentModel,
                         messages: messages,
-                        response_format: isFreeModel ? undefined : { type: "json_object" }
+                        // response_format: isFreeModel ? undefined : { type: "json_object" }
                     });
                     
                     const rawContent2 = completion2.choices[0].message.content || '';
@@ -1524,13 +1608,20 @@ INSTRUCTIONS:
                     keyService.recordKeyUsage(apiKey2, tokenUsage2);
                     
                     const parsed2 = extractJsonFromAiResponse(rawContent2);
-                    if (isFreeModel && (!parsed2 || !parsed2.reply)) {
-                        const relaxedReply = extractReplyFromText(rawContent2);
-                        if (parsed2) parsed2.reply = relaxedReply;
-                    }
-                    if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text;
+                    if (!parsed2) throw new Error("AI returned an unparseable response after tool execution.");
+                    
+                    if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text || "";
+                    
+                     // Auto-inject SAVE_ORDER tag if create_order tool was called
+                     if (toolCalls && toolCalls.some(tc => tc.function.name === 'create_order')) {
+                         const orderCall = toolCalls.find(tc => tc.function.name === 'create_order');
+                         const args = JSON.parse(orderCall.function.arguments);
+                         if (!parsed2.reply.includes('[SAVE_ORDER:')) {
+                             parsed2.reply += `\n\n[SAVE_ORDER: ${JSON.stringify(args)}]`;
+                         }
+                     }
 
-                    if (!parsed2.reply && products.length > 0) {
+                    if (!parsed2.reply && foundProducts.length > 0) {
                         parsed2.reply = "আমি আপনার খোঁজা পণ্যগুলো পেয়েছি। নিচে দেখুন:"; 
                     }
 
@@ -1542,7 +1633,7 @@ INSTRUCTIONS:
                     let tagMatch;
                     while ((tagMatch = tagRegex.exec(replyText)) !== null) {
                         const productName = tagMatch[1].toLowerCase();
-                        const product = products.find(p => p.name.toLowerCase() === productName);
+                        const product = foundProducts.find(p => p.name.toLowerCase() === productName);
                         
                         if (product) {
                             // Helper to normalize URL (same as above)
@@ -1583,7 +1674,7 @@ INSTRUCTIONS:
                     parsed2.reply = replyText.replace(tagRegex, '').trim();
                     parsed2.images = mentionedImages;
                     
-                    return finalize({ ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: currentModel, foundProducts: products });
+                    return finalize({ ...parsed2, token_usage: tokenUsage + tokenUsage2 + totalTokenUsage, model: currentModel, foundProducts: foundProducts });
                 }
 
                 if (!parsed.reply && isFreeModel) {
