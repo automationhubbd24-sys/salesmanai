@@ -45,8 +45,8 @@ Phone: ${order.number || 'N/A'}`;
   };
 
   useEffect(() => {
-    const fetchOrders = async () => {
-      setOrderLoading(true);
+    const fetchOrders = async (showLoading = true) => {
+      if (showLoading) setOrderLoading(true);
       try {
         const token = localStorage.getItem("auth_token");
         const activePageId = localStorage.getItem("active_fb_page_id");
@@ -103,11 +103,13 @@ Phone: ${order.number || 'N/A'}`;
       }
     };
 
-    fetchOrders();
+    fetchOrders(orders.length === 0); // Only show spinner if we don't have data yet
 
     // Listen for page changes
-    const handlePageChange = () => {
-        fetchOrders();
+    const handlePageChange = (e: any) => {
+        // If it's a storage event, check if it's the page_id
+        if (e.type === 'storage' && e.key !== 'active_fb_page_id') return;
+        fetchOrders(true); // Force loading for page change
     };
 
     window.addEventListener("storage", handlePageChange);

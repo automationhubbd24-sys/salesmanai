@@ -1399,8 +1399,26 @@ async function logMessage(msgData) {
 
 // 12. Save Order Tracking (Messenger)
 async function saveOrderTracking(orderData) {
-    const { page_id, sender_id, product_name, number, location, product_quantity, price, sender_number } = orderData;
+    let { page_id, sender_id, product_name, number, location, product_quantity, price, sender_number } = orderData;
     
+    // Robust Product Name Cleaning
+    if (product_name) {
+        // Remove internal instruction blocks like Item 1: ... | Price: ... | Image URL: ...
+        if (product_name.includes('|')) {
+            product_name = product_name.split('|')[0].trim();
+        }
+        // Remove common AI markers
+        product_name = product_name
+            .replace(/Item \d+:/gi, '')
+            .replace(/##product/gi, '')
+            .replace(/"/g, '')
+            .replace(/\[.*?\]/g, '') // Remove [SAVE_ORDER] or other tags
+            .trim();
+        
+        // If it's still empty or too long/junk, use a fallback
+        if (!product_name) product_name = 'Recovered Lead';
+    }
+
     console.log(`[Order] Attempting to save/update order for ${sender_id}...`);
 
     try {
