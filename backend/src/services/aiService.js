@@ -1532,6 +1532,7 @@ Reply naturally in PLAIN TEXT. Use tools when needed.`;
         }
 
         // --- STANDARD OPENAI PATH ---
+        let completion = null;
         if (!usedCache) {
             const useProxy = (finalProvider === 'google' || finalProvider === 'gemini' || finalProvider === 'groq');
             const proxyAgent = getGeminiProxyAgent(baseURL, useProxy);
@@ -1554,7 +1555,7 @@ Reply naturally in PLAIN TEXT. Use tools when needed.`;
             try {
                 const effectiveResponseFormat = isFreeModel ? undefined : responseFormat;
 
-                const completion = await openai.chat.completions.create({
+                completion = await openai.chat.completions.create({
                     model: currentModel,
                     messages: messages,
                     response_format: effectiveResponseFormat,
