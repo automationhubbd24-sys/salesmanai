@@ -1110,62 +1110,85 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             replyText = String(replyText);
         }
 
-        // If AI returns null/empty text and no images, send a safe fallback reply
-        if (!replyText && (!aiResponse.images || aiResponse.images.length === 0)) {
-            // IGNORE EMPTY RESPONSES
-            // Do not log as error if it's just silence (common in Function Calling when no reply needed yet)
-            // But if it was an error, log it.
-            if (aiResponse.error) {
-                console.log(`[AI] Error detected. Reason: ${aiResponse.error}`);
-                await dbService.saveFbChat({
-                    page_id: pageId,
-                    sender_id: pageId,
-                    recipient_id: senderId,
-                    message_id: `fail_${Date.now()}`,
-                    text: `[AI Error - Silent] ${aiResponse.error}`,
-                    timestamp: Date.now(),
-                    status: 'ai_ignored',
-                    reply_by: 'bot'
-                });
-            }
-            replyText = ''; // Ensure it stays empty so no message is sent
-        }
-        
-        // --- JSON BLOCK FIX ---
-        // Previously, we blocked any text that looked like JSON.
-        // But with Function Calling, sometimes the model might output a JSON-like string if it fails to call the tool correctly.
-        // We should try to parse it and extract the 'reply' field instead of blocking it.
-        // However, `aiService.js` already does this extraction.
-        // If we are here, `replyText` is what `aiService` returned as the final "spoken" text.
-        // If it still looks like raw JSON, it means `aiService` failed to clean it.
-        // We will relax this check to avoid "JSON reply blocked" unless it's truly garbage.
-        
-        if (replyText && shouldBlockOutgoingReply(replyText)) {
-            // LAST RESORT: Try to extract "reply" from the blocked JSON string
+        // --- JSON & ERROR HANDLING (Commercial Grade) ---
+        // 1. Attempt to Rescue JSON
+        if (replyText && (replyText.trim().startsWith('{') || replyText.trim().startsWith('['))) {
             try {
-                const rescued = JSON.parse(replyText);
-                if (rescued.reply && typeof rescued.reply === 'string') {
-                    replyText = rescued.reply;
-                    console.log(`[Controller] Rescued blocked JSON reply: ${replyText}`);
-                } else {
-                    throw new Error("No reply field");
-                }
+                // Remove Markdown code blocks if present (```json ... ```)
+                const cleanJson = replyText.replace(/```json/g, '').replace(/```/g, '').trim();
+                const parsed = JSON.parse(cleanJson);
+                
+                // Extract useful text from common JSON fields
+                if (parsed.reply) replyText = parsed.reply;
+                else if (parsed.message) replyText = parsed.message;
+                else if (parsed.text) replyText = parsed.text;
+                else if (parsed.answer) replyText = parsed.answer;
+                else if (parsed.content) replyText = parsed.content;
+                
+                console.log(`[JSON Rescuer] Successfully extracted text from JSON: "${replyText.substring(0, 50)}..."`);
             } catch (e) {
-                // If rescue fails, THEN block it.
+                console.warn(`[JSON Rescuer] Failed to parse JSON: ${e.message}. Content: ${replyText.substring(0, 20)}...`);
+                // If parsing fails, we treat it as potentially harmful raw code.
+                // We will LOG it for Admin but NOT send it to User.
                 await dbService.saveFbChat({
                     page_id: pageId,
                     sender_id: pageId,
                     recipient_id: senderId,
                     message_id: `fail_${Date.now()}`,
-                    text: `[AI Error - Silent] JSON reply blocked`,
+                    text: `[AI Error - Silent] Raw JSON/Code Blocked: ${replyText}`,
                     timestamp: Date.now(),
                     status: 'ai_ignored',
                     reply_by: 'bot'
                 });
-                replyText = '';
-                aiResponse.images = [];
+                replyText = ''; // SILENCE
             }
         }
+
+        // 2. Suppress Known Error Patterns (Strict Commercial Quality)
+        // Never show "AI Error", "null", "undefined" or technical jargon to customers.
+        const forbiddenPatterns = [
+            '[AI Error', 
+            'JSON reply blocked', 
+            'Error:', 
+            'undefined', 
+            'null',
+            '[System Error]'
+        ];
+
+        if (replyText) {
+            for (const pattern of forbiddenPatterns) {
+                if (replyText.includes(pattern)) {
+                    console.log(`[Quality Control] Blocked internal error text: "${pattern}"`);
+                    // Log for Admin
+                    await dbService.saveFbChat({
+                        page_id: pageId,
+                        sender_id: pageId,
+                        recipient_id: senderId,
+                        message_id: `fail_${Date.now()}`,
+                        text: `[Blocked Internal Error] ${replyText}`,
+                        timestamp: Date.now(),
+                        status: 'ai_ignored',
+                        reply_by: 'bot'
+                    });
+                    replyText = ''; // SILENCE
+                    break;
+                }
+            }
+        }
+
+        // 3. Final Empty Check
+        if (!replyText || replyText.trim() === '' || replyText === 'null') {
+            replyText = ''; // Ensure it's empty string
+            
+            // If we also have no images, this is a SILENT event.
+            if (!aiResponse.images || aiResponse.images.length === 0) {
+                 console.log(`[AI Silence] No text and no images. Staying silent.`);
+                 // We already logged the error above if it was a block. 
+                 // If it was just natural silence (function call), we do nothing.
+                 return; // STOP HERE. Do not send anything to FB.
+            }
+        }
+
 
         if (replyText && pagePrompts) {
             const normalizeEmojiText = (str) => (str || '').replace(/\uFE0F/g, '').normalize('NFC');

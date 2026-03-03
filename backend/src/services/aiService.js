@@ -536,87 +536,67 @@ function extractImagesFromText(text) {
     };
 }
 
-// Helper to clean and extract JSON from AI response (handles <think> blocks and markdown)
+    // Helper to clean and extract JSON from AI response (handles <think> blocks and markdown)
 function extractJsonFromAiResponse(rawContent) {
     let parsed = {};
+    
+    // 1. Remove <think>...</think> blocks (DeepSeek/Gemini reasoning)
+    let cleanContent = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+    // 2. Remove markdown code blocks (```json ... ```)
+    cleanContent = cleanContent.replace(/```json/gi, '').replace(/```/g, '').trim();
+
     try {
-        // 1. Remove <think>...</think> blocks (DeepSeek/Gemini reasoning)
-        let cleanContent = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-
-        // 2. Remove markdown code blocks (```json ... ```)
-        cleanContent = cleanContent.replace(/```json/gi, '').replace(/```/g, '').trim();
-
         // 3. Find the first '{' and last '}' to isolate JSON object
         const firstOpen = cleanContent.indexOf('{');
         const lastClose = cleanContent.lastIndexOf('}');
 
         if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
             cleanContent = cleanContent.substring(firstOpen, lastClose + 1);
+            parsed = JSON.parse(cleanContent);
+        } else {
+            // No JSON structure found -> Treat as Plain Text
+            // This is NORMAL for Function Calling mode when model replies naturally.
+            parsed = { reply: rawContent };
         }
-
-        parsed = JSON.parse(cleanContent);
     } catch (e) {
-        console.warn("[AI] JSON Extraction Failed, attempting raw parse...");
-        try {
-            parsed = JSON.parse(rawContent); // Fallback to original
-        } catch (e2) {
-            console.warn("[AI] Raw JSON Parse Failed. Returning as reply text.");
-            // DANGER: Do NOT return raw JSON string as reply, or controller will block it.
-            // If it starts with { or [, assume it's broken JSON and return empty/error.
-            const trimmed = rawContent.trim();
-            if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-                // Try to regex extract the "reply" value even if JSON is broken
-                const match = trimmed.match(/"(?:reply|response|message|answer|text|content|completion)"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-                if (match && match[1]) {
-                    try {
-                        parsed = { reply: JSON.parse(`"${match[1]}"`) };
-                    } catch (e) {
-                        parsed = { reply: match[1] };
-                    }
-                } else {
-                    // Total failure: Return null to prevent raw JSON leak
-                    console.warn("[AI] Failed to rescue broken JSON. Returning NULL.");
-                    parsed = null; 
-                }
-            } else {
-                // It's just plain text (not JSON), so it's safe to return.
-                parsed = { reply: rawContent };
-            }
-        }
+        // JSON Extraction Failed -> Treat as Plain Text
+        // console.warn("[AI] JSON Parse Failed, treating as text:", e.message);
+        parsed = { reply: rawContent };
     }
 
     if (!parsed || typeof parsed !== 'object') {
-        // ERROR: Return null so the controller handles it silently (logs error to DB but sends nothing to user)
-        console.warn("[AI] Failed to parse JSON response. Returning NULL to prevent bad UX.");
-        return null;
+        parsed = { reply: rawContent };
     }
 
-    // NORMALIZE REPLY FIELD - STRICT MODE
-    // User Request: Strict JSON Enforcement. No field guessing.
-    // If 'reply' is missing, check if it is a tool call.
-    // If not a tool call and not a reply, it is an INVALID response.
+    // NORMALIZE REPLY FIELD
     if (!parsed.reply) {
-        // FLEXIBLE FALLBACK: Check common aliases before failing
+        // Check aliases
         if (parsed.response && typeof parsed.response === 'string') parsed.reply = parsed.response;
         else if (parsed.message && typeof parsed.message === 'string') parsed.reply = parsed.message;
         else if (parsed.answer && typeof parsed.answer === 'string') parsed.reply = parsed.answer;
         else if (parsed.text && typeof parsed.text === 'string') parsed.reply = parsed.text;
 
-        // Check for Tool Call
+        // Check for Tool Call (Native or Legacy)
         const isTool = (parsed.tool && typeof parsed.tool === 'string') ||
                        (parsed.tools && Array.isArray(parsed.tools)) ||
-                       (parsed.function && typeof parsed.function === 'string');
+                       (parsed.function && typeof parsed.function === 'string') ||
+                       (parsed.query && typeof parsed.query === 'string'); // Legacy search
 
         if (!parsed.reply && !isTool) {
-            console.warn("[AI] Strict Parse Warning: 'reply' field missing and NOT a tool call.", JSON.stringify(parsed));
-            // FAIL SAFE: Return null to prevent sending garbage to user.
-            // The user said: "user er kase kono ans jabe na but fb cahts e error show hobe"
-            return null;
+            // If it's just a raw string that failed parsing, assign it to reply
+            if (typeof parsed === 'string') {
+                parsed = { reply: parsed };
+            } else {
+                 // Fallback: If object but no known fields, assume it's valid data (or empty)
+                 // Don't fail, just return what we have.
+            }
         }
     }
     
     return parsed;
 }
+
 
 function extractReplyFromText(text) {
     if (!text) return "";
@@ -997,17 +977,16 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
 
         // --- DYNAMIC PRODUCT INJECTION FROM SYSTEM PROMPT ---
         try {
-
             if (systemPromptProductNames.length > 0) {
                 console.log(`[AI] Found product references in System Prompt: ${systemPromptProductNames.join(', ')}`);
                 const systemProducts = await dbService.getProductsByNames(pageConfig.user_id, systemPromptProductNames);
                 
                 if (systemProducts && systemProducts.length > 0) {
                      // Add to productContext if not already present
-                     if (!productContext) productContext = "\n[Available Products in Store]\n";
+                     if (!productContext) productContext = "\n[Available Products in Store (From DB + Prompt)]\n";
                      
                      systemProducts.forEach((p) => {
-                         // Check if already added by search
+                         // Check if already added by search (Duplicate Check)
                          if (!foundProducts.some(fp => fp.id === p.id)) {
                              // Add it
                              foundProducts.push(p);
@@ -1015,6 +994,11 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                              // User Request: Full Context Injection (No Truncation)
                              // Only inject name, stock, and image. Full description. REMOVED PRICE.
                              let shortDesc = p.description || '';
+                             
+                             // --- HYBRID SUPPORT: MERGE PROMPT OVERRIDES ---
+                             // If the user defined the product in the prompt (e.g. ##product "Name" ...), 
+                             // we should respect any custom details they might have added there, 
+                             // BUT prioritized DB data for price/stock if available.
                              
                              productContext += `Product: "${p.name}"\n`;
                              // Price removed per user request
