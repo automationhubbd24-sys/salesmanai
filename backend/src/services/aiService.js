@@ -1445,14 +1445,22 @@ Reply naturally in PLAIN TEXT. Use tools when needed.`;
         const isFreeModel = typeof currentModel === 'string' && currentModel.includes(':free');
 
         // --- GEMINI CACHING PATH ---
-        if ((finalProvider === 'google' || finalProvider === 'gemini') && messages.length > 0 && messages[0].role === 'system') {
+        // User Requirement: "suno amader gemini engine e eta disable tak but use own api e enable tak"
+        // Meaning: Only enable caching if the user provided their own API key (Phase 1 or Own API Mode).
+        // If we are using System Keys (Phase 2), caching MUST be disabled to avoid hitting limits on free tier keys.
+        
+        const isUserKey = pageConfig.api_key && pageConfig.api_key !== 'MANAGED_SECRET_KEY' && apiKey === pageConfig.api_key;
+        const shouldUseCache = isUserKey && (finalProvider === 'google' || finalProvider === 'gemini');
+
+        if (shouldUseCache && messages.length > 0 && messages[0].role === 'system') {
             const systemContent = messages[0].content;
-            // Only use cache if system prompt is large enough (>500 chars) to matter
-            if (systemContent.length > 500) {
+            // Only use cache if system prompt is large enough (>2000 chars) to matter
+            // Raised limit to 2000 chars to ensure it's worth the cache creation cost
+            if (systemContent.length > 2000) {
                 const cacheName = await getOrCreateGeminiCache(apiKey, currentModel, systemContent);
                 if (cacheName) {
                     try {
-                        console.log(`[AI] Using Gemini Cache: ${cacheName}`);
+                        console.log(`[AI] Using Gemini Cache (User Key): ${cacheName}`);
                         const genAI = new GoogleGenerativeAI(apiKey);
                         const model = genAI.getGenerativeModelFromCachedContent(cacheName);
                         
