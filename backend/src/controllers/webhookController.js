@@ -1,4 +1,5 @@
 const dbService = require('../services/dbService');
+const { query } = require('../services/pgClient');
 const aiService = require('../services/aiService');
 const facebookService = require('../services/facebookService');
 const { runMessengerWorkflow } = require('../services/messenger_workflow');
@@ -1033,17 +1034,18 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         }
         // --------------------------------------------------------------------
 
-        const aiResponse = await aiService.generateReply(
-            finalUserMessage, 
-            pageConfig, 
-            pagePrompts, 
-            effectiveHistory, 
-            senderName, 
-            senderGender,
-            [], // imageUrls (Already processed)
-            [], // audioUrls (Already processed)
-            totalVisionTokens + totalAudioTokens // Pass aggregated token usage
-        );
+        const aiResponse = await aiService.generateResponse({
+            pageId: pageId,
+            userId: senderId,
+            userMessage: finalUserMessage,
+            history: effectiveHistory,
+            imageUrls: [], // imageUrls (Already processed)
+            audioUrls: [], // audioUrls (Already processed)
+            config: pageConfig,
+            platform: 'messenger',
+            extraTokenUsage: totalVisionTokens + totalAudioTokens,
+            senderName: senderName
+        });
         
         if (aiResponse == null) {
              console.error(`[Webhook] AI generation failed or returned NULL for ${senderId}. No response sent to user.`);
@@ -1092,6 +1094,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         // --- ZERO COST ORDER TRACKING LOGIC ---
         // If AI detects order details, save to DB immediately.
         // This uses the SAME AI call, so ZERO extra cost.
+        let orderSaved = false;
         const saveOrderPayload = aiResponse.order_details || extractSaveOrderTag(aiResponse.reply);
         if (saveOrderPayload && saveOrderPayload.product_name) {
              const order = saveOrderPayload;
@@ -1112,7 +1115,47 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                      product_quantity: order.quantity || '1',
                      price: order.price || null
                  });
+                 orderSaved = true;
              }
+        }
+
+        if (!orderSaved) {
+            const normalizedCombined = normalizeBanglaDigits(combinedText);
+            const phoneMatch = normalizedCombined.match(/(?:\+?88)?(01[3-9]\d{8})/g);
+            const fallbackNumber = phoneMatch ? normalizeBdPhone(phoneMatch[0]) : null;
+            const addrKeywords = ['ঠিকানা','নাম','জেলা','থানা','গ্রাম','পোস্ট','বাড়ি','রোড','বাসা','উপজেলা','বিভাগ','ইউনিয়ন','বাজার','এলাকা'];
+            const addressLines = combinedText
+                .split('\n')
+                .map(l => l.trim())
+                .filter(l => l && addrKeywords.some(k => l.includes(k)));
+            const fallbackAddress = addressLines.join(' ').trim();
+            const nameMatch = combinedText.match(/(?:নাম|name)\s*[:ঃ-]?\s*([^\n,।]+)/i);
+            const fallbackName = nameMatch ? nameMatch[1].trim() : '';
+            const qtyMatch = normalizedCombined.match(/(এক|দুই|তিন|চার|পাঁচ|\d+)\s*(বোতল|পিস|টা|টি)/);
+            const fallbackQty = qtyMatch ? qtyMatch[0] : '1';
+            const locationParts = [];
+            if (fallbackName) locationParts.push(`নাম: ${fallbackName}`);
+            if (fallbackAddress) locationParts.push(fallbackAddress);
+            const fallbackLocation = locationParts.join(' | ') || 'N/A';
+
+            if (fallbackNumber) {
+                const exists = await query(
+                    'SELECT id FROM fb_order_tracking WHERE page_id = $1 AND sender_id = $2 AND number = $3 LIMIT 1',
+                    [pageId, senderId, fallbackNumber]
+                );
+                if (exists.rows.length === 0) {
+                    await dbService.saveOrderTracking({
+                        page_id: pageId,
+                        sender_id: senderId,
+                        product_name: 'Recovered Lead',
+                        number: fallbackNumber,
+                        location: fallbackLocation,
+                        product_quantity: fallbackQty,
+                        price: null
+                    });
+                    orderSaved = true;
+                }
+            }
         }
         // --------------------------------------
 
@@ -1130,6 +1173,13 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
 
         // 6. Send Reply (Text + Images)
         let replyText = aiResponse.reply;
+        if (replyText && typeof replyText === 'object') {
+            if (replyText.reply) {
+                replyText = String(replyText.reply);
+            } else {
+                replyText = '';
+            }
+        }
         
         // --- SAFETY FILTER: Remove Internal Tags like [SAVE_ORDER] ---
         // This ensures the user never sees technical JSON or internal commands.
@@ -1143,6 +1193,20 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             replyText = '';
         } else {
             replyText = String(replyText);
+        }
+
+        if (replyText && shouldBlockOutgoingReply(replyText)) {
+            await dbService.saveFbChat({
+                page_id: pageId,
+                sender_id: pageId,
+                recipient_id: senderId,
+                message_id: `fail_${Date.now()}`,
+                text: `[Blocked Internal Error] ${replyText}`,
+                timestamp: Date.now(),
+                status: 'ai_ignored',
+                reply_by: 'bot'
+            });
+            replyText = '';
         }
 
         // --- JSON & ERROR HANDLING (Commercial Grade) ---

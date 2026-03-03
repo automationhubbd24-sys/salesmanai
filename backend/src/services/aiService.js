@@ -487,6 +487,9 @@ async function fetchOgImage(url) {
 async function generateResponse({ pageId, userId, userMessage, history, imageUrls, audioUrls, config, platform, extraTokenUsage = 0, senderName: explicitSenderName = null, ownerName = null }) {
     // 1. Fetch Prompts if needed
     let pagePrompts = config;
+    if (config && platform) {
+        config.platform = platform;
+    }
     
     // For Messenger, config might not have prompts if passed from minimal object
     // But for WhatsApp, we usually pass full config.
@@ -1320,12 +1323,14 @@ Reply naturally in PLAIN TEXT. Use tools when needed.`;
                                 // Process tags and images
                                 if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text || "";
                                 
-                                // Auto-inject SAVE_ORDER tag if create_order tool was called
                                 if (toolCalls && toolCalls.some(tc => tc.function.name === 'create_order')) {
                                     const orderCall = toolCalls.find(tc => tc.function.name === 'create_order');
                                     const args = JSON.parse(orderCall.function.arguments);
-                                    if (!parsed2.reply.includes('[SAVE_ORDER:')) {
-                                        parsed2.reply += `\n\n[SAVE_ORDER: ${JSON.stringify(args)}]`;
+                                    parsed2.order_details = args;
+                                    if (pageConfig && pageConfig.platform === 'whatsapp') {
+                                        if (!parsed2.reply.includes('[SAVE_ORDER:')) {
+                                            parsed2.reply += `\n\n[SAVE_ORDER: ${JSON.stringify(args)}]`;
+                                        }
                                     }
                                 }
 
@@ -1664,12 +1669,14 @@ Reply naturally in PLAIN TEXT. Use tools when needed.`;
                     
                     if (!parsed2.reply) parsed2.reply = parsed2.response || parsed2.text || "";
                     
-                     // Auto-inject SAVE_ORDER tag if create_order tool was called
                      if (toolCalls && toolCalls.some(tc => tc.function.name === 'create_order')) {
                          const orderCall = toolCalls.find(tc => tc.function.name === 'create_order');
                          const args = JSON.parse(orderCall.function.arguments);
-                         if (!parsed2.reply.includes('[SAVE_ORDER:')) {
-                             parsed2.reply += `\n\n[SAVE_ORDER: ${JSON.stringify(args)}]`;
+                         parsed2.order_details = args;
+                         if (pageConfig && pageConfig.platform === 'whatsapp') {
+                             if (!parsed2.reply.includes('[SAVE_ORDER:')) {
+                                 parsed2.reply += `\n\n[SAVE_ORDER: ${JSON.stringify(args)}]`;
+                             }
                          }
                      }
 
