@@ -27,7 +27,12 @@ function getProxyUrl() {
     // Rotation using random session ID for better stability
     const session = `sess_${Math.floor(Math.random() * 99999)}`;
     const url = `http://${user}-session-${session}:${pass}@${proxyUrl}`;
-    // console.log(`[Proxy] Generated session URL: ${user}-session-${session}`);
+    
+    // Validate proxy format (basic check)
+    if (!url.startsWith('http://')) {
+        console.warn("[Proxy] Invalid Proxy URL format constructed.");
+        return null;
+    }
     return url;
 }
 
@@ -36,6 +41,7 @@ function getGeminiProxyAgent(baseURL, useProxy = true) {
     const proxy = getProxyUrl();
     if (!proxy) return null;
     try {
+        // HttpsProxyAgent automatically handles http/https protocols
         return new HttpsProxyAgent(proxy);
     } catch (e) {
         console.warn(`[Proxy] Failed to create Gemini Proxy Agent: ${e.message}`);
@@ -1187,6 +1193,12 @@ Reply naturally in PLAIN TEXT. Use tools when needed.`;
             try {
                 const useProxy = (currentProvider.includes('google') || currentProvider.includes('gemini') || currentProvider.includes('groq')) && !currentKey;
                 const proxyAgent = getGeminiProxyAgent(baseURL, useProxy);
+                
+                // --- PROXY DEBUG LOG ---
+                if (useProxy && proxyAgent) {
+                     console.log(`[AI] Using Proxy for ${currentProvider} (System Key)`);
+                }
+
                 const openai = new OpenAI({ 
                     apiKey: currentKey, 
                     baseURL: baseURL,
@@ -1523,6 +1535,12 @@ Reply naturally in PLAIN TEXT. Use tools when needed.`;
         if (!usedCache) {
             const useProxy = (finalProvider === 'google' || finalProvider === 'gemini' || finalProvider === 'groq');
             const proxyAgent = getGeminiProxyAgent(baseURL, useProxy);
+            
+            // --- PROXY DEBUG LOG ---
+            if (useProxy && proxyAgent) {
+                 console.log(`[AI] Using Proxy for System Provider: ${finalProvider}`);
+            }
+
             const openai = new OpenAI({ 
                 apiKey: apiKey, 
                 baseURL: baseURL,
