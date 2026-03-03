@@ -44,72 +44,72 @@ Phone: ${order.number || 'N/A'}`;
     });
   };
 
-  useEffect(() => {
-    const fetchOrders = async (showLoading = true) => {
-      if (showLoading) setOrderLoading(true);
-      try {
-        const token = localStorage.getItem("auth_token");
-        const activePageId = localStorage.getItem("active_fb_page_id");
-        if (!token || !activePageId) {
-          setOrders([]);
-          setOrderLoading(false);
-          return;
-        }
-
-        const params = new URLSearchParams();
-        params.set("page_id", activePageId);
-
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        
-        const tomorrow = new Date(today);
-        tomorrow.setDate(tomorrow.getDate() + 1);
-
-        const yesterday = new Date(today);
-        yesterday.setDate(yesterday.getDate() - 1);
-
-        if (dateFilter === 'today') {
-          params.set("from", today.getTime().toString());
-          params.set("to", tomorrow.getTime().toString());
-        } else if (dateFilter === 'yesterday') {
-          params.set("from", yesterday.getTime().toString());
-          params.set("to", today.getTime().toString());
-        } else if (dateFilter === 'custom' && date) {
-          const customStart = new Date(date);
-          customStart.setHours(0, 0, 0, 0);
-          const customEnd = new Date(date);
-          customEnd.setHours(23, 59, 59, 999);
-          params.set("from", customStart.getTime().toString());
-          params.set("to", customEnd.getTime().toString());
-        }
-
-        const res = await fetch(`${BACKEND_URL}/api/messenger/orders?${params.toString()}`, {
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                },
-            });
-
-        if (!res.ok) {
-          throw new Error("Failed to fetch orders");
-        }
-
-        const data = await res.json();
-        setOrders(Array.isArray(data) ? data : []);
-      } catch (error) {
-        console.error("Error fetching orders:", error);
-        toast.error("Failed to fetch orders");
-      } finally {
+  const fetchOrders = useCallback(async (showLoading = true) => {
+    if (showLoading) setOrderLoading(true);
+    try {
+      const token = localStorage.getItem("auth_token");
+      const activePageId = localStorage.getItem("active_fb_page_id");
+      if (!token || !activePageId) {
+        setOrders([]);
         setOrderLoading(false);
+        return;
       }
-    };
 
-    fetchOrders(orders.length === 0); // Only show spinner if we don't have data yet
+      const params = new URLSearchParams();
+      params.set("page_id", activePageId);
 
-    // Listen for page changes
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+
+      const yesterday = new Date(today);
+      yesterday.setDate(yesterday.getDate() - 1);
+
+      if (dateFilter === 'today') {
+        params.set("from", today.getTime().toString());
+        params.set("to", tomorrow.getTime().toString());
+      } else if (dateFilter === 'yesterday') {
+        params.set("from", yesterday.getTime().toString());
+        params.set("to", today.getTime().toString());
+      } else if (dateFilter === 'custom' && date) {
+        const customStart = new Date(date);
+        customStart.setHours(0, 0, 0, 0);
+        const customEnd = new Date(date);
+        customEnd.setHours(23, 59, 59, 999);
+        params.set("from", customStart.getTime().toString());
+        params.set("to", customEnd.getTime().toString());
+      }
+
+      const res = await fetch(`${BACKEND_URL}/api/messenger/orders?${params.toString()}`, {
+              headers: {
+                  Authorization: `Bearer ${token}`,
+              },
+          });
+
+      if (!res.ok) {
+        throw new Error("Failed to fetch orders");
+      }
+
+      const data = await res.json();
+      setOrders(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error("Error fetching orders:", error);
+      toast.error("Failed to fetch orders");
+    } finally {
+      setOrderLoading(false);
+    }
+  }, [dateFilter, date]);
+
+  useEffect(() => {
+    fetchOrders(orders.length === 0);
+  }, [fetchOrders]);
+
+  useEffect(() => {
     const handlePageChange = (e: any) => {
-        // If it's a storage event, check if it's the page_id
         if (e.type === 'storage' && e.key !== 'active_fb_page_id') return;
-        fetchOrders(true); // Force loading for page change
+        fetchOrders(true);
     };
 
     window.addEventListener("storage", handlePageChange);
@@ -119,7 +119,7 @@ Phone: ${order.number || 'N/A'}`;
         window.removeEventListener("storage", handlePageChange);
         window.removeEventListener("db-connection-changed", handlePageChange);
     };
-  }, [dateFilter, date]);
+  }, [fetchOrders]);
 
   const downloadCSV = () => {
     if (!orders.length) {

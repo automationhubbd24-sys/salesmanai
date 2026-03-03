@@ -1018,19 +1018,13 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
              pagePrompts.text_prompt += `\n\n[IMPORTANT OUTPUT RULES]\n` +
                 `1) There are two default modes:\n` +
                 `   - Case A (no product tags): If the system prompt does NOT contain any line starting with '##PRODUCT', reply like a normal human.\n` +
-                `     Keep any links exactly in the text and DO NOT invent product details or extra images unless the user clearly asks.\n` +
-                `   - Case B (product tags): If the system prompt contains lines like '##PRODUCT \"gradepicture\"' (quotes may contain **bold** etc.),\n` +
-                `     treat those as product definitions that you can use in replies.\n` +
-                `2) In Case B, whenever you decide to use one of those products in your answer:\n` +
-                `   - Merge the main reply and that product's information into ONE natural, human-sounding message.\n` +
-                `   - Inside the same text, include: product name, key benefit, price, and a clear call-to-action.\n` +
-                `   - Use the product's Image URL from the [Available Products in Store] context to output exactly ONE image line per used product\n` +
-                `     using this STRICT format:\n` +
-                `       IMAGE: <Product Name> | <Image URL>\n` +
-                `3) Always keep the final text coherent and conversational, as if a real human agent wrote it.\n` +
-                `   Do NOT send a separate \"product info\" block; the product details must be blended into the main message.\n` +
-                `4) Never expose raw '##PRODUCT' tags back to the customer.\n` +
-                `5) DO NOT use [Image] placeholders. ONLY use the 'IMAGE: Title | URL' format.\n`;
+                `   - Case B (product tags): If the system prompt contains lines like '##PRODUCT "name"', use those for product replies.\n` +
+                `2) [ORDER TRACKING]: If a customer provides a phone number, you MUST output a hidden tag at the end of your reply:\n` +
+                `   [SAVE_ORDER: {"product_name": "...", "number": "...", "location": "...", "price": "...", "quantity": "..."}]\n` +
+                `   - Fill in as much info as you can from the current conversation history (product, price, address).\n` +
+                `   - If any info is missing (e.g. you have the number but not the location), leave those fields empty in the JSON and politely ask the customer for them in your main text.\n` +
+                `3) [IMAGES]: Use the STRICT format for any product images you send: IMAGE: Title | URL. DO NOT use [Image] placeholders.\n` +
+                `4) Always keep the final text natural, human-sounding, and coherent. Never expose raw internal tags to the customer.\n`;
         }
         // --------------------------------------------------------------------
 
@@ -1095,13 +1089,27 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             if (!Array.isArray(historyList)) return '';
             return historyList
                 .map(item => {
+                    let content = '';
                     if (!item) return '';
-                    if (typeof item === 'string') return item;
-                    if (typeof item.content === 'string') return item.content;
-                    if (typeof item.text === 'string') return item.text;
-                    if (item.message && typeof item.message.content === 'string') return item.message.content;
-                    if (item.message && typeof item.message.text === 'string') return item.message.text;
-                    return '';
+                    if (typeof item === 'string') content = item;
+                    else if (typeof item.content === 'string') content = item.content;
+                    else if (typeof item.text === 'string') content = item.text;
+                    else if (item.message && typeof item.message.content === 'string') content = item.message.content;
+                    else if (item.message && typeof item.message.text === 'string') content = item.message.text;
+                    
+                    if (!content) return '';
+
+                    // --- SMART CLEAN INTERNAL NOISE FROM HISTORY ---
+                    // Instead of deleting everything, we strip out the "pollution" (long URLs and Descs)
+                    // but keep the core info (Product Name, Price) for the regex to find.
+                    return content
+                        .replace(/Image URL: https?:\/\/[^\s|]+/gi, '(Image)') // Shorten long URLs
+                        .replace(/Desc: [\s\S]*?(?=\||\[End|$)/gi, '') // Remove long internal descriptions
+                        .replace(/\[Instruction Products\]/gi, '') // Remove start marker
+                        .replace(/\[End of Instruction Products\]/gi, '') // Remove end marker
+                        .replace(/\[SAVE_ORDER:[\s\S]*?\]/gi, '') // Remove raw JSON
+                        .replace(/##product/gi, '')
+                        .trim();
                 })
                 .filter(Boolean)
                 .join('\n');
@@ -1115,19 +1123,34 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 .trim();
             const flatText = cleanedText.replace(/\s+/g, ' ').trim();
             const normalized = normalizeBanglaDigits(cleanedText);
-            const productMatch = flatText.match(/(?:পণ্যের নাম|প্রোডাক্টের নাম|পণ্য|product name|product)\s*[:ঃ-]?\s*([^\n,।]+)/i);
+
+            // 1. PRODUCT NAME EXTRACTION
+            // Priority: Explicit mention -> AI suggestion in history -> Recovered
+            const productMatch = flatText.match(/(?:পণ্যের নাম|প্রোডাক্টের নাম|পণ্য|আইটেম|প্রোডাক্ট|product name|product|item)\s*[:ঃ-]?\s*([^\n,।|]+)/i);
+            
+            // 2. QUANTITY EXTRACTION
             const qtyMatch = normalized.match(/(?:কোয়ান্টিটি|quantity|qty|পরিমাণ)\s*[:ঃ-]?\s*([০-৯\d]+|এক|দুই|তিন|চার|পাঁচ|ছয়|সাত|আট|নয়|দশ)\s*(পিস|টা|টি|বোতল)?/i);
             const unitMatch = normalized.match(/(\d+)\s*(পিস|টা|টি|বোতল)/i);
-            const totalMatch = normalized.match(/(?:মোট মূল্য|total price|total)\s*[:ঃ-]?\s*([\d,]+)\s*(টাকা)?/i);
-            const priceMatch = normalized.match(/(?:পণ্যের মূল্য|price|amount|মূল্য)\s*[:ঃ-]?\s*([\d,]+)\s*(টাকা)?/i);
-            const nameMatch = flatText.match(/(?:নাম|name)\s*[:ঃ-]?\s*([^\n,।]+)/i);
-            const addrKeywords = ['ঠিকানা','জেলা','থানা','গ্রাম','পোস্ট','বাড়ি','রোড','বাসা','উপজেলা','বিভাগ','ইউনিয়ন','বাজার','এলাকা'];
+            
+            // 3. PRICE EXTRACTION
+            const totalMatch = normalized.match(/(?:মোট মূল্য|total price|total)\s*[:ঃ-]?\s*([\d,]+)\s*(টাকা|tk|bdt)?/i);
+            const priceMatch = normalized.match(/(?:পণ্যের মূল্য|price|amount|মূল্য|দাম)\s*[:ঃ-]?\s*([\d,]+)\s*(টাকা|tk|bdt)?/i);
+            
+            // 4. CUSTOMER NAME
+            const nameMatch = flatText.match(/(?:নাম|customer name|name)\s*[:ঃ-]?\s*([^\n,।|]+)/i);
+            
+            // 5. LOCATION/ADDRESS
+            const addrKeywords = ['ঠিকানা','জেলা','থানা','গ্রাম','পোস্ট','বাড়ি','রোড','বাসা','উপজেলা','বিভাগ','ইউনিয়ন','বাজার','এলাকা','address'];
             const addressLines = cleanedText
                 .split('\n')
                 .map(l => l.trim())
-                .filter(l => l && addrKeywords.some(k => l.includes(k)));
+                .filter(l => l && addrKeywords.some(k => l.includes(k)))
+                // Filter out any lines that still contain internal tags just in case
+                .filter(l => !l.includes('[Instruction') && !l.includes('IMAGE:'));
+            
             const location = addressLines.join(' ').trim();
             const bnNumberMap = { এক: '1', দুই: '2', তিন: '3', চার: '4', পাঁচ: '5', ছয়: '6', সাত: '7', আট: '8', নয়: '9', দশ: '10' };
+            
             let qtyValue = '';
             let qtyUnit = '';
             if (qtyMatch) {
@@ -1138,8 +1161,10 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 qtyUnit = unitMatch[2] || '';
             }
             const quantity = qtyValue ? `${qtyValue}${qtyUnit ? ` ${qtyUnit}` : ''}`.trim() : '';
+            
             const priceRaw = totalMatch ? totalMatch[1] : (priceMatch ? priceMatch[1] : null);
             const price = priceRaw ? String(priceRaw).replace(/,/g, '') : null;
+
             return {
                 product_name: productMatch ? productMatch[1].trim() : '',
                 quantity,
@@ -1188,30 +1213,41 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             const phoneMatch = normalizedCombined.match(/(?:\+?88)?(01[3-9]\d{8})/g);
             const fallbackNumber = phoneMatch ? normalizeBdPhone(phoneMatch[0]) : null;
 
-            // STRICT: Only fallback to history parsing if we have a number in the current message
+            // ONLY save if we have a number in the current message OR if it's a known user with a previous order
             if (fallbackNumber) {
+                // 1. Get History Context for fallback parsing
                 const historyText = getHistoryText(effectiveHistory);
                 const historyOrder = extractHistoryOrder(historyText);
-                const addrKeywords = ['ঠিকানা','নাম','জেলা','থানা','গ্রাম','পোস্ট','বাড়ি','রোড','বাসা','উপজেলা','বিভাগ','ইউনিয়ন','বাজার','এলাকা'];
+
+                // 2. Extract Info from CURRENT message (Highest Priority)
+                const addrKeywords = ['ঠিকানা','নাম','জেলা','থানা','গ্রাম','পোস্ট','বাড়ি','রোড','বাসা','উপজেলা','বিভাগ','ইউনিয়ন','বাজার','এলাকা','address'];
                 const addressLines = combinedText
                     .split('\n')
                     .map(l => l.trim())
                     .filter(l => l && addrKeywords.some(k => l.includes(k)));
-                const fallbackAddress = addressLines.join(' ').trim();
-                const nameMatch = combinedText.match(/(?:নাম|name)\s*[:ঃ-]?\s*([^\n,।]+)/i);
-                const fallbackName = nameMatch ? nameMatch[1].trim() : '';
+                const currentAddress = addressLines.join(' ').trim();
+                
+                const nameMatch = combinedText.match(/(?:নাম|name)\s*[:ঃ-]?\s*([^\n,।|]+)/i);
+                const currentName = nameMatch ? nameMatch[1].trim() : '';
+                
                 const qtyMatch = normalizedCombined.match(/(এক|দুই|তিন|চার|পাঁচ|\d+)\s*(বোতল|পিস|টা|টি)/);
-                const fallbackQty = qtyMatch ? qtyMatch[0] : '1';
-                const finalName = fallbackName || historyOrder.name || '';
-                const finalAddress = fallbackAddress || historyOrder.location || '';
+                const currentQty = qtyMatch ? qtyMatch[0] : '';
+
+                // 3. MERGE Current Info with History Info (Fallback)
+                const finalName = currentName || historyOrder.name || '';
+                const finalAddress = currentAddress || historyOrder.location || '';
+                
                 const locationParts = [];
                 if (finalName) locationParts.push(`নাম: ${finalName}`);
                 if (finalAddress) locationParts.push(finalAddress);
                 const fallbackLocation = locationParts.join(' | ') || 'N/A';
-                const finalQuantity = fallbackQty !== '1' ? fallbackQty : (historyOrder.quantity || fallbackQty);
                 
-                // Clean product name for fallback too
+                const finalQuantity = currentQty || historyOrder.quantity || '1';
+                
+                // For product name: Priority 1 (AI detection above), Priority 2 (History Parsing)
                 let finalProduct = historyOrder.product_name || 'Recovered Lead';
+                
+                // Clean product name if it was picked up from a polluted source
                 if (finalProduct.includes('|')) {
                     finalProduct = finalProduct.split('|')[0].trim();
                 }
