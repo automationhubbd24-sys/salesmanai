@@ -1112,39 +1112,59 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
 
         // If AI returns null/empty text and no images, send a safe fallback reply
         if (!replyText && (!aiResponse.images || aiResponse.images.length === 0)) {
-            const reason = originalReply === null ? 'Strict Domain Control (Null Reply)' : 'Empty String Response';
-            // User Requirement: Silent on Error. Do NOT send fallback text to user.
-            // We only log the error to DB for admin visibility.
-            console.log(`[AI] Empty reply detected. Reason: ${reason}. SILENT MODE: Ignoring.`);
-
-            await dbService.saveFbChat({
-                page_id: pageId,
-                sender_id: pageId,
-                recipient_id: senderId,
-                message_id: `fail_${Date.now()}`,
-                text: `[AI Error - Silent] ${reason}${aiResponse.error ? ` | ${aiResponse.error}` : ''}`,
-                timestamp: Date.now(),
-                status: 'ai_ignored',
-                reply_by: 'bot'
-            });
-
+            // IGNORE EMPTY RESPONSES
+            // Do not log as error if it's just silence (common in Function Calling when no reply needed yet)
+            // But if it was an error, log it.
+            if (aiResponse.error) {
+                console.log(`[AI] Error detected. Reason: ${aiResponse.error}`);
+                await dbService.saveFbChat({
+                    page_id: pageId,
+                    sender_id: pageId,
+                    recipient_id: senderId,
+                    message_id: `fail_${Date.now()}`,
+                    text: `[AI Error - Silent] ${aiResponse.error}`,
+                    timestamp: Date.now(),
+                    status: 'ai_ignored',
+                    reply_by: 'bot'
+                });
+            }
             replyText = ''; // Ensure it stays empty so no message is sent
         }
         
+        // --- JSON BLOCK FIX ---
+        // Previously, we blocked any text that looked like JSON.
+        // But with Function Calling, sometimes the model might output a JSON-like string if it fails to call the tool correctly.
+        // We should try to parse it and extract the 'reply' field instead of blocking it.
+        // However, `aiService.js` already does this extraction.
+        // If we are here, `replyText` is what `aiService` returned as the final "spoken" text.
+        // If it still looks like raw JSON, it means `aiService` failed to clean it.
+        // We will relax this check to avoid "JSON reply blocked" unless it's truly garbage.
+        
         if (replyText && shouldBlockOutgoingReply(replyText)) {
-            await dbService.saveFbChat({
-                page_id: pageId,
-                sender_id: pageId,
-                recipient_id: senderId,
-                message_id: `fail_${Date.now()}`,
-                text: `[AI Error - Silent] JSON reply blocked`,
-                timestamp: Date.now(),
-                status: 'ai_ignored',
-                reply_by: 'bot'
-            });
-
-            replyText = '';
-            aiResponse.images = [];
+            // LAST RESORT: Try to extract "reply" from the blocked JSON string
+            try {
+                const rescued = JSON.parse(replyText);
+                if (rescued.reply && typeof rescued.reply === 'string') {
+                    replyText = rescued.reply;
+                    console.log(`[Controller] Rescued blocked JSON reply: ${replyText}`);
+                } else {
+                    throw new Error("No reply field");
+                }
+            } catch (e) {
+                // If rescue fails, THEN block it.
+                await dbService.saveFbChat({
+                    page_id: pageId,
+                    sender_id: pageId,
+                    recipient_id: senderId,
+                    message_id: `fail_${Date.now()}`,
+                    text: `[AI Error - Silent] JSON reply blocked`,
+                    timestamp: Date.now(),
+                    status: 'ai_ignored',
+                    reply_by: 'bot'
+                });
+                replyText = '';
+                aiResponse.images = [];
+            }
         }
 
         if (replyText && pagePrompts) {
