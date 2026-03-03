@@ -1159,57 +1159,66 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
              console.log(`[Order] AI detected potential order: ${JSON.stringify(order)}`);
              
              let customerNumber = normalizeBdPhone(order.phone || order.number || order.mobile);
-             if (!customerNumber && /^\d+$/.test(senderId)) {
-                 customerNumber = senderId;
-             }
              
-             // AI detection usually implies a full order attempt. 
-             // Even if no number is found in the current AI response, we still call saveOrderTracking
-             // because it will try to update a previous order for this user (e.g. they provided the number in a previous message).
-             await dbService.saveOrderTracking({
-                 page_id: pageId,
-                 sender_id: senderId,
-                 product_name: order.product_name,
-                 number: customerNumber, 
-                 location: order.address || order.location || '',
-                 product_quantity: order.quantity || '1',
-                 price: order.price || null,
-                 sender_number: senderId
-             });
-             orderSaved = true;
+             // STRICT: Only save if we have a valid phone number
+             if (customerNumber) {
+                 // Clean product name from internal instructions/metadata
+                 let cleanProductName = order.product_name;
+                 if (cleanProductName.includes('|')) {
+                     cleanProductName = cleanProductName.split('|')[0].trim();
+                 }
+                 cleanProductName = cleanProductName.replace(/Item \d+:/gi, '').replace(/##product/gi, '').replace(/"/g, '').trim();
+
+                 await dbService.saveOrderTracking({
+                     page_id: pageId,
+                     sender_id: senderId,
+                     product_name: cleanProductName,
+                     number: customerNumber, 
+                     location: order.address || order.location || '',
+                     product_quantity: order.quantity || '1',
+                     price: order.price || null,
+                     sender_number: senderId
+                 });
+                 orderSaved = true;
+             }
         }
 
         if (!orderSaved) {
             const normalizedCombined = normalizeBanglaDigits(combinedText);
             const phoneMatch = normalizedCombined.match(/(?:\+?88)?(01[3-9]\d{8})/g);
             const fallbackNumber = phoneMatch ? normalizeBdPhone(phoneMatch[0]) : null;
-            const historyText = getHistoryText(effectiveHistory);
-            const historyOrder = extractHistoryOrder(historyText);
-            const addrKeywords = ['ঠিকানা','নাম','জেলা','থানা','গ্রাম','পোস্ট','বাড়ি','রোড','বাসা','উপজেলা','বিভাগ','ইউনিয়ন','বাজার','এলাকা'];
-            const addressLines = combinedText
-                .split('\n')
-                .map(l => l.trim())
-                .filter(l => l && addrKeywords.some(k => l.includes(k)));
-            const fallbackAddress = addressLines.join(' ').trim();
-            const nameMatch = combinedText.match(/(?:নাম|name)\s*[:ঃ-]?\s*([^\n,।]+)/i);
-            const fallbackName = nameMatch ? nameMatch[1].trim() : '';
-            const qtyMatch = normalizedCombined.match(/(এক|দুই|তিন|চার|পাঁচ|\d+)\s*(বোতল|পিস|টা|টি)/);
-            const fallbackQty = qtyMatch ? qtyMatch[0] : '1';
-            const finalName = fallbackName || historyOrder.name || '';
-            const finalAddress = fallbackAddress || historyOrder.location || '';
-            const locationParts = [];
-            if (finalName) locationParts.push(`নাম: ${finalName}`);
-            if (finalAddress) locationParts.push(finalAddress);
-            const fallbackLocation = locationParts.join(' | ') || 'N/A';
-            const finalQuantity = fallbackQty !== '1' ? fallbackQty : (historyOrder.quantity || fallbackQty);
-            const finalProduct = historyOrder.product_name || 'Recovered Lead';
-            const finalPrice = historyOrder.price || null;
 
-            // NEW: Try to save even if we don't have a number in this message, 
-            // the saveOrderTracking function will try to update a previous row for this user.
-            const hasSignificantInfo = fallbackNumber || (fallbackLocation && fallbackLocation !== 'N/A') || (finalProduct && finalProduct !== 'Recovered Lead');
+            // STRICT: Only fallback to history parsing if we have a number in the current message
+            if (fallbackNumber) {
+                const historyText = getHistoryText(effectiveHistory);
+                const historyOrder = extractHistoryOrder(historyText);
+                const addrKeywords = ['ঠিকানা','নাম','জেলা','থানা','গ্রাম','পোস্ট','বাড়ি','রোড','বাসা','উপজেলা','বিভাগ','ইউনিয়ন','বাজার','এলাকা'];
+                const addressLines = combinedText
+                    .split('\n')
+                    .map(l => l.trim())
+                    .filter(l => l && addrKeywords.some(k => l.includes(k)));
+                const fallbackAddress = addressLines.join(' ').trim();
+                const nameMatch = combinedText.match(/(?:নাম|name)\s*[:ঃ-]?\s*([^\n,।]+)/i);
+                const fallbackName = nameMatch ? nameMatch[1].trim() : '';
+                const qtyMatch = normalizedCombined.match(/(এক|দুই|তিন|চার|পাঁচ|\d+)\s*(বোতল|পিস|টা|টি)/);
+                const fallbackQty = qtyMatch ? qtyMatch[0] : '1';
+                const finalName = fallbackName || historyOrder.name || '';
+                const finalAddress = fallbackAddress || historyOrder.location || '';
+                const locationParts = [];
+                if (finalName) locationParts.push(`নাম: ${finalName}`);
+                if (finalAddress) locationParts.push(finalAddress);
+                const fallbackLocation = locationParts.join(' | ') || 'N/A';
+                const finalQuantity = fallbackQty !== '1' ? fallbackQty : (historyOrder.quantity || fallbackQty);
+                
+                // Clean product name for fallback too
+                let finalProduct = historyOrder.product_name || 'Recovered Lead';
+                if (finalProduct.includes('|')) {
+                    finalProduct = finalProduct.split('|')[0].trim();
+                }
+                finalProduct = finalProduct.replace(/Item \d+:/gi, '').replace(/##product/gi, '').replace(/"/g, '').trim();
 
-            if (hasSignificantInfo) {
+                const finalPrice = historyOrder.price || null;
+
                 await dbService.saveOrderTracking({
                     page_id: pageId,
                     sender_id: senderId,
