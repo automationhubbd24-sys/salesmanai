@@ -1185,12 +1185,16 @@ Reply naturally in PLAIN TEXT. Use tools when needed.`;
             }
 
             try {
-                const geminiProxyAgent = getGeminiProxyAgent(baseURL, false);
+                const useProxy = (currentProvider.includes('google') || currentProvider.includes('gemini') || currentProvider.includes('groq')) && !currentKey;
+                const proxyAgent = getGeminiProxyAgent(baseURL, useProxy);
                 const openai = new OpenAI({ 
                     apiKey: currentKey, 
                     baseURL: baseURL,
                     timeout: 25000,
-                    ...(geminiProxyAgent ? { httpAgent: geminiProxyAgent } : {})
+                    ...(proxyAgent ? { 
+                        httpAgent: proxyAgent,
+                        httpsAgent: proxyAgent
+                    } : {})
                 });
                 // Normalize Model Name for User Keys
                 // User Requirement: Use EXACTLY what user typed. No mapping.
@@ -1517,12 +1521,16 @@ Reply naturally in PLAIN TEXT. Use tools when needed.`;
 
         // --- STANDARD OPENAI PATH ---
         if (!usedCache) {
-            const geminiProxyAgent = getGeminiProxyAgent(baseURL, true);
+            const useProxy = (finalProvider === 'google' || finalProvider === 'gemini' || finalProvider === 'groq');
+            const proxyAgent = getGeminiProxyAgent(baseURL, useProxy);
             const openai = new OpenAI({ 
                 apiKey: apiKey, 
                 baseURL: baseURL,
                 timeout: 60000,
-                ...(geminiProxyAgent ? { httpAgent: geminiProxyAgent } : {})
+                ...(proxyAgent ? { 
+                    httpAgent: proxyAgent,
+                    httpsAgent: proxyAgent 
+                } : {})
             });
 
             try {
@@ -1608,12 +1616,16 @@ Reply naturally in PLAIN TEXT. Use tools when needed.`;
                     }
                     const apiKey2 = keyData2.key;
 
-                    const geminiProxyAgent2 = getGeminiProxyAgent(baseURL, true);
+                    const useProxy2 = (finalProvider === 'google' || finalProvider === 'gemini' || finalProvider === 'groq');
+                    const proxyAgent2 = getGeminiProxyAgent(baseURL, useProxy2);
                     const openai2 = new OpenAI({ 
                         apiKey: apiKey2, 
                         baseURL: baseURL, 
                         timeout: 20000,
-                        ...(geminiProxyAgent2 ? { httpAgent: geminiProxyAgent2 } : {})
+                        ...(proxyAgent2 ? { 
+                            httpAgent: proxyAgent2,
+                            httpsAgent: proxyAgent2 
+                        } : {})
                     });
                     
                     // Call again for final answer
@@ -1977,8 +1989,8 @@ Rules:
                     ]
                 }]
             };
-            const useGeminiProxy = pageConfig?.cheap_engine !== false;
-            const geminiProxyAgent = getGeminiProxyAgent(url, useGeminiProxy);
+            const useProxy = (provider === 'google' || provider === 'gemini');
+            const geminiProxyAgent = getGeminiProxyAgent(url, useProxy);
             const visionResponse = await axios.post(url, payload, {
                     headers: { 'Content-Type': 'application/json' },
                     timeout: 20000,
@@ -2361,7 +2373,8 @@ async function transcribeAudio(audioUrl, config) {
 
                 // NEW: Groq Proxy Support (Similar to Gemini Proxy)
                 // Use proxy if it's a system key (no user key provided in option)
-                const groqProxyAgent = getGroqProxyAgent(!option.key);
+                const useProxy = !option.key;
+                const groqProxyAgent = getGroqProxyAgent(useProxy);
                 
                 // Force proxy for system keys as requested
                 // "groq er test file banao then ... salesmanchatbot er groq diye test deo"
