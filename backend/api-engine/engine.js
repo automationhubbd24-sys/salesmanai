@@ -179,6 +179,15 @@ router.post('/v1/chat/completions', async (req, res) => {
     else if (provider === 'openrouter') targetUrl = 'https://openrouter.ai/api/v1/chat/completions';
     else if (provider === 'mistral') targetUrl = 'https://api.mistral.ai/v1/chat/completions';
 
+    // Proxy Logic - Always use if credentials exist
+    const proxyUrl = getProxyUrl();
+    const agent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
+    if (agent) {
+        console.log(`[API Engine] 🌐 Using Bright Data Proxy for this request (Provider: ${provider}, Model: ${model})`);
+    } else {
+        console.warn(`[API Engine] ⚠️ Proxy credentials missing, sending direct request.`);
+    }
+
     try {
         if (stream) {
             const maxAttempts = 5;
@@ -186,10 +195,6 @@ router.post('/v1/chat/completions', async (req, res) => {
             for (let attempt = 0; attempt < maxAttempts; attempt++) {
                 const keyData = await keyService.getSmartKey(provider, model);
                 if (!keyData) break;
-
-                const useProxy = provider === 'google' || provider === 'gemini' || provider === 'groq';
-                const proxy = useProxy ? getProxyUrl() : null;
-                const agent = proxy ? new HttpsProxyAgent(proxy) : undefined;
 
                 const response = await axios.post(targetUrl, req.body, {
                     headers: {
@@ -247,10 +252,6 @@ router.post('/v1/chat/completions', async (req, res) => {
                 } 
             });
         }
-
-        const useProxy = provider === 'google' || provider === 'gemini' || provider === 'groq';
-        const proxy = useProxy ? getProxyUrl() : null;
-        const agent = proxy ? new HttpsProxyAgent(proxy) : undefined;
 
         const response = await axios.post(targetUrl, req.body, {
             headers: {
