@@ -944,7 +944,10 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     // --- PROMPT & MESSAGE CONSTRUCTION ---
     let messages = [];
     // User Update: Default to JSON Object for reliability
-    let responseFormat = { type: "json_object" }; 
+    // UPDATE: For Function Calling, we MUST NOT force JSON object unless we explicitly want a JSON response body.
+    // If we force JSON, the model might try to output JSON even when it should be calling a tool or talking normally.
+    // We let the model decide (auto) or default to text.
+    let responseFormat = undefined; 
     const toolsEnabled = pageConfig.is_external_api ? false : true;
     const tools = toolsEnabled ? functionTools : undefined;
 
