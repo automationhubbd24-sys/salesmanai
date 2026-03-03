@@ -1062,14 +1062,42 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
              return;
         }
 
+        const normalizeBanglaDigits = (value) => {
+            if (!value) return '';
+            const map = { '০':'0','১':'1','২':'2','৩':'3','৪':'4','৫':'5','৬':'6','৭':'7','৮':'8','৯':'9' };
+            return String(value).replace(/[০-৯]/g, d => map[d] || d);
+        };
+
+        const normalizeBdPhone = (value) => {
+            if (!value) return null;
+            const normalized = normalizeBanglaDigits(value);
+            const digits = normalized.replace(/\D/g, '');
+            const candidate = digits.length > 11 ? digits.slice(-11) : digits;
+            if (candidate.length === 11 && candidate.startsWith('01')) return candidate;
+            return null;
+        };
+
+        const extractSaveOrderTag = (replyText) => {
+            if (!replyText || typeof replyText !== 'string') return null;
+            const match = replyText.match(/\[SAVE_ORDER:\s*({[\s\S]*?})\]/);
+            if (!match || !match[1]) return null;
+            try {
+                return JSON.parse(match[1]);
+            } catch (e) {
+                console.warn(`[Order] Failed to parse SAVE_ORDER JSON: ${e.message}`);
+                return null;
+            }
+        };
+
         // --- ZERO COST ORDER TRACKING LOGIC ---
         // If AI detects order details, save to DB immediately.
         // This uses the SAME AI call, so ZERO extra cost.
-        if (aiResponse.order_details && aiResponse.order_details.product_name) {
-             const order = aiResponse.order_details;
+        const saveOrderPayload = aiResponse.order_details || extractSaveOrderTag(aiResponse.reply);
+        if (saveOrderPayload && saveOrderPayload.product_name) {
+             const order = saveOrderPayload;
              console.log(`[Order] AI detected potential order: ${JSON.stringify(order)}`);
              
-             let customerNumber = order.phone ? order.phone.replace(/\D/g, '') : null;
+             let customerNumber = normalizeBdPhone(order.phone || order.number || order.mobile);
              if (!customerNumber && /^\d+$/.test(senderId)) {
                  customerNumber = senderId;
              }
