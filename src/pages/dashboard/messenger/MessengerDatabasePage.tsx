@@ -32,9 +32,11 @@ export default function MessengerDatabasePage() {
 
     // Listen for storage changes
     window.addEventListener("storage", checkConnection);
+    window.addEventListener("db-connection-changed", checkConnection);
     
     return () => {
       window.removeEventListener("storage", checkConnection);
+      window.removeEventListener("db-connection-changed", checkConnection);
     };
   }, []);
 

@@ -52,6 +52,7 @@ Phone: ${order.number || 'N/A'}`;
         const activePageId = localStorage.getItem("active_fb_page_id");
         if (!token || !activePageId) {
           setOrders([]);
+          setOrderLoading(false);
           return;
         }
 
@@ -103,6 +104,19 @@ Phone: ${order.number || 'N/A'}`;
     };
 
     fetchOrders();
+
+    // Listen for page changes
+    const handlePageChange = () => {
+        fetchOrders();
+    };
+
+    window.addEventListener("storage", handlePageChange);
+    window.addEventListener("db-connection-changed", handlePageChange);
+
+    return () => {
+        window.removeEventListener("storage", handlePageChange);
+        window.removeEventListener("db-connection-changed", handlePageChange);
+    };
   }, [dateFilter, date]);
 
   const downloadCSV = () => {

@@ -51,12 +51,23 @@ export default function MessengerConversionPage() {
   const [filterType, setFilterType] = useState("today");
 
   useEffect(() => {
-    const storedPageId = localStorage.getItem("active_fb_page_id");
-    setActivePageId(storedPageId);
-    if (storedPageId) {
-        fetchStats(storedPageId);
-    }
-  }, []); // Fetch stats once on mount
+    const checkConnection = () => {
+        const storedPageId = localStorage.getItem("active_fb_page_id");
+        setActivePageId(storedPageId);
+        if (storedPageId) {
+            fetchStats(storedPageId);
+        }
+    };
+
+    checkConnection();
+    window.addEventListener("storage", checkConnection);
+    window.addEventListener("db-connection-changed", checkConnection);
+
+    return () => {
+        window.removeEventListener("storage", checkConnection);
+        window.removeEventListener("db-connection-changed", checkConnection);
+    };
+  }, []); // Initial load and listeners
 
   useEffect(() => {
     // Fetch messages whenever date, pageId, or currentPage changes

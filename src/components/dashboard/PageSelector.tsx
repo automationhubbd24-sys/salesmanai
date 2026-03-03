@@ -32,6 +32,11 @@ export function PageSelector() {
           localStorage.setItem("active_fb_db_id", selected.db_id.toString());
           localStorage.setItem("active_fb_page_id", selected.page_id);
           window.dispatchEvent(new Event("db-connection-changed"));
+          // Trigger global dashboard reload to refresh all sections
+          window.dispatchEvent(new Event("dashboard:reload"));
+      } else {
+          localStorage.setItem("active_fb_page_id", selected.page_id);
+          window.dispatchEvent(new Event("dashboard:reload"));
       }
     }
   };
