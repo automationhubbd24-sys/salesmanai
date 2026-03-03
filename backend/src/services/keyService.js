@@ -544,7 +544,19 @@ async function getSmartKey(provider, model = 'default') {
 
 // --- 24. Initialization ---
 // Populate the cache immediately on server start
-updateKeyCache(true);
+// updateKeyCache is an async function, so we should catch errors if top-level await isn't supported, 
+// but since we are inside a module, we just call it.
+// The issue "ReferenceError: updateKeyCache is not defined" suggests it might be called before it's defined 
+// if there was some hoisting issue or if it was removed/renamed in a previous edit.
+// However, looking at the code, updateKeyCache IS defined above.
+// The error line 547 `updateKeyCache(true);` seems to be outside any function scope, at the bottom.
+// Let's ensure it's called safely.
+
+if (typeof updateKeyCache === 'function') {
+    updateKeyCache(true).catch(err => console.error("Initial key cache update failed:", err));
+} else {
+    console.error("CRITICAL: updateKeyCache function is missing!");
+}
 
 module.exports = {
     // NEW: Adaptive Rate Limit Reporter
