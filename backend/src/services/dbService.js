@@ -601,6 +601,20 @@ async function getFbChatById(messageId) {
     }
 }
 
+async function getWhatsAppChatById(messageId) {
+    if (!messageId) return null;
+    try {
+        const result = await query(
+            'SELECT * FROM whatsapp_chats WHERE message_id = $1 LIMIT 1',
+            [messageId]
+        );
+        return result.rows.length > 0 ? result.rows[0] : null;
+    } catch (error) {
+        console.error("Error in getWhatsAppChatById:", error);
+        return null;
+    }
+}
+
 async function getMessageById(messageId) {
     if (!messageId) return null;
     
@@ -2095,6 +2109,7 @@ module.exports = {
     saveFbComment,
     logMessage,
     getFbChatById,
+    getWhatsAppChatById,
     getMessageById,
     saveOrderTracking,
     checkLockStatus,

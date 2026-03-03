@@ -13,12 +13,12 @@ import { useNavigate } from "react-router-dom";
 export function PageSelector() {
   const context = useMessenger();
   const navigate = useNavigate();
-
-  if (!context) return null;
-
-  const { pages, currentPage, setCurrentPage } = context;
+  const pages = context?.pages ?? [];
+  const currentPage = context?.currentPage ?? null;
+  const setCurrentPage = context?.setCurrentPage;
 
   const handleValueChange = (value: string) => {
+    if (!setCurrentPage) return;
     if (value === "add_new") {
       navigate("/dashboard/messenger/integration");
       return;
@@ -43,6 +43,7 @@ export function PageSelector() {
 
   // Sync LocalStorage when currentPage changes
   useEffect(() => {
+    if (!currentPage || !context) return;
     if (currentPage) {
         localStorage.setItem("active_fb_page_id", currentPage.page_id);
         if (currentPage.db_id) {
@@ -50,7 +51,9 @@ export function PageSelector() {
             window.dispatchEvent(new Event("db-connection-changed"));
         }
     }
-  }, [currentPage]);
+  }, [currentPage, context]);
+
+  if (!context) return null;
 
   if (pages.length === 0) {
     return (

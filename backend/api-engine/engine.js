@@ -179,14 +179,8 @@ router.post('/v1/chat/completions', async (req, res) => {
     else if (provider === 'openrouter') targetUrl = 'https://openrouter.ai/api/v1/chat/completions';
     else if (provider === 'mistral') targetUrl = 'https://api.mistral.ai/v1/chat/completions';
 
-    // Proxy Logic - Always use if credentials exist
-    const proxyUrl = getProxyUrl();
-    const agent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
-    if (agent) {
-        console.log(`[API Engine] 🌐 Using Bright Data Proxy for this request (Provider: ${provider}, Model: ${model})`);
-    } else {
-        console.warn(`[API Engine] ⚠️ Proxy credentials missing, sending direct request.`);
-    }
+    // Determined Key logic
+    const isSystemEngine = req.body.is_system_engine !== false; 
 
     try {
         if (stream) {
@@ -195,6 +189,16 @@ router.post('/v1/chat/completions', async (req, res) => {
             for (let attempt = 0; attempt < maxAttempts; attempt++) {
                 const keyData = await keyService.getSmartKey(provider, model);
                 if (!keyData) break;
+
+                // Proxy only for system keys to save costs
+                let agent = undefined;
+                if (isSystemEngine) {
+                    const proxyUrl = getProxyUrl();
+                    agent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
+                    if (agent) {
+                        console.log(`[API Engine] 🌐 Using Bright Data Proxy for SalesmanChatbot Engine (Model: ${model})`);
+                    }
+                }
 
                 const response = await axios.post(targetUrl, req.body, {
                     headers: {
@@ -251,6 +255,16 @@ router.post('/v1/chat/completions', async (req, res) => {
                     code: 429 
                 } 
             });
+        }
+
+        // Proxy only for system keys to save costs
+        let agent = undefined;
+        if (isSystemEngine) {
+            const proxyUrl = getProxyUrl();
+            agent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
+            if (agent) {
+                console.log(`[API Engine] 🌐 Using Bright Data Proxy for SalesmanChatbot Engine (Model: ${model})`);
+            }
         }
 
         const response = await axios.post(targetUrl, req.body, {

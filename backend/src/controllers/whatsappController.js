@@ -238,18 +238,22 @@ const handleWebhook = async (req, res) => {
             console.error(`[WA] Failed to process Admin Emoji: ${e.message}`);
         }
         
-        // Save Admin Message to DB (so it appears in conversation)
         if (messageText && messageText.trim().length > 0) {
+             const existingChat = await dbService.getWhatsAppChatById(messageIdRaw);
+             if (existingChat && (existingChat.reply_by === 'bot' || existingChat.reply_by === 'system')) {
+                 console.log(`[WA] Skipping Admin save (Bot/System Echo): ${messageIdRaw}`);
+                 return;
+             }
              const isGroup = (payload.from || '').includes('-');
              await dbService.saveWhatsAppChat({
                 session_name: sessionName,
-                sender_id: sessionName, // Admin/Bot is sender
-                recipient_id: payload.to, // User is recipient
+                sender_id: sessionName,
+                recipient_id: payload.to,
                 message_id: messageIdRaw,
                 text: messageText,
                 timestamp: Date.now(),
                 status: 'sent',
-                reply_by: 'admin', // Mark as admin since it's fromMe but not via API
+                reply_by: 'admin',
                 is_group: isGroup,
                 group_id: isGroup ? payload.from : null,
                 group_name: isGroup ? (payload.notifyName || 'Group') : null
@@ -479,6 +483,12 @@ const handleWebhook = async (req, res) => {
                          }
                     }
                     // --- ECHO GUARD END ---
+
+                    const existingChat = await dbService.getWhatsAppChatById(messageIdRaw);
+                    if (existingChat && (existingChat.reply_by === 'bot' || existingChat.reply_by === 'system')) {
+                        console.log(`[WA] Skipping Admin save (Bot/System Echo): ${messageIdRaw}`);
+                        return;
+                    }
 
                     console.log(`[WA] Admin Message Detected: "${textToSave}"`);
                     

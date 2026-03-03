@@ -14,8 +14,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { useMessenger } from "@/context/MessengerContext";
-import { useWhatsApp } from "@/context/WhatsAppContext";
+import { useMessenger, type MessengerContextType } from "@/context/MessengerContext";
+import { useWhatsApp, type WhatsAppContextType } from "@/context/WhatsAppContext";
 import { useState } from "react";
 
 interface WorkspaceSwitcherProps {
@@ -40,7 +40,9 @@ function WhatsAppSwitcher() {
   return <SwitcherUI context={context} />;
 }
 
-function SwitcherUI({ context }: { context: any }) {
+type WorkspaceContext = MessengerContextType | WhatsAppContextType;
+
+function SwitcherUI({ context }: { context: WorkspaceContext }) {
   const { 
     isTeamMember, 
     teams,          // Messenger (Multi)
@@ -67,10 +69,7 @@ function SwitcherUI({ context }: { context: any }) {
   }
 
   // Determine list of teams
-  let availableTeams: any[] = [];
-  if (teams && Array.isArray(teams)) {
-      availableTeams = teams;
-  }
+  const availableTeams = Array.isArray(teams) ? teams : [];
 
   // Debug: If teams exist but isTeamMember is false, something is wrong with sync
   // Force show if teams array has data
