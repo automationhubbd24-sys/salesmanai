@@ -155,8 +155,24 @@ function report429(modelName, apiKey = null) {
         }
         
         state.last_429 = now;
-    keyLockState.set(apiKey, state);
-    return; // DONE. Do not lock the whole model.
+        keyLockState.set(apiKey, state);
+        return; // DONE. Do not lock the whole model.
+    }
+
+    // 2. Fallback: If no API Key provided, lock the WHOLE Model (Legacy/Emergency)
+    if (!modelName) return;
+    const state = modelLockMap.get(modelName) || { expiry: 0, strikes: 0 };
+    
+    if (state.strikes === 0) {
+        state.strikes = 1;
+        state.expiry = now + 2 * 60 * 1000; 
+        console.warn(`[KeyService] 🔒 Locking MODEL ${modelName} for 2 minutes (First 429 - No Key Info)`);
+    } else {
+        state.strikes = 2; 
+        state.expiry = now + 24 * 60 * 60 * 1000; 
+        console.warn(`[KeyService] 🔒 Locking MODEL ${modelName} for 24 HOURS (Repeated 429 - No Key Info)`);
+    }
+    modelLockMap.set(modelName, state);
 }
 
 // Check if a model is globally locked
@@ -171,22 +187,6 @@ function isModelLocked(modelName) {
         return false;
     }
     return true;
-}
-
-// 2. Fallback: If no API Key provided, lock the WHOLE Model (Legacy/Emergency)
-if (!modelName) return;
-    const state = modelLockMap.get(modelName) || { expiry: 0, strikes: 0 };
-    
-    if (state.strikes === 0) {
-        state.strikes = 1;
-        state.expiry = now + 2 * 60 * 1000; 
-        console.warn(`[KeyService] 🔒 Locking MODEL ${modelName} for 2 minutes (First 429 - No Key Info)`);
-    } else {
-        state.strikes = 2; 
-        state.expiry = now + 24 * 60 * 60 * 1000; 
-        console.warn(`[KeyService] 🔒 Locking MODEL ${modelName} for 24 HOURS (Repeated 429 - No Key Info)`);
-    }
-    modelLockMap.set(modelName, state);
 }
 
 // Helper to mark key dead directly using object or string
