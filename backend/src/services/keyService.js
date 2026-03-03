@@ -75,169 +75,64 @@ const DEFAULT_LIMITS = {
 
 // --- Model Lock Mechanism (User Request: 2m -> 24h) ---
 const modelLockMap = new Map(); // Key: modelName, Value: { expiry: number, strikes: number }
+const keyLockState = new Map(); // Key: apiKey, Value: { strikes: number, last_429: number }
 
-function report429(modelName) {
-    if (!modelName) return;
+function report429(modelName, apiKey = null) {
     const now = Date.now();
+
+    // 1. If API Key is provided, lock ONLY that key (Targeted Lock)
+    if (apiKey) {
+        const state = keyLockState.get(apiKey) || { strikes: 0, last_429: 0 };
+        
+        // Reset strikes if last 429 was > 1 hour ago (Cool-off period)
+        if (now - state.last_429 > 60 * 60 * 1000) {
+            state.strikes = 0;
+        }
+
+        if (state.strikes === 0) {
+            // First offense -> 2 Minutes
+            state.strikes = 1;
+            const duration = 2 * 60 * 1000;
+            markKeyAsDead(apiKey, duration, '429_rate_limit_1st');
+            console.warn(`[KeyService] 🔒 Locking KEY ${apiKey.substring(0,8)}... for 2 mins (First 429)`);
+        } else {
+            // Second offense -> 24 Hours
+            state.strikes = 2;
+            const duration = 24 * 60 * 60 * 1000;
+            markKeyAsDead(apiKey, duration, '429_rate_limit_2nd');
+            console.warn(`[KeyService] 🔒 Locking KEY ${apiKey.substring(0,8)}... for 24 HOURS (Repeated 429)`);
+        }
+        
+        state.last_429 = now;
+        keyLockState.set(apiKey, state);
+        return; // DONE. Do not lock the whole model.
+    }
+
+    // 2. Fallback: If no API Key provided, lock the WHOLE Model (Legacy/Emergency)
+    if (!modelName) return;
     const state = modelLockMap.get(modelName) || { expiry: 0, strikes: 0 };
     
-    // If previous lock expired long ago (e.g. > 1 hour since expiry), reset strikes?
-    // For now, strict adherence to user rule: 
-    // 1st hit -> 2 min
-    // 2nd hit (after retry) -> 24 hours
-    
-    // Check if we are "escalating" a recent failure
     if (state.strikes === 0) {
-        // First offense
         state.strikes = 1;
-        state.expiry = now + 2 * 60 * 1000; // 2 Minutes
-        console.warn(`[KeyService] 🔒 Locking ${modelName} for 2 minutes (First 429)`);
+        state.expiry = now + 2 * 60 * 1000; 
+        console.warn(`[KeyService] 🔒 Locking MODEL ${modelName} for 2 minutes (First 429 - No Key Info)`);
     } else {
-        // Second offense (Consecutive or shortly after unlock)
         state.strikes = 2; 
-        state.expiry = now + 24 * 60 * 60 * 1000; // 24 Hours
-        console.warn(`[KeyService] 🔒 Locking ${modelName} for 24 HOURS (Repeated 429)`);
+        state.expiry = now + 24 * 60 * 60 * 1000; 
+        console.warn(`[KeyService] 🔒 Locking MODEL ${modelName} for 24 HOURS (Repeated 429 - No Key Info)`);
     }
-    
     modelLockMap.set(modelName, state);
 }
 
-function isModelLocked(modelName) {
-    if (!modelName) return false;
-    const state = modelLockMap.get(modelName);
-    if (!state) return false;
-    
-    if (Date.now() < state.expiry) {
-        // console.log(`[KeyService] Model ${modelName} is LOCKED until ${new Date(state.expiry).toLocaleTimeString()}`);
-        return true;
-    }
-    return false;
-}
-
-// --- Helper: Update Cache ---
-async function updateKeyCache(force = false) {
-    const now = Date.now();
-    if (!force && now - lastCacheUpdate < CACHE_TTL && keyCache.length > 0) {
-        return; // Cache is fresh
-    }
-
-    console.log("[KeyService] Refreshing API Key Cache from DB...");
-    
-    const pgClient = require('./pgClient');
-    let keys = [];
-    let error = null;
-
-    try {
-        const result = await pgClient.query(
-            'SELECT * FROM api_list ORDER BY id ASC',
-            []
-        );
-        keys = result.rows || [];
-    } catch (e) {
-        error = e;
-    }
-
-    if (keys && keys.length > 0) {
-        const now = Date.now();
-        const filtered = [];
-        for (const k of keys) {
-            // Log for debugging: check if any salesmanchatbot-flash/lite specific keys exist
-            if (k.text_model || k.vision_model || k.voice_model) {
-                 // console.log(`[KeyService] Found Role-Specific Key: ${k.api.substring(0,8)}... for ${k.text_model || k.vision_model || k.voice_model}`);
-            }
-
-            if (k.status && k.status !== STATUS_ACTIVE) {
-                if (k.status === STATUS_DISABLED && k.last_used_at) {
-                    const disabledAt = new Date(k.last_used_at).getTime();
-                    if (!Number.isNaN(disabledAt) && now - disabledAt >= DISABLE_DURATION_MS) {
-                        k.status = STATUS_ACTIVE;
-                        k.usage_today = 0;
-                        k.last_date_checked = new Date().toISOString().split('T')[0];
-                        pendingUpdates.add(k.api);
-                        filtered.push(k);
-                    }
-                    continue;
-                }
-                continue;
-            }
-            filtered.push(k);
-        }
-        keys = filtered;
-    }
-
-    if (error) {
-        console.error("[KeyService] Failed to refresh key cache:", error.message);
-        return;
-    }
-
-    if (keys) {
-        keyCache = keys;
-        
-        // --- NEW: Pre-index keys for faster access (O(1) lookups) ---
-        const newKeyCacheMap = new Map();
-        const newKeysByProvider = new Map();
-        const newKeysByModel = new Map();
-        
-        keys.forEach(k => {
-            // Index by API Key (Direct Map Lookup)
-            newKeyCacheMap.set(k.api, k);
-
-            // Index by Provider
-            const provider = k.provider || 'unknown';
-            if (!newKeysByProvider.has(provider)) newKeysByProvider.set(provider, []);
-            newKeysByProvider.get(provider).push(k);
-            
-            // Handle Google/Gemini alias
-            if (provider === 'google' || provider === 'gemini') {
-                if (!newKeysByProvider.has('google')) newKeysByProvider.set('google', []);
-                if (!newKeysByProvider.has('gemini')) newKeysByProvider.set('gemini', []);
-                // Add to both if not already added by primary provider
-                if (provider === 'google') newKeysByProvider.get('gemini').push(k);
-                else newKeysByProvider.get('google').push(k);
-            }
-
-            // Index by Model
-            const model = k.model || 'default';
-            if (!newKeysByModel.has(model)) newKeysByModel.set(model, []);
-            newKeysByModel.get(model).push(k);
-
-            // Index by Specific Roles (from engine configs)
-            if (k.text_model) {
-                if (!newKeysByModel.has(k.text_model)) newKeysByModel.set(k.text_model, []);
-                newKeysByModel.get(k.text_model).push(k);
-            }
-            if (k.vision_model) {
-                if (!newKeysByModel.has(k.vision_model)) newKeysByModel.set(k.vision_model, []);
-                newKeysByModel.get(k.vision_model).push(k);
-            }
-            if (k.voice_model) {
-                if (!newKeysByModel.has(k.voice_model)) newKeysByModel.set(k.voice_model, []);
-                newKeysByModel.get(k.voice_model).push(k);
-            }
-        });
-
-        keyCacheMap = newKeyCacheMap;
-        keysByProvider = newKeysByProvider;
-        keysByModel = newKeysByModel;
-        
-        lastCacheUpdate = now;
-        // console.log(`[KeyService] Cache updated. Total Keys: ${keys.length}`);
-        
-        // --- NEW: Efficient deadKeys cleanup ---
-        for (const [key] of deadKeys) {
-            if (!keyCacheMap.has(key)) {
-                deadKeys.delete(key);
-            }
-        }
-    }
-}
-
-function markKeyAsDead(key, duration = DEFAULT_COOLDOWN, reason = 'unknown') {
+// Helper to mark key dead directly using object or string
+function markKeyAsDead(keyOrObj, duration = DEFAULT_COOLDOWN, reason = 'unknown') {
+    const key = typeof keyOrObj === 'object' ? keyOrObj.api : keyOrObj;
     if (!key) return;
     const expiry = Date.now() + duration;
     console.warn(`[KeyService] Blocking key ${key.substring(0, 8)}... for ${(duration/1000).toFixed(1)}s. Reason: ${reason}`);
     deadKeys.set(key, { expiry, reason });
 }
+
 
 function markKeyAsSuspended(key, reason = 'suspended') {
     if (!key) return;

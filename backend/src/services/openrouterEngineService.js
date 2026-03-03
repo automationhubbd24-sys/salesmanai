@@ -335,7 +335,7 @@ class OpenRouterEngineService {
                 }
 
                 if (error.status === 429 && image) {
-                    keyService.report429(image);
+                    keyService.report429(image, apiKey);
                 }
 
                 throw error;
@@ -433,7 +433,7 @@ class OpenRouterEngineService {
             }
 
             if (error.status === 429) {
-                keyService.report429(generatorModel);
+                keyService.report429(generatorModel, apiKey);
             }
 
             throw error;
@@ -472,7 +472,7 @@ class OpenRouterEngineService {
             }
         } catch (error) {
             if (error.status === 429) {
-                keyService.report429(refinerModel);
+                keyService.report429(refinerModel, apiKey);
             }
         }
 
