@@ -1152,7 +1152,10 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             'Error:', 
             'undefined', 
             'null',
-            '[System Error]'
+            '[System Error]',
+            '429 status code', // Handle rate limit messages
+            'no body',         // Handle empty body errors
+            'status code'      // General status code leaks
         ];
 
         if (replyText) {

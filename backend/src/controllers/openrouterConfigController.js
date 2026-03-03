@@ -389,13 +389,15 @@ exports.testApiPool = async (req, res) => {
         }
 
         if (mark_failed && failedIds.length > 0) {
-            for (const id of failedIds) {
-                await dbService.updateApiKeyStatus(id, 'disabled');
+                for (const id of failedIds) {
+                    await dbService.updateApiKeyStatus(id, 'disabled');
+                }
+                if (keyService.forceUpdateKeyCache) {
+                    await keyService.forceUpdateKeyCache();
+                } else if (keyService.updateKeyCache) {
+                    await keyService.updateKeyCache(true);
+                }
             }
-            if (keyService.updateKeyCache) {
-                await keyService.updateKeyCache(true);
-            }
-        }
 
         const failed = results.filter(r => !r.success).length;
 

@@ -33,14 +33,65 @@ const modelDailyUsage = new Map(); // Key: modelName, Value: { date: string, cou
 const modelIndexMap = new Map();
 
 const pendingUpdates = new Set();
+
+// --- 3. KEY CACHE MANAGEMENT ---
+// Function declaration MUST be hoisted or defined before call
+async function updateKeyCache(force = false) {
+    const now = Date.now();
+    if (!force && now - lastCacheUpdate < CACHE_TTL && keyCache.length > 0) {
+        return;
+    }
+
+    try {
+        const pgClient = require('./pgClient');
+        const result = await pgClient.query(
+            "SELECT * FROM api_list WHERE status = 'active' ORDER BY id ASC"
+        );
+        
+        const rows = Array.isArray(result.rows) ? result.rows : [];
+        keyCache = rows;
+        
+        // Re-build lookup maps for performance
+        const newMap = new Map();
+        const providerMap = new Map();
+        const modelMap = new Map();
+
+        rows.forEach(k => {
+            newMap.set(k.api, k);
+            
+            // Provider Index
+            const p = (k.provider || 'unknown').toLowerCase();
+            if (!providerMap.has(p)) providerMap.set(p, []);
+            providerMap.get(p).push(k);
+
+            // Model Index (if set)
+            if (k.model) {
+                const m = k.model.toLowerCase();
+                if (!modelMap.has(m)) modelMap.set(m, []);
+                modelMap.get(m).push(k);
+            }
+        });
+
+        keyCacheMap = newMap;
+        keysByProvider = providerMap;
+        keysByModel = modelMap;
+        lastCacheUpdate = now;
+        
+        // console.log(`[KeyService] Cache updated: ${rows.length} active keys.`);
+    } catch (err) {
+        console.error(`[KeyService] Failed to update key cache:`, err.message);
+    }
+}
+
 // Flush Interval (Increased to 30 Seconds to save CPU)
 setInterval(flushUsageStats, 30 * 1000);
 
 // --- Background Cache Refresh (30 Minutes) ---
 // Proactively fetches new keys/limits from DB to keep memory fresh
 setInterval(() => {
-    // console.log("[KeyService] Background cache refresh triggered.");
-    updateKeyCache(true); // force = true
+    if (typeof updateKeyCache === 'function') {
+        updateKeyCache(true); 
+    }
 }, 30 * 60 * 1000);
 // --------------------------------------------------
 
@@ -237,7 +288,7 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
     // Only check model-specific limits if the key itself is fine.
     // This is useful if you want to limit "Gemini Vision" specifically to 1 RPM, but allow "Gemini Flash" 10 RPM.
     if (modelToCheck) {
-        const manual = dynamicLimits.get(modelToCheck);
+        const manual = dynamicLimits.get(String(modelToCheck));
         if (manual) {
             // Strict Model RPD
             if (manual.rpd) {
@@ -278,7 +329,7 @@ async function recordKeyUsage(apiKey, tokenUsage = 0) {
     const cachedKey = keyCacheMap.get(apiKey);
 
     if (cachedKey) {
-        const usageKey = `${apiKey}:${cachedKey.model || 'default'}`;
+        const usageKey = `${apiKey}:${String(cachedKey.model || 'default')}`;
         keyUsageMap.set(usageKey, Date.now());
 
         // Update token usage ONLY (Request count is now in getSmartKey)
@@ -370,11 +421,12 @@ function updateKeyStatusFromHeaders(apiKey, headers) {
     if (limitCap) {
         const keyInfo = keyCache.find(k => k.api === apiKey);
         if (keyInfo && keyInfo.model) {
-            const current = dynamicLimits.get(keyInfo.model) || {};
+            const modelName = String(keyInfo.model);
+            const current = dynamicLimits.get(modelName) || {};
             // Only update if it's different to avoid spamming
             if (current.rpm !== parseInt(limitCap)) {
-                console.log(`[KeyService] 🧠 Learned Real-Time Limit for ${keyInfo.model}: ${limitCap} RPM (Config was ${DEFAULT_LIMITS[keyInfo.model]?.rpm || 'unknown'})`);
-                dynamicLimits.set(keyInfo.model, { ...current, rpm: parseInt(limitCap) });
+                console.log(`[KeyService] 🧠 Learned Real-Time Limit for ${modelName}: ${limitCap} RPM (Config was ${DEFAULT_LIMITS[modelName]?.rpm || 'unknown'})`);
+                dynamicLimits.set(modelName, { ...current, rpm: parseInt(limitCap) });
             }
         }
     }
@@ -406,7 +458,9 @@ function updateKeyStatusFromHeaders(apiKey, headers) {
 const globalKeyPointers = new Map(); // Stores last used index for each "provider:model"
 
 async function getSmartKey(provider, model = 'default') {
-    await updateKeyCache();
+    if (typeof updateKeyCache === 'function') {
+        await updateKeyCache();
+    }
     
     // Check Global Model Lock
     if (isModelLocked(model)) {
@@ -490,7 +544,7 @@ async function getSmartKey(provider, model = 'default') {
             // --- ATOMIC TIMESTAMP RECORDING ---
             const today = new Date().toISOString().split('T')[0];
             
-            const modelName = model || candidateKey.model || 'default';
+            const modelName = String(model || candidateKey.model || 'default');
 
             // Per Key RPM
             const tsList = keyUsageTimestamps.get(candidateKey.api) || [];
@@ -544,21 +598,16 @@ async function getSmartKey(provider, model = 'default') {
 
 // --- 24. Initialization ---
 // Populate the cache immediately on server start
-// updateKeyCache is an async function, so we should catch errors if top-level await isn't supported, 
-// but since we are inside a module, we just call it.
-// The issue "ReferenceError: updateKeyCache is not defined" suggests it might be called before it's defined 
-// if there was some hoisting issue or if it was removed/renamed in a previous edit.
-// However, looking at the code, updateKeyCache IS defined above.
-// The error line 547 `updateKeyCache(true);` seems to be outside any function scope, at the bottom.
-// Let's ensure it's called safely.
+// Let's ensure it's called safely with a small delay to avoid race conditions with other modules.
 
-if (typeof updateKeyCache === 'function') {
-    // TRIGGER DEPLOYMENT: Added timestamp log
-    console.log(`[KeyService] Initializing Key Cache at ${new Date().toISOString()}...`);
-    updateKeyCache(true).catch(err => console.error("Initial key cache update failed:", err));
-} else {
-    console.error("CRITICAL: updateKeyCache function is missing!");
-}
+setTimeout(() => {
+    if (typeof updateKeyCache === 'function') {
+        console.log(`[KeyService] Initializing Key Cache at ${new Date().toISOString()}...`);
+        updateKeyCache(true).catch(err => console.error("Initial key cache update failed:", err));
+    } else {
+        console.error("CRITICAL: updateKeyCache function is missing at runtime!");
+    }
+}, 2000); // 2 seconds delay for safe initialization
 
 module.exports = {
     // NEW: Adaptive Rate Limit Reporter
@@ -591,6 +640,10 @@ module.exports = {
     recordKeyUsage,
     updateKeyStatusFromHeaders,
     updateKeyCache, // Export this!
+    forceUpdateKeyCache: async () => {
+        console.log("[KeyService] Manual cache refresh requested.");
+        return updateKeyCache(true);
+    },
     flushUsageStats, // Export this!
     report429, 
     isModelLocked,

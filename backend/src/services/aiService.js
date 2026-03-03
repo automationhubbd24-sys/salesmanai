@@ -1977,16 +1977,6 @@ Rules:
         }
     }
 
-    // ATTEMPT 2: Gemini 2.0 Flash (Explicit Fallback)
-    // ONLY for Free Users
-    if (pageConfig.cheap_engine !== false) {
-        // User Request: "best model ta amr motabek kono engine e nijer teke defult e work korbe na"
-        // Solution: REMOVE FALLBACK.
-        // If Attempt 1 failed (configured model), we STOP.
-        // We do NOT automatically switch to Gemini 2.0 Flash.
-        console.warn("[Vision] Configured model failed. Automatic fallback disabled by user policy.");
-    }
-
     // ATTEMPT 3: OpenRouter Vision (Dynamically from Config)
     try {
         const provider = 'openrouter';
@@ -2220,19 +2210,6 @@ async function transcribeAudio(audioUrl, config) {
              } else {
                  priorityChain.push({ provider: provider, model: voiceModel, name: `Configured (${voiceModel})` });
              }
-             
-             // Always ensure a strong fallback
-             if (!priorityChain.some(o => o.model.includes('gemini-1.5-flash'))) {
-                 priorityChain.push({ provider: 'google', model: 'gemini-1.5-flash', name: 'Gemini 1.5 Fallback' });
-             }
-             if (!priorityChain.some(o => o.model.includes('gemini-2.0-flash'))) {
-                 priorityChain.push({ provider: 'google', model: 'gemini-2.0-flash', name: 'Gemini 2.0 Fallback' });
-             }
-        } else {
-             // Fallback if NO voice model configured (but we shouldn't really reach here if frontend is set up right)
-             // User Request: "best model ta amr motabek kono engine e nijer teke defult e work korbe na"
-             // Solution: NO DEFAULT FALLBACKS.
-             console.error("[Audio] No Voice Model configured in Page or Global settings. Skipping transcription.");
         }
     }
 
@@ -2297,11 +2274,6 @@ async function transcribeAudio(audioUrl, config) {
                 let modelName = option.model;
                 if (modelName.startsWith('models/')) modelName = modelName.replace('models/', '');
                 
-                // DEFAULT TO GEMINI 2.5 FLASH (2026 Model)
-                if (modelName === 'gemini-2.0-flash' || modelName === 'gemini-1.5-flash') {
-                    modelName = 'gemini-2.5-flash';
-                }
-
                 const url = `${baseUrl}/${modelName}:generateContent?key=${apiKey}`;
                 
                 // Determine Voice Prompt
