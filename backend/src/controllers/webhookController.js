@@ -1894,12 +1894,8 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         await dbService.saveChatMessage(sessionId, 'user', finalUserMessage);
 
         // Prepare Assistant History Content
-        // Fix: Save Assistant Reply and then save Image Memory as a SYSTEM message to avoid AI hallucination
         let historyReplyText = replyText;
         
-        // Save Assistant Reply (Text ONLY) to AI Context
-        await dbService.saveChatMessage(sessionId, 'assistant', historyReplyText);
-
         if (aiResponse.images && Array.isArray(aiResponse.images) && aiResponse.images.length > 0) {
             let memoryNote = "";
             
@@ -1930,8 +1926,9 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                  memoryNote = `[SYSTEM MEMORY: Sent product images in this reply: ${summary}. The user is now looking at these images.]`;
             }
             
-            // Save to AI Context as a SYSTEM message instead of appending to assistant
-            await dbService.saveChatMessage(sessionId, 'system', memoryNote);
+            // MERGE MEMORY INTO ASSISTANT MESSAGE to preserve context flow
+            // This is better for context than a separate 'system' message which some models ignore.
+            historyReplyText += `\n\n${memoryNote}`;
 
             // Save to fb_chats (for Audit/Debugging & User Requirement)
             await dbService.saveFbChat({
@@ -1945,6 +1942,9 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 reply_by: 'system'
             });
         }
+
+        // Save Assistant Reply (Text + Memory) to AI Context
+        await dbService.saveChatMessage(sessionId, 'assistant', historyReplyText);
 
         await dbService.saveLead({
             page_id: pageId,

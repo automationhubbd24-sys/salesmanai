@@ -697,25 +697,25 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     // --- SMART HISTORY PROCESSOR ---
     // User Requirement: "system memory ta read korte partese na"
     // Solution: Many providers (Gemini) ignore 'system' roles in middle of history.
-    // We merge 'system' notes into the NEXT user message to ensure LLM sees them.
+    // We merge 'system' notes into the NEXT message to ensure LLM sees them.
     const processedHistory = [];
     let pendingSystemNotes = [];
 
     for (const msg of (history || [])) {
         if (msg.role === 'system') {
             pendingSystemNotes.push(msg.content);
-        } else if (msg.role === 'user' && pendingSystemNotes.length > 0) {
-            // Merge pending notes into this user message
+        } else if (pendingSystemNotes.length > 0) {
+            // Merge pending notes into this message (User or Assistant)
             processedHistory.push({
-                role: 'user',
-                content: `[SYSTEM CONTEXT: ${pendingSystemNotes.join(' | ')}]\n${msg.content}`
+                ...msg,
+                content: `${pendingSystemNotes.join('\n')}\n${msg.content}`
             });
             pendingSystemNotes = [];
         } else {
             processedHistory.push(msg);
         }
     }
-    
+
     // 0. Unified Logger Helper (Defined at top to avoid Hoisting/Initialization errors)
     const finalize = async (result) => {
         // Release slot before finishing
@@ -871,18 +871,25 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                      const msg = history[i];
                      const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
                      
-                     // Check for Image Analysis Result
+                     // 1. Check for Image Analysis Result (User sent image)
                      if (content.includes('[Image Analysis Result]')) {
-                         // Extract meaningful keywords (e.g. first 100 chars of analysis)
-                         const analysisMatch = content.match(/\[Image Analysis Result\]\s*([\s\S]{1,100})/);
+                         const analysisMatch = content.match(/\[Image Analysis Result\]\s*([\s\S]{1,200})/);
                          if (analysisMatch && analysisMatch[1]) {
                              analysisKeywords += " " + analysisMatch[1];
+                         }
+                     }
+                     
+                     // 2. Check for SYSTEM MEMORY (Bot sent image)
+                     if (content.includes('[SYSTEM MEMORY:')) {
+                         const memoryMatch = content.match(/\[SYSTEM MEMORY:\s*Sent product images for:\s*\[(.*?)\].*?\]/);
+                         if (memoryMatch && memoryMatch[1]) {
+                             analysisKeywords += " " + memoryMatch[1];
                          }
                      }
                  }
                  if (analysisKeywords) {
                     searchQuery += " " + analysisKeywords.trim();
-                    console.log(`[AI] Enhanced search query with multi-image context: "${searchQuery}"`);
+                    console.log(`[AI] Enhanced search query with context: "${searchQuery}"`);
                  }
             }
 
@@ -1004,7 +1011,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
 
         let finalUserMsg = cleanUserMessage;
         if (pendingSystemNotes.length > 0) {
-            finalUserMsg = `[SYSTEM CONTEXT: ${pendingSystemNotes.join(' | ')}]\n${finalUserMsg}`;
+            finalUserMsg = `${pendingSystemNotes.join('\n')}\n${finalUserMsg}`;
         }
 
         messages = [
@@ -1135,7 +1142,7 @@ Reply naturally in PLAIN TEXT. Use tools when needed.`;
 
         // Merge remaining notes into current user message
         if (pendingSystemNotes.length > 0) {
-            cleanUserMessage = `[SYSTEM CONTEXT: ${pendingSystemNotes.join(' | ')}]\n${cleanUserMessage}`;
+            cleanUserMessage = `${pendingSystemNotes.join('\n')}\n${cleanUserMessage}`;
         }
 
         if (isDuplicate) {
