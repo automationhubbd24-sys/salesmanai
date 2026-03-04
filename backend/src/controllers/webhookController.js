@@ -1738,8 +1738,15 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
 
         let botMessageId = `bot_${Date.now()}`;
         if (replyText && replyText.length > 0) {
-            const sendResult = await facebookService.sendMessage(pageId, senderId, replyText, pageConfig.page_access_token);
-            botMessageId = sendResult?.message_id || botMessageId;
+            // FIX: If AI says "no reply", we skip sending it to Facebook but still save it to our DB for history/tracking.
+            const isNoReply = replyText.toLowerCase().trim() === 'no reply';
+            
+            if (!isNoReply) {
+                const sendResult = await facebookService.sendMessage(pageId, senderId, replyText, pageConfig.page_access_token);
+                botMessageId = sendResult?.message_id || botMessageId;
+            } else {
+                console.log(`[AI Silence] Detected "no reply". Saving to DB but skipping Facebook send.`);
+            }
 
             let aiModelLabel = aiResponse.model || null;
             const isCheapEngineForLog = pageConfig.cheap_engine !== false;
@@ -2055,7 +2062,7 @@ async function processCommentEvent(changeValue, entryPageId = null) {
 
         const replyText = aiResponse.reply;
 
-        if (!replyText) return;
+        if (!replyText || replyText.toLowerCase().trim() === 'no reply') return;
 
         // 4. Reply to Comment
         await facebookService.replyToComment(commentId, replyText, pageConfig.page_access_token);

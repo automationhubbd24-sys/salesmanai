@@ -65,6 +65,95 @@ function extractDecisionMode(text) {
     return { mode, cleaned };
 }
 
+// --- ORDER TRACKING HELPERS ---
+const normalizeBanglaDigits = (value) => {
+    if (!value) return '';
+    const map = { '০':'0','১':'1','২':'2','৩':'3','৪':'4','৫':'5','৬':'6','৭':'7','৮':'8','৯':'9' };
+    return String(value).replace(/[০-৯]/g, d => map[d] || d);
+};
+
+const normalizeBdPhone = (value) => {
+    if (!value) return null;
+    const normalized = normalizeBanglaDigits(value);
+    const digits = normalized.replace(/\D/g, '');
+    const candidate = digits.length > 11 ? digits.slice(-11) : digits;
+    if (candidate.length === 11 && candidate.startsWith('01')) return candidate;
+    return null;
+};
+
+const getHistoryText = (historyList) => {
+    if (!Array.isArray(historyList)) return '';
+    return historyList
+        .map(item => {
+            let content = '';
+            if (!item) return '';
+            if (typeof item === 'string') content = item;
+            else if (typeof item.content === 'string') content = item.content;
+            else if (typeof item.text === 'string') content = item.text;
+            
+            if (!content) return '';
+
+            return content
+                .replace(/Image URL: https?:\/\/[^\s|]+/gi, '(Image)') 
+                .replace(/Desc: [\s\S]*?(?=\||\[End|$)/gi, '') 
+                .replace(/\[Instruction Products\]/gi, '') 
+                .replace(/\[End of Instruction Products\]/gi, '') 
+                .replace(/\[SAVE_ORDER:[\s\S]*?\]/gi, '') 
+                .replace(/##product/gi, '')
+                .trim();
+        })
+        .filter(Boolean)
+        .join('\n');
+};
+
+const extractHistoryOrder = (historyText) => {
+    const cleanedText = String(historyText || '')
+        .replace(/\*\*/g, '')
+        .replace(/[*_`]/g, '')
+        .replace(/[•·]/g, ' ')
+        .trim();
+    const flatText = cleanedText.replace(/\s+/g, ' ').trim();
+    const normalized = normalizeBanglaDigits(cleanedText);
+
+    const productMatch = flatText.match(/(?:পণ্যের নাম|প্রোডাক্টের নাম|পণ্য|আইটেম|প্রোডাক্ট|product name|product|item)\s*[:ঃ-]?\s*([^\n,।|]+)/i);
+    const qtyMatch = normalized.match(/(?:কোয়ান্টিটি|quantity|qty|পরিমাণ)\s*[:ঃ-]?\s*([০-৯\d]+|এক|দুই|তিন|চার|পাঁচ|ছয়|সাত|আট|নয়|দশ)\s*(পিস|টা|টি|বোতল)?/i);
+    const unitMatch = normalized.match(/(\d+)\s*(পিস|টা|টি|বোতল)/i);
+    const totalMatch = normalized.match(/(?:মোট মূল্য|total price|total)\s*[:ঃ-]?\s*([\d,]+)\s*(টাকা|tk|bdt)?/i);
+    const priceMatch = normalized.match(/(?:পণ্যের মূল্য|price|amount|মূল্য|দাম)\s*[:ঃ-]?\s*([\d,]+)\s*(টাকা|tk|bdt)?/i);
+    const nameMatch = flatText.match(/(?:নাম|customer name|name)\s*[:ঃ-]?\s*([^\n,।|]+)/i);
+    const addrKeywords = ['ঠিকানা','জেলা','থানা','গ্রাম','পোস্ট','বাড়ি','রোড','বাসা','উপজেলা','বিভাগ','ইউনিয়ন','বাজার','এলাকা','address'];
+    const addressLines = cleanedText
+        .split('\n')
+        .map(l => l.trim())
+        .filter(l => l && addrKeywords.some(k => l.includes(k)))
+        .filter(l => !l.includes('[Instruction') && !l.includes('IMAGE:'));
+    
+    const location = addressLines.join(' ').trim();
+    const bnNumberMap = { এক: '1', দুই: '2', তিন: '3', চার: '4', পাঁচ: '5', ছয়: '6', সাত: '7', আট: '8', নয়: '9', দশ: '10' };
+    
+    let qtyValue = '';
+    let qtyUnit = '';
+    if (qtyMatch) {
+        qtyValue = bnNumberMap[qtyMatch[1]] || qtyMatch[1];
+        qtyUnit = qtyMatch[2] || '';
+    } else if (unitMatch) {
+        qtyValue = unitMatch[1];
+        qtyUnit = unitMatch[2] || '';
+    }
+    const quantity = qtyValue ? `${qtyValue}${qtyUnit ? ` ${qtyUnit}` : ''}`.trim() : '';
+    const priceRaw = totalMatch ? totalMatch[1] : (priceMatch ? priceMatch[1] : null);
+    const price = priceRaw ? String(priceRaw).replace(/,/g, '') : null;
+
+    return {
+        product_name: productMatch ? productMatch[1].trim() : '',
+        quantity,
+        price,
+        location,
+        name: nameMatch ? nameMatch[1].trim() : ''
+    };
+};
+// -----------------------------
+
 // Global Debounce Map (In-Memory)
 // Key: sessionId (session_chatId)
 const debounceMap = new Map();
@@ -2067,6 +2156,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
         await new Promise(resolve => setTimeout(resolve, 2000));
 
         // --- HANDLE SAVE_ORDER ([SAVE_ORDER: {...}]) ---
+        let orderSaved = false;
         const orderRegex = /\[SAVE_ORDER:\s*({.*?})\]/s;
         const orderMatch = finalReplyText.match(orderRegex);
         if (orderMatch && orderMatch[1]) {
@@ -2077,7 +2167,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                 await dbService.saveWhatsAppOrderTracking({
                     session_name: sessionName,
                     sender_id: senderId,
-                    number: senderId.split('@')[0], // Clean number
+                    number: senderId.split('@')[0], // Default to sender's number
                     product_name: orderJson.product_name || 'Unknown',
                     location: orderJson.location || '',
                     product_quantity: orderJson.product_quantity || '1',
@@ -2085,8 +2175,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                 });
                 
                 // ADVANCED FIX: Auto-apply 'ordertrack' label and STOP workflow immediately
-                // This ensures reliability even if AI forgets the [ADD_LABEL] tag
-                console.log(`[WA] Order Saved. Enforcing 'ordertrack' label and lock.`);
+                console.log(`[WA] Order Saved via AI Tag. Enforcing 'ordertrack' label and lock.`);
                 await whatsappService.addLabel(sessionName, senderId, 'ordertrack');
                 
                 const chatKey = `${sessionName}_${effectiveSenderId}`;
@@ -2094,8 +2183,73 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                 
                 // Remove tag from user-facing text
                 finalReplyText = finalReplyText.replace(orderMatch[0], '').trim();
+                orderSaved = true;
             } catch (e) {
                 console.error(`[WA] Failed to save order from AI tag:`, e.message);
+            }
+        }
+
+        // --- FALLBACK ORDER DETECTION (Regex & History) ---
+        if (!orderSaved) {
+            const normalizedCombined = normalizeBanglaDigits(finalOutput); // Use user's last message
+            const phoneMatch = normalizedCombined.match(/(?:\+?88)?(01[3-9]\d{8})/g);
+            
+            // For WhatsApp, we always have a number, but we check if user provided a DIFFERENT one
+            const fallbackNumber = phoneMatch ? normalizeBdPhone(phoneMatch[0]) : (senderId.split('@')[0]);
+
+            // We only auto-save if we see order-like keywords in the current message or history
+            const hasOrderKeywords = /(অর্ডার|অডার|order|ঠিকানা|address|কনফার্ম|confirm|বিকাশ|bkash|পেমেন্ট|payment|পার্সেল|parcel)/i.test(finalOutput);
+            
+            if (hasOrderKeywords || phoneMatch) {
+                console.log(`[WA] Fallback order detection triggered. Number: ${fallbackNumber}`);
+                
+                // 1. Get History Context
+                const historyText = getHistoryText(history);
+                const historyOrder = extractHistoryOrder(historyText);
+
+                // 2. Extract Info from CURRENT message
+                const addrKeywords = ['ঠিকানা','নাম','জেলা','থানা','গ্রাম','পোস্ট','বাড়ি','রোড','বাসা','উপজেলা','বিভাগ','ইউনিয়ন','বাজার','এলাকা','address'];
+                const addressLines = finalOutput
+                    .split('\n')
+                    .map(l => l.trim())
+                    .filter(l => l && addrKeywords.some(k => l.includes(k)));
+                const currentAddress = addressLines.join(' ').trim();
+                
+                const nameMatch = finalOutput.match(/(?:নাম|name)\s*[:ঃ-]?\s*([^\n,।|]+)/i);
+                const currentName = nameMatch ? nameMatch[1].trim() : '';
+                
+                const qtyMatch = normalizedCombined.match(/(এক|দুই|তিন|চার|পাঁচ|\d+)\s*(বোতল|পিস|টা|টি)/);
+                const currentQty = qtyMatch ? qtyMatch[0] : '';
+
+                // 3. MERGE
+                const finalName = currentName || historyOrder.name || '';
+                const finalAddress = currentAddress || historyOrder.location || '';
+                
+                const locationParts = [];
+                if (finalName) locationParts.push(`নাম: ${finalName}`);
+                if (finalAddress) locationParts.push(finalAddress);
+                const fallbackLocation = locationParts.join(' | ') || 'N/A';
+                
+                const finalQuantity = currentQty || historyOrder.quantity || '1';
+                let finalProduct = historyOrder.product_name || 'Recovered Lead';
+                
+                if (finalProduct.includes('|')) finalProduct = finalProduct.split('|')[0].trim();
+                finalProduct = finalProduct.replace(/Item \d+:/gi, '').replace(/##product/gi, '').replace(/"/g, '').trim();
+
+                const finalPrice = historyOrder.price || null;
+
+                await dbService.saveWhatsAppOrderTracking({
+                    session_name: sessionName,
+                    sender_id: senderId,
+                    number: fallbackNumber,
+                    product_name: finalProduct,
+                    location: fallbackLocation,
+                    product_quantity: finalQuantity,
+                    price: finalPrice
+                });
+                
+                console.log(`[WA] Fallback Order Saved for ${fallbackNumber}.`);
+                orderSaved = true;
             }
         }
 
@@ -2308,30 +2462,37 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
         let sentMessageId = `bot_${Date.now()}`;
         
         if (finalReplyText) {
+             // FIX: If AI says "no reply", we skip sending it to WhatsApp but still save it to our DB for history/tracking.
+             const isNoReply = finalReplyText.toLowerCase().trim() === 'no reply';
+
              // PRE-REGISTER to prevent Race Condition (Echo Guard)
              // We add it to the map BEFORE sending, so if the webhook hits immediately, it's already there.
              const existing = recentBotReplies.get(senderId) || [];
              existing.push({ text: normalizeText(finalReplyText), timestamp: Date.now() });
              recentBotReplies.set(senderId, existing);
 
-             const sentData = await whatsappService.sendMessage(sessionName, senderId, finalReplyText);
-             if (sentData && sentData.id) {
-                 // WAHA returns { id: "...", ... } or { id: { _serialized: "..." } } depending on version
-                 // Usually sentData.id is the ID string
-                 sentMessageId = (typeof sentData.id === 'object') ? sentData.id._serialized : sentData.id;
-                 
-                 // Add to Bot Message IDs (Critical for preventing Double Messages in Dashboard)
-                 if (sentMessageId) {
-                     console.log(`[WA Debug] Adding BotID: ${sentMessageId}`);
-                     botMessageIds.add(sentMessageId);
+             if (!isNoReply) {
+                 const sentData = await whatsappService.sendMessage(sessionName, senderId, finalReplyText);
+                 if (sentData && sentData.id) {
+                     // WAHA returns { id: "...", ... } or { id: { _serialized: "..." } } depending on version
+                     // Usually sentData.id is the ID string
+                     sentMessageId = (typeof sentData.id === 'object') ? sentData.id._serialized : sentData.id;
                      
-                     // Auto-clear after 2 minutes to save memory
-                     setTimeout(() => {
-                         botMessageIds.delete(sentMessageId);
-                         recentBotReplies.delete(senderId);
-                         // console.log(`[WA Debug] Cleared BotID: ${sentMessageId}`);
-                     }, 2 * 60 * 1000);
+                     // Add to Bot Message IDs (Critical for preventing Double Messages in Dashboard)
+                     if (sentMessageId) {
+                         console.log(`[WA Debug] Adding BotID: ${sentMessageId}`);
+                         botMessageIds.add(sentMessageId);
+                         
+                         // Auto-clear after 2 minutes to save memory
+                         setTimeout(() => {
+                             botMessageIds.delete(sentMessageId);
+                             recentBotReplies.delete(senderId);
+                             // console.log(`[WA Debug] Cleared BotID: ${sentMessageId}`);
+                         }, 2 * 60 * 1000);
+                     }
                  }
+             } else {
+                 console.log(`[WA Silence] Detected "no reply". Saving to DB but skipping WhatsApp send.`);
              }
         }
 
