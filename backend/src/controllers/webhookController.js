@@ -1025,9 +1025,9 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 `   [SAVE_ORDER: {"product_name": "...", "number": "...", "location": "...", "price": "...", "quantity": "..."}]\n` +
                 `   - Fill in as much info as you can from the current conversation history (product, price, address).\n` +
                 `   - If any info is missing (e.g. you have the number but not the location), leave those fields empty in the JSON and politely ask the customer for them in your main text.\n` +
-                `3) [IMAGES]: Use the STRICT format for any product images you send: IMAGE: Title | URL. DO NOT use [Image] placeholders.\n` +
+                `3) [IMAGES]: Use the STRICT format for any product images you send: IMAGE: Title | URL. DO NOT use [Image] placeholders or markdown syntax.\n` +
                 `4) [DESC RULE]: Only use Desc when it is explicitly provided in [Instruction Products]. Never repeat internal notes.\n` +
-                `   If an item in [Instruction Products] has only Image URL (no name/price/desc), send ONLY the image using title "Image". Do not mention any product name or description.\n` +
+                `   If an item in [Instruction Products] has only Image URL (no name/price/desc), send ONLY the image using the strict format: "IMAGE: Image | URL". Do not mention any product name or description.\n` +
                 `5) Always keep the final text natural, human-sounding, and coherent. Never expose raw internal tags to the customer.\n`;
         }
         // --------------------------------------------------------------------
@@ -1327,34 +1327,44 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         // --- JSON & ERROR HANDLING (Commercial Grade) ---
         // 1. Attempt to Rescue JSON
         if (replyText && (replyText.trim().startsWith('{') || replyText.trim().startsWith('['))) {
-            try {
-                // Remove Markdown code blocks if present (```json ... ```)
-                const cleanJson = replyText.replace(/```json/g, '').replace(/```/g, '').trim();
-                const parsed = JSON.parse(cleanJson);
-                
-                // Extract useful text from common JSON fields
-                if (parsed.reply) replyText = parsed.reply;
-                else if (parsed.message) replyText = parsed.message;
-                else if (parsed.text) replyText = parsed.text;
-                else if (parsed.answer) replyText = parsed.answer;
-                else if (parsed.content) replyText = parsed.content;
-                
-                console.log(`[JSON Rescuer] Successfully extracted text from JSON: "${replyText.substring(0, 50)}..."`);
-            } catch (e) {
-                console.warn(`[JSON Rescuer] Failed to parse JSON: ${e.message}. Content: ${replyText.substring(0, 20)}...`);
-                // If parsing fails, we treat it as potentially harmful raw code.
-                // We will LOG it for Admin but NOT send it to User.
-                await dbService.saveFbChat({
-                    page_id: pageId,
-                    sender_id: pageId,
-                    recipient_id: senderId,
-                    message_id: `fail_${Date.now()}`,
-                    text: `[AI Error - Silent] Raw JSON/Code Blocked: ${replyText}`,
-                    timestamp: Date.now(),
-                    status: 'ai_ignored',
-                    reply_by: 'bot'
-                });
-                replyText = ''; // SILENCE
+            const trimmed = replyText.trim();
+            // Robust check: Is it likely JSON? (Contains " : " and " " ")
+            const isLikelyJson = (trimmed.includes('"') && trimmed.includes(':')) || trimmed.includes('{}');
+            
+            if (isLikelyJson) {
+                try {
+                    // Remove Markdown code blocks if present (```json ... ```)
+                    const cleanJson = replyText.replace(/```json/g, '').replace(/```/g, '').trim();
+                    const parsed = JSON.parse(cleanJson);
+                    
+                    // Extract useful text from common JSON fields
+                    if (parsed.reply) replyText = parsed.reply;
+                    else if (parsed.message) replyText = parsed.message;
+                    else if (parsed.text) replyText = parsed.text;
+                    else if (parsed.answer) replyText = parsed.answer;
+                    else if (parsed.content) replyText = parsed.content;
+                    
+                    console.log(`[JSON Rescuer] Successfully extracted text from JSON: "${replyText.substring(0, 50)}..."`);
+                } catch (e) {
+                    console.warn(`[JSON Rescuer] Failed to parse JSON: ${e.message}. Content: ${replyText.substring(0, 20)}...`);
+                    // If parsing fails, we treat it as potentially harmful raw code.
+                    // We will LOG it for Admin but NOT send it to User.
+                    await dbService.saveFbChat({
+                        page_id: pageId,
+                        sender_id: pageId,
+                        recipient_id: senderId,
+                        message_id: `fail_${Date.now()}`,
+                        text: `[AI Error - Silent] Raw JSON/Code Blocked: ${replyText}`,
+                        timestamp: Date.now(),
+                        status: 'ai_ignored',
+                        reply_by: 'bot'
+                    });
+                    replyText = ''; // SILENCE
+                }
+            } else {
+                // Not likely JSON, just bracketed text like "[Image of...]"
+                // Let it pass through to the text handling logic below.
+                console.log(`[JSON Rescuer] Skipping non-JSON bracketed text: "${replyText.substring(0, 20)}..."`);
             }
         }
 
