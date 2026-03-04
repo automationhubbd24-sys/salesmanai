@@ -141,43 +141,35 @@ const handleWebhook = async (req, res) => {
         (async () => {
             try {
                 // --- GATEKEEPER CHECK (Fail Fast) ---
-                // Extract Page ID from the first entry (assuming batch is for same page usually)
-                const pageId = body.entry?.[0]?.id;
+                if (allowedPagesCache.size === 0) await refreshAllowedPages();
                 
-                if (pageId) {
-                     // If cache is empty (server restart), try quick fetch or allow once to be safe?
-                     // Better: If cache is empty, we force refresh.
-                     if (allowedPagesCache.size === 0) await refreshAllowedPages();
-        
-                     if (!allowedPagesCache.has(pageId)) {
+                // Async Processing
+                for (const entry of body.entry) {
+                    const pageId = entry.id; // Correct way to get pageId for THIS entry
+                    if (!pageId) continue;
+
+                    // Gatekeeper Check per Page
+                    if (!allowedPagesCache.has(pageId)) {
                         // Double check DB before hard blocking (in case of new signup not in cache yet)
                         const isActuallyActive = await dbService.getPageConfig(pageId);
                         
                         if (isActuallyActive) {
-                            // Note: getPageConfig now returns shared 'message_credit' from user_configs
                             const hasCredit = (isActuallyActive.message_credit > 0);
                             const hasOwnKey = (isActuallyActive.api_key && isActuallyActive.api_key.length > 5 && isActuallyActive.cheap_engine === false);
-                            
-                            // Allow if they have Credit OR Own Key, regardless of subscription_status (unless banned)
-                            // We treat 'null' status as 'free'/'pay-as-you-go'
                             const isBanned = isActuallyActive.subscription_status === 'banned';
         
                             if (!isBanned && (hasCredit || hasOwnKey)) {
                                 allowedPagesCache.add(pageId); 
                             } else {
                                 console.warn(`[Gatekeeper] BLOCKED unauthorized event for Page ID: ${pageId}. Status: ${isActuallyActive.subscription_status}, Credit: ${isActuallyActive.message_credit}, OwnAPI: ${hasOwnKey}`);
-                                return; // Stop processing
+                                continue; // Skip THIS entry
                             }
                         } else {
                             // Page not found in DB
-                            return; // Stop processing
+                            continue; // Skip THIS entry
                         }
-                     }
-                }
-                // ------------------------------------
-        
-                // Async Processing
-                for (const entry of body.entry) {
+                    }
+
                     // 1. Handle Messaging Events (Direct Messages)
                     if (entry.messaging) {
                         for (const webhookEvent of entry.messaging) {
@@ -191,7 +183,7 @@ const handleWebhook = async (req, res) => {
                     if (entry.changes) {
                         for (const change of entry.changes) {
                             if (change.field === 'feed') {
-                                await processCommentEvent(change.value);
+                                await processCommentEvent(change.value, pageId);
                             }
                         }
                     }
@@ -1994,7 +1986,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
 }
 
 // Handle Comments (n8n "OnComment" Logic)
-async function processCommentEvent(changeValue) {
+async function processCommentEvent(changeValue, entryPageId = null) {
     try {
         if (changeValue.item !== 'comment' || changeValue.verb !== 'add') return;
 
@@ -2003,7 +1995,9 @@ async function processCommentEvent(changeValue) {
         const senderId = changeValue.from?.id;
         const senderName = changeValue.from?.name || 'Unknown';
         const postId = changeValue.post_id;
-        const pageId = postId.split('_')[0]; // Extract Page ID from Post ID
+        
+        // Priority: Use entryPageId from Webhook Entry if available, otherwise extract from Post ID
+        const pageId = entryPageId || postId.split('_')[0]; 
 
         // Ignore if sender is the page itself
         if (senderId === pageId) return;
