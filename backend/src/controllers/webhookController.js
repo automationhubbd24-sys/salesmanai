@@ -1319,10 +1319,16 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             }
         }
         
-        // --- SAFETY FILTER: Remove Internal Tags like [SAVE_ORDER] ---
+        // --- SAFETY FILTER: Remove Internal Tags like [SAVE_ORDER], [SYSTEM MEMORY] ---
         // This ensures the user never sees technical JSON or internal commands.
         if (replyText && typeof replyText === 'string') {
-            replyText = replyText.replace(/\[SAVE_ORDER:[\s\S]*?\]/g, '').trim();
+            replyText = replyText
+                .replace(/\[SAVE_ORDER:[\s\S]*?\]/g, '')
+                .replace(/\[SYSTEM MEMORY:[\s\S]*?\]/g, '')
+                .replace(/\[IMAGE_DECISION:[\s\S]*?\]/g, '')
+                .replace(/\[IMAGE_MODE:[\s\S]*?\]/g, '')
+                .replace(/\[ADD_LABEL:[\s\S]*?\]/g, '')
+                .trim();
         }
 
         let decisionMode = null;

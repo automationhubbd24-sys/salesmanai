@@ -2056,6 +2056,17 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
         const replyText = aiResponse.reply || aiResponse.text;
         finalReplyText = replyText == null ? '' : String(replyText);
 
+        // --- SAFETY FILTER: Remove Internal Tags from Final Output ---
+        if (finalReplyText && typeof finalReplyText === 'string') {
+            finalReplyText = finalReplyText
+                .replace(/\[SAVE_ORDER:[\s\S]*?\]/g, '')
+                .replace(/\[SYSTEM MEMORY:[\s\S]*?\]/g, '')
+                .replace(/\[IMAGE_DECISION:[\s\S]*?\]/g, '')
+                .replace(/\[IMAGE_MODE:[\s\S]*?\]/g, '')
+                .replace(/\[ADD_LABEL:[\s\S]*?\]/g, '')
+                .trim();
+        }
+
         let decisionMode = null;
         if (finalReplyText && typeof finalReplyText === 'string') {
             const decision = extractDecisionMode(finalReplyText);
