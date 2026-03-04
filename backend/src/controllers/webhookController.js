@@ -68,6 +68,26 @@ function extractProductNamesFromPrompt(promptText) {
     return Array.from(set);
 }
 
+function detectImageMode(promptText) {
+    const text = String(promptText || '');
+    const tagMatch = text.match(/\[(?:IMAGE_MODE|MODE):\s*(image_only|image_title|title_desc|full_product)\s*\]/i);
+    if (tagMatch) return tagMatch[1].toLowerCase();
+    if (/(image\s*only|only\s*image|only\s*picture|only\s*photo|শুধু\s*(ইমেজ|ছবি|সবি)|sudu\s*sobi)/i.test(text)) return 'image_only';
+    if (/(image\s*(and|&)\s*title|title\s*(and|&)\s*image|ছবি\s*.*টাইটেল|ইমেজ\s*.*টাইটেল)/i.test(text)) return 'image_title';
+    if (/(title\s*(and|&)\s*description|description\s*(and|&)\s*title|টাইটেল\s*.*ডেসক্রিপশন|টাইটেল\s*.*বর্ণনা)/i.test(text)) return 'title_desc';
+    if (/(full\s*product|title\s*description\s*price|সব\s*দাও|সব\s*দেবে|সম্পূর্ণ)/i.test(text)) return 'full_product';
+    return null;
+}
+
+function extractDecisionMode(text) {
+    if (!text || typeof text !== 'string') return { mode: null, cleaned: text };
+    const match = text.match(/\[(?:IMAGE_DECISION|DECISION_MODE):\s*(image_only|image_title|title_desc|full_product)\s*\]/i);
+    if (!match) return { mode: null, cleaned: text };
+    const mode = match[1].toLowerCase();
+    const cleaned = text.replace(match[0], '').trim();
+    return { mode, cleaned };
+}
+
 const debounceMap = new Map();
 const pageQueueMap = new Map();
 const MAX_CONCURRENT_PER_PAGE = 5;
@@ -1026,9 +1046,14 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 `   - Fill in as much info as you can from the current conversation history (product, price, address).\n` +
                 `   - If any info is missing (e.g. you have the number but not the location), leave those fields empty in the JSON and politely ask the customer for them in your main text.\n` +
                 `3) [IMAGES]: Use the STRICT format for any product images you send: IMAGE: Title | URL. DO NOT use [Image] placeholders or markdown syntax.\n` +
-                `4) [DESC RULE]: Only use Desc when it is explicitly provided in [Instruction Products]. Never repeat internal notes.\n` +
+                `4) [DECISION MODE]: At the end of your reply, append ONE tag based on what the user needs now:\n` +
+                `   - [IMAGE_DECISION: image_only] (only image)\n` +
+                `   - [IMAGE_DECISION: image_title] (image + title)\n` +
+                `   - [IMAGE_DECISION: title_desc] (title + description, no price)\n` +
+                `   - [IMAGE_DECISION: full_product] (title + description + price + image)\n` +
+                `5) [DESC RULE]: Only use Desc when it is explicitly provided in [Instruction Products]. Never repeat internal notes.\n` +
                 `   If an item in [Instruction Products] has only Image URL (no name/price/desc), send ONLY the image using the strict format: "IMAGE: Image | URL". Do not mention any product name or description.\n` +
-                `5) Always keep the final text natural, human-sounding, and coherent. Never expose raw internal tags to the customer.\n`;
+                `6) Always keep the final text natural, human-sounding, and coherent. Never expose raw internal tags to the customer.\n`;
         }
         // --------------------------------------------------------------------
 
@@ -1300,6 +1325,13 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         // This ensures the user never sees technical JSON or internal commands.
         if (replyText && typeof replyText === 'string') {
             replyText = replyText.replace(/\[SAVE_ORDER:[\s\S]*?\]/g, '').trim();
+        }
+
+        let decisionMode = null;
+        if (replyText && typeof replyText === 'string') {
+            const decision = extractDecisionMode(replyText);
+            decisionMode = decision.mode;
+            replyText = decision.cleaned;
         }
 
         const originalReply = replyText;
@@ -1686,6 +1718,19 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             console.log(`[Smart Extraction] Found ${aiResponse.images.length} images.`);
         }
         // ----------------------------------------
+
+        const promptMode = decisionMode || detectImageMode(pagePrompts?.text_prompt);
+        if (promptMode === 'image_only' && aiResponse.images.length > 0) {
+            replyText = '';
+        } else if (promptMode === 'image_title' && aiResponse.images.length > 0) {
+            const titles = aiResponse.images.map(img => img.title).filter(Boolean);
+            replyText = titles.length > 0 ? titles.join('\n') : '';
+        } else if (promptMode === 'title_desc' && replyText) {
+            replyText = replyText
+                .replace(/(?:৳|bdt|taka|tk)\s*[\d,.]+/gi, '')
+                .replace(/[\d,.]+\s*(?:৳|bdt|taka|tk)/gi, '')
+                .trim();
+        }
 
         let botMessageId = `bot_${Date.now()}`;
         if (replyText && replyText.length > 0) {

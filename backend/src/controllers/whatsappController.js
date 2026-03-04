@@ -35,6 +35,17 @@ function normalizeMediaUrl(value) {
     return url;
 }
 
+function detectImageMode(promptText) {
+    const text = String(promptText || '');
+    const tagMatch = text.match(/\[(?:IMAGE_MODE|MODE):\s*(image_only|image_title|title_desc|full_product)\s*\]/i);
+    if (tagMatch) return tagMatch[1].toLowerCase();
+    if (/(image\s*only|only\s*image|only\s*picture|only\s*photo|শুধু\s*(ইমেজ|ছবি|সবি)|sudu\s*sobi)/i.test(text)) return 'image_only';
+    if (/(image\s*(and|&)\s*title|title\s*(and|&)\s*image|ছবি\s*.*টাইটেল|ইমেজ\s*.*টাইটেল)/i.test(text)) return 'image_title';
+    if (/(title\s*(and|&)\s*description|description\s*(and|&)\s*title|টাইটেল\s*.*ডেসক্রিপশন|টাইটেল\s*.*বর্ণনা)/i.test(text)) return 'title_desc';
+    if (/(full\s*product|title\s*description\s*price|সব\s*দাও|সব\s*দেবে|সম্পূর্ণ)/i.test(text)) return 'full_product';
+    return null;
+}
+
 function resolveLockUserId(senderId, payload) {
     if (senderId && senderId.includes('@lid')) {
         const alt = payload?._data?.key?.remoteJidAlt || payload?._data?.key?.remoteJid;
@@ -43,6 +54,15 @@ function resolveLockUserId(senderId, payload) {
         }
     }
     return senderId;
+}
+
+function extractDecisionMode(text) {
+    if (!text || typeof text !== 'string') return { mode: null, cleaned: text };
+    const match = text.match(/\[(?:IMAGE_DECISION|DECISION_MODE):\s*(image_only|image_title|title_desc|full_product)\s*\]/i);
+    if (!match) return { mode: null, cleaned: text };
+    const mode = match[1].toLowerCase();
+    const cleaned = text.replace(match[0], '').trim();
+    return { mode, cleaned };
 }
 
 // Global Debounce Map (In-Memory)
@@ -1946,6 +1966,26 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
 
         const replyText = aiResponse.reply || aiResponse.text;
         finalReplyText = replyText == null ? '' : String(replyText);
+
+        let decisionMode = null;
+        if (finalReplyText && typeof finalReplyText === 'string') {
+            const decision = extractDecisionMode(finalReplyText);
+            decisionMode = decision.mode;
+            finalReplyText = decision.cleaned;
+        }
+
+        const promptMode = decisionMode || detectImageMode(pageConfig.page_prompts?.text_prompt);
+        if (promptMode === 'image_only' && Array.isArray(aiResponse.images) && aiResponse.images.length > 0) {
+            finalReplyText = '';
+        } else if (promptMode === 'image_title' && Array.isArray(aiResponse.images) && aiResponse.images.length > 0) {
+            const titles = aiResponse.images.map(img => img.title).filter(Boolean);
+            finalReplyText = titles.length > 0 ? titles.join('\n') : '';
+        } else if (promptMode === 'title_desc' && finalReplyText) {
+            finalReplyText = finalReplyText
+                .replace(/(?:৳|bdt|taka|tk)\s*[\d,.]+/gi, '')
+                .replace(/[\d,.]+\s*(?:৳|bdt|taka|tk)/gi, '')
+                .trim();
+        }
         
         if (finalReplyText && shouldBlockOutgoingReply(finalReplyText)) {
             await dbService.saveWhatsAppChat({
