@@ -1054,7 +1054,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         try {
             if (systemPromptProductNames.length > 0) {
                 console.log(`[AI] Found product references in System Prompt: ${systemPromptProductNames.join(', ')}`);
-                const systemProducts = await dbService.getProductsByNames(pageConfig.user_id, systemPromptProductNames);
+                const systemProducts = await dbService.getProductsByNames(pageConfig.user_id, systemPromptProductNames, pageConfig.page_id);
                 
                 if (systemProducts && systemProducts.length > 0) {
                      // Add to productContext if not already present

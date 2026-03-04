@@ -350,7 +350,7 @@ async function queueMessage(event, entryPageId = null) {
     // ---------------------------------------------------------
 
     const senderId = event.sender.id;
-    const pageId = event.recipient.id;
+    const pageId = event.recipient.id || entryPageId; // Always prioritize FB recipient ID for messaging
     console.log(`[Webhook DEBUG] Event for Page: ${pageId} | Sender: ${senderId}`);
     let messageText = event.message?.text || '';
     const messageId = event.message?.mid || `evt_${Date.now()}`;
@@ -702,6 +702,12 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         let pagePrompts = null;
         try {
             pagePrompts = await dbService.getPagePrompts(pageId);
+            if (pagePrompts) {
+                const promptSnippet = pagePrompts.text_prompt ? pagePrompts.text_prompt.substring(0, 100).replace(/\n/g, ' ') : "EMPTY";
+                console.log(`[AI Context Check] Page: ${pageId} | Prompt Snippet: "${promptSnippet}..."`);
+            } else {
+                console.warn(`[AI Context Check] Page: ${pageId} | NO PROMPT FOUND IN DB!`);
+            }
         } catch (e) {
             console.warn(`[Webhook] Failed to fetch prompts for ${pageId}:`, e.message);
         }

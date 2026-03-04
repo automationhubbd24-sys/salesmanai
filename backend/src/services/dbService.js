@@ -2527,21 +2527,28 @@ async function deleteProduct(id, userId) {
 }
 
 // 30.5 Get Products by Exact Names (For System Prompt Injection)
-async function getProductsByNames(userId, productNames) {
+async function getProductsByNames(userId, productNames, pageId = null) {
     if (!productNames || productNames.length === 0) return [];
     
     // Normalize names to lowercase for comparison if needed, 
     // but ILIKE ANY handles case insensitivity.
     
-    const sql = `
+    let sql = `
         SELECT * FROM products 
         WHERE user_id = $1 
         AND is_active = true 
         AND name ILIKE ANY($2)
     `;
     
+    const params = [userId, productNames];
+
+    if (pageId) {
+        params.push(String(pageId));
+        sql += ` AND (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb OR allowed_page_ids::jsonb @> jsonb_build_array($${params.length}::text))`;
+    }
+    
     try {
-        const result = await query(sql, [userId, productNames]);
+        const result = await query(sql, params);
         return result.rows;
     } catch (err) {
         console.warn("[DB] Failed to fetch products by names:", err.message);
