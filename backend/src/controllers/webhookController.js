@@ -1537,10 +1537,9 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 const lowerName = name.toLowerCase();
                 const isExplicitlyTagged = mentionedViaTag.has(lowerName);
                 
-                // HYBRID RULE: 
-                // - If it's a short greeting, ONLY inject if there's a tag (For Health Steps).
-                // - Otherwise, inject if there's a tag OR a natural mention (For Cosmetics Shop).
-                const shouldInject = isExplicitlyTagged || (!isShortGreeting && lowerReply.includes(lowerName));
+                // FIX: Only inject if there's an EXPLICIT tag (##PRODUCT). 
+                // Natural mention matching is disabled to prevent image leaks on greetings or casual talk.
+                const shouldInject = isExplicitlyTagged;
 
                 if (shouldInject) {
                     // Add Primary Image
