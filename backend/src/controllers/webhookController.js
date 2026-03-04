@@ -997,7 +997,11 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                         const priceDisplay = p.price ? `${p.price} ${p.currency || 'BDT'}` : 'N/A';
                         const imgDisplay = p.image_url || 'N/A';
                         const descDisplay = p.description ? p.description.replace(/\n/g, ' ').substring(0, 200) : '';
-                        const descPart = p.allow_description && descDisplay ? ` | Desc: ${descDisplay}` : '';
+                        if (!p.allow_description) {
+                            promptProductContext += `Item ${i + 1}: Image URL: ${imgDisplay}\n`;
+                            return;
+                        }
+                        const descPart = descDisplay ? ` | Desc: ${descDisplay}` : '';
                         promptProductContext += `Item ${i + 1}: ${p.name} | Price: ${priceDisplay} | Image URL: ${imgDisplay}${descPart}\n`;
                     });
                     promptProductContext += "[End of Instruction Products]\n";
@@ -1023,6 +1027,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 `   - If any info is missing (e.g. you have the number but not the location), leave those fields empty in the JSON and politely ask the customer for them in your main text.\n` +
                 `3) [IMAGES]: Use the STRICT format for any product images you send: IMAGE: Title | URL. DO NOT use [Image] placeholders.\n` +
                 `4) [DESC RULE]: Only use Desc when it is explicitly provided in [Instruction Products]. Never repeat internal notes.\n` +
+                `   If an item in [Instruction Products] has only Image URL (no name/price/desc), send ONLY the image using title "Image". Do not mention any product name or description.\n` +
                 `5) Always keep the final text natural, human-sounding, and coherent. Never expose raw internal tags to the customer.\n`;
         }
         // --------------------------------------------------------------------
