@@ -792,13 +792,13 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                                 const analysisText = `[Image Analysis Result] ${perMsgText}`;
                                 await dbService.saveFbChat({
                                     page_id: pageId,
-                                    sender_id: senderId,
-                                    recipient_id: pageId,
-                                    message_id: `img_analysis_${Date.now()}_${messages.indexOf(msg)}`, // New ID for analysis text
+                                    sender_id: pageId, // Bot (Page) is sender
+                                    recipient_id: senderId, // User is recipient
+                                    message_id: `img_analysis_${Date.now()}_${messages.indexOf(msg)}`,
                                     text: analysisText,
                                     timestamp: Date.now(),
-                                    status: 'received',
-                                    reply_by: 'user'
+                                    status: 'bot_reply',
+                                    reply_by: 'bot'
                                 });
                                 console.log(`[FB] Saved image analysis as new text message for ${senderId}`);
                             } catch (e) {
@@ -843,18 +843,17 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 const combinedAudioTranscript = audioTranscripts.join('\n');
                 combinedText += `\n\n[System: User sent ${allAudios.length} voice messages. Transcripts follow:]\n${combinedAudioTranscript}`;
                 
-                // Save Audio Transcripts to DB as User Messages
                 try {
                     const audioMsgText = `[Voice Transcript] ${combinedAudioTranscript}`;
                     await dbService.saveFbChat({
                         page_id: pageId,
-                        sender_id: senderId,
-                        recipient_id: pageId,
-                        message_id: `audio_${Date.now()}`, // Generate a unique ID since we don't have one per audio file easily here without mapping
+                        sender_id: pageId, // Bot (Page) is sender
+                        recipient_id: senderId, // User is recipient
+                        message_id: `audio_transcript_${Date.now()}`,
                         text: audioMsgText,
                         timestamp: Date.now(),
-                        status: 'received',
-                        reply_by: 'user'
+                        status: 'bot_reply',
+                        reply_by: 'bot'
                     });
                     console.log(`[FB] Saved audio transcript to DB for ${senderId}`);
                 } catch (e) {
