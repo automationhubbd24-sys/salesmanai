@@ -114,8 +114,20 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
       }
 
       let url = `${BACKEND_URL}/api/messenger/pages`;
-      if (viewMode === 'team' && activeTeam) {
-          url += `?team_owner=${encodeURIComponent(activeTeam.owner_email)}`;
+      
+      // FIX: Ensure team_owner is used even on initial mount if stored in localStorage
+      const storedTeamOwner = localStorage.getItem('active_team_owner');
+      const effectiveTeamOwner = (viewMode === 'team') ? (activeTeam?.owner_email || storedTeamOwner) : null;
+
+      if (viewMode === 'team') {
+          if (effectiveTeamOwner) {
+              url += `?team_owner=${encodeURIComponent(effectiveTeamOwner)}`;
+          } else {
+              // If in team mode but no owner found, don't fetch personal pages
+              setPages([]);
+              setLoading(false);
+              return;
+          }
       }
 
       const res = await fetch(url, {
@@ -157,11 +169,15 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
                 localStorage.setItem("active_fb_db_id", found.db_id.toString());
               }
           } else if (mergedPages.length > 0) {
-              // If stored one is invalid/gone, select first
-              updateActivePage(mergedPages[0]);
+              // Only auto-select first if we are sure of the context
+              if (viewMode === 'personal' || (viewMode === 'team' && effectiveTeamOwner)) {
+                  updateActivePage(mergedPages[0]);
+              }
           }
       } else if (mergedPages.length > 0) {
-          updateActivePage(mergedPages[0]);
+          if (viewMode === 'personal' || (viewMode === 'team' && effectiveTeamOwner)) {
+              updateActivePage(mergedPages[0]);
+          }
       }
 
     } catch (error) {

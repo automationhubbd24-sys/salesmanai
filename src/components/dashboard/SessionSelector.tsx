@@ -38,14 +38,11 @@ export function SessionSelector() {
               // Also set session ID (name) for other components
               localStorage.setItem("active_wa_session_id", selected.name);
               window.dispatchEvent(new Event("db-connection-changed"));
-              // Trigger global dashboard reload
-              window.dispatchEvent(new Event("dashboard:reload"));
           }
       } else {
          // Even if no DB ID (rare), set session ID
          localStorage.setItem("active_wa_session_id", selected.name);
          window.dispatchEvent(new Event("db-connection-changed"));
-         window.dispatchEvent(new Event("dashboard:reload"));
       }
     }
   };

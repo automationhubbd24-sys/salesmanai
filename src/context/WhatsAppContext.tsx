@@ -126,8 +126,20 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
       }
 
       let url = `${BACKEND_URL}/api/whatsapp/sessions`;
-      if (viewMode === 'team' && activeTeam) {
-          url += `?team_owner=${encodeURIComponent(activeTeam.owner_email)}`;
+      
+      // FIX: Ensure team_owner is used even on initial mount if stored in localStorage
+      const storedTeamOwner = localStorage.getItem('active_team_owner');
+      const effectiveTeamOwner = (viewMode === 'team') ? (activeTeam?.owner_email || storedTeamOwner) : null;
+
+      if (viewMode === 'team') {
+          if (effectiveTeamOwner) {
+              url += `?team_owner=${encodeURIComponent(effectiveTeamOwner)}`;
+          } else {
+              // If in team mode but no owner found, don't fetch personal sessions
+              setSessions([]);
+              setLoading(false);
+              return;
+          }
       }
 
       const res = await fetch(url, {
@@ -147,10 +159,14 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
         if (found) {
             setCurrentSession(found);
         } else if (allSessions.length > 0) {
-            setCurrentSession(allSessions[0]);
+            if (viewMode === 'personal' || (viewMode === 'team' && effectiveTeamOwner)) {
+                setCurrentSession(allSessions[0]);
+            }
         }
       } else if (!current && allSessions.length > 0) {
-        setCurrentSession(allSessions[0]);
+        if (viewMode === 'personal' || (viewMode === 'team' && effectiveTeamOwner)) {
+            setCurrentSession(allSessions[0]);
+        }
       } else if (current) {
         // Update current session object with latest data
         const updated = allSessions.find((s) => s.name === current.name);
