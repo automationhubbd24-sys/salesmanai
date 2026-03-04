@@ -2385,10 +2385,29 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
 
         // Save Image Memory (system note) so AI can see previously sent product images for this chat
         if (allowImageSend && aiResponse.images && Array.isArray(aiResponse.images) && aiResponse.images.length > 0) {
-            const summary = aiResponse.images
-                .map(img => `${img.title || 'Image'} | ${img.url}`)
-                .join(' ; ');
-            const memoryNote = `[IMAGE MEMORY] Sent product images in this reply: ${summary}`;
+            let memoryNote = "";
+            
+            // Priority: Use 'foundProducts' if available to include full context in memory
+            let relevantProducts = [];
+            if (aiResponse.foundProducts && Array.isArray(aiResponse.foundProducts) && aiResponse.foundProducts.length > 0) {
+                 const sentImages = aiResponse.images.map(img => typeof img === 'string' ? img : img.url);
+                 relevantProducts = aiResponse.foundProducts.filter(p => sentImages.includes(p.image_url));
+            }
+
+            if (relevantProducts.length > 0) {
+                 const productDetails = relevantProducts.map(p => {
+                     const desc = p.description ? ` | Description: ${p.description.substring(0, 300)}` : '';
+                     return `${p.name}${desc}`;
+                 }).join(' || ');
+                 const summary = aiResponse.images.map(img => typeof img === 'string' ? img : img.url).join(' ; ');
+                 memoryNote = `[SYSTEM MEMORY: Sent product images for: [${productDetails}]. Images: ${summary}. The user is now looking at these products.]`;
+            } else {
+                 const summary = aiResponse.images
+                    .map(img => typeof img === 'string' ? img : `${img.title || 'Image'} | ${img.url}`)
+                    .join(' ; ');
+                 memoryNote = `[SYSTEM MEMORY: Sent product images in this reply: ${summary}. The user is now looking at these images.]`;
+            }
+
             await dbService.saveWhatsAppChat({
                 session_name: sessionName,
                 sender_id: sessionName,

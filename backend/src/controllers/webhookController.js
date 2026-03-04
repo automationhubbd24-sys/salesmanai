@@ -1906,7 +1906,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             let memoryNote = "";
             
             // Priority: Use 'foundProducts' if available to be specific about WHICH product
-            // FIX: Only include product names and URLs. REMOVED descriptions to prevent internal data leak.
+            // FIX: Include product names, URLs AND descriptions so AI knows exactly what it sent.
             let relevantProducts = [];
             if (aiResponse.foundProducts && Array.isArray(aiResponse.foundProducts) && aiResponse.foundProducts.length > 0) {
                  const sentImages = aiResponse.images.map(img => typeof img === 'string' ? img : img.url);
@@ -1914,15 +1914,18 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             }
 
             if (relevantProducts.length > 0) {
-                 const productDetails = relevantProducts.map(p => p.name).join(' | ');
+                 const productDetails = relevantProducts.map(p => {
+                     const desc = p.description ? ` | Description: ${p.description.substring(0, 300)}` : '';
+                     return `${p.name}${desc}`;
+                 }).join(' || ');
                  const summary = aiResponse.images.map(img => typeof img === 'string' ? img : img.url).join(' ; ');
-                 memoryNote = `[SYSTEM: Sent product images for: [${productDetails}]. Images: ${summary}]`;
+                 memoryNote = `[SYSTEM MEMORY: Sent product images for: [${productDetails}]. Images: ${summary}. The user is now looking at these products.]`;
             } else {
                  // Fallback: Just list titles/urls from images array
                  const summary = aiResponse.images
                     .map(img => typeof img === 'string' ? img : `${img.title || 'Image'} | ${img.url}`)
                     .join(' ; ');
-                 memoryNote = `[SYSTEM: Sent product images in this reply: ${summary}]`;
+                 memoryNote = `[SYSTEM MEMORY: Sent product images in this reply: ${summary}. The user is now looking at these images.]`;
             }
             
             // Save to AI Context as a SYSTEM message instead of appending to assistant

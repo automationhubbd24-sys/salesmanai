@@ -1055,7 +1055,7 @@ async function getWhatsAppChatHistory(sessionName, senderId, limit = 10) {
     );
 
     return result.rows.reverse().map(msg => ({
-        role: msg.reply_by === 'user' ? 'user' : 'assistant',
+        role: msg.reply_by === 'user' ? 'user' : (msg.reply_by === 'system' ? 'system' : 'assistant'),
         content: msg.text || ''
     }));
 }

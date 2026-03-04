@@ -1083,7 +1083,7 @@ ${productContext}
 5. LABELS:
    - Support: Append "[ADD_LABEL: adminhandle]" to reply.
    - Order: Append "[ADD_LABEL: ordertrack]" to reply.
-6. VISION RESULTS: If the user message contains "[Image Analysis Result]", prioritize this information to identify the product.
+6. VISION RESULTS & MEMORY: If the user message contains "[Image Analysis Result]", or history contains "[SYSTEM MEMORY: Sent product images...]", prioritize this information. These tags tell you exactly what the user is looking at or replying to. Use the product names and descriptions from these tags to understand user references like "it", "this", "4" (if 4 is a grade in the image), etc.
 7. COMBO PRODUCTS: If a product is marked as [COMBO PRODUCT], it means it contains multiple items. NEVER proactively list or mention the sub-items inside a combo. Only disclose the hidden contents if the customer explicitly asks what is inside the combo or package. Normally, just refer to it as "this combo" or "this package". If a user sends a photo containing multiple products that match a combo's items, offer the combo as a smart choice but do not list the items unless asked.
 8. ORDER TRACKING: If a user provides order details (Product Name, Phone Number, and Address), call the 'create_order' tool. Do NOT output JSON manually.
 
