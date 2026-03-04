@@ -911,9 +911,11 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                         ? additionalImgs.map(normalizeUrl).join(', ')
                         : 'None';
                      
-                     // Format: ##product "name" | Price: ... | Stock: ... | Image: ...
-                     // Re-added Price per user feedback about "irrelevant prices" (AI needs to know the REAL price to answer correctly)
-                     productContext += `##product "${p.name}" | Price: ${priceDisplay} | Stock: ${stockDisplay} | Main Image: ${imgDisplay} | Additional Images: ${additionalImgsDisplay} | Desc: ${descDisplay} | Keywords: ${keywordsDisplay}${variantInfo}${comboDisplay}\n`;
+                    if (!p.allow_description) {
+                        productContext += `##product "${p.name}" | Main Image: ${imgDisplay} | Additional Images: ${additionalImgsDisplay} | OUTPUT_ONLY_IMAGE: true\n`;
+                        return;
+                    }
+                    productContext += `##product "${p.name}" | Price: ${priceDisplay} | Stock: ${stockDisplay} | Main Image: ${imgDisplay} | Additional Images: ${additionalImgsDisplay} | Desc: ${descDisplay} | Keywords: ${keywordsDisplay}${variantInfo}${comboDisplay}\n`;
                  });
                  productContext += "[End of Products]\n";
                  console.log(`[AI] Injected ${products.length} products into context.`);
@@ -1040,14 +1042,21 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                              // BUT prioritized DB data for price/stock if available.
                              
                              productContext += `Product: "${p.name}"\n`;
-                             // Price removed per user request
-                             if (p.stock_quantity) productContext += `Stock: ${p.stock_quantity}\n`;
-                             if (shortDesc) productContext += `Desc: ${shortDesc}\n`;
-                             if (p.image_url) productContext += `Image: ${p.image_url}\n`;
-                             if (p.additional_images && Array.isArray(p.additional_images) && p.additional_images.length > 0) {
-                                 productContext += `More Images: ${p.additional_images.join(', ')}\n`;
+                             if (!p.allow_description) {
+                                 if (p.image_url) productContext += `Image: ${p.image_url}\n`;
+                                 if (p.additional_images && Array.isArray(p.additional_images) && p.additional_images.length > 0) {
+                                     productContext += `More Images: ${p.additional_images.join(', ')}\n`;
+                                 }
+                                 productContext += `OUTPUT_ONLY_IMAGE: true\n\n`;
+                             } else {
+                                 if (p.stock_quantity) productContext += `Stock: ${p.stock_quantity}\n`;
+                                 if (shortDesc) productContext += `Desc: ${shortDesc}\n`;
+                                 if (p.image_url) productContext += `Image: ${p.image_url}\n`;
+                                 if (p.additional_images && Array.isArray(p.additional_images) && p.additional_images.length > 0) {
+                                     productContext += `More Images: ${p.additional_images.join(', ')}\n`;
+                                 }
+                                 productContext += `\n`;
                              }
-                             productContext += `\n`;
                         }
                     });
                }
@@ -1067,7 +1076,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
 ${productContext}
 
 [System Rules]
-1. STRICT PRODUCT DATA & VERBATIM DESC: You are a salesperson. You MUST ONLY talk about products listed in [Context: Available Products]. When providing product details, you MUST use the exact "Desc" field provided in the context. DO NOT summarize, shorten, or change a single word or emoji in the description. Copy it exactly. If the user asks about a product not listed there, call the 'search_products' tool to find it.
+1. STRICT PRODUCT DATA & VERBATIM DESC: You are a salesperson. You MUST ONLY talk about products listed in [Context: Available Products]. When providing product details, you MUST use the exact "Desc" field provided in the context. DO NOT summarize, shorten, or change a single word or emoji in the description. Copy it exactly. If a product has OUTPUT_ONLY_IMAGE: true, do NOT mention product name, price, or description. Only send the image using title "Image". If the user asks about a product not listed there, call the 'search_products' tool to find it.
 2. NO HALLUCINATIONS: Do NOT invent prices, stock, or features. If a price is "Ask for Price", say exactly that.
 3. IMAGES: Use ONLY provided image URLs from the product list.
 4. SILENCE: If your instructions say "no reply" or to be silent, output nothing or return an empty string.

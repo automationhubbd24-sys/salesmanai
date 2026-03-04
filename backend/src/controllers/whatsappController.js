@@ -2101,6 +2101,43 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
         if (aiResponse.images && Array.isArray(aiResponse.images)) {
             extractedImages = [...aiResponse.images];
         }
+        
+        if (
+            extractedImages.length === 0 &&
+            aiResponse.foundProducts &&
+            Array.isArray(aiResponse.foundProducts)
+        ) {
+            const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
+            const normalizeUrl = (url) => {
+                if (!url || url === 'N/A') return null;
+                if (url.startsWith('http')) return url;
+                const cleanPath = url.startsWith('/') ? url : `/${url}`;
+                return `${baseUrl}${cleanPath}`;
+            };
+            aiResponse.foundProducts.forEach((p) => {
+                if (p.allow_description) return;
+                const mainUrl = normalizeUrl(p.image_url);
+                if (mainUrl && !extractedImages.some(img => img.url === mainUrl)) {
+                    extractedImages.push({ url: mainUrl, title: 'Image' });
+                }
+                let additionalImgs = [];
+                try {
+                    if (p.additional_images) {
+                        additionalImgs = typeof p.additional_images === 'string'
+                            ? JSON.parse(p.additional_images)
+                            : p.additional_images;
+                    }
+                } catch (e) {}
+                if (Array.isArray(additionalImgs)) {
+                    additionalImgs.forEach((img) => {
+                        const norm = normalizeUrl(img);
+                        if (norm && !extractedImages.some(i => i.url === norm)) {
+                            extractedImages.push({ url: norm, title: 'Image' });
+                        }
+                    });
+                }
+            });
+        }
 
         // 2. Legacy Regex Fallback (In case AI puts it in text)
         const strictImageRegex = /IMAGE:\s*(.+?)\s*\|\s*(https?:\/\/[^\s,]+)/gi;
