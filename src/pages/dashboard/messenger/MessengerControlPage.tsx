@@ -10,12 +10,12 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Bot, MessageSquare, Loader2, Save, Image, Sparkles, MessageCircle, Lock, PackageSearch, ReplyAll, LayoutTemplate, Hand, StopCircle, CheckCircle2, RefreshCcw, Edit, Mic } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "react-router-dom";
+import { useMessenger } from "@/context/MessengerContext";
 
 export default function MessengerControlPage() {
+  const { currentPage, loading: contextLoading } = useMessenger();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [dbId, setDbId] = useState<string | null>(null);
-  const [pageId, setPageId] = useState<string | null>(null);
   const [verified, setVerified] = useState(true);
   
   // Prompt State
@@ -38,39 +38,19 @@ export default function MessengerControlPage() {
     text_prompt: '',
   });
 
-  const lastDbIdRef = useRef<string | null>(null);
+  const activeDbId = currentPage?.db_id || null;
+  const activePageId = currentPage?.page_id || null;
 
   useEffect(() => {
-    const checkConnection = () => {
-      const storedDbId = localStorage.getItem("active_fb_db_id");
-      const storedPageId = localStorage.getItem("active_fb_page_id");
-      
-      if (storedDbId) {
-        if (storedDbId !== lastDbIdRef.current) {
-          lastDbIdRef.current = storedDbId;
-          setDbId(storedDbId);
-          if (storedPageId) setPageId(storedPageId);
-          fetchConfig(storedDbId);
-        }
-      } else {
-        lastDbIdRef.current = null;
-        setDbId(null);
+    if (activeDbId) {
+        fetchConfig(activeDbId.toString());
+    } else if (!contextLoading) {
         setLoading(false);
-      }
-    };
-
-    checkConnection();
-
-    window.addEventListener("storage", checkConnection);
-    window.addEventListener("db-connection-changed", checkConnection);
-    
-    return () => {
-      window.removeEventListener("storage", checkConnection);
-      window.removeEventListener("db-connection-changed", checkConnection);
-    };
-  }, []);
+    }
+  }, [activeDbId, contextLoading]);
 
   const fetchConfig = async (id: string) => {
+    setLoading(true);
     try {
       const token = localStorage.getItem("auth_token");
 
@@ -84,7 +64,6 @@ export default function MessengerControlPage() {
 
       const row: any = await res.json();
 
-      setPageId(row.page_id || null);
       setVerified(row.verified !== false); 
       setConfig({
         reply_message: row.reply_message ?? false,
@@ -109,13 +88,13 @@ export default function MessengerControlPage() {
   };
 
   const handleSave = async () => {
-    if (!dbId) return;
+    if (!activeDbId) return;
     setSaving(true);
     try {
       const payload = { ...config };
       const token = localStorage.getItem("auth_token");
 
-      const res = await fetch(`${BACKEND_URL}/api/messenger/config/${dbId}`, {
+      const res = await fetch(`${BACKEND_URL}/api/messenger/config/${activeDbId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -141,12 +120,12 @@ export default function MessengerControlPage() {
   };
 
   const handleSavePrompt = async () => {
-    if (!dbId) return;
+    if (!activeDbId) return;
     setPromptSaving(true);
     try {
         const token = localStorage.getItem("auth_token");
 
-        const res = await fetch(`${BACKEND_URL}/api/messenger/config/${dbId}`, {
+        const res = await fetch(`${BACKEND_URL}/api/messenger/config/${activeDbId}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
@@ -167,11 +146,11 @@ export default function MessengerControlPage() {
         toast.success("System prompt updated successfully!");
         
         // Auto-Trigger RAG Ingestion in Background
-        if (pageId) {
+        if (activePageId) {
             fetch(`${BACKEND_URL}/api/ai/ingest`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ pageId: pageId, promptText: tempPrompt })
+                body: JSON.stringify({ pageId: activePageId, promptText: tempPrompt })
             }).then(() => console.log("RAG Ingestion Triggered"))
               .catch(err => console.error("RAG Ingestion Failed", err));
         }
@@ -211,7 +190,7 @@ export default function MessengerControlPage() {
   };
 
 
-  if (loading) {
+  if (loading || contextLoading) {
     return (
       <div className="flex items-center justify-center h-full">
         <Loader2 className="h-8 w-8 animate-spin" />
@@ -219,7 +198,7 @@ export default function MessengerControlPage() {
     );
   }
 
-  if (!dbId) {
+  if (!activeDbId) {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] space-y-4">
         <Bot className="h-16 w-16 text-muted-foreground" />

@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { Link, useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { BACKEND_URL } from "@/config";
+import { useWhatsApp } from "@/context/WhatsAppContext";
 
 interface WhatsAppConfig {
   reply_message: boolean;
@@ -28,12 +29,11 @@ interface WhatsAppConfig {
 export default function WhatsAppControlPage() {
   const { t } = useLanguage();
   const navigate = useNavigate();
+  const { currentSession, loading: contextLoading } = useWhatsApp();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [dbId, setDbId] = useState<string | null>(null);
   const [verified, setVerified] = useState(true);
   const [expiryDays, setExpiryDays] = useState<number | null>(null);
-  const [sessionName, setSessionName] = useState<string | null>(null);
   const [availableColumns, setAvailableColumns] = useState<string[]>([]);
   const [config, setConfig] = useState<WhatsAppConfig>({
     reply_message: false,
@@ -57,32 +57,20 @@ export default function WhatsAppControlPage() {
     yesterdayCustomers: 0
   });
   const [recentChats, setRecentChats] = useState<any[]>([]);
-  const showLegacyMetrics = false;
+  
+  const activeDbId = (currentSession as any)?.wp_db_id || null;
+  const activeSessionName = currentSession?.name || null;
 
   useEffect(() => {
-    const checkConnection = () => {
-      const storedDbId = localStorage.getItem("active_wp_db_id");
-      if (storedDbId) {
-        setDbId(storedDbId);
-        fetchConfig(storedDbId);
-      } else {
-        setDbId(null);
+    if (activeDbId) {
+        fetchConfig(activeDbId.toString());
+    } else if (!contextLoading) {
         setLoading(false);
-      }
-    };
-
-    checkConnection();
-
-    window.addEventListener("storage", checkConnection);
-    window.addEventListener("db-connection-changed", checkConnection);
-
-    return () => {
-      window.removeEventListener("storage", checkConnection);
-      window.removeEventListener("db-connection-changed", checkConnection);
-    };
-  }, []);
+    }
+  }, [activeDbId, contextLoading]);
 
   const fetchConfig = async (id: string) => {
+    setLoading(true);
     try {
       const token = localStorage.getItem("auth_token");
       if (!token) {
@@ -102,7 +90,6 @@ export default function WhatsAppControlPage() {
       const row: any = await res.json();
 
       setVerified(row.verified !== false); 
-      setSessionName(row.session_name || null);
       setAvailableColumns(Object.keys(row || {}));
       
       if (row.expires_at) {
@@ -197,7 +184,7 @@ export default function WhatsAppControlPage() {
   };
 
   const handleSave = async () => {
-    if (!dbId) return;
+    if (!activeDbId) return;
     setSaving(true);
     try {
       const validColumns = [
@@ -216,7 +203,7 @@ export default function WhatsAppControlPage() {
         throw new Error(t("Please login again", "অনুগ্রহ করে আবার লগইন করুন"));
       }
 
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${dbId}`, {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${activeDbId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -233,11 +220,11 @@ export default function WhatsAppControlPage() {
 
       toast.success(t("Settings saved successfully", "সেটিংস সফলভাবে সংরক্ষিত হয়েছে"));
       
-      await fetchConfig(dbId);
+      await fetchConfig(activeDbId.toString());
       
-      if (sessionName) {
-        fetchMetrics(sessionName);
-        fetchRecent(sessionName);
+      if (activeSessionName) {
+        fetchMetrics(activeSessionName);
+        fetchRecent(activeSessionName);
       }
     } catch (error: any) {
       const message = error.message || (typeof error === 'string' ? error : "Unknown error");
@@ -248,15 +235,15 @@ export default function WhatsAppControlPage() {
     }
   };
 
-  if (loading) {
+  if (loading || contextLoading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <Loader2 className="h-8 w-8 animate-spin" />
+      <div className="flex items-center justify-center h-[60vh]">
+        <Loader2 className="h-10 w-10 animate-spin text-primary" />
       </div>
     );
   }
 
-  if (!dbId) {
+  if (!activeDbId) {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] space-y-4">
         <Bot className="h-16 w-16 text-muted-foreground" />
