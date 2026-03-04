@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
@@ -9,6 +9,7 @@ import { Link } from "react-router-dom";
 import { addDays, format, startOfDay, endOfDay, subDays, isWithinInterval, parseISO } from "date-fns";
 import { DateRange } from "react-day-picker";
 import { Calendar } from "@/components/ui/calendar";
+import { useMessenger } from "@/context/MessengerContext";
 import {
   Popover,
   PopoverContent,
@@ -31,6 +32,7 @@ import { cn } from "@/lib/utils";
 import { BACKEND_URL } from "@/config";
 
 export default function MessengerConversionPage() {
+  const { currentPage, loading: contextLoading } = useMessenger();
   const [messages, setMessages] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [filteredBotReplyCount, setFilteredBotReplyCount] = useState(0);
@@ -38,8 +40,7 @@ export default function MessengerConversionPage() {
   const [filteredTokenCount, setFilteredTokenCount] = useState(0);
   const [allTimeTokenCount, setAllTimeTokenCount] = useState(0);
   const [tokenBreakdown, setTokenBreakdown] = useState<Record<string, number>>({});
-  const [activePageId, setActivePageId] = useState<string | null>(null);
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPageNum, setCurrentPageNum] = useState(1);
   const [totalMessages, setTotalMessages] = useState(0);
   const LIMIT = 50;
   
@@ -50,35 +51,24 @@ export default function MessengerConversionPage() {
   });
   const [filterType, setFilterType] = useState("today");
 
-  useEffect(() => {
-    const checkConnection = () => {
-        const storedPageId = localStorage.getItem("active_fb_page_id");
-        setActivePageId(storedPageId);
-        if (storedPageId) {
-            fetchStats(storedPageId);
-        }
-    };
-
-    checkConnection();
-    window.addEventListener("storage", checkConnection);
-    window.addEventListener("db-connection-changed", checkConnection);
-
-    return () => {
-        window.removeEventListener("storage", checkConnection);
-        window.removeEventListener("db-connection-changed", checkConnection);
-    };
-  }, []); // Initial load and listeners
+  const activePageId = currentPage?.page_id || null;
 
   useEffect(() => {
-    // Fetch messages whenever date, pageId, or currentPage changes
-    if (activePageId && date?.from && date?.to) {
-        fetchMessages(activePageId, date.from, date.to, currentPage);
+    if (activePageId) {
+        fetchStats(activePageId);
     }
-  }, [activePageId, date, currentPage]);
+  }, [activePageId]);
+
+  useEffect(() => {
+    // Fetch messages whenever date, pageId, or currentPageNum changes
+    if (activePageId && date?.from && date?.to) {
+        fetchMessages(activePageId, date.from, date.to, currentPageNum);
+    }
+  }, [activePageId, date, currentPageNum]);
 
   // Reset page when date changes
   useEffect(() => {
-    setCurrentPage(1);
+    setCurrentPageNum(1);
   }, [date]);
 
   // Separate function for All Time Stats (Optimized)
@@ -168,19 +158,26 @@ export default function MessengerConversionPage() {
   };
 
   const handleRefresh = () => {
-    const storedPageId = localStorage.getItem("active_fb_page_id");
-    if (storedPageId) {
+    if (activePageId) {
         if (date?.from && date?.to) {
-             fetchMessages(storedPageId, date.from, date.to, currentPage);
-             fetchStats(storedPageId); // Also refresh stats
+             fetchMessages(activePageId, date.from, date.to, currentPageNum);
+             fetchStats(activePageId); // Also refresh stats
         } else {
-             fetchMessages(storedPageId, startOfDay(new Date()), endOfDay(new Date()), 1);
-             fetchStats(storedPageId);
+             fetchMessages(activePageId, startOfDay(new Date()), endOfDay(new Date()), 1);
+             fetchStats(activePageId);
         }
     } else {
         toast.error("No active page found. Please connect a database.");
     }
   };
+
+  if (contextLoading && !activePageId) {
+      return (
+          <div className="flex items-center justify-center min-h-[400px]">
+              <RefreshCw className="h-8 w-8 animate-spin text-primary" />
+          </div>
+      );
+  }
 
   if (!activePageId) {
       return (
@@ -424,26 +421,26 @@ export default function MessengerConversionPage() {
           {totalMessages > LIMIT && (
             <div className="flex items-center justify-between mt-4 px-2">
               <div className="text-sm text-muted-foreground">
-                Showing {((currentPage - 1) * LIMIT) + 1} to {Math.min(currentPage * LIMIT, totalMessages)} of {totalMessages} messages
+                Showing {((currentPageNum - 1) * LIMIT) + 1} to {Math.min(currentPageNum * LIMIT, totalMessages)} of {totalMessages} messages
               </div>
               <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                  disabled={currentPage === 1 || loading}
+                  onClick={() => setCurrentPageNum(prev => Math.max(1, prev - 1))}
+                  disabled={currentPageNum === 1 || loading}
                 >
                   <ChevronLeft className="h-4 w-4 mr-1" />
                   Previous
                 </Button>
                 <div className="text-sm font-medium">
-                  Page {currentPage} of {Math.ceil(totalMessages / LIMIT)}
+                  Page {currentPageNum} of {Math.ceil(totalMessages / LIMIT)}
                 </div>
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setCurrentPage(prev => prev + 1)}
-                  disabled={currentPage >= Math.ceil(totalMessages / LIMIT) || loading}
+                  onClick={() => setCurrentPageNum(prev => prev + 1)}
+                  disabled={currentPageNum >= Math.ceil(totalMessages / LIMIT) || loading}
                 >
                   Next
                   <ChevronRight className="h-4 w-4 ml-1" />

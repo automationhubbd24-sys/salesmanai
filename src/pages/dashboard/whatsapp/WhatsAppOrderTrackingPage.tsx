@@ -20,43 +20,20 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
-import { Calendar as CalendarIcon, Download, ShoppingBag, Copy, Check, AlertCircle } from "lucide-react";
+import { Calendar as CalendarIcon, Download, ShoppingBag, Copy, Check, AlertCircle, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "react-router-dom";
 import { BACKEND_URL } from "@/config";
 
 export default function WhatsAppOrderTrackingPage() {
-  const { currentSession } = useWhatsApp();
+  const { currentSession, loading: contextLoading } = useWhatsApp();
   const [orders, setOrders] = useState<any[]>([]);
   const [orderLoading, setOrderLoading] = useState(false);
   const [dateFilter, setDateFilter] = useState<'today' | 'yesterday' | 'custom' | 'all'>('today');
   const [date, setDate] = useState<Date | undefined>(new Date());
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [activeSessionName, setActiveSessionName] = useState<string | null>(null);
 
-  const fetchSessionNameFromDbId = useCallback(async (dbId: string) => {
-    try {
-      const token = localStorage.getItem("auth_token");
-      if (!token) return;
-
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/session-name/${dbId}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (!res.ok) return;
-
-      const data = await res.json();
-      if (data && data.session_name) {
-        const sName = String(data.session_name);
-        setActiveSessionName(sName);
-        localStorage.setItem("active_wa_session_id", sName);
-      }
-    } catch (e) {
-      console.error("Error recovering session name", e);
-    }
-  }, []);
+  const activeSessionName = currentSession?.name || null;
 
   const handleCopy = (order: any) => {
     const textToCopy = `Product: ${order.product_name || 'N/A'}
@@ -71,24 +48,6 @@ Phone: ${order.number || 'N/A'}`;
       setTimeout(() => setCopiedId(null), 2000);
     });
   };
-
-  useEffect(() => {
-    if (currentSession?.name) {
-      setActiveSessionName(currentSession.name);
-      localStorage.setItem("active_wa_session_id", currentSession.name);
-      return;
-    }
-    const storedSession = localStorage.getItem("active_wa_session_id");
-    if (storedSession) {
-      setActiveSessionName(storedSession);
-    } else {
-      setActiveSessionName(null);
-      const storedDbId = localStorage.getItem("active_wp_db_id");
-      if (storedDbId) {
-        fetchSessionNameFromDbId(storedDbId);
-      }
-    }
-  }, [currentSession, fetchSessionNameFromDbId]);
 
   useEffect(() => {
     if (!activeSessionName) return;
@@ -136,13 +95,6 @@ Phone: ${order.number || 'N/A'}`;
         });
 
         if (!res.ok) {
-          if (res.status === 403 || res.status === 404) {
-            const storedDbId = localStorage.getItem("active_wp_db_id");
-            if (storedDbId) {
-              await fetchSessionNameFromDbId(storedDbId);
-              return;
-            }
-          }
           const errBody = await res.json().catch(() => ({}));
           const msg = errBody.error || "Failed to fetch orders";
           throw new Error(msg);
@@ -159,7 +111,15 @@ Phone: ${order.number || 'N/A'}`;
     };
 
     fetchOrders();
-  }, [dateFilter, date, activeSessionName, fetchSessionNameFromDbId]);
+  }, [dateFilter, date, activeSessionName]);
+
+  if (contextLoading && !activeSessionName) {
+    return (
+      <div className="flex items-center justify-center h-[60vh]">
+        <RefreshCw className="h-10 w-10 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   if (!activeSessionName) {
     return (

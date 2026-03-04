@@ -138,9 +138,18 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
 
       setSessions(allSessions);
       
-      // Auto-select first if none selected
+      // Auto-select logic (Prioritize localStorage)
+      const storedSessionId = localStorage.getItem("active_wa_session_id");
       const current = currentSessionRef.current;
-      if (!current && allSessions.length > 0) {
+      
+      if (storedSessionId && !current) {
+        const found = allSessions.find(s => s.name === storedSessionId);
+        if (found) {
+            setCurrentSession(found);
+        } else if (allSessions.length > 0) {
+            setCurrentSession(allSessions[0]);
+        }
+      } else if (!current && allSessions.length > 0) {
         setCurrentSession(allSessions[0]);
       } else if (current) {
         // Update current session object with latest data

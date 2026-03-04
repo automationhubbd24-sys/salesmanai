@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
+import { useMessenger } from "@/context/MessengerContext";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -19,11 +20,12 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
-import { Calendar as CalendarIcon, Download, ShoppingBag, Copy, Check } from "lucide-react";
+import { Calendar as CalendarIcon, Download, ShoppingBag, Copy, Check, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { BACKEND_URL } from "@/config";
 
 export default function MessengerOrderTrackingPage() {
+  const { currentPage, loading: contextLoading } = useMessenger();
   const [orders, setOrders] = useState<any[]>([]);
   const [orderLoading, setOrderLoading] = useState(false);
   const [dateFilter, setDateFilter] = useState<'today' | 'yesterday' | 'custom' | 'all'>('today');
@@ -34,6 +36,8 @@ export default function MessengerOrderTrackingPage() {
   const ordersRef = useRef<any[]>([]);
   const requestIdRef = useRef(0);
   const inFlightRef = useRef<AbortController | null>(null);
+
+  const activePageId = currentPage?.page_id || null;
 
   const handleCopy = (order: any) => {
     const textToCopy = `Product: ${order.product_name || 'N/A'}
@@ -55,7 +59,6 @@ Phone: ${order.number || 'N/A'}`;
 
   const fetchOrders = useCallback(async (showLoading = true) => {
     const token = localStorage.getItem("auth_token");
-    const activePageId = localStorage.getItem("active_fb_page_id");
     
     if (!token || !activePageId) {
       setOrders([]);
@@ -136,33 +139,14 @@ Phone: ${order.number || 'N/A'}`;
         }
       }
     }
-  }, [dateFilter, date]);
+  }, [dateFilter, date, activePageId]);
 
   // Combined effect for initial fetch and filter changes
   useEffect(() => {
-    // Only fetch if we have an active page ID
-    const activePageId = localStorage.getItem("active_fb_page_id");
     if (activePageId) {
       fetchOrders(true);
     }
-  }, [fetchOrders]);
-
-  // Separate effect for event listeners to avoid re-adding them unnecessarily
-  useEffect(() => {
-    const handlePageChange = (e: any) => {
-      // Only trigger if the actual page ID in storage changed
-      if (e.type === 'storage' && e.key !== 'active_fb_page_id') return;
-      fetchOrders(true);
-    };
-
-    window.addEventListener("storage", handlePageChange);
-    window.addEventListener("db-connection-changed", handlePageChange);
-
-    return () => {
-      window.removeEventListener("storage", handlePageChange);
-      window.removeEventListener("db-connection-changed", handlePageChange);
-    };
-  }, [fetchOrders]);
+  }, [fetchOrders, activePageId]);
 
   const downloadCSV = () => {
     if (!orders.length) {
@@ -193,6 +177,14 @@ Phone: ${order.number || 'N/A'}`;
     link.click();
     document.body.removeChild(link);
   };
+
+  if (contextLoading && !activePageId) {
+      return (
+          <div className="flex items-center justify-center min-h-[400px]">
+              <RefreshCw className="h-8 w-8 animate-spin text-primary" />
+          </div>
+      );
+  }
 
   return (
     <div className="space-y-6">

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
@@ -9,6 +9,7 @@ import { Link } from "react-router-dom";
 import { addDays, format, startOfDay, endOfDay, subDays, isWithinInterval, parseISO } from "date-fns";
 import { DateRange } from "react-day-picker";
 import { Calendar } from "@/components/ui/calendar";
+import { useWhatsApp } from "@/context/WhatsAppContext";
 import {
   Popover,
   PopoverContent,
@@ -31,6 +32,7 @@ import { cn } from "@/lib/utils";
 import { BACKEND_URL } from "@/config";
 
 export default function WhatsAppConversionPage() {
+  const { currentSession, loading: contextLoading } = useWhatsApp();
   type WaChat = {
     id?: string | number;
     message_id?: string;
@@ -50,9 +52,10 @@ export default function WhatsAppConversionPage() {
   const [filteredTokenCount, setFilteredTokenCount] = useState(0);
   const [allTimeTokenCount, setAllTimeTokenCount] = useState(0);
   const [tokenBreakdown, setTokenBreakdown] = useState<Record<string, number>>({});
-  const [activeSessionName, setActiveSessionName] = useState<string | null>(null);
   const [expandedMessageIds, setExpandedMessageIds] = useState<Set<string | number>>(new Set());
   const [lockedContacts, setLockedContacts] = useState<Record<string, boolean>>({});
+
+  const activeSessionName = currentSession?.name || null;
 
   const fetchContacts = async (sessionName: string) => {
     try {
@@ -150,58 +153,10 @@ export default function WhatsAppConversionPage() {
   const [filterType, setFilterType] = useState("today");
 
   useEffect(() => {
-    const checkConnection = () => {
-        const storedSessionName = localStorage.getItem("active_wa_session_id");
-        setActiveSessionName(storedSessionName);
-        if (storedSessionName) {
-            fetchStats(storedSessionName);
-        } else {
-            // Fallback: If no session name but we have a DB ID, maybe we can fetch the session name?
-            // This happens if the user refreshes and SessionSelector hasn't run yet.
-            const storedDbId = localStorage.getItem("active_wp_db_id");
-            if (storedDbId) {
-                // We can't easily fetch session name from DB ID here without a query.
-                // Let's try to fetch it.
-                fetchSessionNameFromId(storedDbId);
-            }
-        }
-    };
-
-    checkConnection();
-    window.addEventListener("storage", checkConnection);
-    window.addEventListener("db-connection-changed", checkConnection);
-
-    return () => {
-        window.removeEventListener("storage", checkConnection);
-        window.removeEventListener("db-connection-changed", checkConnection);
-    };
-  }, []); // Fetch stats once on mount
-
-  const fetchSessionNameFromId = async (id: string) => {
-    try {
-      const token = localStorage.getItem("auth_token");
-      if (!token) return;
-
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/session-name/${id}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (!res.ok) return;
-
-      const data = await res.json();
-      if (data && data.session_name) {
-        const sName = String(data.session_name);
-        localStorage.setItem("active_wa_session_id", sName);
-        setActiveSessionName(sName);
-        fetchStats(sName);
-      }
-    } catch (e) {
-      console.error("Error recovering session name", e);
+    if (activeSessionName) {
+        fetchStats(activeSessionName);
     }
-  };
-
+  }, [activeSessionName]);
 
   useEffect(() => {
     // Fetch messages whenever date or sessionName changes
@@ -234,13 +189,6 @@ export default function WhatsAppConversionPage() {
       });
 
       if (!res.ok) {
-        if (res.status === 403 || res.status === 404) {
-            const storedDbId = localStorage.getItem("active_wp_db_id");
-            if (storedDbId) {
-                await fetchSessionNameFromId(storedDbId);
-                return;
-            }
-        }
         const errData = await res.json().catch(() => ({}));
         throw new Error(errData.error || "Failed to fetch messages");
       }
@@ -316,6 +264,14 @@ export default function WhatsAppConversionPage() {
       // Keep current date or open calendar
     }
   };
+
+  if (contextLoading && !activeSessionName) {
+      return (
+          <div className="flex items-center justify-center min-h-[400px]">
+              <RefreshCw className="h-8 w-8 animate-spin text-primary" />
+          </div>
+      );
+  }
 
   if (!activeSessionName) {
       return (
