@@ -2396,14 +2396,19 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
 
             if (relevantProducts.length > 0) {
                  const productDetails = relevantProducts.map(p => {
-                     const desc = p.description ? ` | Description: ${p.description.substring(0, 300)}` : '';
+                     const desc = p.description ? ` (Desc: ${p.description.substring(0, 300)})` : '';
                      return `${p.name}${desc}`;
                  }).join(' || ');
                  const summary = aiResponse.images.map(img => typeof img === 'string' ? img : img.url).join(' ; ');
                  memoryNote = `[SYSTEM MEMORY: Sent product images for: [${productDetails}]. Images: ${summary}. The user is now looking at these products.]`;
             } else {
                  const summary = aiResponse.images
-                    .map(img => typeof img === 'string' ? img : `${img.title || 'Image'} | ${img.url}`)
+                    .map(img => {
+                        if (typeof img === 'string') return img;
+                        const titlePart = img.title ? `${img.title}` : 'Image';
+                        const descPart = img.description ? ` (Desc: ${img.description.substring(0, 300)})` : '';
+                        return `${titlePart}${descPart} | ${img.url}`;
+                    })
                     .join(' ; ');
                  memoryNote = `[SYSTEM MEMORY: Sent product images in this reply: ${summary}. The user is now looking at these images.]`;
             }

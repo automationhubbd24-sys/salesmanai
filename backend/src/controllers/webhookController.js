@@ -1553,7 +1553,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                     }
 
                     if (!extractedImages.some(img => img.url === primaryUrl)) {
-                        extractedImages.push({ url: primaryUrl, title: product.name || name });
+                        extractedImages.push({ url: primaryUrl, title: product.name || name, description: product.description || '' });
                     }
 
                     // Add Additional Images
@@ -1565,7 +1565,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                                 additionalUrl = `${baseUrl.replace(/\/$/, '')}/${additionalUrl.replace(/^\/+/, '')}`;
                             }
                             if (!extractedImages.some(img => img.url === additionalUrl)) {
-                                extractedImages.push({ url: additionalUrl, title: `${product.name || name} (Pic ${idx + 2})` });
+                                extractedImages.push({ url: additionalUrl, title: `${product.name || name} (Pic ${idx + 2})`, description: product.description || '' });
                             }
                         });
                     }
@@ -1602,7 +1602,13 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
 
             if (isImage && !isSuspicious) {
                 if (!extractedImages.some(img => img.url === url)) {
-                    extractedImages.push({ url: url, title: title });
+                    // Try to find product description if this is a known product URL
+                    let description = '';
+                    if (isKnownProduct && promptProductMap) {
+                        const product = Object.values(promptProductMap).find(p => p.image_url === url);
+                        if (product) description = product.description || '';
+                    }
+                    extractedImages.push({ url: url, title: title, description: description });
                 }
                 replyText = replyText.replace(fullMatch, '').trim();
             } else if (isSuspicious) {
@@ -1690,7 +1696,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 if (p.allow_description) return;
                 const mainUrl = normalizeUrl(p.image_url);
                 if (mainUrl && !extractedImages.some(img => img.url === mainUrl)) {
-                    extractedImages.push({ url: mainUrl, title: 'Image' });
+                    extractedImages.push({ url: mainUrl, title: p.name || 'Image', description: p.description || '' });
                 }
                 let additionalImgs = [];
                 try {
@@ -1704,7 +1710,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                     additionalImgs.forEach((img) => {
                         const norm = normalizeUrl(img);
                         if (norm && !extractedImages.some(i => i.url === norm)) {
-                            extractedImages.push({ url: norm, title: 'Image' });
+                            extractedImages.push({ url: norm, title: p.name || 'Image', description: p.description || '' });
                         }
                     });
                 }
@@ -1921,9 +1927,13 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                  const summary = aiResponse.images.map(img => typeof img === 'string' ? img : img.url).join(' ; ');
                  memoryNote = `[SYSTEM MEMORY: Sent product images for: [${productDetails}]. Images: ${summary}. The user is now looking at these products.]`;
             } else {
-                 // Fallback: Just list titles/urls from images array
                  const summary = aiResponse.images
-                    .map(img => typeof img === 'string' ? img : `${img.title || 'Image'} | ${img.url}`)
+                    .map(img => {
+                        if (typeof img === 'string') return img;
+                        const titlePart = img.title ? `${img.title}` : 'Image';
+                        const descPart = img.description ? ` (Desc: ${img.description.substring(0, 300)})` : '';
+                        return `${titlePart}${descPart} | ${img.url}`;
+                    })
                     .join(' ; ');
                  memoryNote = `[SYSTEM MEMORY: Sent product images in this reply: ${summary}. The user is now looking at these images.]`;
             }
