@@ -1608,13 +1608,13 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                                 
                                 await dbService.saveWhatsAppChat({
                                     session_name: sessionName,
-                                    sender_id: senderId,
-                                    recipient_id: pageId || sessionName,
-                                    message_id: msg.id,
-                                    text: transcript,
+                                    sender_id: pageId || sessionName, // Bot (Page) is sender
+                                    recipient_id: senderId, // User is recipient
+                                    message_id: `transcript_${msg.id}`,
+                                    text: `[Voice Transcript] ${transcript}`,
                                     timestamp: Date.now(),
-                                    status: 'received',
-                                    reply_by: 'user',
+                                    status: 'sent',
+                                    reply_by: 'bot', // Mark as BOT reply
                                     is_group: isGroup,
                                     group_id: null,
                                     group_name: null
@@ -1682,13 +1682,13 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                         try {
                             await dbService.saveWhatsAppChat({
                                 session_name: sessionName,
-                                sender_id: senderId,
-                                recipient_id: pageId || sessionName,
-                                message_id: msg.id,
+                                sender_id: pageId || sessionName, // Bot (Page) is sender
+                                recipient_id: senderId, // User is recipient
+                                message_id: `analysis_${msg.id}`,
                                 text: `[Image Analysis Result] ${perMsgText}`,
                                 timestamp: Date.now(),
-                                status: 'received',
-                                reply_by: 'user',
+                                status: 'sent',
+                                reply_by: 'bot', // Mark as BOT reply
                                 is_group: isGroup,
                                 group_id: null,
                                 group_name: null
