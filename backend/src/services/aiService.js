@@ -694,6 +694,28 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     // Acquire Slot to prevent CPU Spikes
     await acquireAiSlot();
 
+    // --- SMART HISTORY PROCESSOR ---
+    // User Requirement: "system memory ta read korte partese na"
+    // Solution: Many providers (Gemini) ignore 'system' roles in middle of history.
+    // We merge 'system' notes into the NEXT user message to ensure LLM sees them.
+    const processedHistory = [];
+    let pendingSystemNotes = [];
+
+    for (const msg of (history || [])) {
+        if (msg.role === 'system') {
+            pendingSystemNotes.push(msg.content);
+        } else if (msg.role === 'user' && pendingSystemNotes.length > 0) {
+            // Merge pending notes into this user message
+            processedHistory.push({
+                role: 'user',
+                content: `[SYSTEM CONTEXT: ${pendingSystemNotes.join(' | ')}]\n${msg.content}`
+            });
+            pendingSystemNotes = [];
+        } else {
+            processedHistory.push(msg);
+        }
+    }
+    
     // 0. Unified Logger Helper (Defined at top to avoid Hoisting/Initialization errors)
     const finalize = async (result) => {
         // Release slot before finishing
@@ -980,10 +1002,15 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         const userSystemPrompt = pagePrompts?.text_prompt || "";
         const finalSystemPrompt = `${whiteLabelInstruction}\n\n${userSystemPrompt}`.trim();
 
+        let finalUserMsg = cleanUserMessage;
+        if (pendingSystemNotes.length > 0) {
+            finalUserMsg = `[SYSTEM CONTEXT: ${pendingSystemNotes.join(' | ')}]\n${finalUserMsg}`;
+        }
+
         messages = [
             { role: 'system', content: finalSystemPrompt },
-            ...history,
-            { role: 'user', content: cleanUserMessage }
+            ...processedHistory,
+            { role: 'user', content: finalUserMsg }
         ];
         
         // Disable strict JSON enforcement for external API (allow natural text)
@@ -1094,7 +1121,7 @@ Reply naturally in PLAIN TEXT. Use tools when needed.`;
     
         // Deduplicate: If the last message in history is identical to the current user message, don't add it again.
         // This prevents "User: Hello" -> "User: Hello" which confuses the AI.
-        const lastHistoryMsg = history.length > 0 ? history[history.length - 1] : null;
+        const lastHistoryMsg = processedHistory.length > 0 ? processedHistory[processedHistory.length - 1] : null;
         let isDuplicate = false;
         
         if (lastHistoryMsg && lastHistoryMsg.role === 'user') {
@@ -1106,16 +1133,21 @@ Reply naturally in PLAIN TEXT. Use tools when needed.`;
             }
         }
 
+        // Merge remaining notes into current user message
+        if (pendingSystemNotes.length > 0) {
+            cleanUserMessage = `[SYSTEM CONTEXT: ${pendingSystemNotes.join(' | ')}]\n${cleanUserMessage}`;
+        }
+
         if (isDuplicate) {
             console.log(`[AI] Deduplicated user message: "${cleanUserMessage}" already in history.`);
             messages = [
                 systemMessage,
-                ...history
+                ...processedHistory
             ];
         } else {
             messages = [
                 systemMessage,
-                ...history,
+                ...processedHistory,
                 { role: 'user', content: cleanUserMessage }
             ];
         }
