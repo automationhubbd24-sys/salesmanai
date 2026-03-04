@@ -1025,18 +1025,85 @@ async function approveDepositTransaction(txn) {
 
 // 17. Save WhatsApp Order Tracking
 async function saveWhatsAppOrderTracking(orderData) {
+    let { session_name, sender_id, product_name, number, location, product_quantity, price } = orderData;
     const { query } = require('./pgClient');
-    const { session_name, sender_id, product_name, number, location, product_quantity, price } = orderData;
 
-    const result = await query(
-        `INSERT INTO whatsapp_order_tracking
-            (session_name, sender_id, product_name, number, location, product_quantity, price)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)
-         RETURNING *`,
-        [session_name, sender_id, product_name, number, location, product_quantity, price]
-    );
+    // Clean product name
+    if (product_name) {
+        if (product_name.includes('|')) product_name = product_name.split('|')[0].trim();
+        product_name = product_name.replace(/Item \d+:/gi, '').replace(/##product/gi, '').replace(/"/g, '').replace(/\[.*?\]/g, '').trim();
+        if (!product_name) product_name = 'Recovered Lead';
+    }
 
-    return result.rows[0];
+    try {
+        // SMART MERGE: Last 1 hour
+        const recentOrder = await query(
+            `SELECT id, product_name, number, location, product_quantity, price 
+             FROM whatsapp_order_tracking 
+             WHERE session_name = $1 AND sender_id = $2 
+             AND created_at >= NOW() - INTERVAL '1 hour'
+             ORDER BY created_at DESC LIMIT 1`,
+            [session_name, sender_id]
+        );
+
+        if (recentOrder.rows.length > 0) {
+            const existing = recentOrder.rows[0];
+            const updates = [];
+            const values = [];
+            let idx = 1;
+
+            if (product_name && product_name !== 'Recovered Lead' && (!existing.product_name || existing.product_name === 'Recovered Lead')) {
+                updates.push(`product_name = $${idx++}`);
+                values.push(product_name);
+            }
+            if (number && !existing.number) {
+                updates.push(`number = $${idx++}`);
+                values.push(number);
+            }
+            if (location && location !== 'N/A' && (!existing.location || existing.location === 'N/A' || existing.location === '')) {
+                updates.push(`location = $${idx++}`);
+                values.push(location);
+            }
+            if (product_quantity && product_quantity !== '1' && (!existing.product_quantity || existing.product_quantity === '1')) {
+                updates.push(`product_quantity = $${idx++}`);
+                values.push(product_quantity);
+            }
+            if (price && !existing.price) {
+                updates.push(`price = $${idx++}`);
+                values.push(price);
+            }
+
+            if (updates.length > 0) {
+                values.push(existing.id);
+                const updateResult = await query(
+                    `UPDATE whatsapp_order_tracking SET ${updates.join(', ')} WHERE id = $${idx} RETURNING *`,
+                    values
+                );
+                console.log(`[WA Order] Smart Merged data into ID ${existing.id}`);
+                return updateResult.rows[0];
+            }
+            
+            if (number && existing.number && number !== existing.number) {
+                console.log(`[WA Order] New number for ${sender_id}. New row.`);
+            } else {
+                return existing;
+            }
+        }
+
+        if (!number && (!product_name || product_name === 'Recovered Lead')) return null;
+
+        const result = await query(
+            `INSERT INTO whatsapp_order_tracking
+                (session_name, sender_id, product_name, number, location, product_quantity, price)
+             VALUES ($1,$2,$3,$4,$5,$6,$7)
+             RETURNING *`,
+            [session_name, sender_id, product_name, number, location, product_quantity, price]
+        );
+        return result.rows[0];
+    } catch (error) {
+        console.error("Error in saveWhatsAppOrderTracking:", error);
+        return null;
+    }
 }
 
 // 17. Get WhatsApp Chat History
@@ -1442,12 +1509,12 @@ async function saveOrderTracking(orderData) {
     console.log(`[Order] Attempting to save/update order for ${sender_id}...`);
 
     try {
-        // 1. Try to find a recent order (last 24 hours) for this user to update missing info
+        // 1. Try to find a recent order (last 1 hour) for this user to update missing info (Smart Merge)
         const recentOrder = await query(
             `SELECT id, product_name, number, location, product_quantity, price 
              FROM fb_order_tracking 
              WHERE page_id = $1 AND sender_id = $2 
-             AND created_at >= NOW() - INTERVAL '24 hours'
+             AND created_at >= NOW() - INTERVAL '1 hour'
              ORDER BY created_at DESC LIMIT 1`,
             [page_id, sender_id]
         );
@@ -1458,8 +1525,8 @@ async function saveOrderTracking(orderData) {
             const values = [];
             let idx = 1;
 
-            // Update if the new data is available AND the existing data is missing or generic
-            if (product_name && (existing.product_name === 'Recovered Lead' || !existing.product_name)) {
+            // SMART MERGE: Only update if the new value is NOT empty and either the existing is missing or generic
+            if (product_name && product_name !== 'Recovered Lead' && (!existing.product_name || existing.product_name === 'Recovered Lead')) {
                 updates.push(`product_name = $${idx++}`);
                 values.push(product_name);
             }
@@ -1467,11 +1534,11 @@ async function saveOrderTracking(orderData) {
                 updates.push(`number = $${idx++}`);
                 values.push(number);
             }
-            if (location && (existing.location === 'N/A' || !existing.location || existing.location === '')) {
+            if (location && location !== 'N/A' && (!existing.location || existing.location === 'N/A' || existing.location === '')) {
                 updates.push(`location = $${idx++}`);
                 values.push(location);
             }
-            if (product_quantity && (existing.product_quantity === '1' || !existing.product_quantity)) {
+            if (product_quantity && product_quantity !== '1' && (!existing.product_quantity || existing.product_quantity === '1')) {
                 updates.push(`product_quantity = $${idx++}`);
                 values.push(product_quantity);
             }
@@ -1486,13 +1553,18 @@ async function saveOrderTracking(orderData) {
                     `UPDATE fb_order_tracking SET ${updates.join(', ')} WHERE id = $${idx} RETURNING *`,
                     values
                 );
-                console.log(`[Order] Updated existing order ID ${existing.id} for user ${sender_id}`);
+                console.log(`[Order] Smart Merged data into existing order ID ${existing.id} for user ${sender_id}`);
                 return updateResult.rows[0];
             }
             
-            // If we have a number but it's DIFFERENT from the existing one, we should probably create a NEW row
-            // instead of updating, because it might be a different order or different person.
-            // But if the existing row HAS a number and the new one doesn't, we skip the update (handled above).
+            // If we have a number but it's DIFFERENT from the existing one, 
+            // and the existing one already has a number, we create a NEW row.
+            if (number && existing.number && number !== existing.number) {
+                console.log(`[Order] New number detected for ${sender_id}. Creating new row.`);
+            } else {
+                console.log(`[Order] No new info to merge for ${sender_id}. Skipping duplicate.`);
+                return existing;
+            }
         }
 
         // 2. If no recent order found or no updates were needed, perform a new INSERT

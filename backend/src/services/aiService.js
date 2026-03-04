@@ -1119,7 +1119,11 @@ ${productContext}
    - Order: Append "[ADD_LABEL: ordertrack]" to reply.
 6. VISION RESULTS & MEMORY: If the user message contains "[Image Analysis Result]", or history contains "[SYSTEM MEMORY: ...]", prioritize this information. These tags tell you exactly what the user is looking at. IMPORTANT: Never repeat these tags or their contents in your final reply. They are for your internal understanding only.
 7. COMBO PRODUCTS: If a product is marked as [COMBO PRODUCT], it means it contains multiple items. NEVER proactively list or mention the sub-items inside a combo. Only disclose the hidden contents if the customer explicitly asks what is inside the combo or package. Normally, just refer to it as "this combo" or "this package". If a user sends a photo containing multiple products that match a combo's items, offer the combo as a smart choice but do not list the items unless asked.
-8. ORDER TRACKING: If a user provides order details (Product Name, Phone Number, and Address), call the 'create_order' tool. Do NOT output JSON manually.
+8. ORDER TRACKING & EXTRACTION: 
+   - If a user provides order details (Product Name, Phone Number, and Address), call the 'create_order' tool. Do NOT output JSON manually.
+   - [DATA EXTRACTION]: Even if the user is just giving information (not a full order), you MUST extract any 'name', 'phone', or 'address' you see in the user's message. 
+   - Return these extracted details in your response as an 'order_details' object: {"name": "...", "phone": "...", "address": "...", "product_name": "...", "quantity": "...", "price": "..."}. 
+   - Only fill fields you are 100% sure about from the current or previous message. Keep others empty.
 
 [Response Format]
 Reply naturally in PLAIN TEXT. Use tools when needed.`;

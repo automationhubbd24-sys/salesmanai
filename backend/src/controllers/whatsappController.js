@@ -2168,6 +2168,24 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
 
         // --- HANDLE SAVE_ORDER ([SAVE_ORDER: {...}]) ---
         let orderSaved = false;
+        const aiExtracted = aiResponse.order_details;
+        
+        if (aiExtracted && (aiExtracted.phone || aiExtracted.number || aiExtracted.address || aiExtracted.location || aiExtracted.name)) {
+             console.log(`[WA Order] AI extracted natural data:`, aiExtracted);
+             let customerNumber = normalizeBdPhone(aiExtracted.phone || aiExtracted.number || aiExtracted.mobile);
+             
+             await dbService.saveWhatsAppOrderTracking({
+                 session_name: sessionName,
+                 sender_id: senderId,
+                 number: customerNumber || senderId.split('@')[0],
+                 product_name: aiExtracted.product_name || 'Recovered Lead',
+                 location: aiExtracted.address || aiExtracted.location || '',
+                 product_quantity: aiExtracted.quantity || '1',
+                 price: aiExtracted.price || null
+             });
+             orderSaved = true;
+        }
+
         const orderRegex = /\[SAVE_ORDER:\s*({.*?})\]/s;
         const orderMatch = finalReplyText.match(orderRegex);
         if (orderMatch && orderMatch[1]) {

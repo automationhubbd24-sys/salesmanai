@@ -1205,29 +1205,24 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         // This uses the SAME AI call, so ZERO extra cost.
         let orderSaved = false;
         const saveOrderPayload = aiResponse.order_details || extractSaveOrderTag(aiResponse.reply);
-        if (saveOrderPayload && saveOrderPayload.product_name) {
-             const order = saveOrderPayload;
-             console.log(`[Order] AI detected potential order: ${JSON.stringify(order)}`);
+        
+        // AI DATA EXTRACTION (New Logic: AI detects Name, Phone, Address naturally)
+        if (saveOrderPayload && (saveOrderPayload.phone || saveOrderPayload.number || saveOrderPayload.address || saveOrderPayload.location)) {
+             const extracted = saveOrderPayload;
+             console.log(`[Order] AI extracted data: ${JSON.stringify(extracted)}`);
              
-             let customerNumber = normalizeBdPhone(order.phone || order.number || order.mobile);
+             let customerNumber = normalizeBdPhone(extracted.phone || extracted.number || extracted.mobile);
              
-             // STRICT: Only save if we have a valid phone number
-             if (customerNumber) {
-                 // Clean product name from internal instructions/metadata
-                 let cleanProductName = order.product_name;
-                 if (cleanProductName.includes('|')) {
-                     cleanProductName = cleanProductName.split('|')[0].trim();
-                 }
-                 cleanProductName = cleanProductName.replace(/Item \d+:/gi, '').replace(/##product/gi, '').replace(/"/g, '').trim();
-
+             // Smart Save: If we have at least a number OR a name/address, attempt save
+             if (customerNumber || extracted.address || extracted.location || extracted.name) {
                  await dbService.saveOrderTracking({
                      page_id: pageId,
                      sender_id: senderId,
-                     product_name: cleanProductName,
-                     number: customerNumber, 
-                     location: order.address || order.location || '',
-                     product_quantity: order.quantity || '1',
-                     price: order.price || null,
+                     product_name: extracted.product_name || 'Recovered Lead',
+                     number: customerNumber || null, 
+                     location: extracted.address || extracted.location || '',
+                     product_quantity: extracted.quantity || '1',
+                     price: extracted.price || null,
                      sender_number: senderId
                  });
                  orderSaved = true;
