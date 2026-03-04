@@ -60,6 +60,7 @@ export default function WhatsAppControlPage() {
   
   const activeDbId = (currentSession as any)?.wp_db_id || null;
   const activeSessionName = currentSession?.name || null;
+  const showLegacyMetrics = true; // Define to show bot stats
 
   useEffect(() => {
     if (activeDbId) {
