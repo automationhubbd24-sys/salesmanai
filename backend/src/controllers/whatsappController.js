@@ -2079,17 +2079,20 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
             }
         }
 
-        // --- NEW AGENTIC DELIVERY SYSTEM (BACKEND-DRIVEN) ---
+        // --- AGENTIC DELIVERY SYSTEM (BACKEND-DRIVEN) ---
         if (aiResponse.action && aiResponse.action !== "NONE" && aiResponse.product_id) {
             try {
                 const product = await dbService.getProductById(aiResponse.product_id);
                 if (product) {
-                    const numericPrice = parsePrice(product.price);
-                    const priceDisplay = numericPrice > 0 ? `${numericPrice} ${product.currency || 'BDT'}` : "দাম জানতে ইনবক্স করুন";
-                    const details = `🛍️ *${product.name}*\n💰 Price: ${priceDisplay}\n📝 Info: ${product.description || 'No details available.'}`;
-
                     if (aiResponse.action === "SEND_DETAILS" || aiResponse.action === "SEND_BOTH") {
-                        finalReplyText = `${finalReplyText}\n\n${details}`;
+                        // Backend only appends details if AI explicitly asks for it AND hasn't already included it.
+                        // We assume AI handled the description length as per its prompt.
+                        if (!finalReplyText || finalReplyText.length < 50) {
+                            const numericPrice = parsePrice(product.price);
+                            const priceDisplay = numericPrice > 0 ? `${numericPrice} ${product.currency || 'BDT'}` : "দাম জানতে ইনবক্স করুন";
+                            const details = `🛍️ *${product.name}*\n💰 Price: ${priceDisplay}\n📝 Info: ${product.description || 'No details available.'}`;
+                            finalReplyText = `${finalReplyText}\n\n${details}`;
+                        }
                     }
 
                     if ((aiResponse.action === "SEND_PHOTO" || aiResponse.action === "SEND_BOTH") && product.image_url) {

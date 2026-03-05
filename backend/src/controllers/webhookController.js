@@ -1826,19 +1826,22 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
 
         // -----------------------------------------------------
 
-        // --- NEW AGENTIC DELIVERY SYSTEM (BACKEND-DRIVEN) ---
+        // --- AGENTIC DELIVERY SYSTEM (BACKEND-DRIVEN) ---
         if (aiResponse.action && aiResponse.action !== "NONE" && aiResponse.product_id) {
             try {
                 const product = await dbService.getProductById(aiResponse.product_id);
                 if (product) {
-                    const numericPrice = parsePrice(product.price);
-                    const priceDisplay = numericPrice > 0 ? `${numericPrice} ${product.currency || 'BDT'}` : "Ask for Price";
-                    const details = `🛍️ *${product.name}*\n💰 Price: ${priceDisplay}\n📝 Info: ${product.description || 'No details available.'}`;
-
                     if (aiResponse.action === "SEND_DETAILS" || aiResponse.action === "SEND_BOTH") {
-                        // Append details to replyText or send as a separate message?
-                        // Pro-choice: Append to replyText for context
-                        replyText = `${replyText}\n\n${details}`;
+                        // Backend only appends details if AI explicitly asks for it AND hasn't already included it.
+                        // However, per user request, we now give AI full control over description length.
+                        // If AI already wrote a reply, we assume it handled the description as per its prompt.
+                        // We only append if replyText is very short (fallback).
+                        if (!replyText || replyText.length < 50) {
+                            const numericPrice = parsePrice(product.price);
+                            const priceDisplay = numericPrice > 0 ? `${numericPrice} ${product.currency || 'BDT'}` : "Ask for Price";
+                            const details = `🛍️ *${product.name}*\n💰 Price: ${priceDisplay}\n📝 Info: ${product.description || 'No details available.'}`;
+                            replyText = `${replyText}\n\n${details}`;
+                        }
                     }
 
                     if ((aiResponse.action === "SEND_PHOTO" || aiResponse.action === "SEND_BOTH") && product.image_url) {

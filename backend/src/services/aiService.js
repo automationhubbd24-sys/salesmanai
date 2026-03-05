@@ -1527,13 +1527,15 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             console.log(`[AI] Deduplicated user message: "${cleanUserMessage}" already in history.`);
             messages = [
                 systemMessage,
-                ...processedHistory
+                ...processedHistory,
+                { role: 'system', content: `[REMINDER: HIGHEST PRIORITY] Always follow the Business Owner's specific instructions. Keep replies to 1-2 lines max. Use JSON format only.` }
             ];
         } else {
             messages = [
                 systemMessage,
                 ...processedHistory,
-                { role: 'user', content: cleanUserMessage }
+                { role: 'user', content: cleanUserMessage },
+                { role: 'system', content: `[REMINDER: HIGHEST PRIORITY] Always follow the Business Owner's specific instructions. Keep replies to 1-2 lines max. Use JSON format only.` }
             ];
         }
     }
