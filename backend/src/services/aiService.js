@@ -1532,14 +1532,14 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             messages = [
                 systemMessage,
                 ...processedHistory,
-                { role: 'system', content: \`[REMINDER: HIGHEST PRIORITY] Follow the Business Owner's specific instructions. If they say "no tools", do NOT call functions. Keep replies to 1-2 lines max. Use JSON format only.\` }
+                { role: 'system', content: `[REMINDER: HIGHEST PRIORITY] Follow the Business Owner's specific instructions. If they say "no tools", do NOT call functions. Keep replies to 1-2 lines max. Use JSON format only.` }
             ];
         } else {
             messages = [
                 systemMessage,
                 ...processedHistory,
                 { role: 'user', content: cleanUserMessage },
-                { role: 'system', content: \`[REMINDER: HIGHEST PRIORITY] Follow the Business Owner's specific instructions. If they say "no tools", do NOT call functions. Keep replies to 1-2 lines max. Use JSON format only.\` }
+                { role: 'system', content: `[REMINDER: HIGHEST PRIORITY] Follow the Business Owner's specific instructions. If they say "no tools", do NOT call functions. Keep replies to 1-2 lines max. Use JSON format only.` }
             ];
         }
     }
