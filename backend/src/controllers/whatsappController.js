@@ -227,13 +227,27 @@ const normalizeText = (text) => {
 
 function shouldBlockOutgoingReply(text) {
     const trimmed = String(text || '').trim();
-    if (!trimmed) return false;
+    if (!trimmed) return true; // Silence if empty
+
+    // 1. Check for remaining Structural Symbols (Logic-based, no keywords)
+    const hasBrackets = trimmed.includes('[') || trimmed.includes(']');
+    const hasBraces = trimmed.includes('{') || trimmed.includes('}');
+    const hasUrls = trimmed.toLowerCase().includes('http');
+    const hasBackslashes = trimmed.includes('\\');
+
+    if (hasBrackets || hasBraces || hasUrls || hasBackslashes) {
+        console.warn(`[Quality Control] Blocked unprofessional message: "${trimmed.substring(0, 50)}..."`);
+        return true; 
+    }
+
+    // 2. Original JSON check
     if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
         try {
             JSON.parse(trimmed);
             return true;
         } catch (e) {}
     }
+    
     return false;
 }
 

@@ -45,13 +45,29 @@ function escapeRegExp(str) {
 
 function shouldBlockOutgoingReply(text) {
     const trimmed = String(text || '').trim();
-    if (!trimmed) return false;
+    if (!trimmed) return true; // Silence if empty
+
+    // 1. Check for remaining Structural Symbols (e.g. [ , ] , { , } , http)
+    // If the Logic-Based Sanitizer didn't catch these, it means the message is messy.
+    // Professional messages should be pure text, emojis, and common punctuation.
+    const hasBrackets = trimmed.includes('[') || trimmed.includes(']');
+    const hasBraces = trimmed.includes('{') || trimmed.includes('}');
+    const hasUrls = trimmed.toLowerCase().includes('http');
+    const hasBackslashes = trimmed.includes('\\');
+
+    if (hasBrackets || hasBraces || hasUrls || hasBackslashes) {
+        console.warn(`[Quality Control] Blocked unprofessional message: "${trimmed.substring(0, 50)}..."`);
+        return true; // BLOCK it. Better silence than garbage.
+    }
+
+    // 2. Original JSON check
     if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
         try {
             JSON.parse(trimmed);
             return true;
         } catch (e) {}
     }
+    
     return false;
 }
 
