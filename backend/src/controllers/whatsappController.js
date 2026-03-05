@@ -2116,7 +2116,10 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                 .replace(/\[IMAGE_DECISION:[\s\S]*?\]/g, '')
                 .replace(/\[IMAGE_MODE:[\s\S]*?\]/g, '')
                 .replace(/\[ADD_LABEL:[\s\S]*?\]/g, '')
-                .replace(/https?:\/\/[^\s,)]*supabase\.co[^\s,)]*/gi, '') // Strip only Supabase URLs for professionalism
+                .replace(/https?:\/\/[^\s,)]*supabase\.co[^\s,)]*/gi, (url) => {
+                    if (aiResponse.images && aiResponse.images.some(img => img.url === url)) return '';
+                    return url; // Keep it if it's not being sent as an attachment
+                })
                 .trim();
         }
 
@@ -2390,11 +2393,13 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
             const title = strictMatch[1].trim();
             const url = strictMatch[2].trim();
             
+            let extractedSuccessfully = false;
             if (!extractedImages.some(img => img.url === url)) {
                 // Check if it's a direct image or a product page
                 const isImageExtension = /\.(jpg|jpeg|png|gif|webp|bmp|tiff)(\?.*)?$/i.test(url);
                 if (isImageExtension) {
                     extractedImages.push({ url: url, title: title });
+                    extractedSuccessfully = true;
                 } else {
                     // Try to fetch OG image for product pages labeled as IMAGE
                     try {
@@ -2403,6 +2408,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                         if (ogImage) {
                             extractedImages.push({ url: ogImage, title: title });
                             console.log(`[WA] Successfully fetched OG Image for labeled link: ${ogImage}`);
+                            extractedSuccessfully = true;
                         } else {
                             // If no OG image, keep the link but maybe not send as image
                             console.warn(`[WA] No OG Image found for labeled link: ${url}`);
@@ -2411,10 +2417,20 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                         console.warn(`[WA] OG Image fetch failed for ${url}:`, ogError.message);
                     }
                 }
+            } else {
+                extractedSuccessfully = true;
             }
             
-            // Remove from text
-            finalReplyText = finalReplyText.replace(fullMatch, '').trim();
+            // Only remove from text if it's an image we successfully extracted and it's a Supabase link
+            if (extractedSuccessfully && url.includes('supabase.co')) {
+                finalReplyText = finalReplyText.replace(fullMatch, '').trim();
+            } else if (!extractedSuccessfully) {
+                // Keep as text if not extracted, but remove the IMAGE: prefix to make it look natural
+                finalReplyText = finalReplyText.replace(fullMatch, `${title}: ${url}`).trim();
+            } else {
+                // Keep in text even if extracted, unless it's a Supabase link
+                finalReplyText = finalReplyText.replace(fullMatch, `${title}: ${url}`).trim();
+            }
         }
 
         // --- NEW: AUTO-EXTRACT PRODUCT LINKS WITHOUT LABELS ---

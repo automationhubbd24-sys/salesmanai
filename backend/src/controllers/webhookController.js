@@ -1800,13 +1800,22 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                     }
                     extractedImages.push({ url: url, title: title, description: description });
                 }
+                // Only remove from text if it's an image we successfully extracted
                 replyText = replyText.replace(fullMatch, '').trim();
             } else if (isSuspicious) {
-                 console.log(`[Image Extraction] Blocked hallucinated/suspicious URL: ${url}`);
-                 replyText = replyText.replace(fullMatch, '').trim(); // Remove the hallucination from text too
+                 // If it's suspicious, we still keep it as text unless it's a known internal storage link
+                 if (url.includes('supabase.co')) {
+                    console.log(`[Image Extraction] Removing internal Supabase link: ${url}`);
+                    replyText = replyText.replace(fullMatch, '').trim();
+                 } else {
+                    console.log(`[Image Extraction] Keeping "suspicious" link as text: ${url}`);
+                    // Replace the IMAGE: tag with just the URL to keep it readable
+                    replyText = replyText.replace(fullMatch, `${title}: ${url}`).trim();
+                 }
             } else {
                 // Non-Image URLs stay as normal text
                 console.log(`[Image Extraction] Keeping non-Image URL as text: ${url}`);
+                replyText = replyText.replace(fullMatch, `${title}: ${url}`).trim();
             }
         }
 
@@ -1854,9 +1863,13 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             }
         }
 
-        // Pass 2: Aggressively strip ONLY Supabase URLs from the visible text.
-        // This allows other external URLs (like websites or custom links) to reach the customer.
-        replyText = replyText.replace(/https?:\/\/[^\s,)]*supabase\.co[^\s,)]*/gi, '').trim();
+        // Pass 2: Aggressively strip ONLY Supabase URLs that are already extracted as attachments.
+        // This prevents showing raw storage links to customers when the image is already sent.
+        const supabaseRegex = /https?:\/\/[^\s,)]*supabase\.co[^\s,)]*/gi;
+        replyText = replyText.replace(supabaseRegex, (url) => {
+            if (extractedImages.some(img => img.url === url)) return '';
+            return url; // Keep it if it's not being sent as an attachment
+        }).trim();
 
         // Pass 3: Cleanup Markdown artifacts and link-related phrases.
         const cleanupPhrases = [
