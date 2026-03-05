@@ -1500,7 +1500,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
       "intent": "INQUIRY"
     }
     
-    [CRITICAL] Output ONLY the raw JSON object. Do not wrap it in markdown code blocks like \x60\x60\x60json. Do not include any other text.\`;
+    [CRITICAL] Output ONLY the raw JSON object. Do not wrap it in markdown code blocks like \x60\x60\x60json. Do not include any other text.`;
 
         const systemMessage = { role: 'system', content: n8nSystemPrompt };
     
