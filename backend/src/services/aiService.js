@@ -1022,23 +1022,28 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
             
             // --- AGENTIC JSON PARSER ---
             try {
-                // Strip potential Markdown blocks if AI ignored instructions
-                const cleanJson = aiText.replace(/```json|```/g, '').trim();
-                const structured = JSON.parse(cleanJson);
+                // More robust cleaning: find the first { and last }
+                const firstBrace = aiText.indexOf('{');
+                const lastBrace = aiText.lastIndexOf('}');
                 
-                if (structured.reply_text) {
-                    return { 
-                        reply: structured.reply_text, 
-                        action: structured.action || "NONE",
-                        product_id: structured.product_id || null,
-                        token_usage: tokenUsage + totalTokensInLoop, 
-                        model: model, 
-                        foundProducts 
-                    };
+                if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+                    const potentialJson = aiText.substring(firstBrace, lastBrace + 1);
+                    const structured = JSON.parse(potentialJson);
+                    
+                    if (structured.reply_text) {
+                        return { 
+                            reply: structured.reply_text, 
+                            action: structured.action || "NONE",
+                            product_id: structured.product_id || null,
+                            token_usage: tokenUsage + totalTokensInLoop, 
+                            model: model, 
+                            foundProducts 
+                        };
+                    }
                 }
             } catch (parseErr) {
                 // Not JSON or missing reply_text, fallback to raw text
-                console.warn(`[AgentLoop] Response not in expected JSON format. Content: ${aiText.substring(0, 50)}...`);
+                console.warn(`[AgentLoop] Response parsing failed. Fallback to raw text.`);
             }
 
             return { 
@@ -1460,14 +1465,17 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     3. TERTIARY: Tools ('resolve_product', 'get_product'). Use these to identify and confirm details of any item mentioned.
     
     [STRICT ARCHITECTURE]
-    You are an Agentic Brain. You do NOT output URLs, [PRODUCT_ID] tags, or Markdown links in your text.
-    Your output MUST be a valid JSON object with the following fields:
-    - reply_text: Your human-like message to the customer.
+    - You are an Agentic Brain. Your output MUST be a valid JSON object only.
+    - DO NOT include any conversational text before or after the JSON.
+    - Your output MUST be a valid JSON object with the following fields:
+    - reply_text: Your human-like message to the customer (Keep it very short, 1-2 lines maximum).
     - action: One of ["NONE", "SEND_DETAILS", "SEND_PHOTO", "SEND_BOTH"]
     - product_id: The UUID of the item from the Inventory List below.
     - intent: Short description of user intent.
 
     [STRICT RULES]
+    - RESPONSE LENGTH: Keep 'reply_text' extremely concise. 1 to 2 sentences max. 
+    - PRODUCT DETAILS: When showing details, only summarize the most important 2-3 features. Do not copy long descriptions.
     - HYBRID CONTROL: 
         - Backend handles DATA (prices, stocks, product matching scores). 
         - AI handles BEHAVIOR (tone, emoji, and selection from matches).
@@ -1484,20 +1492,15 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     - [PRICE RULE]: ALWAYS use the 'price' field. If price is 0/null, say "ইনবক্স করুন".
     - [FOLLOW-UP]: Use [CONTEXT: LAST_RESOLVED_PRODUCT_ID] if user refers to "it" or "this".
 
-    [CONVERSATION CONTEXT]
-    Customer: ${senderName} | Store: ${ownerName}
-    Inventory List (DB): ${inventoryList || "Search required"}
-    Note: [CONTEXT: LAST_RESOLVED_PRODUCT_ID: "..."] is the current item.
-
     [Response Format - JSON ONLY]
     {
-      "reply_text": "হ্যাঁ, আমাদের কাছে এটি আছে। আমি নিচে এর দাম ও বিস্তারিত তথ্য পাঠিয়ে দিচ্ছি।",
+      "reply_text": "হ্যাঁ, এটি আমাদের স্টকে আছে। দাম ১৬৫০ টাকা।",
       "action": "SEND_BOTH",
       "product_id": "42a392ce-bece-...",
       "intent": "INQUIRY"
     }
     
-    [CRITICAL] Output ONLY the JSON object. Do not include Markdown code blocks or any text outside the JSON.`;
+    [CRITICAL] Output ONLY the raw JSON object. Do not wrap it in markdown code blocks like ```json. Do not include any other text.`;
 
         const systemMessage = { role: 'system', content: n8nSystemPrompt };
     
