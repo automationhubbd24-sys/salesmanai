@@ -1,0 +1,13 @@
+{
+  "name": "salesmanai-root",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "cd backend && npm start",
+    "install-backend": "cd backend && npm install",
+    "build": "cd backend && npm run build"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
