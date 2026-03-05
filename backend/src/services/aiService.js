@@ -1346,7 +1346,17 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     // If we force JSON, the model might try to output JSON even when it should be calling a tool or talking normally.
     // We let the model decide (auto) or default to text.
     let responseFormat = undefined; 
-    const toolsEnabled = pageConfig.is_external_api ? false : true;
+    
+    // --- TOOL ENABLING LOGIC (USER PROMPT DRIVEN) ---
+    const userSystemPromptText = (pagePrompts?.text_prompt || "").toLowerCase();
+    const disableToolKeywords = [
+        'don\'t use tools', 'do not use tools', 'no tools', 'disable tools', 
+        'no function call', 'don\'t call functions', 'do not call functions',
+        'টুল ব্যবহার করবে না', 'ফাংশন কল করবে না'
+    ];
+    const userRequestedNoTools = disableToolKeywords.some(kw => userSystemPromptText.includes(kw));
+    
+    const toolsEnabled = !pageConfig.is_external_api && !userRequestedNoTools;
     const tools = toolsEnabled ? functionTools : undefined;
 
     if (pageConfig.is_external_api) {
@@ -1462,7 +1472,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     [DATA SOURCES & PRIORITY]
     1. PRIMARY: Business Owner Instructions (Context/Rules) above.
     2. SECONDARY: Inventory/Offerings List (DB DATA) below. Includes IDs and names.
-    3. TERTIARY: Tools ('resolve_product', 'get_product'). Use these to identify and confirm details of any item mentioned.
+    ${toolsEnabled ? "3. TERTIARY: Tools ('resolve_product', 'get_product'). Use these to identify and confirm details of any item mentioned." : ""}
     
     [STRICT ARCHITECTURE]
     - You are an Agentic Brain. Your output MUST be a valid JSON object only.
@@ -1479,13 +1489,13 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     - HYBRID CONTROL: 
         - Backend handles DATA (prices, stocks, product matching scores). 
         - AI handles BEHAVIOR (tone, emoji, and selection from matches).
-    - RESOLUTION (Hybrid Strategy):
+    ${toolsEnabled ? `- RESOLUTION (Hybrid Strategy):
         1. Always call 'resolve_product' if the user mentions an item.
         2. If the tool returns 'candidates', review their 'match_score':
            - If top candidate has match_score >= 80: Accept it as an EXACT match. Show its details immediately.
            - If top candidate has match_score between 60-79: It's likely the correct product. You may show it, but mention you think they mean this one.
            - If match_score < 60 or multiple candidates have similar high scores (within 10 points): Ask the user to clarify by providing the top 2-3 names.
-        3. Do NOT ask redundant questions like "Are you looking for X?" if the score is high (>=80). Be proactive.
+        3. Do NOT ask redundant questions like "Are you looking for X?" if the score is high (>=80). Be proactive.` : ""}
     - IMAGE ANALYSIS: If a user sends an image, use visible text to find the item.
     - NO URLs: NEVER include links (http/https) in your text.
     - NO LINK PHRASES: NEVER mention "seeing links" or "clicking here".
