@@ -1347,16 +1347,10 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     // We let the model decide (auto) or default to text.
     let responseFormat = undefined; 
     
-    // --- TOOL ENABLING LOGIC (USER PROMPT DRIVEN) ---
-    const userSystemPromptText = (pagePrompts?.text_prompt || "").toLowerCase();
-    const disableToolKeywords = [
-        'don\'t use tools', 'do not use tools', 'no tools', 'disable tools', 
-        'no function call', 'don\'t call functions', 'do not call functions',
-        'টুল ব্যবহার করবে না', 'ফাংশন কল করবে না'
-    ];
-    const userRequestedNoTools = disableToolKeywords.some(kw => userSystemPromptText.includes(kw));
-    
-    const toolsEnabled = !pageConfig.is_external_api && !userRequestedNoTools;
+    // --- TOOL ENABLING LOGIC ---
+    // We always provide tools to the AI (unless external API). 
+    // The AI will decide whether to call them based on the Business Owner's instructions.
+    const toolsEnabled = !pageConfig.is_external_api;
     const tools = toolsEnabled ? functionTools : undefined;
 
     if (pageConfig.is_external_api) {
@@ -1471,8 +1465,8 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
 
     [DATA SOURCES & PRIORITY]
     1. PRIMARY: Business Owner Instructions (Context/Rules) above.
-    2. SECONDARY: Inventory/Offerings List (DB DATA) below. Includes IDs and names.
-    ${toolsEnabled ? "3. TERTIARY: Tools ('resolve_product', 'get_product'). Use these to identify and confirm details of any item mentioned." : ""}
+    2. SECONDARY: Inventory/Offerings List (DB DATA) below.
+    ${toolsEnabled ? "3. TERTIARY: Available Tools ('resolve_product', 'get_product'). IMPORTANT: If Business Owner's instructions say NOT to use tools/functions, you MUST follow that and rely only on provided context." : ""}
     
     [STRICT ARCHITECTURE]
     - You are an Agentic Brain. Your output MUST be a valid JSON object only.
@@ -1490,7 +1484,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         - Backend handles DATA (prices, stocks, product matching scores). 
         - AI handles BEHAVIOR (tone, emoji, and selection from matches).
     ${toolsEnabled ? `- RESOLUTION (Hybrid Strategy):
-        1. Always call 'resolve_product' if the user mentions an item.
+        1. IF AND ONLY IF tool usage is permitted by Business Owner: Always call 'resolve_product' if the user mentions an item.
         2. If the tool returns 'candidates', review their 'match_score':
            - If top candidate has match_score >= 80: Accept it as an EXACT match. Show its details immediately.
            - If top candidate has match_score between 60-79: It's likely the correct product. You may show it, but mention you think they mean this one.
@@ -1538,14 +1532,14 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             messages = [
                 systemMessage,
                 ...processedHistory,
-                { role: 'system', content: `[REMINDER: HIGHEST PRIORITY] Always follow the Business Owner's specific instructions. Keep replies to 1-2 lines max. Use JSON format only.` }
+                { role: 'system', content: \`[REMINDER: HIGHEST PRIORITY] Follow the Business Owner's specific instructions. If they say "no tools", do NOT call functions. Keep replies to 1-2 lines max. Use JSON format only.\` }
             ];
         } else {
             messages = [
                 systemMessage,
                 ...processedHistory,
                 { role: 'user', content: cleanUserMessage },
-                { role: 'system', content: `[REMINDER: HIGHEST PRIORITY] Always follow the Business Owner's specific instructions. Keep replies to 1-2 lines max. Use JSON format only.` }
+                { role: 'system', content: \`[REMINDER: HIGHEST PRIORITY] Follow the Business Owner's specific instructions. If they say "no tools", do NOT call functions. Keep replies to 1-2 lines max. Use JSON format only.\` }
             ];
         }
     }
