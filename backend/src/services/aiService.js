@@ -860,21 +860,30 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs) {
                 // Sort by score
                 candidates.sort((a, b) => b.match_score - a.match_score);
 
-                // --- DYNAMIC CANDIDATE DELIVERY ---
-                // We return all matching candidates to the AI.
-                // The AI will use its system prompt context and intelligence to decide which one to pick.
+                // --- PURE AGENTIC DATA DELIVERY ---
+                // We return the raw data of all matching candidates to the AI.
+                // The AI will read this data just like it reads a system prompt.
                 if (candidates.length > 0) {
+                    const formattedCandidates = candidates.slice(0, 5).map(c => 
+                        `PRODUCT_DATA:
+                         ID: ${c.product_id}
+                         Name: ${c.name}
+                         Price: ${c.price}
+                         Description: ${c.description}
+                         Stock: ${c.stock}`
+                    ).join('\n---\n');
+
                     return { 
                         status: 'SUCCESS', 
-                        count: candidates.length,
-                        candidates: candidates.slice(0, 5), // Return up to 5 best matches
-                        message: "Review the candidates above. Use your system prompt and context to decide which single product best matches the user's request. Do not ask for clarification if you can make a logical decision."
+                        found_count: candidates.length,
+                        data_injection: formattedCandidates,
+                        message: "I have fetched the following product data from the database. READ THIS DATA CAREFULLY. If any of these products match the user's intent (even partially, like 'Rice Cream' matching 'Rice Combo'), use the ID of the best match and provide its details."
                     };
                 }
 
                 return { 
                     status: 'NOT_FOUND', 
-                    message: "No products found matching that name in the database."
+                    message: "No matching products found in the database. Tell the user we don't have this item."
                 };
             }
 
@@ -1494,24 +1503,24 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     1. Inventory/Offerings List (DB DATA) provided below.
     ${toolsEnabled ? "2. Workflow Tools ('resolve_product', 'get_product')." : ""}
     
-    [AGENTIC WORKFLOW]
-    STEP 1 (Search): ALWAYS call 'resolve_product' if the user mentions any item.
-    STEP 2 (Analyze): Review the 'candidates' returned by the tool.
-    STEP 3 (Decision): 
-        - Pick the best match and set action to "SEND_BOTH".
-        - Use the Business Owner's instructions to craft the 'reply_text'.
+    [AGENTIC INSTRUCTIONS]
+    1. ALWAYS call 'resolve_product' first if any item is mentioned.
+    2. The tool will return raw "PRODUCT_DATA". Read it carefully.
+    3. Even if names aren't identical (e.g., 'Rice Cream' vs 'Rice Combo'), use your intelligence to pick the most relevant product from the data.
+    4. Once you pick a product, set action to "SEND_BOTH" and provide its UUID.
+    5. Do NOT ask "Which one?" if the data allows you to make a decision.
     
     [STRICT ARCHITECTURE]
-    - Output MUST be a valid JSON object only.
-    - reply_text: Human-like response based on the Business Owner's instructions.
+    - Output MUST be a valid JSON object ONLY.
+    - reply_text: Craft your response based on the BUSINESS OWNER'S instructions.
     - action: ["NONE", "SEND_DETAILS", "SEND_PHOTO", "SEND_BOTH"]
-    - product_id: The UUID of the chosen candidate.
+    - product_id: The ID from the PRODUCT_DATA you selected.
     - intent: ["INQUIRY", "ORDER", "GREETING", "OTHER"]
 
     [STRICT RULES]
-    - LANGUAGE & TONE: Strictly follow the Business Owner's instructions for language, tone, and personality.
+    - BEHAVIOR & TONE: Strictly follow the BUSINESS OWNER'S instructions for tone, language, and behavior.
+    - DECISIVE: If 'Rice Combo' is in the data and user asks for 'Rice Cream', assume it's the match.
     - NO URLs: NEVER include links in 'reply_text'.
-    - [PRICE RULE]: Use the 'price' field from the chosen candidate. If 0, follow the owner's instruction for price (default: "Ask for Price").
 
     [Response Format - JSON ONLY]
     {
