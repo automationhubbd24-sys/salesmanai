@@ -1499,31 +1499,31 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     STEP 1 (Search): ALWAYS call 'resolve_product' if the user mentions any item.
     STEP 2 (Analyze): You will receive a list of 'candidates' from the tool. 
         - Review their names, prices, and descriptions.
-        - Compare them against your knowledge and the user's intent.
-        - Use your intelligence to decide which single product is the best match. 
+        - Compare them against the user's request.
+        - If a candidate like "Rice Combo" is found for "Rice Cream", assume it's a match.
     STEP 3 (Decision):
-        - If you find a match: Set action to "SEND_BOTH" and provide its UUID.
-        - If NO match found: Tell the user we don't have it.
-        - DO NOT ask "Which one do you mean?" if you can make a logical decision from the candidates. Be decisive.
+        - YOU MUST BE DECISIVE. Pick the best match and set action to "SEND_BOTH".
+        - NEVER ask "Is this what you are looking for?" if a close match exists. Just send it.
     
     [STRICT ARCHITECTURE]
-    - Output MUST be a valid JSON object only.
-    - reply_text: Short, human-like response (1-2 lines).
+    - LANGUAGE: Always reply in the same language as the user (Bengali/English).
+    - Output MUST be a valid JSON object ONLY. NO plain text allowed.
+    - reply_text: Very short response (1-2 lines).
     - action: ["NONE", "SEND_DETAILS", "SEND_PHOTO", "SEND_BOTH"]
-    - product_id: The UUID of the BEST matching candidate.
+    - product_id: The UUID of the chosen candidate.
     - intent: ["INQUIRY", "ORDER", "GREETING", "OTHER"]
 
     [STRICT RULES]
-    - DECISIVE: If multiple products like "Rice Combo" and "Alikne Rice Combo" are found for "Rice Cream", pick the one that fits best based on context. Do not ask redundant questions.
-    - PROACTIVE DELIVERY: Always provide details/photo via 'action' for the chosen product.
+    - DECISIVE: Proactively send product details for "Rice Combo" if user asks for "Rice Cream". 
+    - PROACTIVE: Always use "SEND_BOTH" for confirmed products.
     - NO URLs: NEVER include links in 'reply_text'.
-    - [PRICE RULE]: Use the 'price' field from the chosen candidate. If 0, say "ইনবক্স করুন".
+    - [PRICE RULE]: Use the 'price' field. If 0, say "ইনবক্স করুন".
 
     [Response Format - JSON ONLY]
     {
-      "reply_text": "হ্যাঁ, এটি আমাদের স্টকে আছে। আমি নিচে এর দাম ও ছবি পাঠিয়ে দিচ্ছি।",
+      "reply_text": "হ্যাঁ, এটি আমাদের স্টকে আছে। নিচে এর দাম ও ছবি পাঠিয়ে দিচ্ছি।",
       "action": "SEND_BOTH",
-      "product_id": "UUID-OF-BEST-MATCH",
+      "product_id": "UUID-HERE",
       "intent": "INQUIRY"
     }
     
@@ -1555,14 +1555,14 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             messages = [
                 systemMessage,
                 ...processedHistory,
-                { role: 'system', content: `[REMINDER: HIGHEST PRIORITY] Follow the Business Owner's specific instructions. If they say "no tools", do NOT call functions. Keep replies to 1-2 lines max. Use JSON format only.` }
+                { role: 'system', content: `[CRITICAL REMINDER] 1. REPLY IN BENGALI. 2. USE JSON ONLY. 3. BE DECISIVE: If "Rice Combo" is found, set action to "SEND_BOTH" immediately.` }
             ];
         } else {
             messages = [
                 systemMessage,
                 ...processedHistory,
                 { role: 'user', content: cleanUserMessage },
-                { role: 'system', content: `[REMINDER: HIGHEST PRIORITY] Follow the Business Owner's specific instructions. If they say "no tools", do NOT call functions. Keep replies to 1-2 lines max. Use JSON format only.` }
+                { role: 'system', content: `[CRITICAL REMINDER] 1. REPLY IN BENGALI. 2. USE JSON ONLY. 3. BE DECISIVE: If "Rice Combo" is found, set action to "SEND_BOTH" immediately.` }
             ];
         }
     }
