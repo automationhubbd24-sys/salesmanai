@@ -93,31 +93,6 @@ export default function MessengerSettingsPage() {
   const [initialImagePrompt, setInitialImagePrompt] = useState("");
   const [promptSaving, setPromptSaving] = useState(false);
   
-  // New State for Industry Templates
-  const [industryTemplates, setIndustryTemplates] = useState<Record<string, string>>({});
-  const [templatesLoading, setTemplatesLoading] = useState(false);
-
-  const fetchTemplates = useCallback(async () => {
-    try {
-      setTemplatesLoading(true);
-      const res = await fetch(`${BACKEND_URL}/api/ai/templates`);
-      const data = await res.json();
-      if (data.success) {
-        setIndustryTemplates(data.templates);
-      }
-    } catch (err) {
-      console.error("Failed to fetch templates:", err);
-    } finally {
-      setTemplatesLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (isPromptOpen) {
-      fetchTemplates();
-    }
-  }, [isPromptOpen, fetchTemplates]);
-
   // New State for Behavior Settings
   const [wait, setWait] = useState<number>(8);
   const [behaviorSaving, setBehaviorSaving] = useState(false);
@@ -672,32 +647,6 @@ export default function MessengerSettingsPage() {
                     
                     <TabsContent value="text" className="mt-4 h-full">
                         <div className="flex flex-col h-full gap-3">
-                          <div className="space-y-2">
-                            <div className="text-xs font-medium text-muted-foreground">
-                              Industry Templates (Quick Start)
-                            </div>
-                            <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto border border-white/10 rounded-md bg-black/20 p-2">
-                              {templatesLoading && (
-                                <span className="text-xs text-muted-foreground">Loading templates...</span>
-                              )}
-                              {!templatesLoading && Object.keys(industryTemplates).map((key) => (
-                                <button
-                                  key={key}
-                                  type="button"
-                                  onClick={() => {
-                                    if (textPromptRef.current) {
-                                      textPromptRef.current.value = industryTemplates[key];
-                                      toast.success(`${key} template applied!`);
-                                    }
-                                  }}
-                                  className="text-[10px] px-2 py-1 rounded-md border border-white/20 bg-white/5 hover:bg-white/10 hover:border-[#00ff88] transition-colors uppercase font-bold text-white/80"
-                                >
-                                  {key}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-
                           <div className="space-y-2">
                             <div className="flex items-center justify-between gap-2">
                               <div className="text-xs font-medium text-muted-foreground">

@@ -43,21 +43,7 @@ async function ingestKnowledge(req, res) {
     }
 }
 
-async function getTemplates(req, res) {
-    try {
-        const templates = aiService.getIndustryTemplates();
-        return res.json({ 
-            success: true, 
-            templates 
-        });
-    } catch (error) {
-        console.error("Get Templates Controller Error:", error);
-        return res.status(500).json({ error: "Failed to fetch templates" });
-    }
-}
-
 module.exports = {
     optimizePrompt,
-    ingestKnowledge,
-    getTemplates
+    ingestKnowledge
 };

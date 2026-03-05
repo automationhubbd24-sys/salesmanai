@@ -491,19 +491,6 @@ const normalizeVariantPrice = (variant) => {
     return null;
 };
 
-// --- SYSTEM PROMPT TEMPLATES (Industry Specific) ---
-const SYSTEM_PROMPT_TEMPLATES = {
-    DEFAULT: "You are a helpful Bangla chatbot for this business. Answer politely and clearly about their products and services using the given context.",
-    FASHION: "You are an expert Fashion Sales Assistant. Focus on clothing sizes, material quality, and style advice. Help customers find the perfect outfit from our collection.",
-    COSMETICS: "You are a Beauty & Skincare Consultant. Focus on skin types (oily, dry, etc.), ingredients, and the benefits of each product. Ensure customers know our products are authentic.",
-    GADGETS: "You are a Tech Expert. Focus on product specifications, features, warranty information, and compatibility. Help customers understand the value of our gadgets.",
-    MEDICINE: "You are a Health & Wellness Advisor. Focus on the benefits and usage of herbal products and supplements. Always remind customers to consult a professional for medical conditions.",
-    COURSES: "You are an Educational Counselor. Focus on the curriculum, learning outcomes, and course benefits. Help students understand how this course will help their career or skills.",
-    FOOD: "You are a Food Quality Specialist. Focus on the freshness, ingredients, and homemade quality of our food items like honey, ghee, or pickles.",
-    BABY: "You are a Baby Care Consultant. Focus on safety, material comfort for babies, and the specific needs of different age groups.",
-    KITCHEN: "You are a Home & Kitchen Expert. Focus on the utility, durability, and convenience of our kitchen gadgets and home decor items."
-};
-
 // --- GEMINI CONTEXT CACHING MANAGER ---
 const geminiCacheMap = new Map(); // Key: Hash, Value: { name: string, expirationTime: string }
 
@@ -860,9 +847,6 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs) {
                 // Sort by score
                 candidates.sort((a, b) => b.match_score - a.match_score);
 
-                // --- PURE AGENTIC DATA DELIVERY ---
-                // We return the raw data of all matching candidates to the AI.
-                // The AI will read this data just like it reads a system prompt.
                 if (candidates.length > 0) {
                     const formattedCandidates = candidates.slice(0, 5).map(c => 
                         `PRODUCT_DATA:
@@ -1291,34 +1275,12 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         console.log(`[AI] Added media context to user message. Total Tokens so far: ${totalTokenUsage}`);
     }
 
-    // --- PRODUCT SEARCH INTEGRATION (Context Injection) ---
-    // REMOVED: Automatic Background Search (No more "Hi" triggering all products)
-    // We now rely on AI's Intelligence (Function Calling) to search when needed.
+    // --- PRODUCT SNAPSHOT INJECTION (Prompt-Only Mode) ---
     let productContext = "";
     let foundProducts = [];
-    let inventoryList = "";
 
-    // SMART INVENTORY AWARENESS: Fetch only product titles ALLOWED for this specific page
-    // This ensures isolation between different pages/stores for the same user.
-    if (pageConfig.user_id) {
+    if (pageConfig.user_id && cleanUserMessage) {
         try {
-            const pgClient = require('./pgClient');
-            
-            // Complex Filter: Only products for this page (or all pages if allowed_page_ids is empty)
-            const inventoryRes = await pgClient.query(
-                `SELECT name, price, image_url, description FROM products 
-                 WHERE user_id = $1 AND is_active = true 
-                 AND (
-                    allowed_page_ids IS NULL 
-                    OR allowed_page_ids::jsonb = '[]'::jsonb 
-                    OR allowed_page_ids::jsonb @> jsonb_build_array($2::text)
-                 )
-                 ORDER BY id DESC
-                 LIMIT 50`,
-                [pageConfig.user_id, String(pageConfig.page_id)]
-            );
-            
-            // Normalize URL Helper
             const normalizeUrl = (url) => {
                 if (!url || url === 'N/A') return 'N/A';
                 if (url.startsWith('http')) return url;
@@ -1327,16 +1289,28 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                 return `${baseUrl}${cleanPath}`;
             };
 
-            if (inventoryRes.rows.length > 0) {
-                // Include IDs so AI can use [PRODUCT_ID: "uuid"] tag directly
-                inventoryList = inventoryRes.rows.map(r => `"${r.name}" (ID: ${r.id})`).join(', ');
-                console.log(`[AI] Injected ${inventoryRes.rows.length} product names/IDs for Page ${pageConfig.page_id}.`);
+            const candidates = await dbService.searchProducts(pageConfig.user_id, cleanUserMessage, pageConfig.page_id);
+            if (candidates && candidates.length > 0) {
+                const topCandidates = candidates.slice(0, 5);
+                productContext = "[PRODUCT LIST SNAPSHOT - FROM PRODUCT ENTRY]\n";
+                topCandidates.forEach((p, idx) => {
+                    const priceValue = p.price ? `${p.price} ${p.currency || ''}`.trim() : 'Ask for Price';
+                    productContext += `${idx + 1}) ${p.name}\n`;
+                    productContext += `   ID: ${p.id}\n`;
+                    productContext += `   Price: ${priceValue}\n`;
+                    if (p.description) productContext += `   Description: ${p.description}\n`;
+                    if (p.image_url) productContext += `   Image: ${normalizeUrl(p.image_url)}\n`;
+                    if (Array.isArray(p.additional_images) && p.additional_images.length > 0) {
+                        productContext += `   More Images: ${p.additional_images.map(normalizeUrl).join(', ')}\n`;
+                    }
+                });
+                productContext += "\n";
+                console.log(`[AI] Injected ${topCandidates.length} product snapshot items for query.`);
             }
         } catch (err) {
-            console.warn("[AI] Inventory fetch failed:", err.message);
+            console.warn("[AI] Product snapshot injection failed:", err.message);
         }
     }
-    // ----------------------------------------------------
     // ----------------------------------------------------
 
     // 1. Prepare Configuration
@@ -1395,7 +1369,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         const whiteLabelInstruction = "You are SalesmanChatbot, a high-performance AI developed by SalesmanChatbot team. You are NOT Google Gemini, OpenAI, Meta, or any other company's model. If asked about your identity, maintain that you are a proprietary SalesmanChatbot AI.";
         
         const userSystemPrompt = pagePrompts?.text_prompt || "";
-        const finalSystemPrompt = `${whiteLabelInstruction}\n\n${userSystemPrompt}`.trim();
+        const finalSystemPrompt = `${whiteLabelInstruction}\n\n${userSystemPrompt}\n\n${productContext || ""}`.trim();
 
         let finalUserMsg = cleanUserMessage;
         if (pendingSystemNotes.length > 0) {
@@ -1415,82 +1389,9 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     } else {
         let basePrompt = pagePrompts?.text_prompt || "";
 
-        const systemPromptProductNames = [];
-
-        // --- CLEANUP & EXTRACT SHORTCUT PRODUCTS ---
-        // User Request: Extract product from ##product tag, clean it from text, but fetch details.
-        // Manual typing of product name (without tag) should NOT trigger fetch.
-        if (basePrompt) {
-             // Regex handles:
-            // 1. ##PRODUCT "**Name**" 100 BDT (Frontend Shortcut)
-            // 2. ##product "Name" (Standard)
-            // Captures the Name (Group 1) and replaces the whole tag with just "Name".
-            const shortcutRegex = /##PRODUCT\s*["'](?:\*\*)?(.+?)(?:\*\*)?["'](?:\s+\d+\s*\w+)?/gi;
-
-            basePrompt = basePrompt.replace(shortcutRegex, (match, name) => {
-                if (name) {
-                    const cleanName = name.trim();
-                    systemPromptProductNames.push(cleanName);
-                    // Ensure format is ##product "cleanName"
-                    return `##product "${cleanName}"`; 
-                }
-                return match;
-            });
+        if (!basePrompt || !basePrompt.trim()) {
+            basePrompt = "";
         }
-
-        // --- DYNAMIC PRODUCT INJECTION FROM SYSTEM PROMPT ---
-        try {
-            if (systemPromptProductNames.length > 0) {
-                console.log(`[AI] Found product references in System Prompt: ${systemPromptProductNames.join(', ')}`);
-                const systemProducts = await dbService.getProductsByNames(pageConfig.user_id, systemPromptProductNames, pageConfig.page_id);
-                
-                if (systemProducts && systemProducts.length > 0) {
-                     // Add to productContext if not already present
-                     if (!productContext) productContext = "\n[Available Products in Store (From DB + Prompt)]\n";
-                     
-                     systemProducts.forEach((p) => {
-                         // Check if already added by search (Duplicate Check)
-                         if (!foundProducts.some(fp => fp.id === p.id)) {
-                             // Add it
-                             foundProducts.push(p);
-                             
-                             // User Request: Full Context Injection (No Truncation)
-                             // Only inject name, stock, and image. Full description. REMOVED PRICE.
-                             let shortDesc = p.description || '';
-                             
-                             // --- HYBRID SUPPORT: MERGE PROMPT OVERRIDES ---
-                             // If the user defined the product in the prompt (e.g. ##product "Name" ...), 
-                             // we should respect any custom details they might have added there, 
-                             // BUT prioritized DB data for price/stock if available.
-                             
-                             productContext += `Product: "${p.name}"\n`;
-                             if (!p.allow_description) {
-                                 if (p.image_url) productContext += `Image: ${p.image_url}\n`;
-                                 if (p.additional_images && Array.isArray(p.additional_images) && p.additional_images.length > 0) {
-                                     productContext += `More Images: ${p.additional_images.join(', ')}\n`;
-                                 }
-                                 productContext += `OUTPUT_ONLY_IMAGE: true\n\n`;
-                             } else {
-                                 if (p.stock_quantity) productContext += `Stock: ${p.stock_quantity}\n`;
-                                 if (shortDesc) productContext += `Desc: ${shortDesc}\n`;
-                                 if (p.image_url) productContext += `Image: ${p.image_url}\n`;
-                                 if (p.additional_images && Array.isArray(p.additional_images) && p.additional_images.length > 0) {
-                                     productContext += `More Images: ${p.additional_images.join(', ')}\n`;
-                                 }
-                                 productContext += `\n`;
-                             }
-                        }
-                    });
-               }
-           }
-       } catch (err) {
-           console.warn("[AI] Failed to inject system prompt products:", err.message);
-       }
-       // ----------------------------------------------------
-
-       if (!basePrompt || !basePrompt.trim()) {
-           basePrompt = SYSTEM_PROMPT_TEMPLATES.DEFAULT;
-       }
 
     const n8nSystemPrompt = `[CORE SYSTEM RULES]
     - You are an AI Salesman for "${ownerName}".
@@ -1514,16 +1415,16 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     }`;
 
         const systemMessage = { role: 'system', content: n8nSystemPrompt };
+        const ownerInstructionText = `${basePrompt}\n\n${productContext || ""}`.trim();
         const ownerInstructionMessage = { 
-             role: 'system', 
-             content: `[BUSINESS OWNER'S SPECIFIC INSTRUCTIONS - MANDATORY]
-             ${basePrompt || "Always reply politely in the customer's language."}
-             
-             [FINAL DIRECTIVE]
-             1. You MUST follow the tone, language, and behavior defined above. 
-             2. If the owner says speak in Bengali, you MUST speak in Bengali.
-             3. Output ONLY the raw JSON object. Do not wrap it in markdown code blocks. No other text.` 
-         };
+            role: 'system', 
+            content: `[BUSINESS OWNER'S SPECIFIC INSTRUCTIONS - MANDATORY]
+            ${ownerInstructionText}
+            
+            [FINAL DIRECTIVE]
+            1. You MUST follow the tone, language, and behavior defined above. 
+            2. Output ONLY the raw JSON object. Do not wrap it in markdown code blocks. No other text.` 
+        };
     
         // Deduplicate: If the last message in history is identical to the current user message, don't add it again.
         const lastHistoryMsg = processedHistory.length > 0 ? processedHistory[processedHistory.length - 1] : null;
@@ -2579,11 +2480,5 @@ module.exports = {
     fetchOgImage,
     processImageWithVision,
     transcribeAudio,
-    refreshGlobalEngineConfigCache,
-    getIndustryTemplates
+    refreshGlobalEngineConfigCache
 };
-
-function getIndustryTemplates() {
-    return SYSTEM_PROMPT_TEMPLATES;
-}
-2 
