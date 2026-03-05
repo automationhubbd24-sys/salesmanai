@@ -860,31 +860,21 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs) {
                 // Sort by score
                 candidates.sort((a, b) => b.match_score - a.match_score);
 
-                // --- DYNAMIC WORKFLOW DECISION (CODE-DRIVEN) ---
-                const top = candidates[0];
-                const second = candidates[1];
-                
-                // If top match is strong enough, we FORCE it in the tool result
-                // This way AI doesn't have to "think" about the score, the tool result tells it what to do.
-                if (top && top.match_score >= 70) {
-                    const isVeryStrong = top.match_score >= 85 && (!second || (top.match_score - second.match_score) >= 15);
-                    
+                // --- DYNAMIC CANDIDATE DELIVERY ---
+                // We return all matching candidates to the AI.
+                // The AI will use its system prompt context and intelligence to decide which one to pick.
+                if (candidates.length > 0) {
                     return { 
                         status: 'SUCCESS', 
-                        decision: isVeryStrong ? 'EXACT_MATCH' : 'PROBABLE_MATCH',
-                        product: top,
-                        message: isVeryStrong 
-                            ? `Confirmed! This is definitely the product: ${top.name}. Proceed to show details.` 
-                            : `Found a likely match: ${top.name}. Show this to the customer but you can be slightly less certain.`
+                        count: candidates.length,
+                        candidates: candidates.slice(0, 5), // Return up to 5 best matches
+                        message: "Review the candidates above. Use your system prompt and context to decide which single product best matches the user's request. Do not ask for clarification if you can make a logical decision."
                     };
                 }
 
-                // If scores are low, let the AI handle clarification with candidates
                 return { 
-                    status: 'AMBIGUOUS', 
-                    decision: 'ASK_CLARIFICATION',
-                    candidates: candidates.slice(0, 3),
-                    message: "No high-confidence match found. Show the candidates and ask the customer to pick one."
+                    status: 'NOT_FOUND', 
+                    message: "No products found matching that name in the database."
                 };
             }
 
@@ -1506,30 +1496,34 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     ${toolsEnabled ? "3. TERTIARY: Workflow Tools ('resolve_product', 'get_product')." : ""}
     
     [AGENTIC WORKFLOW - 3 STEPS]
-    STEP 1 (Identify): Use 'resolve_product' to find the item.
-    STEP 2 (Process): Review the product details returned. If a match is found, you now have its full context.
-    STEP 3 (Act): 
-        - If Product Identified AND (User asks for price/photo/details OR implies interest): Set action to "SEND_BOTH".
-        - If Product Identified AND User is just chatting about it: Set action to "SEND_DETAILS".
-        - If Multiple Products found: Set action to "NONE" and ask user to choose.
+    STEP 1 (Search): ALWAYS call 'resolve_product' if the user mentions any item.
+    STEP 2 (Analyze): You will receive a list of 'candidates' from the tool. 
+        - Review their names, prices, and descriptions.
+        - Compare them against your knowledge and the user's intent.
+        - Use your intelligence to decide which single product is the best match. 
+    STEP 3 (Decision):
+        - If you find a match: Set action to "SEND_BOTH" and provide its UUID.
+        - If NO match found: Tell the user we don't have it.
+        - DO NOT ask "Which one do you mean?" if you can make a logical decision from the candidates. Be decisive.
     
     [STRICT ARCHITECTURE]
     - Output MUST be a valid JSON object only.
     - reply_text: Short, human-like response (1-2 lines).
     - action: ["NONE", "SEND_DETAILS", "SEND_PHOTO", "SEND_BOTH"]
-    - product_id: The UUID from the tool result.
+    - product_id: The UUID of the BEST matching candidate.
     - intent: ["INQUIRY", "ORDER", "GREETING", "OTHER"]
 
     [STRICT RULES]
-    - PROACTIVE DELIVERY: If a product is identified, ALWAYS provide details/photo via 'action'. Do not ask "Do you want to see it?".
+    - DECISIVE: If multiple products like "Rice Combo" and "Alikne Rice Combo" are found for "Rice Cream", pick the one that fits best based on context. Do not ask redundant questions.
+    - PROACTIVE DELIVERY: Always provide details/photo via 'action' for the chosen product.
     - NO URLs: NEVER include links in 'reply_text'.
-    - [PRICE RULE]: Use the 'price' field from tool results. If 0, say "ইনবক্স করুন".
+    - [PRICE RULE]: Use the 'price' field from the chosen candidate. If 0, say "ইনবক্স করুন".
 
     [Response Format - JSON ONLY]
     {
-      "reply_text": "হ্যাঁ, এটি আমাদের স্টকে আছে। নিচে এর দাম ও ছবি পাঠিয়ে দিচ্ছি।",
+      "reply_text": "হ্যাঁ, এটি আমাদের স্টকে আছে। আমি নিচে এর দাম ও ছবি পাঠিয়ে দিচ্ছি।",
       "action": "SEND_BOTH",
-      "product_id": "UUID-HERE",
+      "product_id": "UUID-OF-BEST-MATCH",
       "intent": "INQUIRY"
     }
     
@@ -2604,3 +2598,4 @@ module.exports = {
 function getIndustryTemplates() {
     return SYSTEM_PROMPT_TEMPLATES;
 }
+2 
