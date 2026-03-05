@@ -43,6 +43,33 @@ function escapeRegExp(str) {
     return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function extractImageUrlsFromText(text) {
+    const urls = [];
+    if (!text || typeof text !== 'string') return { cleanText: text || '', urls };
+    const imageUrlRegex = /https?:\/\/[^\s,)]*?\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s,)]*)?/gi;
+    const cleanText = text.replace(imageUrlRegex, match => {
+        const cleaned = match.replace(/[,.]$/, '');
+        urls.push(cleaned);
+        return '';
+    });
+    return {
+        cleanText: cleanText.replace(/\n\s*\n/g, '\n').trim(),
+        urls
+    };
+}
+
+function sanitizeReplyText(text) {
+    if (!text || typeof text !== 'string') return '';
+    return text
+        .replace(/\[[A-Z0-9_]+:[\s\S]*?\]/g, '')
+        .replace(/\[.*?\]\s*\(\s*https?:\/\/[^\s)]+\s*\)/gi, '')
+        .replace(/https?:\/\/[^\s,)]+/gi, '')
+        .replace(/\[\s*\/?[^\]]*\]/gi, '')
+        .replace(/\(\s*\)/g, '')
+        .replace(/\n\s*\n/g, '\n')
+        .trim();
+}
+
 function shouldBlockOutgoingReply(text) {
     const trimmed = String(text || '').trim();
     if (!trimmed) return true; // Silence if empty
@@ -1392,18 +1419,6 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             }
         }
         
-        // --- SAFETY FILTER: Remove Internal Tags like [SAVE_ORDER], [SYSTEM MEMORY] ---
-        // This ensures the user never sees technical JSON or internal commands.
-        if (replyText && typeof replyText === 'string') {
-            replyText = replyText
-                .replace(/\[SAVE_ORDER:[\s\S]*?\]/g, '')
-                .replace(/\[SYSTEM MEMORY:[\s\S]*?\]/g, '')
-                .replace(/\[IMAGE_DECISION:[\s\S]*?\]/g, '')
-                .replace(/\[IMAGE_MODE:[\s\S]*?\]/g, '')
-                .replace(/\[ADD_LABEL:[\s\S]*?\]/g, '')
-                .trim();
-        }
-
         let decisionMode = null;
         if (replyText && typeof replyText === 'string') {
             const decision = extractDecisionMode(replyText);
@@ -1461,6 +1476,19 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 // Not likely JSON, just bracketed text like "[Image of...]"
                 // Let it pass through to the text handling logic below.
                 console.log(`[JSON Rescuer] Skipping non-JSON bracketed text: "${replyText.substring(0, 20)}..."`);
+            }
+        }
+
+        if (replyText && typeof replyText === 'string') {
+            const extracted = extractImageUrlsFromText(replyText);
+            replyText = sanitizeReplyText(extracted.cleanText);
+            if (extracted.urls.length > 0) {
+                if (!aiResponse.images) aiResponse.images = [];
+                extracted.urls.forEach(url => {
+                    if (!aiResponse.images.some(img => (typeof img === 'string' ? img : img.url) === url)) {
+                        aiResponse.images.push({ url: url, title: 'Product Image' });
+                    }
+                });
             }
         }
 
@@ -1885,24 +1913,6 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             } catch (err) {
                 console.error(`[Agentic Delivery] Failed for ID ${aiResponse.product_id}:`, err.message);
             }
-        }
-
-        // --- LOGIC-BASED SANITIZER (NO KEYWORDS) ---
-        // Instead of hardcoded phrases, we use structural logic to ensure a clean reply.
-        if (replyText && typeof replyText === 'string') {
-            replyText = replyText
-                // 1. Remove all Technical Tags (e.g. [SAVE_ORDER], [PRODUCT_ID])
-                .replace(/\[[A-Z0-9_]+:[\s\S]*?\]/g, '')
-                // 2. Remove Markdown Links (e.g. [text](url))
-                .replace(/\[.*?\]\s*\(\s*https?:\/\/[^\s)]+\s*\)/gi, '')
-                // 3. Remove raw URLs
-                .replace(/https?:\/\/[^\s,)]+/gi, '')
-                // 4. Remove broken Markdown/Bracket artifacts
-                .replace(/\[\s*\/?[^\]]*\]/gi, '')
-                .replace(/\(\s*\)/g, '')
-                // 5. Final Cleanup: Trim and normalize line breaks
-                .replace(/\n\s*\n/g, '\n')
-                .trim();
         }
 
         // --- DEDUPLICATION LOGIC REMOVED (User Request) ---

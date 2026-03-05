@@ -225,6 +225,33 @@ const normalizeText = (text) => {
     return (text || '').toLowerCase().replace(/[\s\p{P}]/gu, '');
 };
 
+const extractImageUrlsFromText = (text) => {
+    const urls = [];
+    if (!text || typeof text !== 'string') return { cleanText: text || '', urls };
+    const imageUrlRegex = /https?:\/\/[^\s,)]*?\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s,)]*)?/gi;
+    const cleanText = text.replace(imageUrlRegex, match => {
+        const cleaned = match.replace(/[,.]$/, '');
+        urls.push(cleaned);
+        return '';
+    });
+    return {
+        cleanText: cleanText.replace(/\n\s*\n/g, '\n').trim(),
+        urls
+    };
+};
+
+const sanitizeReplyText = (text) => {
+    if (!text || typeof text !== 'string') return '';
+    return text
+        .replace(/\[[A-Z0-9_]+:[\s\S]*?\]/g, '')
+        .replace(/\[.*?\]\s*\(\s*https?:\/\/[^\s)]+\s*\)/gi, '')
+        .replace(/https?:\/\/[^\s,)]+/gi, '')
+        .replace(/\[\s*\/?[^\]]*\]/gi, '')
+        .replace(/\(\s*\)/g, '')
+        .replace(/\n\s*\n/g, '\n')
+        .trim();
+};
+
 function shouldBlockOutgoingReply(text) {
     const trimmed = String(text || '').trim();
     if (!trimmed) return true; // Silence if empty
@@ -2137,23 +2164,17 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
             });
         }
 
-        // --- LOGIC-BASED SANITIZER (NO KEYWORDS) ---
-        // Instead of hardcoded phrases, we use structural logic to ensure a clean reply.
         if (finalReplyText && typeof finalReplyText === 'string') {
-            finalReplyText = finalReplyText
-                // 1. Remove all Technical Tags (e.g. [SAVE_ORDER], [PRODUCT_ID])
-                .replace(/\[[A-Z0-9_]+:[\s\S]*?\]/g, '')
-                // 2. Remove Markdown Links but keep the text if useful? 
-                // Actually, user wants NO links, so we remove the whole [text](url) structure.
-                .replace(/\[.*?\]\s*\(\s*https?:\/\/[^\s)]+\s*\)/gi, '')
-                // 3. Remove raw URLs (we don't want URLs in professional chat)
-                .replace(/https?:\/\/[^\s,)]+/gi, '')
-                // 4. Remove broken Markdown/Bracket artifacts (e.g. [) , [/] )
-                .replace(/\[\s*\/?[^\]]*\]/gi, '')
-                .replace(/\(\s*\)/g, '')
-                // 5. Final Cleanup: Trim and normalize line breaks
-                .replace(/\n\s*\n/g, '\n')
-                .trim();
+            const extracted = extractImageUrlsFromText(finalReplyText);
+            finalReplyText = sanitizeReplyText(extracted.cleanText);
+            if (extracted.urls.length > 0) {
+                if (!aiResponse.images) aiResponse.images = [];
+                extracted.urls.forEach(url => {
+                    if (!aiResponse.images.some(img => (typeof img === 'string' ? img : img.url) === url)) {
+                        aiResponse.images.push({ url: url, title: 'Product Image' });
+                    }
+                });
+            }
         }
 
         let decisionMode = null;
