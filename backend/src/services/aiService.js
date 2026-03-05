@@ -1040,6 +1040,19 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                             foundProducts 
                         };
                     }
+                } else if (aiText.trim().length > 0) {
+                    // LLM sent a plain text response instead of JSON. 
+                    // This happens if it forgets the JSON rule or thinks a direct answer is better.
+                    // We treat it as a valid reply but with action NONE.
+                    console.log(`[AgentLoop] LLM sent plain text instead of JSON. Using as reply_text.`);
+                    return {
+                        reply: aiText.trim(),
+                        action: "NONE",
+                        product_id: null,
+                        token_usage: tokenUsage + totalTokensInLoop,
+                        model: model,
+                        foundProducts
+                    };
                 }
             } catch (parseErr) {
                 // Not JSON or missing reply_text, fallback to raw text
