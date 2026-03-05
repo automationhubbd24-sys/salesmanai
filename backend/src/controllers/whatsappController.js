@@ -2111,6 +2111,18 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
             }
         }
 
+        // --- NEW: Add images from structured image_urls array (Professional JSON mode) ---
+        if (Array.isArray(aiResponse.image_urls)) {
+            if (!aiResponse.images) aiResponse.images = [];
+            aiResponse.image_urls.forEach(url => {
+                if (url && typeof url === 'string' && url.startsWith('http')) {
+                    if (!aiResponse.images.some(img => (typeof img === 'string' ? img : img.url) === url)) {
+                        aiResponse.images.push({ url: url, title: 'Product Image' });
+                    }
+                }
+            });
+        }
+
         // --- SAFETY FILTER: Remove Internal Tags from Final Output ---
         if (finalReplyText && typeof finalReplyText === 'string') {
             finalReplyText = finalReplyText
@@ -2119,6 +2131,9 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                 .replace(/\[IMAGE_DECISION:[\s\S]*?\]/g, '')
                 .replace(/\[IMAGE_MODE:[\s\S]*?\]/g, '')
                 .replace(/\[ADD_LABEL:[\s\S]*?\]/g, '')
+                .replace(/\[.*?\]\s*\(\s*https?:\/\/[^\s)]+\s*\)/gi, '') // Full markdown links
+                .replace(/\[.*?\]\s*\(\s*\)/gi, '') // Empty Markdown links
+                .replace(/\[\s*\/?[^\]]*\]/gi, '') // Broken [) tags
                 .replace(/https?:\/\/[^\s,)]*supabase\.co[^\s,)]*/gi, (url) => {
                     if (aiResponse.images && aiResponse.images.some(img => img.url === url)) return '';
                     return url; // Keep it if it's not being sent as an attachment

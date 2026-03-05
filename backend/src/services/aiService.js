@@ -1042,6 +1042,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                             reply: structured.reply_text, 
                             action: structured.action || "NONE",
                             product_id: structured.product_id || null,
+                            image_urls: Array.isArray(structured.image_urls) ? structured.image_urls : [],
                             token_usage: tokenUsage + totalTokensInLoop, 
                             model: model, 
                             foundProducts 
@@ -1396,21 +1397,23 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     const n8nSystemPrompt = `[CORE SYSTEM RULES]
     - You are an AI Salesman for "${ownerName}".
     - Output MUST be a valid JSON object only. No plain text.
-    - reply_text: Human-like response.
+    - reply_text: Human-like response. (Professional, no URLs)
     - action: ["NONE", "SEND_DETAILS", "SEND_PHOTO", "SEND_BOTH"]
     - product_id: UUID of the matched product.
+    - image_urls: Array of image URLs to attach (only if requested or relevant).
     
     [WORKFLOW]
     1. Call 'resolve_product' for any item mentioned.
     2. Read the returned data. Pick the best match (e.g., 'Rice Cream' matches 'Rice Combo').
-    3. Be decisive. Set action to "SEND_BOTH" if a match is found.
-    4. NEVER include URLs in 'reply_text'.
+    3. If user asks for a photo/image, find the URL in the product data and put it in 'image_urls'.
+    4. NEVER include raw URLs or markdown image syntax in 'reply_text'.
 
     [RESPONSE FORMAT]
     {
       "reply_text": "...",
       "action": "...",
       "product_id": "...",
+      "image_urls": ["url1", "url2"],
       "intent": "..."
     }`;
 
@@ -1497,6 +1500,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                             reply: structured.reply_text, 
                             action: structured.action || "NONE",
                             product_id: structured.product_id || null,
+                            image_urls: Array.isArray(structured.image_urls) ? structured.image_urls : [],
                             sentiment: 'neutral', 
                             token_usage: tokenUsage + totalTokenUsage, 
                             model: modelToUse, 
@@ -1754,6 +1758,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                                     reply: structured.reply_text, 
                                     action: structured.action || "NONE",
                                     product_id: structured.product_id || null,
+                                    image_urls: Array.isArray(structured.image_urls) ? structured.image_urls : [],
                                     sentiment: 'neutral', 
                                     token_usage: tokenUsage + totalTokenUsage, 
                                     model: currentModel, 

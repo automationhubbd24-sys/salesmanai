@@ -1613,6 +1613,17 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         // --- SMART IMAGE EXTRACTION & CLEANING ---
         if (!aiResponse.images) aiResponse.images = [];
         
+        // --- NEW: Add images from structured image_urls array (Professional JSON mode) ---
+        if (Array.isArray(aiResponse.image_urls)) {
+            aiResponse.image_urls.forEach(url => {
+                if (url && typeof url === 'string' && url.startsWith('http')) {
+                    if (!aiResponse.images.some(img => (typeof img === 'string' ? img : img.url) === url)) {
+                        aiResponse.images.push({ url: url, title: 'Product Image' });
+                    }
+                }
+            });
+        }
+
         // Start with existing images from AI Service (normalize strings to objects)
         let extractedImages = aiResponse.images.map(img => {
             if (typeof img === 'string') return { url: img, title: 'Product Image' };
@@ -1909,9 +1920,12 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             /\[View\]/gi,
             /\[Link\]/gi,
             /\[ছবি\]/gi,
+            /\[.*?\]\s*\(\s*https?:\/\/[^\s)]+\s*\)/gi, // Full markdown links
             /\[.*?\]\s*\(\s*\)/gi, // Empty Markdown links
             /\[\s*\]/gi, // Empty brackets
-            /\(\s*\)/gi  // Empty parens
+            /\(\s*\)/gi,  // Empty parens
+            /\[\s*\/?[^\]]*\]/gi, // Catch broken [) or [/] tags
+            /Link:?\s*https?:\/\/[^\s,)]+/gi // Catch Link: http...
         ];
 
         for (const phraseRegex of cleanupPhrases) {
