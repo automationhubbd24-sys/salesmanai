@@ -441,24 +441,40 @@ const normalizeText = (value) => (value || '').toString().toLowerCase().trim().r
 const computeCandidateScore = (query, product) => {
     const q = normalizeText(query);
     const name = normalizeText(product.name);
-    const keywords = normalizeText(product.keywords);
-    const visual = normalizeText(product.visual_tags);
-    const desc = normalizeText(product.description);
+    const keywords = normalizeText(product.keywords || '');
+    const visual = normalizeText(product.visual_tags || '');
+    const desc = normalizeText(product.description || '');
+    
     if (!q) return 0;
+    
+    // 1. Exact or very close matches
     if (name === q) return 100;
-    if (keywords === q) return 95;
+    if (keywords === q) return 98;
+    if (name.includes(q) && q.length > 3) return 90;
+
     let score = 0;
-    if (name.includes(q)) score += 70;
-    if (keywords.includes(q)) score += 60;
-    if (visual.includes(q)) score += 50;
-    const tokens = q.split(/\s+/).filter(Boolean);
-    tokens.forEach(t => {
-        if (name.includes(t)) score += 10;
-        else if (keywords.includes(t)) score += 8;
-        else if (visual.includes(t)) score += 6;
-        else if (desc.includes(t)) score += 2;
+    const qTokens = q.split(/\s+/).filter(Boolean);
+    const nameTokens = name.split(/\s+/).filter(Boolean);
+
+    // 2. Token Matching with position weight
+    qTokens.forEach((t, i) => {
+        if (name.includes(t)) {
+            score += 40; // Core name match
+            if (nameTokens[0] === t) score += 10; // First word match bonus
+        } else if (keywords.includes(t)) {
+            score += 35;
+        } else if (visual.includes(t)) {
+            score += 25;
+        } else if (desc.includes(t)) {
+            score += 10;
+        }
     });
-    return score;
+
+    // 3. Penalty for length mismatch (to avoid "Rice" matching "Rice Bran Oil" too highly if user only wanted "Rice")
+    const lenDiff = Math.abs(name.length - q.length);
+    score -= Math.min(lenDiff, 15);
+
+    return Math.min(Math.max(score, 0), 100);
 };
 
 const normalizeVariantPrice = (variant) => {
@@ -825,56 +841,26 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs) {
                     return { status: 'NOT_FOUND', message: `No products found for "${query}"` };
                 }
 
-                const candidates = products.map(p => ({
-                    product_id: String(p.id),
-                    name: p.name,
-                    price: p.price,
-                    match_score: computeCandidateScore(query, p)
-                }));
+                const candidates = products.map(p => {
+                    const score = computeCandidateScore(query, p);
+                    return {
+                        product_id: String(p.id),
+                        name: p.name,
+                        price: p.price,
+                        description: p.description,
+                        stock: p.stock_quantity,
+                        match_score: score
+                    };
+                });
 
                 // Sort by score
                 candidates.sort((a, b) => b.match_score - a.match_score);
 
-                // EXACT match if top score is high and gap is large
-                // Optimization: lower the threshold for "EXACT" if it's the only strong candidate
-                const top = candidates[0];
-                const second = candidates[1];
-                const isExact = (top.match_score >= 85) && (!second || (top.match_score - second.match_score) >= 15);
-
-                if (isExact) {
-                    const p = products.find(p => String(p.id) === top.product_id);
-                    // --- PERSISTENCE: Save to Conversation State ---
-                    if (senderId) {
-                        await dbService.setConversationState(pageId, senderId, {
-                            last_product_id: top.product_id,
-                            last_intent: 'product_resolved'
-                        });
-                    }
-                    return { 
-                        status: 'EXACT', 
-                        product_id: top.product_id, 
-                        name: top.name,
-                        product: p,
-                        message: "Product found with high confidence. Proceed to show details/price."
-                    };
-                }
-
-                // If not exact but there is a clear leader, still suggest it strongly
-                if (top.match_score >= 70 && (!second || (top.match_score - second.match_score) >= 10)) {
-                    const p = products.find(p => String(p.id) === top.product_id);
-                    return {
-                        status: 'EXACT', // Treat as exact to avoid AI asking redundant questions
-                        product_id: top.product_id,
-                        name: top.name,
-                        product: p,
-                        message: "Product matched with moderate confidence. Showing details."
-                    };
-                }
-
+                // --- HYBRID MODEL: Return candidates with details to AI ---
                 return { 
-                    status: 'AMBIGUOUS', 
+                    status: 'SUCCESS', 
                     candidates: candidates.slice(0, 3),
-                    message: "Multiple products found with similar scores. Ask the user to clarify which one they mean."
+                    message: "Search completed. Review candidates and decide whether to show the top match or ask for clarification based on scores."
                 };
             }
 
@@ -1482,14 +1468,21 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     - intent: Short description of user intent.
 
     [STRICT RULES]
-    - RESOLUTION: If the user mentions any item (Medicine, Course, Product, Service), resolve it using 'resolve_product' immediately. If the tool returns status "EXACT", you MUST NOT ask the user if they are looking for it. Instead, proceed immediately to show its details/price.
-    - IMAGE ANALYSIS: If a user sends an image, prioritize the text visible in the image (e.g., Brand name, Course title, Price) to find the matching item in the database.
-    - PROACTIVE: Do not ask "Are you looking for X?". If a match is found, say "Yes, we have X. Here are the details:" and set the action to "SEND_BOTH" or "SEND_DETAILS".
+    - HYBRID CONTROL: 
+        - Backend handles DATA (prices, stocks, product matching scores). 
+        - AI handles BEHAVIOR (tone, emoji, and selection from matches).
+    - RESOLUTION (Hybrid Strategy):
+        1. Always call 'resolve_product' if the user mentions an item.
+        2. If the tool returns 'candidates', review their 'match_score':
+           - If top candidate has match_score >= 80: Accept it as an EXACT match. Show its details immediately.
+           - If top candidate has match_score between 60-79: It's likely the correct product. You may show it, but mention you think they mean this one.
+           - If match_score < 60 or multiple candidates have similar high scores (within 10 points): Ask the user to clarify by providing the top 2-3 names.
+        3. Do NOT ask redundant questions like "Are you looking for X?" if the score is high (>=80). Be proactive.
+    - IMAGE ANALYSIS: If a user sends an image, use visible text to find the item.
     - NO URLs: NEVER include links (http/https) in your text.
     - NO LINK PHRASES: NEVER mention "seeing links" or "clicking here".
-    - ACTION: If an item is identified, set action to "SEND_DETAILS". If photo requested, set to "SEND_PHOTO" or "SEND_BOTH".
-    - [PRICE RULE]: ALWAYS use the 'price' field from the data. If price is 0 or null, say "দাম জানতে ইনবক্স করুন" or "Ask for price". NEVER extract price from the description field.
-    - [FOLLOW-UP]: If the user asks "how to use", "price", or for a "photo" without naming an item, check the [CONTEXT: LAST_RESOLVED_PRODUCT_ID] provided in the history and use that ID.
+    - [PRICE RULE]: ALWAYS use the 'price' field. If price is 0/null, say "ইনবক্স করুন".
+    - [FOLLOW-UP]: Use [CONTEXT: LAST_RESOLVED_PRODUCT_ID] if user refers to "it" or "this".
 
     [CONVERSATION CONTEXT]
     Customer: ${senderName} | Store: ${ownerName}
