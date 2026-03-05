@@ -1800,8 +1800,13 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                     }
                     extractedImages.push({ url: url, title: title, description: description });
                 }
-                // Only remove from text if it's an image we successfully extracted
-                replyText = replyText.replace(fullMatch, '').trim();
+                // Only remove from text if it's a Supabase link. 
+                // For all other links, keep them in the text so the customer can click them.
+                if (url.includes('supabase.co')) {
+                    replyText = replyText.replace(fullMatch, '').trim();
+                } else {
+                    replyText = replyText.replace(fullMatch, `${title}: ${url}`).trim();
+                }
             } else if (isSuspicious) {
                  // If it's suspicious, we still keep it as text unless it's a known internal storage link
                  if (url.includes('supabase.co')) {

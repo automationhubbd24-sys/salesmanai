@@ -2421,14 +2421,11 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                 extractedSuccessfully = true;
             }
             
-            // Only remove from text if it's an image we successfully extracted and it's a Supabase link
+            // Only remove from text if it's a Supabase link. 
+            // For all other links, keep them in the text so the customer can click them.
             if (extractedSuccessfully && url.includes('supabase.co')) {
                 finalReplyText = finalReplyText.replace(fullMatch, '').trim();
-            } else if (!extractedSuccessfully) {
-                // Keep as text if not extracted, but remove the IMAGE: prefix to make it look natural
-                finalReplyText = finalReplyText.replace(fullMatch, `${title}: ${url}`).trim();
             } else {
-                // Keep in text even if extracted, unless it's a Supabase link
                 finalReplyText = finalReplyText.replace(fullMatch, `${title}: ${url}`).trim();
             }
         }
