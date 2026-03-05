@@ -450,29 +450,33 @@ const computeCandidateScore = (query, product) => {
     // 1. Exact or very close matches
     if (name === q) return 100;
     if (keywords === q) return 98;
-    if (name.includes(q) && q.length > 3) return 90;
+    
+    // Partial Match logic (e.g. "Rice Cream" matches "Rice Combo")
+    if (name.includes(q) || q.includes(name)) return 95;
 
     let score = 0;
     const qTokens = q.split(/\s+/).filter(Boolean);
     const nameTokens = name.split(/\s+/).filter(Boolean);
 
-    // 2. Token Matching with position weight
+    // 2. Token Matching with high weight for partial matches
+    let matchedTokens = 0;
     qTokens.forEach((t, i) => {
         if (name.includes(t)) {
-            score += 40; // Core name match
-            if (nameTokens[0] === t) score += 10; // First word match bonus
+            score += 45; // High weight for shared tokens
+            matchedTokens++;
+            if (nameTokens[0] === t) score += 10; 
         } else if (keywords.includes(t)) {
-            score += 35;
-        } else if (visual.includes(t)) {
-            score += 25;
-        } else if (desc.includes(t)) {
-            score += 10;
+            score += 40;
+            matchedTokens++;
         }
     });
 
-    // 3. Penalty for length mismatch (to avoid "Rice" matching "Rice Bran Oil" too highly if user only wanted "Rice")
+    // 3. Score boost for multiple token matches
+    if (matchedTokens >= 2) score += 20;
+
+    // 4. Penalty for length mismatch (reduced to allow partials like "Rice Cream" -> "Rice Combo")
     const lenDiff = Math.abs(name.length - q.length);
-    score -= Math.min(lenDiff, 15);
+    score -= Math.min(lenDiff, 10);
 
     return Math.min(Math.max(score, 0), 100);
 };
