@@ -2123,67 +2123,23 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
             });
         }
 
-        // --- SAFETY FILTER: Remove Internal Tags from Final Output ---
+        // --- LOGIC-BASED SANITIZER (NO KEYWORDS) ---
+        // Instead of hardcoded phrases, we use structural logic to ensure a clean reply.
         if (finalReplyText && typeof finalReplyText === 'string') {
             finalReplyText = finalReplyText
-                .replace(/\[SAVE_ORDER:[\s\S]*?\]/g, '')
-                .replace(/\[SYSTEM MEMORY:[\s\S]*?\]/g, '')
-                .replace(/\[IMAGE_DECISION:[\s\S]*?\]/g, '')
-                .replace(/\[IMAGE_MODE:[\s\S]*?\]/g, '')
-                .replace(/\[ADD_LABEL:[\s\S]*?\]/g, '')
-                .replace(/\[.*?\]\s*\(\s*https?:\/\/[^\s)]+\s*\)/gi, '') // Full markdown links
-                .replace(/\[.*?\]\s*\(\s*\)/gi, '') // Empty Markdown links
-                .replace(/\[\s*\/?[^\]]*\]/gi, '') // Broken [) tags
-                .replace(/https?:\/\/[^\s,)]*supabase\.co[^\s,)]*/gi, (url) => {
-                    if (aiResponse.images && aiResponse.images.some(img => img.url === url)) return '';
-                    return url; // Keep it if it's not being sent as an attachment
-                })
+                // 1. Remove all Technical Tags (e.g. [SAVE_ORDER], [PRODUCT_ID])
+                .replace(/\[[A-Z0-9_]+:[\s\S]*?\]/g, '')
+                // 2. Remove Markdown Links but keep the text if useful? 
+                // Actually, user wants NO links, so we remove the whole [text](url) structure.
+                .replace(/\[.*?\]\s*\(\s*https?:\/\/[^\s)]+\s*\)/gi, '')
+                // 3. Remove raw URLs (we don't want URLs in professional chat)
+                .replace(/https?:\/\/[^\s,)]+/gi, '')
+                // 4. Remove broken Markdown/Bracket artifacts (e.g. [) , [/] )
+                .replace(/\[\s*\/?[^\]]*\]/gi, '')
+                .replace(/\(\s*\)/g, '')
+                // 5. Final Cleanup: Trim and normalize line breaks
+                .replace(/\n\s*\n/g, '\n')
                 .trim();
-
-            const cleanupPhrases = [
-                / আপনি এই লিংকে ছবিটি দেখতে পারেন[:ঃ]?/gi,
-                /আপনি এই লিংকে ক্লিক করতে পারেন[:ঃ]?/gi,
-                /এই লিংকে ক্লিক করে.*?[:ঃ]?/gi,
-                /বিস্তারিত জানতে এই লিংকে.*?[:ঃ]?/gi,
-                /আপনি এই লিংকে ক্লিক করুন[:ঃ]?/gi,
-                /এই লিংকে ছবিটি দেখতে পারেন[:ঃ]?/gi,
-                /লিংকটি হলো[:ঃ]?/gi,
-                /এখানে ক্লিক করুন[:ঃ]?/gi,
-                /ছবিটি দেখতে পারেন[:ঃ]?/gi,
-                /নিছে ছবিটি দেওয়া হলো[:ঃ]?/gi,
-                /নিছে ছবিটি দেওয়া হলো[:ঃ]?/gi,
-                /নিচে ছবিটি দেওয়া হলো[:ঃ]?/gi,
-                /এখানে ছবি দেওয়া হলো[:ঃ]?/gi,
-                /ছবিটি হলো[:ঃ]?/gi,
-                /আরও কিছু ছবি দেখতে চাইলে[:ঃ]?/gi,
-                /পণ্যটির ছবি[:ঃ]?/gi,
-                /Image:?/gi,
-                /Photo:?/gi,
-                /Link:?/gi,
-                /Sobi:?/gi,
-                /Sure, here is the picture:?/gi,
-                /অবশ্যই, এখানে ছবি দেওয়া হলো[:ঃ]?/gi,
-                /Sure, here is the photo of.*?[:ঃ]?/gi,
-                /You can see the photo at this link[:ঃ]?/gi,
-                /Click here to see the picture[:ঃ]?/gi,
-                /Here is the link[:ঃ]?/gi,
-                /Link:$/gm,
-                /\[Image.*?\]/gi,
-                /^Image:$/gm,
-                /\[View\]/gi,
-                /\[Link\]/gi,
-                /\[ছবি\]/gi,
-                /\[.*?\]\s*\(\s*https?:\/\/[^\s)]+\s*\)/gi, // Full markdown links
-                /\[.*?\]\s*\(\s*\)/gi, // Empty Markdown links
-                /\[\s*\]/gi, // Empty brackets
-                /\(\s*\)/gi,  // Empty parens
-                /\[\s*\/?[^\]]*\]/gi, // Catch broken [) or [/] tags
-                /Link:?\s*https?:\/\/[^\s,)]+/gi // Catch Link: http...
-            ];
-
-            for (const phraseRegex of cleanupPhrases) {
-                finalReplyText = finalReplyText.replace(phraseRegex, '').trim();
-            }
         }
 
         let decisionMode = null;

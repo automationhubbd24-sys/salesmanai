@@ -1871,72 +1871,23 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             }
         }
 
-        // 3. Direct Image URLs (Fallback & Professional Cleanup)
-        // Pass 1: Extract all valid image URLs and store them for attachment.
-        const urlRegex = /https?:\/\/[^\s,)]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s,)]*)?/gi;
-        let urlMatch;
-        while ((urlMatch = urlRegex.exec(replyText)) !== null) {
-            let url = urlMatch[0].trim().replace(/[,.)]$/, '');
-            if (!extractedImages.some(img => img.url === url)) {
-                extractedImages.push({ url: url, title: 'View Image' });
-            }
+        // --- LOGIC-BASED SANITIZER (NO KEYWORDS) ---
+        // Instead of hardcoded phrases, we use structural logic to ensure a clean reply.
+        if (replyText && typeof replyText === 'string') {
+            replyText = replyText
+                // 1. Remove all Technical Tags (e.g. [SAVE_ORDER], [PRODUCT_ID])
+                .replace(/\[[A-Z0-9_]+:[\s\S]*?\]/g, '')
+                // 2. Remove Markdown Links (e.g. [text](url))
+                .replace(/\[.*?\]\s*\(\s*https?:\/\/[^\s)]+\s*\)/gi, '')
+                // 3. Remove raw URLs
+                .replace(/https?:\/\/[^\s,)]+/gi, '')
+                // 4. Remove broken Markdown/Bracket artifacts
+                .replace(/\[\s*\/?[^\]]*\]/gi, '')
+                .replace(/\(\s*\)/g, '')
+                // 5. Final Cleanup: Trim and normalize line breaks
+                .replace(/\n\s*\n/g, '\n')
+                .trim();
         }
-
-        // Pass 2: Aggressively strip ONLY Supabase URLs that are already extracted as attachments.
-        // This prevents showing raw storage links to customers when the image is already sent.
-        const supabaseRegex = /https?:\/\/[^\s,)]*supabase\.co[^\s,)]*/gi;
-        replyText = replyText.replace(supabaseRegex, (url) => {
-            if (extractedImages.some(img => img.url === url)) return '';
-            return url; // Keep it if it's not being sent as an attachment
-        }).trim();
-
-        // Pass 3: Cleanup Markdown artifacts and link-related phrases.
-        const cleanupPhrases = [
-            / আপনি এই লিংকে ছবিটি দেখতে পারেন[:ঃ]?/gi,
-            /আপনি এই লিংকে ক্লিক করতে পারেন[:ঃ]?/gi,
-            /এই লিংকে ক্লিক করে.*?[:ঃ]?/gi,
-            /বিস্তারিত জানতে এই লিংকে.*?[:ঃ]?/gi,
-            /আপনি এই লিংকে ক্লিক করুন[:ঃ]?/gi,
-            /এই লিংকে ছবিটি দেখতে পারেন[:ঃ]?/gi,
-            /লিংকটি হলো[:ঃ]?/gi,
-            /এখানে ক্লিক করুন[:ঃ]?/gi,
-            /ছবিটি দেখতে পারেন[:ঃ]?/gi,
-            /নিছে ছবিটি দেওয়া হলো[:ঃ]?/gi,
-            /নিচে ছবিটি দেওয়া হলো[:ঃ]?/gi,
-            /এখানে ছবি দেওয়া হলো[:ঃ]?/gi,
-            /ছবিটি হলো[:ঃ]?/gi,
-            /আরও কিছু ছবি দেখতে চাইলে[:ঃ]?/gi,
-            /পণ্যটির ছবি[:ঃ]?/gi,
-            /Image:?/gi,
-            /Photo:?/gi,
-            /Link:?/gi,
-            /Sobi:?/gi,
-            /Sure, here is the picture:?/gi,
-            /অবশ্যই, এখানে ছবি দেওয়া হলো[:ঃ]?/gi,
-            /Sure, here is the photo of.*?[:ঃ]?/gi,
-            /You can see the photo at this link[:ঃ]?/gi,
-            /Click here to see the picture[:ঃ]?/gi,
-            /Here is the link[:ঃ]?/gi,
-            /Link:$/gm,
-            /\[Image.*?\]/gi,
-            /^Image:$/gm,
-            /\[View\]/gi,
-            /\[Link\]/gi,
-            /\[ছবি\]/gi,
-            /\[.*?\]\s*\(\s*https?:\/\/[^\s)]+\s*\)/gi, // Full markdown links
-            /\[.*?\]\s*\(\s*\)/gi, // Empty Markdown links
-            /\[\s*\]/gi, // Empty brackets
-            /\(\s*\)/gi,  // Empty parens
-            /\[\s*\/?[^\]]*\]/gi, // Catch broken [) or [/] tags
-            /Link:?\s*https?:\/\/[^\s,)]+/gi // Catch Link: http...
-        ];
-
-        for (const phraseRegex of cleanupPhrases) {
-            replyText = replyText.replace(phraseRegex, '').trim();
-        }
-
-        // Pass 4: Final trim and line-break cleanup
-        replyText = replyText.replace(/\n\s*\n/g, '\n').trim();
 
         // --- DEDUPLICATION LOGIC REMOVED (User Request) ---
         // We now rely entirely on the System Prompt / AI to decide whether to send an image or not.
