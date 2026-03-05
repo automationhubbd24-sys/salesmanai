@@ -252,6 +252,27 @@ const sanitizeReplyText = (text) => {
         .trim();
 };
 
+const normalizeImageUrl = (url) => {
+    if (!url || url === 'N/A') return null;
+    if (url.startsWith('http')) return url;
+    const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
+    const cleanPath = url.startsWith('/') ? url : `/${url}`;
+    return `${baseUrl.replace(/\/$/, '')}${cleanPath}`;
+};
+
+const hasPhotoIntent = (historyList) => {
+    if (!Array.isArray(historyList)) return false;
+    return historyList.some(item => {
+        let content = '';
+        if (typeof item === 'string') content = item;
+        else if (typeof item.content === 'string') content = item.content;
+        else if (typeof item.text === 'string') content = item.text;
+        else if (item.message && typeof item.message.content === 'string') content = item.message.content;
+        else if (item.message && typeof item.message.text === 'string') content = item.message.text;
+        return typeof content === 'string' && content.includes('[INTENT_DETECTED: USER_REQUESTED_PHOTO]');
+    });
+};
+
 function shouldBlockOutgoingReply(text) {
     const trimmed = String(text || '').trim();
     if (!trimmed) return true; // Silence if empty
@@ -2174,6 +2195,29 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                         aiResponse.images.push({ url: url, title: 'Product Image' });
                     }
                 });
+            }
+        }
+
+        if (hasPhotoIntent(history)) {
+            const convPageId = pageConfig.page_id || pageId || sessionName;
+            let targetProductId = null;
+            const state = await dbService.getConversationState(convPageId, senderId);
+            if (state && state.last_product_id) targetProductId = state.last_product_id;
+            if (!targetProductId && aiResponse.product_id) targetProductId = aiResponse.product_id;
+            if (targetProductId) {
+                const product = await dbService.getProductById(targetProductId);
+                if (product && product.image_url) {
+                    const primaryUrl = normalizeImageUrl(product.image_url);
+                    const additional = Array.isArray(product.additional_images)
+                        ? product.additional_images.map(normalizeImageUrl).filter(Boolean)
+                        : [];
+                    const urls = [primaryUrl, ...additional].filter(Boolean);
+                    aiResponse.images = urls.map((url, idx) => ({
+                        url,
+                        title: product.name || (idx === 0 ? 'Product Image' : `Product Image ${idx + 1}`),
+                        description: product.description || ''
+                    }));
+                }
             }
         }
 
