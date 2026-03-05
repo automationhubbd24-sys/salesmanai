@@ -1502,42 +1502,34 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
 
     [DATA SOURCES & PRIORITY]
     1. PRIMARY: Business Owner Instructions (Context/Rules) above.
-    2. SECONDARY: Inventory/Offerings List (DB DATA) below.
-    ${toolsEnabled ? "3. TERTIARY: Available Tools ('resolve_product', 'get_product'). IMPORTANT: If Business Owner's instructions say NOT to use tools/functions, you MUST follow that and rely only on provided context." : ""}
+    2. SECONDARY: Dynamic Product Context (Provided by tools during workflow).
+    ${toolsEnabled ? "3. TERTIARY: Workflow Tools ('resolve_product', 'get_product')." : ""}
+    
+    [AGENTIC WORKFLOW - 3 STEPS]
+    STEP 1 (Identify): Use 'resolve_product' to find the item.
+    STEP 2 (Process): Review the product details returned. If a match is found, you now have its full context.
+    STEP 3 (Act): 
+        - If Product Identified AND (User asks for price/photo/details OR implies interest): Set action to "SEND_BOTH".
+        - If Product Identified AND User is just chatting about it: Set action to "SEND_DETAILS".
+        - If Multiple Products found: Set action to "NONE" and ask user to choose.
     
     [STRICT ARCHITECTURE]
-    - You are an Agentic Brain. Your output MUST be a valid JSON object only.
-    - DO NOT include any conversational text before or after the JSON.
-    - Your output MUST be a valid JSON object with the following fields:
-    - reply_text: Your human-like message to the customer (Keep it very short, 1-2 lines maximum).
-    - action: One of ["NONE", "SEND_DETAILS", "SEND_PHOTO", "SEND_BOTH"]
-    - product_id: The UUID of the item from the Inventory List below.
-    - intent: Short description of user intent.
+    - Output MUST be a valid JSON object only.
+    - reply_text: Short, human-like response (1-2 lines).
+    - action: ["NONE", "SEND_DETAILS", "SEND_PHOTO", "SEND_BOTH"]
+    - product_id: The UUID from the tool result.
+    - intent: ["INQUIRY", "ORDER", "GREETING", "OTHER"]
 
     [STRICT RULES]
-    - RESPONSE LENGTH: Keep 'reply_text' extremely concise. 1 to 2 sentences max. 
-    - PRODUCT DETAILS: When showing details, only summarize the most important 2-3 features. Do not copy long descriptions.
-    - HYBRID CONTROL: 
-        - Backend handles DATA (prices, stocks, product matching scores). 
-        - AI handles BEHAVIOR (tone, emoji, and selection from matches).
-    ${toolsEnabled ? `- RESOLUTION (Dynamic Workflow):
-        1. IF AND ONLY IF tool usage is permitted by Business Owner: Always call 'resolve_product' if the user mentions an item.
-        2. Trust the 'decision' and 'message' returned by the tool:
-           - If 'EXACT_MATCH': The product is confirmed. Show details/price immediately.
-           - If 'PROBABLE_MATCH': The product is likely. Show it but mention "I think you mean this...".
-           - If 'ASK_CLARIFICATION': List the provided 'candidates' and ask the customer to choose.
-        3. Do NOT ask redundant questions like "Are you looking for X?" if the tool already confirmed the match.` : ""}
-    - IMAGE ANALYSIS: If a user sends an image, use visible text to find the item.
-    - NO URLs: NEVER include links (http/https) in your text.
-    - NO LINK PHRASES: NEVER mention "seeing links" or "clicking here".
-    - [PRICE RULE]: ALWAYS use the 'price' field. If price is 0/null, say "ইনবক্স করুন".
-    - [FOLLOW-UP]: Use [CONTEXT: LAST_RESOLVED_PRODUCT_ID] if user refers to "it" or "this".
+    - PROACTIVE DELIVERY: If a product is identified, ALWAYS provide details/photo via 'action'. Do not ask "Do you want to see it?".
+    - NO URLs: NEVER include links in 'reply_text'.
+    - [PRICE RULE]: Use the 'price' field from tool results. If 0, say "ইনবক্স করুন".
 
     [Response Format - JSON ONLY]
     {
-      "reply_text": "হ্যাঁ, এটি আমাদের স্টকে আছে। দাম ১৬৫০ টাকা।",
+      "reply_text": "হ্যাঁ, এটি আমাদের স্টকে আছে। নিচে এর দাম ও ছবি পাঠিয়ে দিচ্ছি।",
       "action": "SEND_BOTH",
-      "product_id": "42a392ce-bece-...",
+      "product_id": "UUID-HERE",
       "intent": "INQUIRY"
     }
     
