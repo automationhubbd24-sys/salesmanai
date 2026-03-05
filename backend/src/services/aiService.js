@@ -1492,55 +1492,44 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
            basePrompt = SYSTEM_PROMPT_TEMPLATES.DEFAULT;
        }
 
-       const n8nSystemPrompt = `[BUSINESS OWNER'S SPECIFIC INSTRUCTIONS (HIGHEST PRIORITY)]
-    ${basePrompt}
-
-    [SYSTEM ROLE & GUIDELINES]
-    You are a professional assistant for "${ownerName}". 
-    Your behavior, tone, and language MUST strictly follow the "BUSINESS OWNER'S SPECIFIC INSTRUCTIONS" provided above.
-
-    [DATA SOURCES]
-    1. Inventory/Offerings List (DB DATA) provided below.
-    ${toolsEnabled ? "2. Workflow Tools ('resolve_product', 'get_product')." : ""}
-    
-    [AGENTIC INSTRUCTIONS]
-    1. ALWAYS call 'resolve_product' first if any item is mentioned.
-    2. The tool will return raw "PRODUCT_DATA". Read it carefully.
-    3. Even if names aren't identical (e.g., 'Rice Cream' vs 'Rice Combo'), use your intelligence to pick the most relevant product from the data.
-    4. Once you pick a product, set action to "SEND_BOTH" and provide its UUID.
-    5. Do NOT ask "Which one?" if the data allows you to make a decision.
-    
-    [STRICT ARCHITECTURE]
-    - Output MUST be a valid JSON object ONLY.
-    - reply_text: Craft your response based on the BUSINESS OWNER'S instructions.
+    const n8nSystemPrompt = `[CORE SYSTEM RULES]
+    - You are an AI Salesman for "${ownerName}".
+    - Output MUST be a valid JSON object only. No plain text.
+    - reply_text: Human-like response.
     - action: ["NONE", "SEND_DETAILS", "SEND_PHOTO", "SEND_BOTH"]
-    - product_id: The ID from the PRODUCT_DATA you selected.
-    - intent: ["INQUIRY", "ORDER", "GREETING", "OTHER"]
+    - product_id: UUID of the matched product.
+    
+    [WORKFLOW]
+    1. Call 'resolve_product' for any item mentioned.
+    2. Read the returned data. Pick the best match (e.g., 'Rice Cream' matches 'Rice Combo').
+    3. Be decisive. Set action to "SEND_BOTH" if a match is found.
+    4. NEVER include URLs in 'reply_text'.
 
-    [STRICT RULES]
-    - BEHAVIOR & TONE: Strictly follow the BUSINESS OWNER'S instructions for tone, language, and behavior.
-    - DECISIVE: If 'Rice Combo' is in the data and user asks for 'Rice Cream', assume it's the match.
-    - NO URLs: NEVER include links in 'reply_text'.
-
-    [Response Format - JSON ONLY]
+    [RESPONSE FORMAT]
     {
       "reply_text": "...",
       "action": "...",
       "product_id": "...",
       "intent": "..."
-    }
-    
-    [CRITICAL] Output ONLY the raw JSON object. Do not wrap it in markdown code blocks like \x60\x60\x60json. Do not include any other text.`;
+    }`;
 
         const systemMessage = { role: 'system', content: n8nSystemPrompt };
+        const ownerInstructionMessage = { 
+             role: 'system', 
+             content: `[BUSINESS OWNER'S SPECIFIC INSTRUCTIONS - MANDATORY]
+             ${basePrompt || "Always reply politely in the customer's language."}
+             
+             [FINAL DIRECTIVE]
+             1. You MUST follow the tone, language, and behavior defined above. 
+             2. If the owner says speak in Bengali, you MUST speak in Bengali.
+             3. Output ONLY the raw JSON object. Do not wrap it in markdown code blocks. No other text.` 
+         };
     
         // Deduplicate: If the last message in history is identical to the current user message, don't add it again.
-        // This prevents "User: Hello" -> "User: Hello" which confuses the AI.
         const lastHistoryMsg = processedHistory.length > 0 ? processedHistory[processedHistory.length - 1] : null;
         let isDuplicate = false;
         
         if (lastHistoryMsg && lastHistoryMsg.role === 'user') {
-            // Compare content (handle object content vs string content if needed, but usually string here)
             const histContent = typeof lastHistoryMsg.content === 'string' ? lastHistoryMsg.content.trim() : JSON.stringify(lastHistoryMsg.content);
             const currContent = cleanUserMessage.trim();
             if (histContent === currContent) {
@@ -1553,21 +1542,17 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             cleanUserMessage = `${pendingSystemNotes.join('\n')}\n${cleanUserMessage}`;
         }
 
-        if (isDuplicate) {
-            console.log(`[AI] Deduplicated user message: "${cleanUserMessage}" already in history.`);
-            messages = [
-                systemMessage,
-                ...processedHistory,
-                { role: 'system', content: `[CRITICAL REMINDER] Follow the "BUSINESS OWNER'S SPECIFIC INSTRUCTIONS" for tone, language, and behavior. Use JSON ONLY.` }
-            ];
-        } else {
-            messages = [
-                systemMessage,
-                ...processedHistory,
-                { role: 'user', content: cleanUserMessage },
-                { role: 'system', content: `[CRITICAL REMINDER] Follow the "BUSINESS OWNER'S SPECIFIC INSTRUCTIONS" for tone, language, and behavior. Use JSON ONLY.` }
-            ];
+        messages = [
+            systemMessage,
+            ...processedHistory
+        ];
+
+        if (!isDuplicate) {
+            messages.push({ role: 'user', content: cleanUserMessage });
         }
+
+        // Final enforcement message at the VERY END of the array to ensure highest priority
+        messages.push(ownerInstructionMessage);
     }
 
     // --- UNIFIED AI REQUEST LOGIC ---
