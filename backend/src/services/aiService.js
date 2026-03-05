@@ -860,11 +860,31 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs) {
                 // Sort by score
                 candidates.sort((a, b) => b.match_score - a.match_score);
 
-                // --- HYBRID MODEL: Return candidates with details to AI ---
+                // --- DYNAMIC WORKFLOW DECISION (CODE-DRIVEN) ---
+                const top = candidates[0];
+                const second = candidates[1];
+                
+                // If top match is strong enough, we FORCE it in the tool result
+                // This way AI doesn't have to "think" about the score, the tool result tells it what to do.
+                if (top && top.match_score >= 70) {
+                    const isVeryStrong = top.match_score >= 85 && (!second || (top.match_score - second.match_score) >= 15);
+                    
+                    return { 
+                        status: 'SUCCESS', 
+                        decision: isVeryStrong ? 'EXACT_MATCH' : 'PROBABLE_MATCH',
+                        product: top,
+                        message: isVeryStrong 
+                            ? `Confirmed! This is definitely the product: ${top.name}. Proceed to show details.` 
+                            : `Found a likely match: ${top.name}. Show this to the customer but you can be slightly less certain.`
+                    };
+                }
+
+                // If scores are low, let the AI handle clarification with candidates
                 return { 
-                    status: 'SUCCESS', 
+                    status: 'AMBIGUOUS', 
+                    decision: 'ASK_CLARIFICATION',
                     candidates: candidates.slice(0, 3),
-                    message: "Search completed. Review candidates and decide whether to show the top match or ask for clarification based on scores."
+                    message: "No high-confidence match found. Show the candidates and ask the customer to pick one."
                 };
             }
 
@@ -1500,13 +1520,13 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     - HYBRID CONTROL: 
         - Backend handles DATA (prices, stocks, product matching scores). 
         - AI handles BEHAVIOR (tone, emoji, and selection from matches).
-    ${toolsEnabled ? `- RESOLUTION (Hybrid Strategy):
+    ${toolsEnabled ? `- RESOLUTION (Dynamic Workflow):
         1. IF AND ONLY IF tool usage is permitted by Business Owner: Always call 'resolve_product' if the user mentions an item.
-        2. If the tool returns 'candidates', review their 'match_score':
-           - If top candidate has match_score >= 80: Accept it as an EXACT match. Show its details immediately.
-           - If top candidate has match_score between 60-79: It's likely the correct product. You may show it, but mention you think they mean this one.
-           - If match_score < 60 or multiple candidates have similar high scores (within 10 points): Ask the user to clarify by providing the top 2-3 names.
-        3. Do NOT ask redundant questions like "Are you looking for X?" if the score is high (>=80). Be proactive.` : ""}
+        2. Trust the 'decision' and 'message' returned by the tool:
+           - If 'EXACT_MATCH': The product is confirmed. Show details/price immediately.
+           - If 'PROBABLE_MATCH': The product is likely. Show it but mention "I think you mean this...".
+           - If 'ASK_CLARIFICATION': List the provided 'candidates' and ask the customer to choose.
+        3. Do NOT ask redundant questions like "Are you looking for X?" if the tool already confirmed the match.` : ""}
     - IMAGE ANALYSIS: If a user sends an image, use visible text to find the item.
     - NO URLs: NEVER include links (http/https) in your text.
     - NO LINK PHRASES: NEVER mention "seeing links" or "clicking here".
