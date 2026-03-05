@@ -2139,6 +2139,51 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                     return url; // Keep it if it's not being sent as an attachment
                 })
                 .trim();
+
+            const cleanupPhrases = [
+                / আপনি এই লিংকে ছবিটি দেখতে পারেন[:ঃ]?/gi,
+                /আপনি এই লিংকে ক্লিক করতে পারেন[:ঃ]?/gi,
+                /এই লিংকে ক্লিক করে.*?[:ঃ]?/gi,
+                /বিস্তারিত জানতে এই লিংকে.*?[:ঃ]?/gi,
+                /আপনি এই লিংকে ক্লিক করুন[:ঃ]?/gi,
+                /এই লিংকে ছবিটি দেখতে পারেন[:ঃ]?/gi,
+                /লিংকটি হলো[:ঃ]?/gi,
+                /এখানে ক্লিক করুন[:ঃ]?/gi,
+                /ছবিটি দেখতে পারেন[:ঃ]?/gi,
+                /নিছে ছবিটি দেওয়া হলো[:ঃ]?/gi,
+                /নিছে ছবিটি দেওয়া হলো[:ঃ]?/gi,
+                /নিচে ছবিটি দেওয়া হলো[:ঃ]?/gi,
+                /এখানে ছবি দেওয়া হলো[:ঃ]?/gi,
+                /ছবিটি হলো[:ঃ]?/gi,
+                /আরও কিছু ছবি দেখতে চাইলে[:ঃ]?/gi,
+                /পণ্যটির ছবি[:ঃ]?/gi,
+                /Image:?/gi,
+                /Photo:?/gi,
+                /Link:?/gi,
+                /Sobi:?/gi,
+                /Sure, here is the picture:?/gi,
+                /অবশ্যই, এখানে ছবি দেওয়া হলো[:ঃ]?/gi,
+                /Sure, here is the photo of.*?[:ঃ]?/gi,
+                /You can see the photo at this link[:ঃ]?/gi,
+                /Click here to see the picture[:ঃ]?/gi,
+                /Here is the link[:ঃ]?/gi,
+                /Link:$/gm,
+                /\[Image.*?\]/gi,
+                /^Image:$/gm,
+                /\[View\]/gi,
+                /\[Link\]/gi,
+                /\[ছবি\]/gi,
+                /\[.*?\]\s*\(\s*https?:\/\/[^\s)]+\s*\)/gi, // Full markdown links
+                /\[.*?\]\s*\(\s*\)/gi, // Empty Markdown links
+                /\[\s*\]/gi, // Empty brackets
+                /\(\s*\)/gi,  // Empty parens
+                /\[\s*\/?[^\]]*\]/gi, // Catch broken [) or [/] tags
+                /Link:?\s*https?:\/\/[^\s,)]+/gi // Catch Link: http...
+            ];
+
+            for (const phraseRegex of cleanupPhrases) {
+                finalReplyText = finalReplyText.replace(phraseRegex, '').trim();
+            }
         }
 
         let decisionMode = null;

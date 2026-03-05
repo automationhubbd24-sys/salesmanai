@@ -834,12 +834,23 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs) {
 
                 const candidates = products.map(p => {
                     const score = computeCandidateScore(query, p);
+                    
+                    const normalizeUrl = (url) => {
+                        if (!url || url === 'N/A') return 'N/A';
+                        if (url.startsWith('http')) return url;
+                        const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
+                        const cleanPath = url.startsWith('/') ? url : `/${url}`;
+                        return `${baseUrl.replace(/\/$/, '')}${cleanPath}`;
+                    };
+
                     return {
                         product_id: String(p.id),
                         name: p.name,
                         price: p.price,
                         description: p.description,
                         stock: p.stock_quantity,
+                        image_url: normalizeUrl(p.image_url),
+                        additional_images: Array.isArray(p.additional_images) ? p.additional_images.map(normalizeUrl) : [],
                         match_score: score
                     };
                 });
@@ -854,7 +865,9 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs) {
                          Name: ${c.name}
                          Price: ${c.price}
                          Description: ${c.description}
-                         Stock: ${c.stock}`
+                         Stock: ${c.stock}
+                         Image_URL: ${c.image_url}
+                         Additional_Images: ${c.additional_images.join(', ')}`
                     ).join('\n---\n');
 
                     return { 
@@ -1397,16 +1410,18 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     const n8nSystemPrompt = `[CORE SYSTEM RULES]
     - You are an AI Salesman for "${ownerName}".
     - Output MUST be a valid JSON object only. No plain text.
-    - reply_text: Human-like response. (Professional, no URLs)
+    - reply_text: Human-like response. (Professional, NO raw URLs, NO "click here" phrases)
     - action: ["NONE", "SEND_DETAILS", "SEND_PHOTO", "SEND_BOTH"]
     - product_id: UUID of the matched product.
-    - image_urls: Array of image URLs to attach (only if requested or relevant).
+    - image_urls: Array of image URLs to attach.
     
-    [WORKFLOW]
+    [WORKFLOW & DIRECTNESS]
     1. Call 'resolve_product' for any item mentioned.
     2. Read the returned data. Pick the best match (e.g., 'Rice Cream' matches 'Rice Combo').
-    3. If user asks for a photo/image, find the URL in the product data and put it in 'image_urls'.
-    4. NEVER include raw URLs or markdown image syntax in 'reply_text'.
+    3. If user asks for a photo/image, extract "Image_URL" from PRODUCT_DATA and put it in 'image_urls'.
+    4. BE DECISIVE: If a user asks for a photo, send it immediately. Do not ask "Do you want to see it?".
+    5. CRITICAL: NEVER mention "click here", "link", "visit", "এই লিংকে ক্লিক করুন" or any URL in 'reply_text'. 
+    6. All image delivery is handled by the backend using your 'image_urls' array.
 
     [RESPONSE FORMAT]
     {

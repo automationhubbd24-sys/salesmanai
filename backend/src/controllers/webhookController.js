@@ -1893,6 +1893,9 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         // Pass 3: Cleanup Markdown artifacts and link-related phrases.
         const cleanupPhrases = [
             / আপনি এই লিংকে ছবিটি দেখতে পারেন[:ঃ]?/gi,
+            /আপনি এই লিংকে ক্লিক করতে পারেন[:ঃ]?/gi,
+            /এই লিংকে ক্লিক করে.*?[:ঃ]?/gi,
+            /বিস্তারিত জানতে এই লিংকে.*?[:ঃ]?/gi,
             /আপনি এই লিংকে ক্লিক করুন[:ঃ]?/gi,
             /এই লিংকে ছবিটি দেখতে পারেন[:ঃ]?/gi,
             /লিংকটি হলো[:ঃ]?/gi,
