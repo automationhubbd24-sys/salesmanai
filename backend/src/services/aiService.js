@@ -1972,7 +1972,7 @@ Rules:
             if (!result) throw new Error("Empty response from OpenRouter");
 
             logDebug(`[Vision] Success with Priority ${model}: ${result.substring(0, 30)}... Usage: ${usage}`);
-            return { text: result, usage: usage };
+            return { text: result, usage: usage, model: model };
 
         } catch (error) {
             const errMsg = error.response?.data?.error?.message || error.message;
@@ -2126,7 +2126,7 @@ Rules:
         if (!result) throw new Error(`Empty response from ${provider}`);
         
         logDebug(`[Vision] Success with ${model}: ${result.substring(0, 30)}... Usage: ${usage}`);
-        return { text: result, usage: usage };
+        return { text: result, usage: usage, model: model };
 
     } catch (error) {
         const errMsg = error.response?.data?.error?.message || error.message;
@@ -2471,7 +2471,7 @@ async function transcribeAudio(audioUrl, config) {
                 
                 if (text) {
                     console.log(`[Audio] Success with ${option.name}: "${text.substring(0, 30)}..." Usage: ${usage}`);
-                    return { text: text.trim(), usage: usage };
+                    return { text: text.trim(), usage: usage, model: option.model || option.name };
                 }
             }
             
@@ -2515,7 +2515,7 @@ async function transcribeAudio(audioUrl, config) {
                 const text = res.data.text;
                 if (text) {
                     console.log(`[Audio] Success with ${option.name}: "${text.substring(0, 30)}..."`);
-                    return { text: text.trim(), usage: 0 };
+                    return { text: text.trim(), usage: 0, model: option.model || 'whisper-large-v3' };
                 }
             }
             

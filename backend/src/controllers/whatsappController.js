@@ -1779,9 +1779,11 @@ STRICT RULES:
                             aiService.processImageWithVision(img, pageConfig, { prompt: productAnalysisPrompt || "", max_tokens: 10000 })
                         )
                     );
+                    let lastVisionModel = 'unknown';
                     const perMsgText = perMsgResults.map((res) => {
                         if (typeof res === 'object') {
                             totalVisionTokens += (res.usage || 0);
+                            lastVisionModel = res.model || 'unknown';
                             return res.text;
                         }
                         return res;
@@ -1803,7 +1805,7 @@ STRICT RULES:
                             group_id: null,
                             group_name: null,
                             token: totalVisionTokens, // Specific tokens for vision
-                            ai_model: 'gemini-vision'
+                            ai_model: lastVisionModel
                         }).catch(e => console.error(`[WA] Failed to save per-message analysis:`, e.message));
                     }
                 } catch (err) {

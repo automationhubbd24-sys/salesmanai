@@ -883,12 +883,15 @@ STRICT RULES:
                         const imagePromises = imagesToAnalyze.map(url =>
                             aiService.processImageWithVision(url, pageConfig, { prompt: productAnalysisPrompt || "", max_tokens: 10000 })
                         );
+                        let lastModelUsed = 'unknown';
                         const imageResults = await Promise.all(imagePromises);
                         
                         const perMsgText = imageResults.map((result, index) => {
                             const text = typeof result === 'object' ? (result.text || '') : String(result || '');
                             const usage = typeof result === 'object' ? (result.usage || 0) : 0;
+                            const model = typeof result === 'object' ? (result.model || 'unknown') : 'unknown';
                             totalVisionTokens += usage;
+                            lastModelUsed = model;
                             return text; // Return raw text, tags added below
                         }).join("\n\n").trim();
                         
@@ -905,7 +908,7 @@ STRICT RULES:
                                 status: 'bot_reply',
                                 reply_by: 'bot',
                                 token: totalVisionTokens, // Specific tokens for vision
-                                ai_model: 'gemini-vision'
+                                ai_model: lastModelUsed
                             }).catch(e => console.error(`[FB] Failed to save per-message analysis:`, e.message));
                         }
                     } catch (err) {
@@ -934,11 +937,14 @@ STRICT RULES:
                 const audioPromises = allAudios.map(url => aiService.transcribeAudio(url, pageConfig));
                 const audioResultsRaw = await Promise.all(audioPromises);
                 
+                let lastAudioModel = 'whisper-large-v3';
                 // Extract text and usage
                 const audioTranscripts = audioResultsRaw.map((res, i) => {
                     const text = typeof res === 'object' ? (res.text || '') : String(res || '');
                     const usage = typeof res === 'object' ? (res.usage || 0) : 0;
+                    const model = typeof res === 'object' ? (res.model || 'unknown') : 'unknown';
                     totalAudioTokens += usage;
+                    lastAudioModel = model;
                     console.log(`[Batch] Audio [${i}] Result: "${text.substring(0, 50)}..."`);
                     return text;
                 });
@@ -959,7 +965,7 @@ STRICT RULES:
                         status: 'bot_reply',
                         reply_by: 'bot',
                         token: totalAudioTokens, // Specific tokens for audio
-                        ai_model: 'google-whisper-style'
+                        ai_model: lastAudioModel
                     }).catch(e => console.error(`[FB] Failed to save audio transcript:`, e.message));
                     console.log(`[FB] Scheduled audio transcript save to DB for ${senderId}`);
                 } catch (e) {
