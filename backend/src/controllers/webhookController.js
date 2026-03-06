@@ -1731,13 +1731,17 @@ STRICT RULES:
         let extractedImages = []; // Start fresh, tags have priority
         const tagRegex = /##PRODUCT\s*["'](.+?)["']/gi;
         const strictImageRegex = /IMAGE:\s*(.+?)\s*\|\s*(https?:\/\/[^\s,]+)/gi;
+        const brokenTagRegex = /IMAGE:\s*([^|]+?)\s*\|\s*(?!\s*https?:\/\/)(.*)/gi;
         
-        const hasTagsInText = tagRegex.test(replyText) || strictImageRegex.test(replyText);
-        // Reset regex index after test
+        // Detect if ANY form of image tag exists in the text (Broken or Strict or Product Tag)
+        const hasTagsInText = tagRegex.test(replyText) || strictImageRegex.test(replyText) || brokenTagRegex.test(replyText);
+        
+        // Reset regex indices
         tagRegex.lastIndex = 0;
         strictImageRegex.lastIndex = 0;
+        brokenTagRegex.lastIndex = 0;
 
-        // If NO tags are in the text, we can use the AI's JSON image_urls or tools
+        // If NO tags are in the text, only then we fallback to AI's JSON image_urls/tools
         if (!hasTagsInText) {
             if (Array.isArray(aiResponse.image_urls)) {
                 aiResponse.image_urls.forEach(url => {
@@ -1748,7 +1752,6 @@ STRICT RULES:
                     }
                 });
             }
-            // Add images from aiResponse.images (from AgentLoop/Tools)
             aiResponse.images.forEach(img => {
                 const url = typeof img === 'string' ? img : img.url;
                 if (url && !extractedImages.some(i => i.url === url)) {
@@ -1816,9 +1819,6 @@ STRICT RULES:
 
         // 1. BROKEN IMAGE TAG RECOVERY & CLEANUP
         if (replyText) {
-            // FIX: Match broken tags with any content after '|' until newline or end of string
-            const brokenTagRegex = /IMAGE:\s*([^|]+?)\s*\|\s*(?!\s*https?:\/\/)(.*)/gi;
-            let brokenMatch;
             brokenTagRegex.lastIndex = 0;
             const seenBrokenTags = new Set();
 
