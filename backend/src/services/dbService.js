@@ -27,7 +27,7 @@ async function getPageConfig(pageId) {
       }
     } else if (data.user_id) {
       const creditResult = await query(
-        'SELECT message_credit FROM user_configs WHERE user_id = $1::uuid LIMIT 1',
+        'SELECT message_credit FROM user_configs WHERE user_id = $1::text::uuid LIMIT 1',
         [data.user_id]
       );
 
