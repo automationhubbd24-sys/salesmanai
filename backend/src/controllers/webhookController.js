@@ -879,7 +879,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                     try {
                         const imagesToAnalyze = msg.images.slice(0, 2);
                         const imagePromises = imagesToAnalyze.map(url =>
-                            aiService.processImageWithVision(url, pageConfig, { prompt: productAnalysisPrompt || "", max_tokens: 1000 })
+                            aiService.processImageWithVision(url, pageConfig, { prompt: productAnalysisPrompt || "", max_tokens: 10000 })
                         );
                         const imageResults = await Promise.all(imagePromises);
                         
