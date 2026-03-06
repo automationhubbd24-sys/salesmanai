@@ -926,6 +926,8 @@ STRICT RULES:
             if (combinedImageAnalysis) {
                 // Unified single block for AI
                 combinedText += `\n\n[Visual Content Description]:\n${combinedImageAnalysis.trim()}`;
+            } else {
+                combinedText += `\n[User sent ${allImages.length} images: ${allImages.join(', ')}]`;
             }
         }
 
@@ -1924,13 +1926,8 @@ STRICT RULES:
                     }
                     extractedImages.push({ url: url, title: title, description: description });
                 }
-                // Only remove from text if it's a Supabase link. 
-                // For all other links, keep them in the text so the customer can click them.
-                if (url.includes('supabase.co')) {
-                    replyText = replyText.replace(fullMatch, '').trim();
-                } else {
-                    replyText = replyText.replace(fullMatch, `${title}: ${url}`).trim();
-                }
+                // ALWAYS remove from text now to prevent "IMAGE: Image |" showing up
+                replyText = replyText.replace(fullMatch, '').trim();
             } else if (isSuspicious) {
                  // If it's suspicious, we still keep it as text unless it's a known internal storage link
                  if (url.includes('supabase.co')) {
@@ -1951,15 +1948,17 @@ STRICT RULES:
         // -----------------------------------------------------
 
         // --- AGENTIC DELIVERY SYSTEM (BACKEND-DRIVEN) ---
+        // User Requirement: "osud er sobi den bolar por sudu ##PRODUCT \"MED60-GX\" eta patano ucit silo maybe duita product load hoyate duitai send kore felse"
+        // Fix: Backend should NOT auto-inject images unless the AI explicitly uses ##PRODUCT tag OR it's a very clear action.
         if (aiResponse.action && aiResponse.action !== "NONE" && aiResponse.product_id) {
             try {
                 const product = await dbService.getProductById(aiResponse.product_id);
                 if (product) {
+                    // Only auto-inject details/photo if NO other images were extracted from text
+                    // This gives the AI full control via ##PRODUCT or IMAGE: tags.
+                    const noImagesExtracted = extractedImages.length === 0;
+
                     if (aiResponse.action === "SEND_DETAILS" || aiResponse.action === "SEND_BOTH") {
-                        // Backend only appends details if AI explicitly asks for it AND hasn't already included it.
-                        // However, per user request, we now give AI full control over description length.
-                        // If AI already wrote a reply, we assume it handled the description as per its prompt.
-                        // We only append if replyText is very short (fallback).
                         if (!replyText || replyText.length < 50) {
                             const numericPrice = parsePrice(product.price);
                             const priceDisplay = numericPrice > 0 ? `${numericPrice} ${product.currency || 'BDT'}` : "Ask for Price";
@@ -1968,7 +1967,7 @@ STRICT RULES:
                         }
                     }
 
-                    if ((aiResponse.action === "SEND_PHOTO" || aiResponse.action === "SEND_BOTH") && product.image_url) {
+                    if (noImagesExtracted && (aiResponse.action === "SEND_PHOTO" || aiResponse.action === "SEND_BOTH") && product.image_url) {
                         if (!aiResponse.images) aiResponse.images = [];
                         if (!aiResponse.images.some(img => img.url === product.image_url)) {
                             aiResponse.images.push({
