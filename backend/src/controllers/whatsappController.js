@@ -1770,49 +1770,54 @@ STRICT RULES:
             console.warn(`[WA] Failed to fetch vision prompt: ${e.message}`);
         }
         let collectedTexts = [];
+        const analysisPromises = [];
+
         for (const msg of messages) {
             if (msg.images && msg.images.length > 0) {
-                try {
-                    const imagesToAnalyze = msg.images.slice(0, 2);
-                    const perMsgResults = await Promise.all(
-                        imagesToAnalyze.map(img =>
-                            aiService.processImageWithVision(img, pageConfig, { prompt: productAnalysisPrompt || "", max_tokens: 10000 })
-                        )
-                    );
-                    let lastVisionModel = 'unknown';
-                    const perMsgText = perMsgResults.map((res) => {
-                        if (typeof res === 'object') {
-                            totalVisionTokens += (res.usage || 0);
-                            lastVisionModel = res.model || 'unknown';
-                            return res.text;
-                        }
-                        return res;
-                    }).join("\n\n").trim();
-
-                    if (perMsgText) {
-                        collectedTexts.push(perMsgText);
-                        // Parallel Save (No await) with specific token count
-                        dbService.saveWhatsAppChat({
-                            session_name: sessionName,
-                            sender_id: pageId || sessionName, // Bot (Page) is sender
-                            recipient_id: senderId, // User is recipient
-                            message_id: `analysis_${msg.id}`,
-                            text: `[Visual Data]:\n${perMsgText}`,
-                            timestamp: Date.now(),
-                            status: 'sent',
-                            reply_by: 'bot', // Mark as BOT reply
-                            is_group: isGroup,
-                            group_id: null,
-                            group_name: null,
-                            token: totalVisionTokens, // Specific tokens for vision
-                            ai_model: lastVisionModel
-                        }).catch(e => console.error(`[WA] Failed to save per-message analysis:`, e.message));
-                    }
-                } catch (err) {
-                    console.error(`[WA] Image Analysis Failed (msg ${msg.id}):`, err.message);
-                }
+                const imagesToAnalyze = msg.images.slice(0, 2);
+                const imagePromises = imagesToAnalyze.map(img =>
+                    aiService.processImageWithVision(img, pageConfig, { prompt: productAnalysisPrompt || "", max_tokens: 10000 })
+                );
+                analysisPromises.push({ msg, promise: Promise.all(imagePromises) });
             }
         }
+
+        // WAIT for all image analysis to complete before proceeding to LLM
+        const allAnalysisResults = await Promise.all(analysisPromises.map(p => p.promise));
+
+        allAnalysisResults.forEach((perMsgResults, idx) => {
+            const msg = analysisPromises[idx].msg;
+            let lastVisionModel = 'unknown';
+            const perMsgText = perMsgResults.map((res) => {
+                if (typeof res === 'object') {
+                    totalVisionTokens += (res.usage || 0);
+                    lastVisionModel = res.model || 'unknown';
+                    return res.text;
+                }
+                return res;
+            }).join("\n\n").trim();
+
+            if (perMsgText) {
+                collectedTexts.push(perMsgText);
+                // Parallel Save (No await)
+                dbService.saveWhatsAppChat({
+                    session_name: sessionName,
+                    sender_id: pageId || sessionName, // Bot (Page) is sender
+                    recipient_id: senderId, // User is recipient
+                    message_id: `analysis_${msg.id}`,
+                    text: `[Visual Data]:\n${perMsgText}`,
+                    timestamp: Date.now(),
+                    status: 'sent',
+                    reply_by: 'bot', // Mark as BOT reply
+                    is_group: isGroup,
+                    group_id: null,
+                    group_name: null,
+                    token: totalVisionTokens, // Specific tokens for vision
+                    ai_model: lastVisionModel
+                }).catch(e => console.error(`[WA] Failed to save per-message analysis:`, e.message));
+            }
+        });
+
         imageAnalyzeText = collectedTexts.join("\n").trim();
         if (imageAnalyzeText) {
             console.log(`[WA] Image Analysis Result (collected): ${imageAnalyzeText.substring(0,50)}... Total Tokens: ${totalVisionTokens}`);

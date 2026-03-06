@@ -876,46 +876,53 @@ STRICT RULES:
                 productAnalysisPrompt = pagePrompts.image_prompt || pagePrompts.vision_prompt;
             }
 
+            // --- STRICT SYNC: Collect all promises for parallel processing and await them ---
+            const analysisPromises = [];
+
             for (const msg of messages) {
                 if (msg.images && msg.images.length > 0) {
-                    try {
-                        const imagesToAnalyze = msg.images.slice(0, 2);
-                        const imagePromises = imagesToAnalyze.map(url =>
-                            aiService.processImageWithVision(url, pageConfig, { prompt: productAnalysisPrompt || "", max_tokens: 10000 })
-                        );
-                        let lastModelUsed = 'unknown';
-                        const imageResults = await Promise.all(imagePromises);
-                        
-                        const perMsgText = imageResults.map((result, index) => {
-                            const text = typeof result === 'object' ? (result.text || '') : String(result || '');
-                            const usage = typeof result === 'object' ? (result.usage || 0) : 0;
-                            const model = typeof result === 'object' ? (result.model || 'unknown') : 'unknown';
-                            totalVisionTokens += usage;
-                            lastModelUsed = model;
-                            return text; // Return raw text, tags added below
-                        }).join("\n\n").trim();
-                        
-                        if (perMsgText) {
-                            combinedImageAnalysis += `${perMsgText}\n\n`;
-                            // Parallel Save (No await) with specific token count
-                            dbService.saveFbChat({
-                                page_id: pageId,
-                                sender_id: pageId, // Bot (Page) is sender
-                                recipient_id: senderId, // User is recipient
-                                message_id: `img_analysis_${Date.now()}_${messages.indexOf(msg)}`,
-                                text: `[Visual Data]:\n${perMsgText}`,
-                                timestamp: Date.now(),
-                                status: 'bot_reply',
-                                reply_by: 'bot',
-                                token: totalVisionTokens, // Specific tokens for vision
-                                ai_model: lastModelUsed
-                            }).catch(e => console.error(`[FB] Failed to save per-message analysis:`, e.message));
-                        }
-                    } catch (err) {
-                        console.error(`[FB] Image Analysis Failed (msg ${msg.id}):`, err.message);
-                    }
+                    const imagesToAnalyze = msg.images.slice(0, 2);
+                    const imagePromises = imagesToAnalyze.map(url =>
+                        aiService.processImageWithVision(url, pageConfig, { prompt: productAnalysisPrompt || "", max_tokens: 10000 })
+                    );
+                    analysisPromises.push({ msg, promise: Promise.all(imagePromises) });
                 }
             }
+
+            // WAIT for all image analysis to complete before proceeding to LLM
+            const allAnalysisResults = await Promise.all(analysisPromises.map(p => p.promise));
+
+            allAnalysisResults.forEach((imageResults, idx) => {
+                const msg = analysisPromises[idx].msg;
+                let lastModelUsed = 'unknown';
+                
+                const perMsgText = imageResults.map((result) => {
+                    const text = typeof result === 'object' ? (result.text || '') : String(result || '');
+                    const usage = typeof result === 'object' ? (result.usage || 0) : 0;
+                    const model = typeof result === 'object' ? (result.model || 'unknown') : 'unknown';
+                    totalVisionTokens += usage;
+                    lastModelUsed = model;
+                    return text;
+                }).join("\n\n").trim();
+                
+                if (perMsgText) {
+                    combinedImageAnalysis += `${perMsgText}\n\n`;
+                    // Parallel Save (No await)
+                    dbService.saveFbChat({
+                        page_id: pageId,
+                        sender_id: pageId, // Bot (Page) is sender
+                        recipient_id: senderId, // User is recipient
+                        message_id: `img_analysis_${Date.now()}_${idx}`,
+                        text: `[Visual Data]:\n${perMsgText}`,
+                        timestamp: Date.now(),
+                        status: 'bot_reply',
+                        reply_by: 'bot',
+                        token: totalVisionTokens, // Specific tokens for vision
+                        ai_model: lastModelUsed
+                    }).catch(e => console.error(`[FB] Failed to save per-message analysis:`, e.message));
+                }
+            });
+
             if (combinedImageAnalysis) {
                 // Unified single block for AI
                 combinedText += `\n\n[Visual Content Description]:\n${combinedImageAnalysis.trim()}`;
@@ -931,9 +938,8 @@ STRICT RULES:
 
             if (audioEnabled) {
                 console.log(`[Batch] Transcribing ${allAudios.length} voice messages...`);
-                allAudios.forEach((url, i) => console.log(`[Batch] Audio URL [${i}]: ${url}`));
-
-                // Process in parallel
+                
+                // Process in parallel and WAIT
                 const audioPromises = allAudios.map(url => aiService.transcribeAudio(url, pageConfig));
                 const audioResultsRaw = await Promise.all(audioPromises);
                 
@@ -945,7 +951,6 @@ STRICT RULES:
                     const model = typeof res === 'object' ? (res.model || 'unknown') : 'unknown';
                     totalAudioTokens += usage;
                     lastAudioModel = model;
-                    console.log(`[Batch] Audio [${i}] Result: "${text.substring(0, 50)}..."`);
                     return text;
                 });
 
@@ -954,7 +959,7 @@ STRICT RULES:
                 
                 try {
                     const audioMsgText = `[Voice Transcript] ${combinedAudioTranscript}`;
-                    // Parallel Save (No await) with specific token count
+                    // Parallel Save (No await)
                     dbService.saveFbChat({
                         page_id: pageId,
                         sender_id: pageId, // Bot (Page) is sender
@@ -967,7 +972,6 @@ STRICT RULES:
                         token: totalAudioTokens, // Specific tokens for audio
                         ai_model: lastAudioModel
                     }).catch(e => console.error(`[FB] Failed to save audio transcript:`, e.message));
-                    console.log(`[FB] Scheduled audio transcript save to DB for ${senderId}`);
                 } catch (e) {
                     console.error(`[FB] Failed to save audio transcript:`, e.message);
                 }
