@@ -859,6 +859,27 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                         
                         if (perMsgText) {
                             combinedImageAnalysis += `\n${perMsgText}\n`;
+                            
+                            // --- ULTRA ADVANCE: AUTOMATIC PRODUCT RESOLUTION FROM VISION ---
+                            // If vision detected products, we immediately try to resolve them in DB 
+                            // to provide REAL data to the main LLM loop.
+                            const detectedProducts = perMsgText.match(/(?:Product|Item|Name):\s*([^\n,]+)/gi);
+                            if (detectedProducts && pageConfig.user_id) {
+                                for (const pMatch of detectedProducts.slice(0, 3)) {
+                                    const pName = pMatch.split(':')[1].trim();
+                                    if (pName.length > 3) {
+                                        try {
+                                            const resolved = await dbService.searchProducts(pageConfig.user_id, pName, pageId);
+                                            if (resolved && resolved.length > 0) {
+                                                const bestMatch = resolved[0];
+                                                combinedImageAnalysis += `\n[DATABASE MATCH FOUND for "${pName}"]: ID: ${bestMatch.id}, Name: ${bestMatch.name}, Price: ${bestMatch.price}\n`;
+                                            }
+                                        } catch (e) {}
+                                    }
+                                }
+                            }
+                            // -------------------------------------------------------------
+
                             try {
                                 const analysisText = `[Image Analysis Result] ${perMsgText}`;
                                 await dbService.saveFbChat({
