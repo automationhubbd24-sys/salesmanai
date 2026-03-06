@@ -1329,7 +1329,10 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                     productContext += `${idx + 1}) ${p.name}\n`;
                     productContext += `   ID: ${p.id}\n`;
                     productContext += `   Price: ${priceValue}\n`;
-                    if (p.description) productContext += `   Description: ${p.description}\n`;
+                    // Check 'allow_description' switch (default true for safety)
+                    if (p.allow_description !== false && p.description) {
+                        productContext += `   Description: ${p.description}\n`;
+                    }
                     if (p.image_url) productContext += `   Image: ${normalizeUrl(p.image_url)}\n`;
                     if (Array.isArray(p.additional_images) && p.additional_images.length > 0) {
                         productContext += `   More Images: ${p.additional_images.map(normalizeUrl).join(', ')}\n`;

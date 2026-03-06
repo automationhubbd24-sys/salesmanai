@@ -894,22 +894,17 @@ STRICT RULES:
                         
                         if (perMsgText) {
                             combinedImageAnalysis += `${perMsgText}\n\n`;
-                            try {
-                                const analysisText = `[Visual Data]:\n${perMsgText}`;
-                                await dbService.saveFbChat({
-                                    page_id: pageId,
-                                    sender_id: pageId, // Bot (Page) is sender
-                                    recipient_id: senderId, // User is recipient
-                                    message_id: `img_analysis_${Date.now()}_${messages.indexOf(msg)}`,
-                                    text: analysisText,
-                                    timestamp: Date.now(),
-                                    status: 'bot_reply',
-                                    reply_by: 'bot'
-                                });
-                                console.log(`[FB] Saved image analysis as new text message for ${senderId}`);
-                            } catch (e) {
-                                console.error(`[FB] Failed to save per-message analysis:`, e.message);
-                            }
+                            // Parallel Save (No await)
+                            dbService.saveFbChat({
+                                page_id: pageId,
+                                sender_id: pageId, // Bot (Page) is sender
+                                recipient_id: senderId, // User is recipient
+                                message_id: `img_analysis_${Date.now()}_${messages.indexOf(msg)}`,
+                                text: `[Visual Data]:\n${perMsgText}`,
+                                timestamp: Date.now(),
+                                status: 'bot_reply',
+                                reply_by: 'bot'
+                            }).catch(e => console.error(`[FB] Failed to save per-message analysis:`, e.message));
                         }
                     } catch (err) {
                         console.error(`[FB] Image Analysis Failed (msg ${msg.id}):`, err.message);

@@ -1789,24 +1789,20 @@ STRICT RULES:
 
                     if (perMsgText) {
                         collectedTexts.push(perMsgText);
-                        // SAVE analysis as TEXT under ORIGINAL message_id for professional swipe-reply
-                        try {
-                            await dbService.saveWhatsAppChat({
-                                session_name: sessionName,
-                                sender_id: pageId || sessionName, // Bot (Page) is sender
-                                recipient_id: senderId, // User is recipient
-                                message_id: `analysis_${msg.id}`,
-                                text: `[Visual Data]:\n${perMsgText}`,
-                                timestamp: Date.now(),
-                                status: 'sent',
-                                reply_by: 'bot', // Mark as BOT reply
-                                is_group: isGroup,
-                                group_id: null,
-                                group_name: null
-                            });
-                        } catch (e) {
-                            console.error(`[WA] Failed to save per-message analysis:`, e.message);
-                        }
+                        // Parallel Save (No await)
+                        dbService.saveWhatsAppChat({
+                            session_name: sessionName,
+                            sender_id: pageId || sessionName, // Bot (Page) is sender
+                            recipient_id: senderId, // User is recipient
+                            message_id: `analysis_${msg.id}`,
+                            text: `[Visual Data]:\n${perMsgText}`,
+                            timestamp: Date.now(),
+                            status: 'sent',
+                            reply_by: 'bot', // Mark as BOT reply
+                            is_group: isGroup,
+                            group_id: null,
+                            group_name: null
+                        }).catch(e => console.error(`[WA] Failed to save per-message analysis:`, e.message));
                     }
                 } catch (err) {
                     console.error(`[WA] Image Analysis Failed (msg ${msg.id}):`, err.message);
