@@ -887,13 +887,13 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                             const text = typeof result === 'object' ? (result.text || '') : String(result || '');
                             const usage = typeof result === 'object' ? (result.usage || 0) : 0;
                             totalVisionTokens += usage;
-                            return `[ANALYSIS_OF_IMAGE_${index + 1}]:\n${text}`;
-                        }).join("\n").trim();
+                            return text; // Return raw text, tags added below
+                        }).join("\n\n").trim();
                         
                         if (perMsgText) {
-                            combinedImageAnalysis += `\n${perMsgText}\n`;
+                            combinedImageAnalysis += `${perMsgText}\n\n`;
                             try {
-                                const analysisText = `[Image Analysis Result] ${perMsgText}`;
+                                const analysisText = `[Visual Data]:\n${perMsgText}`;
                                 await dbService.saveFbChat({
                                     page_id: pageId,
                                     sender_id: pageId, // Bot (Page) is sender
@@ -915,8 +915,8 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 }
             }
             if (combinedImageAnalysis) {
-                // Wrap with [Image Analysis Result] tag to match System Prompt instructions
-                combinedText += `\n\n[Image Analysis Result]\n${combinedImageAnalysis}`;
+                // Unified single block for AI
+                combinedText += `\n\n[Visual Content Description]:\n${combinedImageAnalysis.trim()}`;
             } else {
                 combinedText += `\n[User sent ${allImages.length} images: ${allImages.join(', ')}]`;
             }

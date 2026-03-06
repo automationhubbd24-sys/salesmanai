@@ -1435,9 +1435,9 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     [WORKFLOW & DIRECTNESS]
     1. Call 'resolve_product' for any item mentioned.
     2. Read the returned data. Pick the best match (e.g., 'Rice Cream' matches 'Rice Combo').
-    3. If user sends an image, analyze the '[Image Analysis Result]' provided in the context.
-    4. The '[Image Analysis Result]' contains a detailed Bengali description of the products found in the user's images.
-    5. CRITICAL: Identify all product names mentioned in the Bengali list (e.g. "The Face Shop Rice Water Bright Foaming Cleanser").
+    3. If user sends an image, analyze the '[Visual Content Description]' provided in the context.
+    4. This section contains a descriptive Bengali list of products detected in the images.
+    5. CRITICAL: Identify all product names mentioned in the list (e.g. "The Face Shop Rice Water Bright Foaming Cleanser").
     6. You MUST call 'resolve_product' for these detected items to get real data (price, stock, etc.) immediately.
     7. BE DECISIVE: Provide relevant product details from your tools immediately.
     8. CRITICAL: 'reply_text' MUST be pure human-like text.

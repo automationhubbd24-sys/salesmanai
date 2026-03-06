@@ -1777,13 +1777,13 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                             aiService.processImageWithVision(img, pageConfig, { prompt: productAnalysisPrompt || "", max_tokens: 120 })
                         )
                     );
-                    const perMsgText = perMsgResults.map((res, index) => {
+                    const perMsgText = perMsgResults.map((res) => {
                         if (typeof res === 'object') {
                             totalVisionTokens += (res.usage || 0);
-                            return `[ANALYSIS_OF_IMAGE_${index + 1}]:\n${res.text}`;
+                            return res.text;
                         }
-                        return `[ANALYSIS_OF_IMAGE_${index + 1}]:\n${res}`;
-                    }).join("\n").trim();
+                        return res;
+                    }).join("\n\n").trim();
 
                     if (perMsgText) {
                         collectedTexts.push(perMsgText);
@@ -1794,7 +1794,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                                 sender_id: pageId || sessionName, // Bot (Page) is sender
                                 recipient_id: senderId, // User is recipient
                                 message_id: `analysis_${msg.id}`,
-                                text: `[Image Analysis Result] ${perMsgText}`,
+                                text: `[Visual Data]:\n${perMsgText}`,
                                 timestamp: Date.now(),
                                 status: 'sent',
                                 reply_by: 'bot', // Mark as BOT reply
@@ -1835,7 +1835,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
     if (imageAnalyzeText && imageAnalyzeText.trim() !== "") {
         if (finalOutput) finalOutput += "\n\n";
         if (imageDetectionEnabled) {
-            finalOutput += `[Image Analysis Result]\n${imageAnalyzeText}`;
+            finalOutput += `[Visual Content Description]:\n${imageAnalyzeText.trim()}`;
         } else {
             finalOutput += imageAnalyzeText;
         }
