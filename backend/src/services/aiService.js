@@ -1893,6 +1893,8 @@ async function processImageWithVision(imageUrl, pageConfig = {}, customOptions =
         }
     };
 
+    const maxTokens = Number(customOptions?.max_tokens) > 0 ? Number(customOptions.max_tokens) : 120;
+
     // Determine System Prompt
     let systemPrompt = typeof customOptions?.prompt === 'string' && customOptions.prompt.trim() !== "" 
         ? customOptions.prompt 
@@ -1938,6 +1940,7 @@ Rules:
 
             const payload = {
                 model: model,
+                max_tokens: maxTokens,
                 messages: [
                     { role: "system", content: systemPrompt },
                     {
@@ -2054,6 +2057,7 @@ Rules:
 
             const payload = {
                 model: model,
+                max_tokens: maxTokens,
                 messages: [
                     { role: "system", content: systemPrompt },
                     {
@@ -2087,7 +2091,8 @@ Rules:
                         { text: systemPrompt },
                         { inline_data: { mime_type: mimeType, data: base64Image } }
                     ]
-                }]
+                }],
+                generationConfig: { maxOutputTokens: maxTokens }
             };
             const useProxy = (provider === 'google' || provider === 'gemini');
             const geminiProxyAgent = getGeminiProxyAgent(url, useProxy);
@@ -2149,6 +2154,7 @@ Rules:
 
         const payload = {
             model: model,
+            max_tokens: maxTokens,
             messages: [
                 { role: "system", content: systemPrompt },
                 {

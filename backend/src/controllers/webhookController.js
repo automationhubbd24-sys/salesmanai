@@ -69,6 +69,26 @@ function sanitizeReplyText(text) {
         .trim();
 }
 
+function extractVisionProductNames(text) {
+    const names = [];
+    if (!text || typeof text !== 'string') return names;
+    const productLines = text.match(/PRODUCT:\s*([^\n]+)/gi) || [];
+    for (const line of productLines) {
+        const name = line.split(':').slice(1).join(':').trim();
+        if (name && name.length > 2) names.push(name);
+    }
+    if (names.length === 0) {
+        const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+        for (const line of lines) {
+            if (line.length < 4) continue;
+            if (/price|৳|tk|bdt|\d{3,}/i.test(line)) continue;
+            names.push(line);
+            if (names.length >= 5) break;
+        }
+    }
+    return Array.from(new Set(names));
+}
+
 function normalizeImageUrl(url) {
     if (!url || url === 'N/A') return null;
     if (url.startsWith('http')) return url;
@@ -758,15 +778,15 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         // -----------------------------------------------------------------
 
         // --- FAILURE LOCK CHECK ---
-    const isLocked = await dbService.checkFbLockStatus(pageId, senderId);
-    if (isLocked) {
-        const logMsg = `[Handover Lock] AI is permanently disabled for ${senderId} on Page ${pageId}.`;
-        console.log(logMsg);
-        logToFile(logMsg);
-        return;
-    }
-    // --------------------------
-    
+        const isLocked = await dbService.checkFbLockStatus(pageId, senderId);
+        if (isLocked) {
+            const logMsg = `[Handover Lock] AI is permanently disabled for ${senderId} on Page ${pageId}.`;
+            console.log(logMsg);
+            logToFile(logMsg);
+            return;
+        }
+        // --------------------------
+
     // --- OPTIMIZATION: PARALLEL DATA FETCHING (Modified for Dynamic History) ---
         // 1. Fetch Page Prompts FIRST to get the 'check_conversion' (History Limit)
         // This ensures we only fetch exactly what the user configured (Token Saving)
@@ -796,19 +816,10 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         console.log("Fetching remaining context data in parallel...");
         
         // 2. Fetch the rest in parallel using the dynamic limit
-        // --- MARK SEEN FIRST ---
-        try {
-            await facebookService.sendTypingAction(senderId, pageConfig.page_access_token, 'mark_seen');
-        } catch (e) {}
-
-        const typingStartTime = Date.now();
-
-        // 2. Fetch the rest in parallel using the dynamic limit
-        const [userProfile, fbMessages, history, typingResult] = await Promise.all([
+        const [userProfile, fbMessages, history] = await Promise.all([
             facebookService.getUserProfile(senderId, pageConfig.page_access_token),
             facebookService.getConversationMessages(pageId, senderId, pageConfig.page_access_token, 10), // For Handover Check
-            dbService.getChatHistory(sessionId, historyLimit),
-            facebookService.sendTypingAction(senderId, pageConfig.page_access_token, 'typing_on') 
+            dbService.getChatHistory(sessionId, historyLimit)
         ]);
 
         const senderName = userProfile.name || 'Customer';
@@ -837,7 +848,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             console.log(`[Batch] Per-message analysis for ${allImages.length} images...`);
             let combinedImageAnalysis = "";
 
-            let productAnalysisPrompt = "Analyze this image for a salesperson. CRITICAL: 1. Identify ALL individual products in the image. 2. Extract any VISIBLE PRICES (e.g. '১৬৫০', 'Offer Price: 1650'). 3. If it is a COMBO, list all items in it. 4. Extract Brand Names and exact product names. 5. If there is text on the image like 'Student Budget Combo', capture it exactly. Be extremely precise to distinguish between similar-looking combos based on price or specific items.";
+            let productAnalysisPrompt = "Extract only product names from the image. Output one per line in this exact format: PRODUCT: <full product name>. If a combo is shown, list every product in it as separate PRODUCT lines. Do not add descriptions or prices.";
             if (pagePrompts && (pagePrompts.image_prompt || pagePrompts.vision_prompt)) {
                 productAnalysisPrompt = pagePrompts.image_prompt || pagePrompts.vision_prompt;
             }
@@ -845,8 +856,9 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             for (const msg of messages) {
                 if (msg.images && msg.images.length > 0) {
                     try {
-                        const imagePromises = msg.images.map(url =>
-                            aiService.processImageWithVision(url, pageConfig, { prompt: productAnalysisPrompt || "" })
+                        const imagesToAnalyze = msg.images.slice(0, 2);
+                        const imagePromises = imagesToAnalyze.map(url =>
+                            aiService.processImageWithVision(url, pageConfig, { prompt: productAnalysisPrompt || "", max_tokens: 120 })
                         );
                         const imageResults = await Promise.all(imagePromises);
                         
@@ -860,25 +872,18 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                         if (perMsgText) {
                             combinedImageAnalysis += `\n${perMsgText}\n`;
                             
-                            // --- ULTRA ADVANCE: AUTOMATIC PRODUCT RESOLUTION FROM VISION ---
-                            // If vision detected products, we immediately try to resolve them in DB 
-                            // to provide REAL data to the main LLM loop.
-                            const detectedProducts = perMsgText.match(/(?:Product|Item|Name):\s*([^\n,]+)/gi);
-                            if (detectedProducts && pageConfig.user_id) {
-                                for (const pMatch of detectedProducts.slice(0, 3)) {
-                                    const pName = pMatch.split(':')[1].trim();
-                                    if (pName.length > 3) {
-                                        try {
-                                            const resolved = await dbService.searchProducts(pageConfig.user_id, pName, pageId);
-                                            if (resolved && resolved.length > 0) {
-                                                const bestMatch = resolved[0];
-                                                combinedImageAnalysis += `\n[DATABASE MATCH FOUND for "${pName}"]: ID: ${bestMatch.id}, Name: ${bestMatch.name}, Price: ${bestMatch.price}\n`;
-                                            }
-                                        } catch (e) {}
-                                    }
+                            const detectedProducts = extractVisionProductNames(perMsgText);
+                            if (detectedProducts.length > 0 && pageConfig.user_id) {
+                                for (const pName of detectedProducts.slice(0, 3)) {
+                                    try {
+                                        const resolved = await dbService.searchProducts(pageConfig.user_id, pName, pageId);
+                                        if (resolved && resolved.length > 0) {
+                                            const bestMatch = resolved[0];
+                                            combinedImageAnalysis += `\n[DATABASE MATCH FOUND for "${pName}"]: ID: ${bestMatch.id}, Name: ${bestMatch.name}, Price: ${bestMatch.price}\n`;
+                                        }
+                                    } catch (e) {}
                                 }
                             }
-                            // -------------------------------------------------------------
 
                             try {
                                 const analysisText = `[Image Analysis Result] ${perMsgText}`;
@@ -1434,18 +1439,6 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             }
         }
         // --------------------------------------
-
-        // --- PRE-SEND CHECK (n8n "IfPageReplyExists" Logic) ---
-        // Check again if Admin replied while AI was generating (Race Condition Fix)
-        const freshFbMessages = await facebookService.getConversationMessages(pageId, senderId, pageConfig.page_access_token, 1);
-        if (freshFbMessages.length > 0) {
-            const latestFresh = freshFbMessages[0];
-            if (latestFresh.from && latestFresh.from.id === pageId) {
-                console.log(`Admin replied while AI was generating. Stopping reply for ${sessionId}.`);
-                return;
-            }
-        }
-        // -------------------------------------------------------
 
         // 6. Send Reply (Text + Images)
         if (replyText && typeof replyText === 'object') {
@@ -2007,6 +2000,11 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 .replace(/[\d,.]+\s*(?:৳|bdt|taka|tk)/gi, '')
                 .trim();
         }
+
+        try {
+            await facebookService.sendTypingAction(senderId, pageConfig.page_access_token, 'mark_seen');
+            await facebookService.sendTypingAction(senderId, pageConfig.page_access_token, 'typing_on');
+        } catch (e) {}
 
         let botMessageId = `bot_${Date.now()}`;
         if (replyText && replyText.length > 0) {

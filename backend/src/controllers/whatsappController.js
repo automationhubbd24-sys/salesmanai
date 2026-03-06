@@ -251,6 +251,26 @@ const sanitizeReplyText = (text) => {
         .trim();
 };
 
+const extractVisionProductNames = (text) => {
+    const names = [];
+    if (!text || typeof text !== 'string') return names;
+    const productLines = text.match(/PRODUCT:\s*([^\n]+)/gi) || [];
+    for (const line of productLines) {
+        const name = line.split(':').slice(1).join(':').trim();
+        if (name && name.length > 2) names.push(name);
+    }
+    if (names.length === 0) {
+        const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+        for (const line of lines) {
+            if (line.length < 4) continue;
+            if (/price|৳|tk|bdt|\d{3,}/i.test(line)) continue;
+            names.push(line);
+            if (names.length >= 5) break;
+        }
+    }
+    return Array.from(new Set(names));
+};
+
 const normalizeImageUrl = (url) => {
     if (!url || url === 'N/A') return null;
     if (url.startsWith('http')) return url;
@@ -1711,7 +1731,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
         if (!imageDetectionEnabled) {
             imageAnalyzeText = `[System Note: User sent ${allImages.length} images. Image detection is disabled, so they were not analyzed. Ask the user to describe what they want.]`;
         } else {
-        let productAnalysisPrompt = "Analyze this image for a salesperson. CRITICAL: 1. Identify ALL individual products in the image. 2. Extract any VISIBLE PRICES (e.g. '১৬৫০', 'Offer Price: 1650'). 3. If it is a COMBO, list all items in it. 4. Extract Brand Names and exact product names. 5. If there is text on the image like 'Student Budget Combo', capture it exactly. Be extremely precise to distinguish between similar-looking combos based on price or specific items.";
+         let productAnalysisPrompt = "Extract only product names from the image. Output one per line in this exact format: PRODUCT: <full product name>. If a combo is shown, list every product in it as separate PRODUCT lines. Do not add descriptions or prices.";
         try {
             // Use WhatsApp Config which includes page_prompts
             // const pageConfig = await dbService.getWhatsAppConfig(sessionName); // Optim: Already loaded
@@ -1730,10 +1750,10 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
         for (const msg of messages) {
             if (msg.images && msg.images.length > 0) {
                 try {
+                    const imagesToAnalyze = msg.images.slice(0, 2);
                     const perMsgResults = await Promise.all(
-                        msg.images.map(img =>
-                            // Pass pageConfig to processImageWithVision so it can use the correct model/provider
-                            aiService.processImageWithVision(img, pageConfig, { prompt: productAnalysisPrompt || "" })
+                        imagesToAnalyze.map(img =>
+                            aiService.processImageWithVision(img, pageConfig, { prompt: productAnalysisPrompt || "", max_tokens: 120 })
                         )
                     );
                     const perMsgText = perMsgResults.map(res => {
@@ -1747,23 +1767,17 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                     if (perMsgText) {
                         collectedTexts.push(perMsgText);
                         
-                        // --- ULTRA ADVANCE: AUTOMATIC PRODUCT RESOLUTION FROM VISION ---
-                        // Immediate DB lookup to bridge Vision -> Database
-                        const detectedItems = perMsgText.match(/(?:Product|Item|Name):\s*([^\n,]+)/gi);
-                        if (detectedItems && pageConfig.user_id) {
-                            for (const item of detectedItems.slice(0, 3)) {
-                                const itemName = item.split(':')[1].trim();
-                                if (itemName.length > 3) {
-                                    try {
-                                        const found = await dbService.searchProducts(pageConfig.user_id, itemName, sessionName);
-                                        if (found && found.length > 0) {
-                                            collectedTexts.push(`[DATABASE MATCH FOUND for "${itemName}"]: ID: ${found[0].id}, Name: ${found[0].name}, Price: ${found[0].price}`);
-                                        }
-                                    } catch (e) {}
-                                }
+                        const detectedItems = extractVisionProductNames(perMsgText);
+                        if (detectedItems.length > 0 && pageConfig.user_id) {
+                            for (const itemName of detectedItems.slice(0, 3)) {
+                                try {
+                                    const found = await dbService.searchProducts(pageConfig.user_id, itemName, sessionName);
+                                    if (found && found.length > 0) {
+                                        collectedTexts.push(`[DATABASE MATCH FOUND for "${itemName}"]: ID: ${found[0].id}, Name: ${found[0].name}, Price: ${found[0].price}`);
+                                    }
+                                } catch (e) {}
                             }
                         }
-                        // -------------------------------------------------------------
 
                         // SAVE analysis as TEXT under ORIGINAL message_id for professional swipe-reply
                         try {
@@ -2324,19 +2338,6 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
             }
         }
 
-        // 5. Send Reply
-        console.log(`[WA] Sending Reply: "${finalReplyText.substring(0, 50)}..."`);
-        
-        // Mark as Seen (User Experience)
-        await whatsappService.sendSeen(sessionName, senderId);
-
-        // Send Typing Indicator (User Experience: Seen -> Typing -> Reply)
-        // Simulate human-like behavior
-        await whatsappService.sendTyping(sessionName, senderId);
-        
-        // Wait 2 seconds to show "typing..."
-        await new Promise(resolve => setTimeout(resolve, 2000));
-
         // --- HANDLE SAVE_ORDER ([SAVE_ORDER: {...}]) ---
         let orderSaved = false;
         const aiExtracted = aiResponse.order_details;
@@ -2634,6 +2635,12 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                  else handoverMap.delete(chatKey);
             }
         }
+
+        console.log(`[WA] Sending Reply: "${finalReplyText.substring(0, 50)}..."`);
+
+        await whatsappService.sendSeen(sessionName, senderId);
+        await whatsappService.sendTyping(sessionName, senderId);
+        await new Promise(resolve => setTimeout(resolve, 600));
 
         // Send Text First
         let sentMessageId = `bot_${Date.now()}`;
