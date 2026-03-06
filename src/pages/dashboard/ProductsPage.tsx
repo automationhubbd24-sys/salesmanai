@@ -536,6 +536,37 @@ export default function ProductsPage() {
 
         setIsSubmitting(true);
         try {
+            let currentContextId: string | null = null;
+            if (typeof window !== "undefined") {
+                if (platform === "messenger") {
+                    currentContextId = localStorage.getItem("active_fb_page_id");
+                } else if (platform === "whatsapp") {
+                    currentContextId = localStorage.getItem("active_wa_session_id");
+                }
+            }
+
+            const waIds = new Set(
+                availablePages.filter(p => p.type === "whatsapp").map(p => String(p.page_id))
+            );
+            const fbIds = new Set(
+                availablePages.filter(p => p.type === "messenger").map(p => String(p.page_id))
+            );
+
+            let normalizedAllowedPages = Array.isArray(allowedPages) ? allowedPages.map(String) : [];
+            let normalizedAllowedWASessions = Array.isArray(allowedWASessions) ? allowedWASessions.map(String) : [];
+
+            const moveToWa = normalizedAllowedPages.filter(id => waIds.has(id));
+            if (moveToWa.length > 0) {
+                normalizedAllowedPages = normalizedAllowedPages.filter(id => !waIds.has(id));
+                normalizedAllowedWASessions = Array.from(new Set([...normalizedAllowedWASessions, ...moveToWa]));
+            }
+
+            const moveToFb = normalizedAllowedWASessions.filter(id => fbIds.has(id));
+            if (moveToFb.length > 0) {
+                normalizedAllowedWASessions = normalizedAllowedWASessions.filter(id => !fbIds.has(id));
+                normalizedAllowedPages = Array.from(new Set([...normalizedAllowedPages, ...moveToFb]));
+            }
+
             const formData = new FormData();
             formData.append("user_id", userId);
             formData.append("name", productName);
@@ -545,26 +576,17 @@ export default function ProductsPage() {
             formData.append("currency", productCurrency);
             formData.append("stock", productStock);
             formData.append("is_active", "true");
-            
-            // Explicitly pass platform to help backend resolution
+
             if (platform) {
                 formData.append("platform", platform);
             }
 
-            formData.append("allowed_page_ids", JSON.stringify(allowedPages));
-            formData.append("allowed_wa_sessions", JSON.stringify(allowedWASessions));
+            formData.append("allowed_page_ids", JSON.stringify(normalizedAllowedPages));
+            formData.append("allowed_wa_sessions", JSON.stringify(normalizedAllowedWASessions));
             formData.append("is_combo", String(isCombo));
             formData.append("combo_items", JSON.stringify(comboItems));
             formData.append("allow_description", String(allowDescription));
 
-            let currentContextId: string | null = null;
-            if (typeof window !== "undefined") {
-                if (platform === "messenger") {
-                    currentContextId = localStorage.getItem("active_fb_page_id");
-                } else if (platform === "whatsapp") {
-                    currentContextId = localStorage.getItem("active_wa_session_id");
-                }
-            }
             if (currentContextId) {
                 formData.append("page_id", currentContextId);
             }
@@ -1216,11 +1238,6 @@ export default function ProductsPage() {
                                               <div 
                                                 key={`wa-${page.page_id}`} 
                                                 className="flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors"
-                                                onClick={(e) => {
-                                                  // Prevent double toggle if clicking the checkbox directly
-                                                  if ((e.target as HTMLElement).closest('button')) return;
-                                                  toggleSelection();
-                                                }}
                                               >
                                                 <Checkbox 
                                                   id={`wa-page-${page.page_id}`}
@@ -1230,7 +1247,6 @@ export default function ProductsPage() {
                                                 <Label 
                                                   htmlFor={`wa-page-${page.page_id}`} 
                                                   className="text-sm font-normal cursor-pointer select-none flex-1 truncate"
-                                                  onClick={(e) => e.stopPropagation()} // Let the id/htmlFor handle it
                                                 >
                                                   {page.name}
                                                 </Label>
@@ -1257,10 +1273,6 @@ export default function ProductsPage() {
                                               <div 
                                                 key={`fb-${page.page_id}`} 
                                                 className="flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors"
-                                                onClick={(e) => {
-                                                  if ((e.target as HTMLElement).closest('button')) return;
-                                                  toggleSelection();
-                                                }}
                                               >
                                                 <Checkbox 
                                                   id={`fb-page-${page.page_id}`}
@@ -1270,7 +1282,6 @@ export default function ProductsPage() {
                                                 <Label 
                                                   htmlFor={`fb-page-${page.page_id}`} 
                                                   className="text-sm font-normal cursor-pointer select-none flex-1 truncate"
-                                                  onClick={(e) => e.stopPropagation()}
                                                 >
                                                   {page.name}
                                                 </Label>
