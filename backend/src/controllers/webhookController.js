@@ -72,11 +72,23 @@ function sanitizeReplyText(text) {
 function extractVisionProductNames(text) {
     const names = [];
     if (!text || typeof text !== 'string') return names;
-    const productLines = text.match(/PRODUCT:\s*([^\n]+)/gi) || [];
-    for (const line of productLines) {
-        const name = line.split(':').slice(1).join(':').trim();
+    
+    // 1. Look for numbered list items like: ১. **The Face Shop...**
+    const listMatches = text.match(/(?:\d+|[০-৯])\.\s*\*\*([^*]+)\*\*/g) || [];
+    for (const match of listMatches) {
+        const name = match.replace(/(?:\d+|[০-৯])\.\s*\*\*/, '').replace(/\*\*/, '').trim();
         if (name && name.length > 2) names.push(name);
     }
+
+    // 2. Fallback to PRODUCT: format
+    if (names.length === 0) {
+        const productLines = text.match(/PRODUCT:\s*([^\n]+)/gi) || [];
+        for (const line of productLines) {
+            const name = line.split(':').slice(1).join(':').trim();
+            if (name && name.length > 2) names.push(name);
+        }
+    }
+
     if (names.length === 0) {
         const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
         for (const line of lines) {
@@ -848,15 +860,15 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             console.log(`[Batch] Per-message analysis for ${allImages.length} images...`);
             let combinedImageAnalysis = "";
 
-            let productAnalysisPrompt = `Analyze this image with high precision (like Gemini Pro Vision).
-1. Identify ALL individual products, even if multiple or partially visible.
-2. Read all visible text, branding, and packaging details.
-3. If text is missing or unclear, identify products by shape, color, and visual features.
-4. Extract any prices, combo names (e.g., "Student Budget Best Combo"), or offer text.
-5. List everything clearly in this format:
-PRODUCT: <Brand Name> <Exact Product Name> <Size/Variant if visible>
-TEXT_ON_IMAGE: <Any slogans or offer text>
-SUMMARY: <Brief description of what is in the image>`;
+            let productAnalysisPrompt = `Analyze this image and describe it in Bengali as a professional salesperson.
+1. Count the number of products.
+2. Identify exact product names and their positions/visual details.
+3. Identify the purpose (e.g., skin brightening combo).
+4. Use this EXACT format:
+এই ছবিতে মোট **[সংখ্যা]টি** প্রোডাক্ট রয়েছে। প্রোডাক্টগুলোর নাম নিচে দেওয়া হলো:
+১. **[প্রোডাক্ট নাম]** ([পজিশন বা টিউবের বিবরণ])
+২. ...
+এটি মূলত একটি **"[কম্বো বা অফার নাম]"** হিসেবে সাজানো হয়েছে। [একটি বাক্যে সারসংক্ষেপ বা উদ্দেশ্য]`;
 
             if (pagePrompts && (pagePrompts.image_prompt || pagePrompts.vision_prompt)) {
                 productAnalysisPrompt = pagePrompts.image_prompt || pagePrompts.vision_prompt;
@@ -875,7 +887,7 @@ SUMMARY: <Brief description of what is in the image>`;
                             const text = typeof result === 'object' ? (result.text || '') : String(result || '');
                             const usage = typeof result === 'object' ? (result.usage || 0) : 0;
                             totalVisionTokens += usage;
-                            return `[Image ${index + 1} Analysis]: ${text}`;
+                            return `[ANALYSIS_OF_IMAGE_${index + 1}]:\n${text}`;
                         }).join("\n").trim();
                         
                         if (perMsgText) {
