@@ -2547,8 +2547,18 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
         const pIdx = params.length;
 
         if (strictMode) {
-            // ONLY show products specifically assigned to THIS page/session
-            whereClause += ` AND (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))`;
+            // Strict Isolation (Session-specific view):
+            // 1. Show if explicitly assigned to THIS specific page/session
+            // 2. OR show if it is a TRUE GLOBAL product (not assigned to ANY platform)
+            whereClause += ` AND (
+                (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))
+                OR
+                (
+                    (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb)
+                    AND
+                    (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
+                )
+            )`;
         } else {
             // Non-strict Logic (Dashboard/Manual View):
             // 1. Show Global products (No assignments to ANY platform)

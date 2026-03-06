@@ -1216,16 +1216,21 @@ export default function ProductsPage() {
                                               <div 
                                                 key={`wa-${page.page_id}`} 
                                                 className="flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors"
-                                                onClick={toggleSelection}
+                                                onClick={(e) => {
+                                                  // Prevent double toggle if clicking the checkbox directly
+                                                  if ((e.target as HTMLElement).closest('button')) return;
+                                                  toggleSelection();
+                                                }}
                                               >
                                                 <Checkbox 
                                                   id={`wa-page-${page.page_id}`}
                                                   checked={isSelected}
-                                                  onCheckedChange={toggleSelection} 
+                                                  onCheckedChange={() => toggleSelection()} 
                                                 />
                                                 <Label 
                                                   htmlFor={`wa-page-${page.page_id}`} 
                                                   className="text-sm font-normal cursor-pointer select-none flex-1 truncate"
+                                                  onClick={(e) => e.stopPropagation()} // Let the id/htmlFor handle it
                                                 >
                                                   {page.name}
                                                 </Label>
@@ -1252,16 +1257,20 @@ export default function ProductsPage() {
                                               <div 
                                                 key={`fb-${page.page_id}`} 
                                                 className="flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors"
-                                                onClick={toggleSelection}
+                                                onClick={(e) => {
+                                                  if ((e.target as HTMLElement).closest('button')) return;
+                                                  toggleSelection();
+                                                }}
                                               >
                                                 <Checkbox 
                                                   id={`fb-page-${page.page_id}`}
                                                   checked={isSelected}
-                                                  onCheckedChange={toggleSelection} 
+                                                  onCheckedChange={() => toggleSelection()} 
                                                 />
                                                 <Label 
                                                   htmlFor={`fb-page-${page.page_id}`} 
                                                   className="text-sm font-normal cursor-pointer select-none flex-1 truncate"
+                                                  onClick={(e) => e.stopPropagation()}
                                                 >
                                                   {page.name}
                                                 </Label>
