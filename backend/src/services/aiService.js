@@ -975,14 +975,14 @@ function parsePrice(value) {
 }
 
 // --- AGENTIC LOOP EXECUTION ---
-async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfig, proxyAgent, totalTokenUsage, foundProducts, userId }) {
+async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfig, proxyAgent, totalTokenUsage, foundProducts, userId, temperature = 0.7 }) {
     let loopCount = 0;
     const MAX_LOOP = 3;
     let totalTokensInLoop = totalTokenUsage;
 
     while (loopCount < MAX_LOOP) {
         loopCount++;
-        console.log(`[AgentLoop] Starting iteration ${loopCount} with ${model}...`);
+        console.log(`[AgentLoop] Starting iteration ${loopCount} with ${model} (Temp: ${temperature})...`);
 
         try {
             const openai = new OpenAI({ 
@@ -996,7 +996,8 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 model: model,
                 messages: messages,
                 tools: tools,
-                tool_choice: "auto"
+                tool_choice: "auto",
+                temperature: temperature
             });
 
             const responseMessage = completion.choices[0].message;
@@ -1386,20 +1387,13 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     // --- PROMPT & MESSAGE CONSTRUCTION ---
     let messages = [];
     // User Update: Default to JSON Object for reliability
-    // UPDATE: For Function Calling, we MUST NOT force JSON object unless we explicitly want a JSON response body.
-    // If we force JSON, the model might try to output JSON even when it should be calling a tool or talking normally.
-    // We let the model decide (auto) or default to text.
     let responseFormat = undefined; 
     
     // --- TOOL ENABLING LOGIC ---
-    // We always provide tools to the AI (unless external API). 
-    // The AI will decide whether to call them based on the Business Owner's instructions.
     const toolsEnabled = !pageConfig.is_external_api;
     const tools = toolsEnabled ? functionTools : undefined;
 
     if (pageConfig.is_external_api) {
-        // --- EXTERNAL API MODE (Minimal & White Label) ---
-        // Strictly white-labeling instructions per user request.
         const whiteLabelInstruction = "You are SalesmanChatbot, a high-performance AI developed by SalesmanChatbot team. You are NOT Google Gemini, OpenAI, Meta, or any other company's model. If asked about your identity, maintain that you are a proprietary SalesmanChatbot AI.";
         
         const userSystemPrompt = pagePrompts?.text_prompt || "";
@@ -1416,18 +1410,13 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             { role: 'user', content: finalUserMsg }
         ];
         
-        // Disable strict JSON enforcement for external API (allow natural text)
         responseFormat = undefined; 
         console.log(`[AI] External API Mode: Skipping n8n System Prompt.`);
 
     } else {
         let basePrompt = pagePrompts?.text_prompt || "";
 
-        if (!basePrompt || !basePrompt.trim()) {
-            basePrompt = "";
-        }
-
-    const n8nSystemPrompt = `[CORE SYSTEM RULES]
+        const n8nSystemPrompt = `[CORE SYSTEM RULES]
     - You are an AI Salesman for "${ownerName}".
     - Output MUST be a valid JSON object only. No plain text.
     - reply_text: Human-like response. (Professional, NO raw URLs, NO "click here" phrases)
@@ -1437,16 +1426,9 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     
     [WORKFLOW & DIRECTNESS]
     1. Call 'resolve_product' for any item mentioned.
-    2. Read the returned data. Pick the best match (e.g., 'Rice Cream' matches 'Rice Combo').
-    3. If user sends an image, analyze the '[Visual Content Description]' provided in the context.
-    4. This section contains a descriptive Bengali list of products detected in the images.
-    5. CRITICAL: Identify all product names mentioned in the list (e.g. "The Face Shop Rice Water Bright Foaming Cleanser").
-    6. You MUST call 'resolve_product' for these detected items to get real data (price, stock, etc.) immediately.
-    7. BE DECISIVE: Provide relevant product details from your tools immediately.
-    8. CRITICAL: 'reply_text' MUST be pure human-like text.
-    9. NO technical symbols ([, ], {, }, \\) or URLs are allowed in 'reply_text'. 
-    10. Any message with URLs or technical tags will be AUTOMATICALLY BLOCKED by the system and never sent to the customer.
-    11. All image delivery is handled by the backend using your 'image_urls' array.
+    2. Read the returned data. Pick the best match.
+    3. If user sends an image, analyze the '[Visual Content Description]' provided.
+    4. You MUST follow the tone, language, and behavior defined in the [BUSINESS OWNER'S SPECIFIC INSTRUCTIONS].
 
     [RESPONSE FORMAT]
     {
@@ -1465,11 +1447,11 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             ${ownerInstructionText}
             
             [FINAL DIRECTIVE]
-            1. You MUST follow the tone, language, and behavior defined above. 
-            2. Output ONLY the raw JSON object. Do not wrap it in markdown code blocks. No other text.` 
+            1. YOU MUST STRICTLY FOLLOW THE BUSINESS OWNER'S INSTRUCTIONS ABOVE. THEY TAKE PRECEDENCE OVER GENERAL RULES.
+            2. If the owner said "Answer in Bengali only", you MUST answer in Bengali.
+            3. Output ONLY the raw JSON object. No other text.` 
         };
     
-        // Deduplicate: If the last message in history is identical to the current user message, don't add it again.
         const lastHistoryMsg = processedHistory.length > 0 ? processedHistory[processedHistory.length - 1] : null;
         let isDuplicate = false;
         
@@ -1481,7 +1463,6 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             }
         }
 
-        // Merge remaining notes into current user message
         if (pendingSystemNotes.length > 0) {
             cleanUserMessage = `${pendingSystemNotes.join('\n')}\n${cleanUserMessage}`;
         }
@@ -1495,7 +1476,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             messages.push({ role: 'user', content: cleanUserMessage });
         }
 
-        // Final enforcement message at the VERY END of the array to ensure highest priority
+        // Final enforcement message at the VERY END
         messages.push(ownerInstructionMessage);
     }
 
@@ -1624,7 +1605,8 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                     proxyAgent: proxyAgent,
                     totalTokenUsage: totalTokenUsage,
                     foundProducts: [],
-                    userId: userId
+                    userId: userId,
+                    temperature: (pageConfig.is_external_api ? 0.7 : 0.2) // Low temp for format adherence
                 });
 
                 return finalize({ ...result, sentiment: 'neutral' });
@@ -1835,7 +1817,8 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             proxyAgent: proxyAgent,
             totalTokenUsage: totalTokenUsage,
             foundProducts: [],
-            userId: userId
+            userId: userId,
+            temperature: (pageConfig.is_external_api ? 0.7 : 0.2) // Low temp for format adherence
         });
 
         return finalize({ ...result, sentiment: 'neutral' });

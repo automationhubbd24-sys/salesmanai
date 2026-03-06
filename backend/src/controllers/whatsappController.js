@@ -1841,11 +1841,8 @@ STRICT RULES:
 
     if (imageAnalyzeText && imageAnalyzeText.trim() !== "") {
         if (finalOutput) finalOutput += "\n\n";
-        if (imageDetectionEnabled) {
-            finalOutput += `[Visual Content Description]:\n${imageAnalyzeText.trim()}`;
-        } else {
-            finalOutput += imageAnalyzeText;
-        }
+        // Always use standard tag for consistency
+        finalOutput += `[Visual Content Description]:\n${imageAnalyzeText.trim()}`;
     }
 
     // 3. Audio Transcripts (Critical for Voice Notes)

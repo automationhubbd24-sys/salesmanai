@@ -926,8 +926,6 @@ STRICT RULES:
             if (combinedImageAnalysis) {
                 // Unified single block for AI
                 combinedText += `\n\n[Visual Content Description]:\n${combinedImageAnalysis.trim()}`;
-            } else {
-                combinedText += `\n[User sent ${allImages.length} images: ${allImages.join(', ')}]`;
             }
         }
 
