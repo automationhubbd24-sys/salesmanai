@@ -2110,6 +2110,8 @@ Rules:
                         httpAgent: geminiProxyAgent, 
                         proxy: false 
                     } : {})
+                }, {
+                    timeout: 60000 // Increased timeout for Vision
                 });
 
             result = visionResponse.data?.candidates?.[0]?.content?.parts?.[0]?.text;

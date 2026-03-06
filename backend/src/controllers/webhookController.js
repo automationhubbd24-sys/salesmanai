@@ -860,14 +860,15 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             console.log(`[Batch] Per-message analysis for ${allImages.length} images...`);
             let combinedImageAnalysis = "";
 
-            let productAnalysisPrompt = `Analyze this image with 100% precision. Look at every product carefully.
+            let productAnalysisPrompt = `Analyze this image with 100% precision. 
 STRICT RULES:
-1. READ the actual text printed on each product. DO NOT guess names based on color (e.g., don't call a pink tube "Glow Recipe" if it says "Japan Sakura").
-2. Identify ALL products, even if they are small or partially hidden.
-3. If the text is too blurry to read, describe the product visual details instead of guessing a brand.
-4. Output EXACTLY in this Bengali format:
+1. FOCUS ONLY on the main products in the foreground (e.g., being held in hand or placed at the front). 
+2. IGNORE the background products on shelves or blurred items.
+3. READ the actual text printed on each foreground product carefully. 
+4. Identify the brand and full product name.
+5. Output EXACTLY in this Bengali format:
 এই ছবিতে মোট **[সংখ্যা]টি** প্রোডাক্ট রয়েছে। প্রোডাক্টগুলোর নাম নিচে দেওয়া হলো:
-১. **[প্রোডাক্টের পুরো নাম যা প্যাকেজে লেখা আছে]** ([পজিশন ও ছোট ভিজ্যুয়াল বিবরণ])
+১. **[প্রোডাক্টের পুরো নাম]** ([পজিশন ও ছোট ভিজ্যুয়াল বিবরণ])
 ২. ...
 এটি মূলত একটি **"[কম্বো বা অফার নাম]"** হিসেবে সাজানো হয়েছে। [একটি ছোট বাক্যে সারসংক্ষেপ]`;
 
