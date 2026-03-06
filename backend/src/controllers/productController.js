@@ -445,6 +445,18 @@ exports.createProduct = async (req, res) => {
             }
         }
 
+        let allowedWASessions = null;
+        if (req.body.allowed_wa_sessions) {
+            try {
+                const parsed = JSON.parse(req.body.allowed_wa_sessions);
+                if (Array.isArray(parsed)) {
+                    allowedWASessions = parsed.map(String);
+                }
+            } catch (e) {
+                console.error("Invalid allowed_wa_sessions format", e);
+            }
+        }
+
         if (!name) return res.status(400).json({ error: "Product name is required" });
 
         // 3. Save to DB
@@ -461,6 +473,7 @@ exports.createProduct = async (req, res) => {
             currency,
             stock,
             allowed_page_ids: allowedPages ? JSON.stringify(allowedPages) : null,
+            allowed_wa_sessions: allowedWASessions ? JSON.stringify(allowedWASessions) : null,
             keywords,
             is_combo: req.body.is_combo === 'true' || req.body.is_combo === true,
             combo_items: req.body.combo_items || '[]',
@@ -550,6 +563,8 @@ exports.getProducts = async (req, res) => {
         
         if (pageId && !isTeamMember) {
             const pgClient = require('../services/pgClient');
+            
+            // Check Messenger Pages
             const pageRes = await pgClient.query(
                 'SELECT user_id, email FROM page_access_token_message WHERE page_id = $1 AND user_id IS NOT NULL LIMIT 1',
                 [pageId]
@@ -594,6 +609,16 @@ exports.getProducts = async (req, res) => {
                         targetUserId = pageOwnerId;
                     }
                 }
+            }
+        } else {
+            // Check WhatsApp Sessions
+            const waRes = await pgClient.query(
+                'SELECT user_id FROM whatsapp_message_database WHERE session_name = $1 AND user_id IS NOT NULL LIMIT 1',
+                [pageId]
+            );
+            if (waRes.rows.length > 0) {
+                targetUserId = waRes.rows[0].user_id;
+                console.log(`[ProductFetch] WhatsApp session match for targetUserId: ${targetUserId}`);
             }
         }
     }
@@ -733,6 +758,20 @@ exports.updateProduct = async (req, res) => {
                 }
             } catch (e) {
                 return res.status(400).json({ error: "Invalid allowed_page_ids JSON format" });
+            }
+        }
+
+        if (req.body.allowed_wa_sessions) {
+            try {
+                const parsedAllowed = JSON.parse(req.body.allowed_wa_sessions);
+                if (Array.isArray(parsedAllowed)) {
+                    const stringAllowed = parsedAllowed.map(String);
+                    updates.allowed_wa_sessions = JSON.stringify(stringAllowed);
+                } else {
+                    updates.allowed_wa_sessions = '[]';
+                }
+            } catch (e) {
+                return res.status(400).json({ error: "Invalid allowed_wa_sessions JSON format" });
             }
         }
 

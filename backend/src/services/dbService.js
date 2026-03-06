@@ -2502,9 +2502,9 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
              params.push(userId); // $1
              params.push(String(pageId)); // $2
              whereClause = `user_id = $1 AND (
-                allowed_page_ids IS NULL 
-                OR allowed_page_ids::jsonb = '[]'::jsonb 
-                OR allowed_page_ids::jsonb @> jsonb_build_array($2::text)
+                (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb) 
+                OR (allowed_page_ids::jsonb @> jsonb_build_array($2::text))
+                OR (allowed_wa_sessions::jsonb @> jsonb_build_array($2::text))
              )`;
         } else {
             // TEAM MEMBER VIEW: Restricted by allowed_page_ids
@@ -2554,6 +2554,12 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
             EXISTS (
                 SELECT 1 
                 FROM jsonb_array_elements_text(allowed_page_ids) AS elem 
+                WHERE elem = ANY($${params.length}::text[])
+            )
+            OR
+            EXISTS (
+                SELECT 1 
+                FROM jsonb_array_elements_text(allowed_wa_sessions) AS elem 
                 WHERE elem = ANY($${params.length}::text[])
             )
         )`;
@@ -2667,7 +2673,11 @@ async function getProductsByNames(userId, productNames, pageId = null) {
 
     if (pageId) {
         params.push(String(pageId));
-        sql += ` AND (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb OR allowed_page_ids::jsonb @> jsonb_build_array($${params.length}::text))`;
+        sql += ` AND (
+            (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb OR allowed_page_ids::jsonb @> jsonb_build_array($${params.length}::text))
+            OR
+            (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb OR allowed_wa_sessions::jsonb @> jsonb_build_array($${params.length}::text))
+        )`;
     }
     
     try {
@@ -2737,7 +2747,11 @@ async function searchProducts(userId, queryText, pageId = null) {
 
             if (pageId) {
                 params.push(String(pageId));
-                where += ` AND (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb OR allowed_page_ids::jsonb @> jsonb_build_array($${params.length}::text))`;
+                where += ` AND (
+                    (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb OR allowed_page_ids::jsonb @> jsonb_build_array($${params.length}::text))
+                    OR
+                    (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb OR allowed_wa_sessions::jsonb @> jsonb_build_array($${params.length}::text))
+                )`;
             }
             return { where, params };
         };
