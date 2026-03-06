@@ -425,6 +425,21 @@ async function initTables() {
         `);
         console.log("[DB] 'products.allow_description' column checked.");
 
+        await query(`
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='allowed_wa_sessions') THEN
+                    ALTER TABLE products ADD COLUMN allowed_wa_sessions JSONB DEFAULT '[]'::jsonb;
+                END IF;
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='allowed_page_ids') THEN
+                    ALTER TABLE products ALTER COLUMN allowed_page_ids SET DEFAULT '[]'::jsonb;
+                END IF;
+            END $$;
+        `);
+        await query(`UPDATE products SET allowed_wa_sessions = '[]'::jsonb WHERE allowed_wa_sessions IS NULL`);
+        await query(`UPDATE products SET allowed_page_ids = '[]'::jsonb WHERE allowed_page_ids IS NULL`);
+        console.log("[DB] 'products.allowed_wa_sessions' column checked.");
+
         // Error Logs Table
         await query(`
             CREATE TABLE IF NOT EXISTS error_logs (
