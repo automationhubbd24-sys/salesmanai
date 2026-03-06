@@ -1842,7 +1842,8 @@ STRICT RULES:
 
         // 1. BROKEN IMAGE TAG RECOVERY & CLEANUP
         if (replyText) {
-            const brokenTagRegex = /IMAGE:\s*([^|]+?)\s*\|\s*(?=\s|$)/gi;
+            // FIX: Match broken tags with any content after '|' until newline or end of string
+            const brokenTagRegex = /IMAGE:\s*([^|]+?)\s*\|\s*(?!\s*https?:\/\/)(.*)/gi;
             let brokenMatch;
             brokenTagRegex.lastIndex = 0;
             const seenBrokenTags = new Set();
@@ -1865,11 +1866,9 @@ STRICT RULES:
                             validProductUrls.add(fullImgUrl);
                             if (product.image_url) validProductUrls.add(product.image_url);
                         } else {
-                            // If no valid URL, scrub the tag to prevent it showing up in UI
                             replyText = replyText.split(fullMatch).join('').trim();
                         }
                     } else {
-                        // If product not found, scrub the tag
                         replyText = replyText.split(fullMatch).join('').trim();
                     }
                 } catch (err) {
@@ -1877,6 +1876,10 @@ STRICT RULES:
                     replyText = replyText.split(fullMatch).join('').trim();
                 }
             }
+            
+            // FINAL SCRUBBING: Remove ANY remaining IMAGE: or ##PRODUCT tags that might have survived
+            replyText = replyText.replace(/IMAGE:\s*[^|\n]*\s*\|?[^\n]*/gi, '').trim();
+            replyText = replyText.replace(/##PRODUCT\s*["'](.+?)["']/gi, '').trim();
         }
 
         if (
