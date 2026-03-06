@@ -7,7 +7,7 @@ const authMiddleware = require('../middleware/authMiddleware');
 // If the user is a member of a team, they act on behalf of the team owner.
 // If the user is not a member, they are the owner.
 async function getEffectiveOwnerEmail(req, userEmail) {
-    const requestedOwner = req.query.team_owner || req.headers['x-team-owner'];
+    const requestedOwner = req.query?.team_owner || req.headers['x-team-owner'];
 
     if (requestedOwner) {
         // Verify membership

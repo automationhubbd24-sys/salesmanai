@@ -296,11 +296,14 @@ export default function ProductsPage() {
             }
 
             const res = await fetch(url, { headers });
-            const data = await res.json();
-            
-            console.log("Product Fetch Result:", data);
+            const data = await res.json().catch(() => null);
 
-            if (data.data && Array.isArray(data.data)) {
+            if (!res.ok) {
+                const message = data && data.error ? data.error : `Products fetch failed (${res.status})`;
+                throw new Error(message);
+            }
+
+            if (data && data.data && Array.isArray(data.data)) {
                 setProducts(data.data);
             } else if (Array.isArray(data)) {
                 setProducts(data);
@@ -309,7 +312,8 @@ export default function ProductsPage() {
             }
         } catch (error) {
             console.error("Fetch products failed:", error);
-            toast.error("Products load failed");
+            const message = error instanceof Error ? error.message : "Products load failed";
+            toast.error(message);
         } finally {
             setLoading(false);
         }

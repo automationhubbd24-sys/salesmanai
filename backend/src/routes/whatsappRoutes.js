@@ -80,7 +80,7 @@ router.get('/sessions', async (req, res) => {
             return res.json([]);
         }
 
-        const requestedOwner = req.query.team_owner || req.headers['x-team-owner'];
+        const requestedOwner = req.query?.team_owner || req.headers['x-team-owner'];
 
         // 2. Fetch Personal Sessions
         let mySessions = [];

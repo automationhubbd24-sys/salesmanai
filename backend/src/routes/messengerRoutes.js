@@ -24,7 +24,7 @@ router.get('/pages', async (req, res) => {
             return res.status(401).json({ error: 'Unauthorized' });
         }
 
-        const requestedOwner = req.query.team_owner || req.headers['x-team-owner'];
+        const requestedOwner = req.query?.team_owner || req.headers['x-team-owner'];
 
         console.log(`[GET /pages] User: ${userEmail}, RequestedOwner: ${requestedOwner}`);
 

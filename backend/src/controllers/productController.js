@@ -73,7 +73,7 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
         // 0. CRITICAL PRIORITY: Check Page Ownership First!
         // If I am interacting with a page I OWN, I must stay in my Personal Context.
         // This overrides any cached Team Context or Explicit Team Request.
-        const pageId = req.query.page_id || req.body.page_id;
+        const pageId = req.query?.page_id || req.body?.page_id;
         if (pageId) {
             try {
                 const pageRes = await pgClient.query(
@@ -103,7 +103,7 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
 
         // 2. EXPLICIT TEAM CONTEXT (Professional Workspace)
         // Check if the request explicitly asks for a specific team context
-        const requestedTeamOwner = req.query.team_owner || req.headers['x-team-owner'] || req.body.team_owner;
+        const requestedTeamOwner = req.query?.team_owner || req.headers['x-team-owner'] || req.body?.team_owner;
         
         if (requestedTeamOwner) {
              console.log(`[AuthDebug] Requested Team Owner: ${requestedTeamOwner}`);
@@ -139,7 +139,7 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
              // DYNAMIC CONTEXT: Check Page Owner
              // If a specific page is requested, we check if that page belongs to a Team Owner
              // If so, we automatically switch to that Team Owner's context.
-             const pageId = req.query.page_id || req.body.page_id;
+             const pageId = req.query?.page_id || req.body?.page_id;
              
              if (pageId) {
                  try {
@@ -361,7 +361,7 @@ exports.checkStatus = async (req, res) => {
 exports.createProduct = async (req, res) => {
     try {
         const baseUserId = req.body.user_id || null;
-        const pageId = req.body.page_id || null;
+        const pageId = req.body?.page_id || null;
         
         // Use resolveProductOwnerUserId to ensure products are always attached to the OWNER
         const userId = await resolveProductOwnerUserId(req, baseUserId, pageId);
@@ -489,10 +489,10 @@ exports.createProduct = async (req, res) => {
 
 exports.getProducts = async (req, res) => {
     try {
-        const pageId = req.query.page_id || null;
+        const pageId = req.query?.page_id || null;
         const baseUserId = req.query.user_id || null;
         
-        console.log(`[ProductGet] Incoming Request: Page=${pageId}, User=${baseUserId}, TeamOwner=${req.query.team_owner}`);
+        console.log(`[ProductGet] Incoming Request: Page=${pageId}, User=${baseUserId}, TeamOwner=${req.query?.team_owner}`);
         
         // 1. Resolve Effective User (Handles Team Context)
         // Moved UP to ensure we know who is asking before determining target
@@ -646,7 +646,7 @@ exports.getProducts = async (req, res) => {
         let allowedPageIds = null; // null means "all pages" (for Owner)
         
         if (isTeamMember && viewerEmail) {
-            const requestedTeamOwner = req.query.team_owner || req.headers['x-team-owner'] || teamOwnerEmail;
+            const requestedTeamOwner = req.query?.team_owner || req.headers['x-team-owner'] || teamOwnerEmail;
             
             if (requestedTeamOwner) {
                 const pgClient = require('../services/pgClient');
@@ -708,7 +708,7 @@ exports.updateProduct = async (req, res) => {
     try {
         const { id } = req.params;
         const baseUserId = req.body.user_id || null;
-        const pageId = req.body.page_id || null;
+        const pageId = req.body?.page_id || null;
         const userId = await resolveProductOwnerUserId(req, baseUserId, pageId);
         if (!userId) return res.status(400).json({ error: "user_id is required for verification" });
 
