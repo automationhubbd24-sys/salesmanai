@@ -1731,7 +1731,16 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
         if (!imageDetectionEnabled) {
             imageAnalyzeText = `[System Note: User sent ${allImages.length} images. Image detection is disabled, so they were not analyzed. Ask the user to describe what they want.]`;
         } else {
-         let productAnalysisPrompt = "Extract only product names from the image. Output one per line in this exact format: PRODUCT: <full product name>. If a combo is shown, list every product in it as separate PRODUCT lines. Do not add descriptions or prices.";
+         let productAnalysisPrompt = `Analyze this image with high precision (like Gemini Pro Vision).
+1. Identify ALL individual products, even if multiple or partially visible.
+2. Read all visible text, branding, and packaging details.
+3. If text is missing or unclear, identify products by shape, color, and visual features.
+4. Extract any prices, combo names (e.g., "Student Budget Best Combo"), or offer text.
+5. List everything clearly in this format:
+PRODUCT: <Brand Name> <Exact Product Name> <Size/Variant if visible>
+TEXT_ON_IMAGE: <Any slogans or offer text>
+SUMMARY: <Brief description of what is in the image>`;
+
         try {
             // Use WhatsApp Config which includes page_prompts
             // const pageConfig = await dbService.getWhatsAppConfig(sessionName); // Optim: Already loaded

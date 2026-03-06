@@ -1436,12 +1436,13 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     1. Call 'resolve_product' for any item mentioned.
     2. Read the returned data. Pick the best match (e.g., 'Rice Cream' matches 'Rice Combo').
     3. If user sends an image, analyze the '[Image Analysis Result]' provided in the context.
-    4. If the image analysis describes a product (e.g. "Rice Water Bright Cleanser"), immediately call 'resolve_product' for that item to get its real data (price, stock, etc.).
-    5. BE DECISIVE: If a user asks for a photo or sends an image, provide relevant product details immediately.
-    6. CRITICAL: 'reply_text' MUST be pure human-like text.
-    7. NO technical symbols ([, ], {, }, \\) or URLs are allowed in 'reply_text'. 
-    8. Any message with URLs or technical tags will be AUTOMATICALLY BLOCKED by the system and never sent to the customer.
-    9. All image delivery is handled by the backend using your 'image_urls' array.
+    4. Pay special attention to 'PRODUCT:' lines and 'SUMMARY:' in the Image Analysis to identify what the user wants.
+    5. Immediately call 'resolve_product' for the detected items to get real data (price, stock, etc.).
+    6. BE DECISIVE: If a user sends an image, provide relevant product details immediately.
+    7. CRITICAL: 'reply_text' MUST be pure human-like text.
+    8. NO technical symbols ([, ], {, }, \\) or URLs are allowed in 'reply_text'. 
+    9. Any message with URLs or technical tags will be AUTOMATICALLY BLOCKED by the system and never sent to the customer.
+    10. All image delivery is handled by the backend using your 'image_urls' array.
 
     [RESPONSE FORMAT]
     {
