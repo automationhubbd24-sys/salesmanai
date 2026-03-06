@@ -1944,10 +1944,12 @@ Rules:
                 model: model,
                 max_tokens: maxTokens,
                 messages: [
-                    { role: "system", content: systemPrompt },
-                    {
-                        role: "user",
-                        content: [{ type: "image_url", image_url: imageContent }]
+                    { 
+                        role: "user", 
+                        content: [
+                            { type: "text", text: systemPrompt },
+                            { type: "image_url", image_url: imageContent }
+                        ]
                     }
                 ]
             };
@@ -2061,10 +2063,12 @@ Rules:
                 model: model,
                 max_tokens: maxTokens,
                 messages: [
-                    { role: "system", content: systemPrompt },
-                    {
-                        role: "user",
-                        content: [{ type: "image_url", image_url: imageContent }]
+                    { 
+                        role: "user", 
+                        content: [
+                            { type: "text", text: systemPrompt },
+                            { type: "image_url", image_url: imageContent }
+                        ]
                     }
                 ]
             };
@@ -2158,10 +2162,12 @@ Rules:
             model: model,
             max_tokens: maxTokens,
             messages: [
-                { role: "system", content: systemPrompt },
-                {
-                    role: "user",
-                    content: [{ type: "image_url", image_url: imageContent }]
+                { 
+                    role: "user", 
+                    content: [
+                        { type: "text", text: systemPrompt },
+                        { type: "image_url", image_url: imageContent }
+                    ]
                 }
             ]
         };
