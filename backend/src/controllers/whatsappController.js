@@ -1766,19 +1766,6 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
 
                     if (perMsgText) {
                         collectedTexts.push(perMsgText);
-                        
-                        const detectedItems = extractVisionProductNames(perMsgText);
-                        if (detectedItems.length > 0 && pageConfig.user_id) {
-                            for (const itemName of detectedItems.slice(0, 3)) {
-                                try {
-                                    const found = await dbService.searchProducts(pageConfig.user_id, itemName, sessionName);
-                                    if (found && found.length > 0) {
-                                        collectedTexts.push(`[DATABASE MATCH FOUND for "${itemName}"]: ID: ${found[0].id}, Name: ${found[0].name}, Price: ${found[0].price}`);
-                                    }
-                                } catch (e) {}
-                            }
-                        }
-
                         // SAVE analysis as TEXT under ORIGINAL message_id for professional swipe-reply
                         try {
                             await dbService.saveWhatsAppChat({

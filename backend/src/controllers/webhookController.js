@@ -871,20 +871,6 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                         
                         if (perMsgText) {
                             combinedImageAnalysis += `\n${perMsgText}\n`;
-                            
-                            const detectedProducts = extractVisionProductNames(perMsgText);
-                            if (detectedProducts.length > 0 && pageConfig.user_id) {
-                                for (const pName of detectedProducts.slice(0, 3)) {
-                                    try {
-                                        const resolved = await dbService.searchProducts(pageConfig.user_id, pName, pageId);
-                                        if (resolved && resolved.length > 0) {
-                                            const bestMatch = resolved[0];
-                                            combinedImageAnalysis += `\n[DATABASE MATCH FOUND for "${pName}"]: ID: ${bestMatch.id}, Name: ${bestMatch.name}, Price: ${bestMatch.price}\n`;
-                                        }
-                                    } catch (e) {}
-                                }
-                            }
-
                             try {
                                 const analysisText = `[Image Analysis Result] ${perMsgText}`;
                                 await dbService.saveFbChat({
