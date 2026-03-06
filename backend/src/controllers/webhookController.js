@@ -1728,37 +1728,36 @@ STRICT RULES:
         // --- SMART IMAGE EXTRACTION & CLEANING ---
         if (!aiResponse.images) aiResponse.images = [];
         
-        // --- NEW: Add images from structured image_urls array (Professional JSON mode) ---
-        if (Array.isArray(aiResponse.image_urls)) {
-            aiResponse.image_urls.forEach(url => {
-                if (url && typeof url === 'string' && url.startsWith('http')) {
-                    if (!aiResponse.images.some(img => (typeof img === 'string' ? img : img.url) === url)) {
-                        aiResponse.images.push({ url: url, title: 'Product Image' });
+        let extractedImages = []; // Start fresh, tags have priority
+        const tagRegex = /##PRODUCT\s*["'](.+?)["']/gi;
+        const strictImageRegex = /IMAGE:\s*(.+?)\s*\|\s*(https?:\/\/[^\s,]+)/gi;
+        
+        const hasTagsInText = tagRegex.test(replyText) || strictImageRegex.test(replyText);
+        // Reset regex index after test
+        tagRegex.lastIndex = 0;
+        strictImageRegex.lastIndex = 0;
+
+        // If NO tags are in the text, we can use the AI's JSON image_urls or tools
+        if (!hasTagsInText) {
+            if (Array.isArray(aiResponse.image_urls)) {
+                aiResponse.image_urls.forEach(url => {
+                    if (url && typeof url === 'string' && url.startsWith('http')) {
+                        if (!extractedImages.some(img => img.url === url)) {
+                            extractedImages.push({ url: url, title: 'Product Image' });
+                        }
                     }
+                });
+            }
+            // Add images from aiResponse.images (from AgentLoop/Tools)
+            aiResponse.images.forEach(img => {
+                const url = typeof img === 'string' ? img : img.url;
+                if (url && !extractedImages.some(i => i.url === url)) {
+                    extractedImages.push(typeof img === 'string' ? { url: url, title: 'Product Image' } : img);
                 }
             });
         }
 
-        // Start with existing images from AI Service (normalize strings to objects)
-        let extractedImages = aiResponse.images.map(img => {
-            if (typeof img === 'string') return { url: img, title: 'Product Image' };
-            return img;
-        }); 
-
         // VALIDATION: Filter out hallucinated external URLs (e.g. ibb.co) that are not in our system
-        // We only allow:
-        // 1. URLs from our own domain (local storage)
-        // 2. URLs that exactly match a product's image_url from the promptProductMap
-        // 3. URLs that are FB CDN (from user attachments) - though usually we don't send those back as products
-        
-        const baseUrlForImages = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
-        const normalizeImageUrl = (url) => {
-            if (!url || url === 'N/A') return null;
-            if (url.startsWith('http')) return url;
-            const cleanPath = url.startsWith('/') ? url : `/${url}`;
-            return `${baseUrlForImages.replace(/\/$/, '')}${cleanPath}`;
-        };
-
         const validProductUrls = new Set();
         if (promptProductMap) {
             Object.values(promptProductMap).forEach(p => {
@@ -1783,14 +1782,7 @@ STRICT RULES:
         const normalizedProductNames = Object.keys(promptProductMap || {});
 
         if (normalizedProductNames.length > 0 && replyText) {
-            const lowerReply = replyText.toLowerCase();
-            
-            // 1. GREETING PROTECTION: If reply is too short, skip auto-injection (Only tags allowed)
-            // This prevents image leaks on "Hi", "Hello" etc.
-            const isShortGreeting = replyText.length < 30 && /^(hi|hello|hey|সালাম|হ্যালো|নমস্কার|জ্বি|কিভাবে)/i.test(replyText);
-            
             // 2. TAG-BASED EXTRACTION (Highest Priority)
-            const tagRegex = /##PRODUCT\s*["'](.+?)["']/gi;
             let tagMatch;
             const mentionedViaTag = new Set();
             while ((tagMatch = tagRegex.exec(replyText)) !== null) {
@@ -1802,13 +1794,7 @@ STRICT RULES:
                 if (!product || !product.image_url) return;
                 
                 const lowerName = name.toLowerCase();
-                const isExplicitlyTagged = mentionedViaTag.has(lowerName);
-                
-                // FIX: Only inject if there's an EXPLICIT tag (##PRODUCT). 
-                // Natural mention matching is disabled to prevent image leaks on greetings or casual talk.
-                const shouldInject = isExplicitlyTagged;
-
-                if (shouldInject) {
+                if (mentionedViaTag.has(lowerName)) {
                     // Add Primary Image
                     let primaryUrl = product.image_url;
                     if (!/^https?:\/\//i.test(primaryUrl)) {
@@ -1820,19 +1806,7 @@ STRICT RULES:
                         extractedImages.push({ url: primaryUrl, title: product.name || name, description: product.description || '' });
                     }
 
-                    // Add Additional Images
-                    if (product.additional_images && Array.isArray(product.additional_images)) {
-                        product.additional_images.forEach((url, idx) => {
-                            let additionalUrl = url;
-                            if (!/^https?:\/\//i.test(additionalUrl)) {
-                                const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
-                                additionalUrl = `${baseUrl.replace(/\/$/, '')}/${additionalUrl.replace(/^\/+/, '')}`;
-                            }
-                            if (!extractedImages.some(img => img.url === additionalUrl)) {
-                                extractedImages.push({ url: additionalUrl, title: `${product.name || name} (Pic ${idx + 2})`, description: product.description || '' });
-                            }
-                        });
-                    }
+                    // DO NOT add additional images unless explicitly asked for (keeps it clean)
                 }
             });
 
@@ -1901,7 +1875,6 @@ STRICT RULES:
 
         // 2. STRICT FORMAT: IMAGE: Title | URL
         // Matches: IMAGE: Basic Plan | https://...
-        const strictImageRegex = /IMAGE:\s*(.+?)\s*\|\s*(https?:\/\/[^\s,]+)/gi;
         let strictMatch;
         while ((strictMatch = strictImageRegex.exec(replyText)) !== null) {
             const fullMatch = strictMatch[0];
@@ -1915,7 +1888,6 @@ STRICT RULES:
             const isImage = /\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(url);
             
             // STRICT VALIDATION: Check if this URL is known
-            // If it's a hallucinated URL (not in our product map and not our domain), block it.
             const isKnownProduct = validProductUrls.has(url);
             const isLocal = url.includes(process.env.PUBLIC_BASE_URL || 'localhost');
             const isFbCdn = url.includes('fbcdn.net') || url.includes('cdn.fbsbx.com'); // Allow user images if echoed
@@ -1957,12 +1929,10 @@ STRICT RULES:
 
         // --- AGENTIC DELIVERY SYSTEM (BACKEND-DRIVEN) ---
         // User Requirement: Only send one relevant image. If tags exist, prioritize them.
-        if (aiResponse.action && aiResponse.action !== "NONE" && aiResponse.product_id) {
+        if (!hasTagsInText && aiResponse.action && aiResponse.action !== "NONE" && aiResponse.product_id) {
             try {
                 const product = await dbService.getProductById(aiResponse.product_id);
                 if (product) {
-                    // Logic: If AI already extracted images via tags (##PRODUCT or IMAGE:),
-                    // we do NOT auto-inject the product photo to avoid duplicates/irrelevant images.
                     const alreadyHasImages = extractedImages.length > 0;
 
                     if (aiResponse.action === "SEND_DETAILS" || aiResponse.action === "SEND_BOTH") {
