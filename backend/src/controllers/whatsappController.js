@@ -2718,7 +2718,7 @@ STRICT RULES:
 
         // 7. Save Bot Reply to DB (Only if not empty)
         let modelLabel = aiResponse.model;
-        if (!hasOwnKey && (modelLabel === 'gemini-2.0-flash' || modelLabel === 'gemini-2.0-flash-lite')) {
+        if (!hasOwnKey && (modelLabel === 'gemini-2.5-flash' || modelLabel === 'gemini-2.5-flash-lite' || modelLabel === 'gemini-2.0-flash-lite')) {
             modelLabel = 'salesmanchatbot-pro';
         }
 

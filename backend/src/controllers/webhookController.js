@@ -1894,7 +1894,7 @@ STRICT RULES:
             let aiModelLabel = aiResponse.model || null;
             const isCheapEngineForLog = pageConfig.cheap_engine !== false;
             if (isCheapEngineForLog && (!pageConfig.api_key || pageConfig.api_key === 'MANAGED_SECRET_KEY')) {
-                if (aiModelLabel === 'gemini-2.0-flash' || aiModelLabel === 'gemini-2.0-flash-lite') {
+                if (aiModelLabel === 'gemini-2.5-flash' || aiModelLabel === 'gemini-2.0-flash' || aiModelLabel === 'gemini-2.0-flash-lite') {
                     aiModelLabel = 'salesmanchatbot-pro';
                 }
             }

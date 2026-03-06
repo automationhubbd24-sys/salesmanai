@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS engine_configs (
 -- Seed initial data
 INSERT INTO engine_configs (name, provider, text_model, voice_model, image_model)
 VALUES 
-('salesmanchatbot-pro', 'google', 'gemini-2.0-flash', 'gemini-2.0-flash', 'gemini-2.0-flash'),
+('salesmanchatbot-pro', 'google', 'gemini-2.5-flash', 'gemini-2.5-flash', 'gemini-2.5-flash'),
 ('salesmanchatbot-flash', 'openrouter', 'arcee-ai/trinity-large-preview', 'arcee-ai/trinity-large-preview', 'arcee-ai/trinity-large-preview'),
 ('salesmanchatbot-lite', 'groq', 'llama-3.3-70b-versatile', 'whisper-large-v3', 'llama-3.2-11b-vision-preview')
 ON CONFLICT (name) DO NOTHING;

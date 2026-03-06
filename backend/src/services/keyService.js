@@ -99,11 +99,9 @@ setInterval(() => {
 // Based on typical Free Tier limits as of early 2025
 const DEFAULT_LIMITS = {
     // Gemini Limits (Based on User Info)
-    'gemini-2.5-flash': { rpm: 15, rpd: 1500 }, // User Request: 2.5 Support
-    'gemini-2.5-flash-lite': { rpm: 15, rpd: 1500 }, 
-    'gemini-2.0-flash': { rpm: 15, rpd: 1500 }, 
-    'gemini-2.0-flash-lite': { rpm: 15, rpd: 1500 }, 
-    'gemini-1.5-pro': { rpm: 2, rpd: 50 },
+    'gemini-2.5-flash': { rpm: 5, rpd: 20 }, 
+    'gemini-2.5-flash-lite': { rpm: 5, rpd: 20 }, 
+
     
     // Groq Limits (Based on Official Docs)
     'llama-3.3-70b-versatile': { rpm: 30, rpd: 1000 }, 

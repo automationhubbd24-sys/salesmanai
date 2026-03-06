@@ -34,7 +34,7 @@ async function testOpenRouterKey(apiKey) {
             apiKey: apiKey,
         });
         const completion = await openai.chat.completions.create({
-            model: "google/gemini-2.0-flash-001",
+            model: "google/gemini-2.5-flash",
             messages: [{ role: "user", content: "hi" }],
             max_tokens: 5
         });
@@ -54,7 +54,7 @@ async function testGeminiKey(apiKey) {
         });
 
         const completion = await openai.chat.completions.create({
-            model: 'gemini-2.0-flash',
+            model: 'gemini-2.5-flash',
             messages: [{ role: 'user', content: 'hi from SalesmanChatbot key test' }],
             max_tokens: 8
         });

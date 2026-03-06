@@ -239,7 +239,7 @@ exports.testModel = async (req, res) => {
 
 exports.testGeminiPool = async (req, res) => {
     const { model, message } = req.body || {};
-    const testModel = model || 'gemini-2.0-flash-lite';
+    const testModel = model || 'gemini-2.5-flash-lite';
     const testMessage = message || 'hi from SalesmanChatbot key test';
 
     try {
@@ -311,9 +311,9 @@ exports.testApiPool = async (req, res) => {
     const providerFilter = provider && provider !== 'all' ? [provider] : null;
 
     const providerDefaults = {
-        google: 'gemini-2.0-flash',
-        gemini: 'gemini-2.0-flash',
-        openrouter: 'google/gemini-2.0-flash-001',
+        google: 'gemini-2.5-flash',
+        gemini: 'gemini-2.5-flash',
+        openrouter: 'google/gemini-2.5-flash',
         groq: 'llama-3.3-70b-versatile',
         openai: 'gpt-4o-mini',
         mistral: 'mistral-small-latest'
@@ -338,7 +338,7 @@ exports.testApiPool = async (req, res) => {
         for (const k of keys) {
             const providerKey = (k.provider || '').toLowerCase();
             let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
-            let defaultModel = providerDefaults[providerKey] || 'gemini-2.0-flash';
+            let defaultModel = providerDefaults[providerKey] || 'gemini-2.5-flash';
 
             if (providerKey === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
             else if (providerKey === 'groq') baseURL = 'https://api.groq.com/openai/v1';

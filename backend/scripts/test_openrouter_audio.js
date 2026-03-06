@@ -33,7 +33,7 @@ async function testOpenRouterAudio() {
         
         const modelsToTest = [
             'nvidia/nemotron-nano-12b-v2-vl:free', // The one in question
-            'google/gemini-2.0-flash-lite-preview-02-05:free', // Alternative
+            'google/gemini-2.5-flash:free', // Latest
             'google/gemini-2.0-flash-exp:free' // Another alternative
         ];
 

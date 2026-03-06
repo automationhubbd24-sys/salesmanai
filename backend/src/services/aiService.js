@@ -2189,7 +2189,10 @@ async function transcribeAudio(audioUrl, config) {
                           audioUrl.includes('/api/files/');
         
         if (isWahaUrl) {
-            headers['X-Api-Key'] = WAHA_API_KEY;
+            // Priority: config.waha_api_key || process.env.WAHA_API_KEY || default
+            const activeWahaKey = config.waha_api_key || process.env.WAHA_API_KEY || WAHA_API_KEY;
+            headers['X-Api-Key'] = activeWahaKey;
+            console.log(`[Audio] Using WAHA Auth for URL: ${audioUrl.substring(0, 50)}...`);
         } else if (audioUrl.includes('graph.facebook.com') && config.page_access_token) {
             headers['Authorization'] = `Bearer ${config.page_access_token}`;
         }
@@ -2203,11 +2206,11 @@ async function transcribeAudio(audioUrl, config) {
         if (contentType.includes('opus') || contentType.includes('ogg')) mimeType = 'audio/ogg';
         else if (contentType.includes('mp3') || contentType.includes('mpeg')) mimeType = 'audio/mpeg';
         else if (contentType.includes('wav')) mimeType = 'audio/wav';
-        else if (contentType.includes('aac') || contentType.includes('mp4') || contentType.includes('m4a')) mimeType = 'audio/mp4';
+        else if (contentType.includes('aac') || contentType.includes('mp4') || contentType.includes('m4a') || contentType.includes('mpeg')) mimeType = 'audio/mp4';
         else {
             // Fallback: Check URL extension if Content-Type is generic/unknown
             if (audioUrl.includes('.mp4') || audioUrl.includes('.aac') || audioUrl.includes('.m4a')) mimeType = 'audio/mp4';
-            else if (audioUrl.includes('.mp3')) mimeType = 'audio/mpeg';
+            else if (audioUrl.includes('.mp3') || audioUrl.includes('.mpeg')) mimeType = 'audio/mpeg';
             else if (audioUrl.includes('.wav')) mimeType = 'audio/wav';
             else mimeType = 'audio/ogg'; // Default safe assumption
         }
@@ -2235,7 +2238,7 @@ async function transcribeAudio(audioUrl, config) {
         return `[Audio Download Failed: ${e.message}]`;
     }
 
-    // 2. Priority Chain: Own API -> Gemini 2.5 Flash -> Lite -> Groq (Faster)
+    // 2. Priority Chain: Own API -> Gemini 2.0 Flash -> 1.5 Flash -> Lite -> Groq (Faster)
     const priorityChain = [];
     let userKey = null;
     const preferGeminiForOgg = mimeType === 'audio/ogg';
@@ -2291,12 +2294,15 @@ async function transcribeAudio(audioUrl, config) {
     }
 
     // PHASE 2: SYSTEM KEYS (Cheap Engine / Fallback)
-    // ONLY add system keys if NO User Key was provided.
-    // User Requirement: "own api er modde defualt chatmodel defualt api asob kisui use kora jabe na"
     if (!userKey) {
-        // User Update: Use configured voice model if available
-        let voiceModel = safeConfig.voice_model || safeConfig.audio_model || safeConfig.chat_model;
+        let voiceModel = safeConfig.voice_model || safeConfig.audio_model || safeConfig.chat_model || 'gemini-2.5-flash';
         let provider = safeConfig.ai_provider || safeConfig.ai || safeConfig.operator || 'google';
+
+        // FORCE Gemini 2.5 Flash for 2026/Latest support as requested by user
+        if (!safeConfig.voice_model && !resolved) {
+            voiceModel = 'gemini-2.5-flash';
+            provider = 'google';
+        }
 
         if (resolved) {
             voiceModel = resolved.finalModel;
@@ -2313,7 +2319,6 @@ async function transcribeAudio(audioUrl, config) {
                 if (gConfig) {
                     if (gConfig.voice_model) {
                         voiceModel = gConfig.voice_model;
-                        console.log(`[Audio] Loaded Global Voice Model for ${targetProvider}: ${voiceModel}`);
                     }
                     
                     if (gConfig.voice_provider_override && gConfig.voice_provider_override !== 'default') {
@@ -2323,9 +2328,7 @@ async function transcribeAudio(audioUrl, config) {
                         provider = targetProvider;
                     }
                 }
-            } catch (err) {
-                console.error(`[Audio] Global Config Lookup Failed: ${err.message}. Proceeding with defaults.`);
-            }
+            } catch (err) {}
         }
         
         if (voiceModel) {
@@ -2337,11 +2340,16 @@ async function transcribeAudio(audioUrl, config) {
                  provider = 'google';
              }
              
-             if (preferGeminiForOgg && voiceModel.includes('whisper')) {
-                 priorityChain.push({ provider: 'google', model: 'gemini-1.5-flash', name: 'Gemini Audio (OGG)' });
+             // Add Gemini 2.5 Flash as a high-priority system fallback if not already used
+             if (voiceModel !== 'gemini-2.5-flash') {
                  priorityChain.push({ provider: provider, model: voiceModel, name: `Configured (${voiceModel})` });
+                 priorityChain.push({ provider: 'google', model: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Latest)' });
              } else {
                  priorityChain.push({ provider: provider, model: voiceModel, name: `Configured (${voiceModel})` });
+             }
+             
+             if (preferGeminiForOgg && !voiceModel.includes('gemini')) {
+                 priorityChain.push({ provider: 'google', model: 'gemini-1.5-flash', name: 'Gemini Audio Fallback (OGG)' });
              }
         }
     }
