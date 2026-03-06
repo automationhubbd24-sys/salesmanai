@@ -545,28 +545,6 @@ export default function ProductsPage() {
                 }
             }
 
-            const waIds = new Set(
-                availablePages.filter(p => p.type === "whatsapp").map(p => String(p.page_id))
-            );
-            const fbIds = new Set(
-                availablePages.filter(p => p.type === "messenger").map(p => String(p.page_id))
-            );
-
-            let normalizedAllowedPages = Array.isArray(allowedPages) ? allowedPages.map(String) : [];
-            let normalizedAllowedWASessions = Array.isArray(allowedWASessions) ? allowedWASessions.map(String) : [];
-
-            const moveToWa = normalizedAllowedPages.filter(id => waIds.has(id));
-            if (moveToWa.length > 0) {
-                normalizedAllowedPages = normalizedAllowedPages.filter(id => !waIds.has(id));
-                normalizedAllowedWASessions = Array.from(new Set([...normalizedAllowedWASessions, ...moveToWa]));
-            }
-
-            const moveToFb = normalizedAllowedWASessions.filter(id => fbIds.has(id));
-            if (moveToFb.length > 0) {
-                normalizedAllowedWASessions = normalizedAllowedWASessions.filter(id => !fbIds.has(id));
-                normalizedAllowedPages = Array.from(new Set([...normalizedAllowedPages, ...moveToFb]));
-            }
-
             const formData = new FormData();
             formData.append("user_id", userId);
             formData.append("name", productName);
@@ -577,12 +555,13 @@ export default function ProductsPage() {
             formData.append("stock", productStock);
             formData.append("is_active", "true");
 
-            if (platform) {
-                formData.append("platform", platform);
-            }
+            // Use the current platform from state
+            const currentPlatform = platform || 'global';
+            formData.append("platform", currentPlatform);
 
-            formData.append("allowed_page_ids", JSON.stringify(normalizedAllowedPages));
-            formData.append("allowed_wa_sessions", JSON.stringify(normalizedAllowedWASessions));
+            // Directly use the state values - NO MORE confusing normalization
+            formData.append("allowed_page_ids", JSON.stringify(allowedPages));
+            formData.append("allowed_wa_sessions", JSON.stringify(allowedWASessions));
             formData.append("is_combo", String(isCombo));
             formData.append("combo_items", JSON.stringify(comboItems));
             formData.append("allow_description", String(allowDescription));

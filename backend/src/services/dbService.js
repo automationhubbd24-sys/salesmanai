@@ -2541,18 +2541,21 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
         const contextType = (normalizedPlatform === 'whatsapp' || normalizedPlatform === 'messenger')
             ? normalizedPlatform
             : await resolvePageContextType(pageId);
-        const isWhatsapp = contextType === 'whatsapp';
-        const pageCol = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_page_ids';
         
-        params.push(String(pageId));
-        const pIdx = params.length;
+        // Robustness Fix: Check BOTH columns for the pageId, as data might be misassigned
+        // but the ID itself is unique enough to identify the target.
+        const pageColMatch = `(
+            (allowed_page_ids::jsonb @> jsonb_build_array($${pIdx}::text))
+            OR
+            (allowed_wa_sessions::jsonb @> jsonb_build_array($${pIdx}::text))
+        )`;
 
         if (strictMode) {
             // Strict Isolation (Session-specific view):
-            // 1. Show if explicitly assigned to THIS specific page/session
+            // 1. Show if explicitly assigned to THIS specific page/session (in either column)
             // 2. OR show if it is a TRUE GLOBAL product (not assigned to ANY platform)
             whereClause += ` AND (
-                (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))
+                ${pageColMatch}
                 OR
                 (
                     (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb)
@@ -2566,7 +2569,9 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
             // 2. Show products explicitly assigned to THIS specific page/session
             // 3. EXCLUDE products that are assigned to OTHER platforms but NOT this one.
             
+            const isWhatsapp = contextType === 'whatsapp';
             const otherCol = isWhatsapp ? 'allowed_page_ids' : 'allowed_wa_sessions';
+            const thisCol = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_page_ids';
             
             whereClause += ` AND (
                 (
@@ -2575,11 +2580,11 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
                     (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
                 )
                 OR
-                (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))
+                ${pageColMatch}
             ) AND (
                 (${otherCol} IS NULL OR ${otherCol}::jsonb = '[]'::jsonb)
                 OR
-                (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))
+                ${pageColMatch}
             )`;
         }
     } else if (platform) {
