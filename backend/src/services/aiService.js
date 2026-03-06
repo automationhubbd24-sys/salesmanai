@@ -444,6 +444,7 @@ const computeCandidateScore = (query, product) => {
     const keywords = normalizeText(product.keywords || '');
     const visual = normalizeText(product.visual_tags || '');
     const desc = normalizeText(product.description || '');
+    const comboItems = Array.isArray(product.combo_items) ? normalizeText(product.combo_items.join(' ')) : '';
     
     if (!q) return 0;
     
@@ -457,6 +458,9 @@ const computeCandidateScore = (query, product) => {
     let score = 0;
     const qTokens = q.split(/\s+/).filter(Boolean);
     const nameTokens = name.split(/\s+/).filter(Boolean);
+    const comboTokens = comboItems.split(/\s+/).filter(Boolean);
+    const nameTokenSet = new Set(nameTokens);
+    const qTokenSet = new Set(qTokens);
 
     // 2. Token Matching with high weight for partial matches
     let matchedTokens = 0;
@@ -468,6 +472,9 @@ const computeCandidateScore = (query, product) => {
         } else if (keywords.includes(t)) {
             score += 40;
             matchedTokens++;
+        } else if (comboItems.includes(t)) {
+            score += 12;
+            matchedTokens++;
         }
     });
 
@@ -477,6 +484,15 @@ const computeCandidateScore = (query, product) => {
     // 4. Penalty for length mismatch (reduced to allow partials like "Rice Cream" -> "Rice Combo")
     const lenDiff = Math.abs(name.length - q.length);
     score -= Math.min(lenDiff, 10);
+
+    const coverage = qTokens.length > 0 ? matchedTokens / qTokens.length : 0;
+    const extraNameTokens = nameTokens.filter(t => !qTokenSet.has(t)).length;
+    const extraComboTokens = comboTokens.filter(t => !qTokenSet.has(t)).length;
+
+    if (coverage < 0.5) score -= 15;
+    if (coverage >= 0.8) score += 10;
+    if (product.is_combo && (extraNameTokens > 1 || extraComboTokens > 0) && coverage < 0.9) score -= 20;
+    if (!product.is_combo && coverage >= 0.7 && extraNameTokens <= 1) score += 8;
 
     return Math.min(Math.max(score, 0), 100);
 };

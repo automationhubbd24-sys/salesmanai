@@ -245,7 +245,6 @@ const sanitizeReplyText = (text) => {
     return text
         .replace(/\[[A-Z0-9_]+:[\s\S]*?\]/g, '')
         .replace(/\[.*?\]\s*\(\s*https?:\/\/[^\s)]+\s*\)/gi, '')
-        .replace(/https?:\/\/[^\s,)]+/gi, '')
         .replace(/\[\s*\/?[^\]]*\]/gi, '')
         .replace(/\(\s*\)/g, '')
         .replace(/\n\s*\n/g, '\n')
@@ -280,10 +279,9 @@ function shouldBlockOutgoingReply(text) {
     // 1. Check for remaining Structural Symbols (Logic-based, no keywords)
     const hasBrackets = trimmed.includes('[') || trimmed.includes(']');
     const hasBraces = trimmed.includes('{') || trimmed.includes('}');
-    const hasUrls = trimmed.toLowerCase().includes('http');
     const hasBackslashes = trimmed.includes('\\');
 
-    if (hasBrackets || hasBraces || hasUrls || hasBackslashes) {
+    if (hasBrackets || hasBraces || hasBackslashes) {
         console.warn(`[Quality Control] Blocked unprofessional message: "${trimmed.substring(0, 50)}..."`);
         return true; 
     }
