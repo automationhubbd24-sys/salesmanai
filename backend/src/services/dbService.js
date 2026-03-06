@@ -2486,16 +2486,41 @@ async function createProduct(productData) {
 async function resolvePageContextType(pageId) {
     if (!pageId) return null;
     const sId = String(pageId);
-    if (sId.startsWith('bottow_') || sId.includes('wa_')) return 'whatsapp';
     
+    // 1. Check common WA session prefixes/patterns
+    if (sId.startsWith('bottow_') || sId.includes('wa_') || sId.startsWith('session_')) return 'whatsapp';
+    
+    // 2. Check Database for Session Existence
     try {
         const waRes = await query('SELECT 1 FROM whatsapp_message_database WHERE session_name = $1 LIMIT 1', [sId]);
         if (waRes.rows.length > 0) return 'whatsapp';
-    } catch (e) {}
-    try {
-        const waRes2 = await query('SELECT 1 FROM whatsapp_sessions WHERE session_name = $1 LIMIT 1', [String(pageId)]);
+        
+        const waRes2 = await query('SELECT 1 FROM whatsapp_sessions WHERE session_name = $1 LIMIT 1', [sId]);
         if (waRes2.rows.length > 0) return 'whatsapp';
+    } catch (e) {
+        console.warn("[DB] resolvePageContextType DB check failed:", e.message);
+    }
+    
+    // 3. Check for FB Page IDs (usually all numeric and > 10 digits)
+    if (/^\d{10,}$/.test(sId)) return 'messenger';
+    
+    // 4. Check if this ID exists in ANY product's allowed_wa_sessions column
+    try {
+        const productCheck = await query(
+            "SELECT 1 FROM products WHERE allowed_wa_sessions::jsonb @> jsonb_build_array($1::text) LIMIT 1",
+            [sId]
+        );
+        if (productCheck.rows.length > 0) return 'whatsapp';
     } catch (e) {}
+
+    // 5. Final Fallback: Check if it's in FB table
+    try {
+        const fbRes = await query('SELECT 1 FROM page_access_token_message WHERE page_id = $1 LIMIT 1', [sId]);
+        if (fbRes.rows.length > 0) return 'messenger';
+    } catch (e) {}
+
+    // Default to messenger for legacy reasons, but log it
+    console.log(`[DB] resolvePageContextType defaulted to messenger for ID: ${sId}`);
     return 'messenger';
 }
 
@@ -2507,7 +2532,7 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
     let whereClause = 'user_id = $1';
 
     // 1. Page/Session Filtering
-    if (pageId) {
+    if (pageId && pageId !== 'null' && pageId !== 'undefined') {
         const contextType = await resolvePageContextType(pageId);
         const isWhatsapp = contextType === 'whatsapp';
         const pageCol = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_page_ids';
@@ -2566,7 +2591,7 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
         whereClause += ` AND (name ILIKE $${idx1} OR description ILIKE $${idx2})`;
     }
 
-    console.log(`[DBDebug] getProducts Final WHERE: ${whereClause}`);
+    console.log(`[DBDebug] getProducts Final WHERE: ${whereClause} | Params: ${JSON.stringify(params)}`);
 
     const countResult = await query(
         `SELECT COUNT(*)::int AS cnt

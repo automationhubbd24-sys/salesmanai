@@ -143,46 +143,45 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
              
              if (pageId) {
                  try {
-                     const pageRes = await pgClient.query(
+                     // 1. Check Messenger Pages
+                     let pageRes = await pgClient.query(
                         'SELECT user_id, email FROM page_access_token_message WHERE page_id = $1 AND user_id IS NOT NULL',
                         [String(pageId)]
                      );
+                     
+                     // 2. Fallback to WhatsApp Sessions
+                     if (pageRes.rows.length === 0) {
+                         pageRes = await pgClient.query(
+                            'SELECT user_id, email FROM whatsapp_message_database WHERE session_name = $1 AND user_id IS NOT NULL',
+                            [String(pageId)]
+                         );
+                     }
                      
                      if (pageRes.rows.length > 0) {
                          const pageOwnerId = pageRes.rows[0].user_id;
                          const pageOwnerEmail = pageRes.rows[0].email;
                          
                          // CRITICAL FIX: If I am the Page Owner, I must stay in my OWN context!
-                         // Do not switch to a Team Context even if I happen to be a member of someone else's team elsewhere.
-                         // This solves the issue where an Owner (who is also a Member of another team) 
-                         // gets forced into the other team's context when working on their OWN page.
                          if (pageOwnerId === userId) {
-                             console.log(`[AuthDebug] Page ${pageId} is owned by ME (${viewerEmail}). Staying in Personal Context.`);
+                             console.log(`[AuthDebug] Resource ${pageId} is owned by ME (${viewerEmail}). Staying in Personal Context.`);
                              return { effectiveUserId: userId, isTeamMember: false, viewerEmail: normalizedEmail, teamOwnerEmail: null };
                          }
 
-                         // Check if I am a member of this Page Owner's team
+                         // Check if I am a member of this Resource Owner's team
                          const teamCheck = await pgClient.query(
                              'SELECT 1 FROM team_members WHERE LOWER(member_email) = LOWER($1) AND LOWER(owner_email) = LOWER($2) AND status = $3',
                              [normalizedEmail, pageOwnerEmail, 'active']
                          );
                          
                          if (teamCheck.rows.length > 0) {
-                             console.log(`[AuthDebug] Auto-detected Team Context via Page ${pageId}: ${pageOwnerEmail}`);
+                             console.log(`[AuthDebug] Auto-detected Team Context via Resource ${pageId}: ${pageOwnerEmail}`);
                              effectiveUserId = pageOwnerId;
                              isTeamMember = true;
-                             // Cache this decision? Maybe safer not to cache page-specific decisions globally 
-                             // unless we key it by page, but teamUserCache is keyed by email.
-                             // We should probably NOT cache this as "global" team context for the user, 
-                             // or if we do, we might stick them to this team for requests without page_id.
-                             // Safer to return it directly without polluting the global email-based cache 
-                             // which might be used for "All Products" later.
-                             // Actually, for consistency, let's just return it.
                              return { effectiveUserId, isTeamMember, viewerEmail: normalizedEmail, teamOwnerEmail: pageOwnerEmail };
                          }
                      }
                  } catch (e) {
-                     console.error("[AuthDebug] Failed to resolve page context:", e);
+                     console.error("[AuthDebug] Failed to resolve page/session context:", e);
                  }
              }
         }
@@ -499,53 +498,53 @@ exports.getProducts = async (req, res) => {
         // Moved UP to ensure we know who is asking before determining target
         let { effectiveUserId, isTeamMember, viewerEmail, teamOwnerEmail } = await getEffectiveUserIdFromRequest(req, baseUserId);
 
-        // EXTRA SAFETY FIX: If I am the Page Owner, I MUST see my own products.
-        // Even if getEffectiveUserIdFromRequest decided I'm a "Team Member" (e.g. because of active_team_owner),
-        // we override it here for the "Get Products" view to ensure I see my inventory.
+        // EXTRA SAFETY FIX: If I am the Page Owner (Messenger) or Session Owner (WhatsApp), I MUST see my own products.
         if (pageId && viewerEmail) {
              try {
                  const pgClient = require('../services/pgClient');
+                 
+                 // 1. Check Messenger
                  const pageRes = await pgClient.query(
                     'SELECT user_id, email FROM page_access_token_message WHERE page_id = $1',
                     [String(pageId)]
                  );
+                 
+                 let isOwner = false;
+                 let ownerId = null;
+
                  if (pageRes.rows.length > 0) {
                      const pageOwnerEmail = pageRes.rows[0].email;
-                     const pageOwnerId = pageRes.rows[0].user_id;
-                     
-                     let isOwner = false;
+                     ownerId = pageRes.rows[0].user_id;
                      if (pageOwnerEmail && viewerEmail && pageOwnerEmail.trim().toLowerCase() === viewerEmail.trim().toLowerCase()) {
                          isOwner = true;
                      }
-                     
-                     if (isOwner) {
-                         console.log(`[ProductGet] Page ${pageId} is owned by ME (${viewerEmail}). Forcing Personal Context override.`);
-                         
-                         // If we are currently in Team Mode, we need to switch back to Personal Mode (My ID)
-                         // We resolve the ID from the email since effectiveUserId currently points to the Team Owner
-                         // OR we can just use pageOwnerId if it's reliable
-                         if (pageOwnerId) {
-                             effectiveUserId = pageOwnerId;
-                             isTeamMember = false;
-                         } else {
-                             // Fallback to lookup
-                             const userRes = await pgClient.query('SELECT id FROM users WHERE email = $1', [viewerEmail]);
-                             if (userRes.rows.length > 0) {
-                                 effectiveUserId = userRes.rows[0].id;
-                                 isTeamMember = false;
-                             }
+                 } else {
+                     // 2. Check WhatsApp
+                     const waRes = await pgClient.query(
+                        'SELECT user_id, email FROM whatsapp_message_database WHERE session_name = $1',
+                        [String(pageId)]
+                     );
+                     if (waRes.rows.length > 0) {
+                         const waOwnerEmail = waRes.rows[0].email;
+                         ownerId = waRes.rows[0].user_id;
+                         if (waOwnerEmail && viewerEmail && waOwnerEmail.trim().toLowerCase() === viewerEmail.trim().toLowerCase()) {
+                             isOwner = true;
                          }
-                         
-                         // CRITICAL: Ensure we use the correct ID for targetUserId later
-                         // If we don't set this, targetUserId might be overwritten by page logic below if pageOwnerId is different (which shouldn't happen here, but safe to be sure)
                      }
                  }
+                 
+                 if (isOwner && ownerId) {
+                     console.log(`[ProductGet] Resource ${pageId} is owned by ME (${viewerEmail}). Forcing Personal Context.`);
+                     effectiveUserId = ownerId;
+                     isTeamMember = false;
+                 }
              } catch (e) {
-                 console.error("[ProductGet] Page Owner Check Failed:", e);
+                 console.error("[ProductGet] Resource Owner Check Failed:", e);
              }
         }
         
         let targetUserId = effectiveUserId;
+        console.log(`[ProductFetch] Initial EffectiveUser: ${effectiveUserId}, IsTeam: ${isTeamMember}, Email: ${viewerEmail}`);
 
         // 2. Determine Target User (Owner vs Page Owner)
         // Logic: 
@@ -685,6 +684,7 @@ exports.getProducts = async (req, res) => {
         }
 
         // 3. Fetch Products (Pass allowedPageIds to filter)
+        console.log(`[ProductFetch] Final Call: User=${targetUserId}, Page=${pageId}, Strict=${strict}, AllowedCount=${allowedPageIds ? allowedPageIds.length : 'null'}`);
         const result = await dbService.getProducts(targetUserId, page, limit, search, pageId, allowedPageIds, strict);
         res.json(result);
     } catch (error) {

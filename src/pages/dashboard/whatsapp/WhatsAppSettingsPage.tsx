@@ -212,7 +212,8 @@ export default function WhatsAppSettingsPage() {
   }, [id, fetchConfig, currentSession]);
 
   const fetchProductsForPrompt = async () => {
-    const sessionName = String(currentSession?.session_name || localStorage.getItem("active_wa_session_id") || "");
+    // FIX: currentSession has 'name', not 'session_name'
+    const sessionName = String(currentSession?.name || localStorage.getItem("active_wa_session_id") || "");
     if (!sessionName) {
       toast.error("Active session missing. Please select a session.");
       return;
