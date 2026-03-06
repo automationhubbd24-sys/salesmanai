@@ -149,18 +149,21 @@ export default function ProductsPage() {
 
     const handleSelectAllPages = () => {
         // Only select filtered pages to respect search
-        const newIds = filteredPages.map(p => p.page_id);
-        // Merge with existing selection to avoid losing non-visible ones? 
-        // Or just set to filtered? Usually "Select All" means all currently visible.
-        // But let's just add the filtered ones to the current selection
-        const uniqueIds = Array.from(new Set([...allowedPages, ...newIds]));
-        setAllowedPages(uniqueIds);
+        const newFbIds = filteredPages.filter(p => p.type === 'messenger').map(p => p.page_id);
+        const newWaIds = filteredPages.filter(p => p.type === 'whatsapp').map(p => p.page_id);
+        
+        // Add to respective arrays
+        setAllowedPages(prev => Array.from(new Set([...prev, ...newFbIds])));
+        setAllowedWASessions(prev => Array.from(new Set([...prev, ...newWaIds])));
     };
 
     const handleDeselectAllPages = () => {
         // Remove filtered pages from selection
-        const idsToRemove = filteredPages.map(p => p.page_id);
-        setAllowedPages(allowedPages.filter(id => !idsToRemove.includes(id)));
+        const fbIdsToRemove = filteredPages.filter(p => p.type === 'messenger').map(p => p.page_id);
+        const waIdsToRemove = filteredPages.filter(p => p.type === 'whatsapp').map(p => p.page_id);
+        
+        setAllowedPages(prev => prev.filter(id => !fbIdsToRemove.includes(id)));
+        setAllowedWASessions(prev => prev.filter(id => !waIdsToRemove.includes(id)));
     };
     const [allowedPages, setAllowedPages] = useState<string[]>([]);
     const [allowedWASessions, setAllowedWASessions] = useState<string[]>([]);
@@ -739,8 +742,19 @@ export default function ProductsPage() {
         setImagePreview(null);
         setProductImages([]);
         setImagePreviews([]);
-        setAllowedPages([]);
-        setAllowedWASessions([]);
+        
+        // Auto-select current page/session if available
+        if (platform === "messenger" && pageId) {
+            setAllowedPages([pageId]);
+            setAllowedWASessions([]);
+        } else if (platform === "whatsapp" && pageId) {
+            setAllowedWASessions([pageId]);
+            setAllowedPages([]);
+        } else {
+            setAllowedPages([]);
+            setAllowedWASessions([]);
+        }
+
         setIsCombo(false);
         setComboItems([]);
         setComboItemInput("");
@@ -761,9 +775,13 @@ export default function ProductsPage() {
         <div className="space-y-6 p-6 pb-24">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
-                    <h1 className="text-3xl font-bold tracking-tight">Global Products</h1>
+                    <h1 className="text-3xl font-bold tracking-tight">
+                        {platform === 'whatsapp' ? 'WhatsApp Products' : 
+                         platform === 'messenger' ? 'Messenger Products' : 
+                         'Global Products'}
+                    </h1>
                     <p className="text-muted-foreground">
-                        Manage products for your AI Agents. Images are auto-optimized.
+                        Manage products for your {platform === 'whatsapp' ? 'WhatsApp' : platform === 'messenger' ? 'Messenger' : 'AI'} Agents. Images are auto-optimized.
                     </p>
                 </div>
                 <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
