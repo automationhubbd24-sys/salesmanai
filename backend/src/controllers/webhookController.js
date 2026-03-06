@@ -1725,7 +1725,7 @@ STRICT RULES:
             replyText = lines.join('\n');
         }
 
-        // --- SMART IMAGE EXTRACTION & CLEANING (REFINED LOGIC) ---
+        // --- SMART IMAGE EXTRACTION & CLEANING (TIERED SELECTION) ---
         if (!aiResponse.images) aiResponse.images = [];
         
         let extractedImages = []; 
@@ -1741,16 +1741,100 @@ STRICT RULES:
         strictImageRegex.lastIndex = 0;
         brokenTagRegex.lastIndex = 0;
 
-        // SMART SELECTION: Prioritize Tags > Agentic Product ID > JSON image_urls Array
-        if (hasTagsInText) {
-            console.log(`[Image Selection] Tags detected in text. Disabling auto-injection from JSON fields.`);
-            // extractedImages will be populated by tag extraction logic below
-        } else if (aiResponse.action && aiResponse.action !== "NONE" && aiResponse.product_id) {
-            console.log(`[Image Selection] No tags, but Product ID found. Using Agentic Delivery for ID: ${aiResponse.product_id}`);
-            // extractedImages will be populated by Agentic Delivery logic below
-        } else {
-            // Fallback: Use AI's JSON image_urls or tools only if no tags and no product_id
-            console.log(`[Image Selection] No tags or product_id. Using JSON image_urls/tools.`);
+        // --- TIER 1: TAG-BASED EXTRACTION (Highest Priority) ---
+        if (hasTagsInText && replyText) {
+            console.log(`[Image Selection] TIER 1: Extracting from Tags...`);
+            
+            // A. Extract from ##PRODUCT tags
+            let tagMatch;
+            const mentionedViaTag = new Set();
+            while ((tagMatch = tagRegex.exec(replyText)) !== null) {
+                mentionedViaTag.add(tagMatch[1].toLowerCase());
+            }
+
+            if (promptProductMap) {
+                Object.keys(promptProductMap).forEach(name => {
+                    if (mentionedViaTag.has(name.toLowerCase())) {
+                        const product = promptProductMap[name];
+                        if (product && product.image_url) {
+                            const fullUrl = normalizeImageUrl(product.image_url);
+                            if (fullUrl && !extractedImages.some(img => img.url === fullUrl)) {
+                                extractedImages.push({ url: fullUrl, title: product.name || name, description: product.description || '' });
+                            }
+                        }
+                    }
+                });
+            }
+
+            // B. Extract from IMAGE: tags (Strict & Broken)
+            // Broken tag recovery first to populate replyText with strict tags
+            const seenBrokenTags = new Set();
+            let brokenMatch;
+            while ((brokenMatch = brokenTagRegex.exec(replyText)) !== null) {
+                const fullMatch = brokenMatch[0];
+                const productName = brokenMatch[1].trim();
+                if (seenBrokenTags.has(fullMatch)) continue;
+                seenBrokenTags.add(fullMatch);
+                try {
+                    const products = await dbService.searchProducts(pageConfig.user_id, productName, pageId);
+                    if (products && products.length > 0) {
+                        const product = products[0];
+                        const fullImgUrl = normalizeImageUrl(product.image_url);
+                        if (fullImgUrl) {
+                            replyText = replyText.split(fullMatch).join(`IMAGE: ${product.name} | ${fullImgUrl}`);
+                        }
+                    }
+                } catch (e) {}
+            }
+
+            // Now extract from all strict IMAGE: tags (including recovered ones)
+            let strictMatch;
+            while ((strictMatch = strictImageRegex.exec(replyText)) !== null) {
+                const fullMatch = strictMatch[0];
+                const title = strictMatch[1].trim();
+                let url = strictMatch[2].trim().replace(/[,.]$/, '');
+                if (/\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(url)) {
+                    if (!extractedImages.some(img => img.url === url)) {
+                        extractedImages.push({ url: url, title: title });
+                    }
+                }
+                replyText = replyText.replace(fullMatch, '').trim();
+            }
+
+            // Final scrub of all tags
+            replyText = replyText.replace(tagRegex, '').trim();
+            replyText = replyText.replace(/IMAGE:\s*[^|\n]*\s*\|?[^\n]*/gi, '').trim();
+        }
+
+        // --- TIER 2: AGENTIC ACTION (Priority if no Tags exist) ---
+        if (extractedImages.length === 0 && aiResponse.action && aiResponse.action !== "NONE" && aiResponse.product_id) {
+            console.log(`[Image Selection] TIER 2: Using Agentic Delivery for ID: ${aiResponse.product_id}`);
+            try {
+                const product = await dbService.getProductById(aiResponse.product_id);
+                if (product) {
+                    if (aiResponse.action === "SEND_DETAILS" || aiResponse.action === "SEND_BOTH") {
+                        if (!replyText || replyText.length < 50) {
+                            const numericPrice = parsePrice(product.price);
+                            const priceDisplay = numericPrice > 0 ? `${numericPrice} ${product.currency || 'BDT'}` : "Ask for Price";
+                            const details = `🛍️ *${product.name}*\n💰 Price: ${priceDisplay}\n📝 Info: ${product.description || 'No details available.'}`;
+                            replyText = `${replyText}\n\n${details}`;
+                        }
+                    }
+                    if ((aiResponse.action === "SEND_PHOTO" || aiResponse.action === "SEND_BOTH") && product.image_url) {
+                        const fullUrl = normalizeImageUrl(product.image_url);
+                        if (fullUrl) {
+                            extractedImages.push({ url: fullUrl, title: product.name, description: product.description || '' });
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error(`[Agentic Delivery] Failed:`, err.message);
+            }
+        }
+
+        // --- TIER 3: JSON ARRAY FALLBACK (Only if nothing found in Tier 1 or 2) ---
+        if (extractedImages.length === 0) {
+            console.log(`[Image Selection] TIER 3: Falling back to JSON image_urls/tools.`);
             if (Array.isArray(aiResponse.image_urls)) {
                 aiResponse.image_urls.forEach(url => {
                     if (url && typeof url === 'string' && url.startsWith('http')) {
@@ -1768,232 +1852,13 @@ STRICT RULES:
             });
         }
 
-        // VALIDATION: Filter out hallucinated external URLs (e.g. ibb.co) that are not in our system
-        const validProductUrls = new Set();
-        if (promptProductMap) {
-            Object.values(promptProductMap).forEach(p => {
-                if (p.image_url) {
-                    validProductUrls.add(p.image_url);
-                    const normalized = normalizeImageUrl(p.image_url);
-                    if (normalized) validProductUrls.add(normalized);
-                }
-            });
-        }
-        // Add images found by AI during the AgentLoop
-        if (aiResponse.foundProducts && Array.isArray(aiResponse.foundProducts)) {
-            aiResponse.foundProducts.forEach(p => {
-                if (p.image_url) {
-                    validProductUrls.add(p.image_url);
-                    const normalized = normalizeImageUrl(p.image_url);
-                    if (normalized) validProductUrls.add(normalized);
-                }
-            });
-        }
-
-        const normalizedProductNames = Object.keys(promptProductMap || {});
-
-        if (normalizedProductNames.length > 0 && replyText) {
-            // 2. TAG-BASED EXTRACTION (Highest Priority)
-            let tagMatch;
-            const mentionedViaTag = new Set();
-            while ((tagMatch = tagRegex.exec(replyText)) !== null) {
-                mentionedViaTag.add(tagMatch[1].toLowerCase());
-            }
-
-            normalizedProductNames.forEach(name => {
-                const product = promptProductMap[name];
-                if (!product || !product.image_url) return;
-                
-                const lowerName = name.toLowerCase();
-                if (mentionedViaTag.has(lowerName)) {
-                    // Add Primary Image
-                    let primaryUrl = product.image_url;
-                    if (!/^https?:\/\//i.test(primaryUrl)) {
-                        const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
-                        primaryUrl = `${baseUrl.replace(/\/$/, '')}/${primaryUrl.replace(/^\/+/, '')}`;
-                    }
-
-                    if (!extractedImages.some(img => img.url === primaryUrl)) {
-                        extractedImages.push({ url: primaryUrl, title: product.name || name, description: product.description || '' });
-                    }
-
-                    // DO NOT add additional images unless explicitly asked for (keeps it clean)
-                }
-            });
-
-            // 3. CLEANUP: Remove tags from the final text
-            replyText = replyText.replace(tagRegex, '').trim();
-        }
-
-        // 1. BROKEN IMAGE TAG RECOVERY & CLEANUP
-        if (replyText) {
-            brokenTagRegex.lastIndex = 0;
-            const seenBrokenTags = new Set();
-
-            while ((brokenMatch = brokenTagRegex.exec(replyText)) !== null) {
-                const fullMatch = brokenMatch[0];
-                const productName = brokenMatch[1].trim();
-                
-                if (seenBrokenTags.has(fullMatch)) continue;
-                seenBrokenTags.add(fullMatch);
-
-                try {
-                    const products = await dbService.searchProducts(pageConfig.user_id, productName, pageId);
-                    if (products && products.length > 0) {
-                        const product = products[0];
-                        const fullImgUrl = normalizeImageUrl(product.image_url);
-                        if (fullImgUrl) {
-                            replyText = replyText.split(fullMatch).join(`IMAGE: ${product.name} | ${fullImgUrl}`);
-                            console.log(`[Image Recovery] Fixed broken tag for: ${product.name}`);
-                            validProductUrls.add(fullImgUrl);
-                            if (product.image_url) validProductUrls.add(product.image_url);
-                        } else {
-                            replyText = replyText.split(fullMatch).join('').trim();
-                        }
-                    } else {
-                        replyText = replyText.split(fullMatch).join('').trim();
-                    }
-                } catch (err) {
-                    console.warn(`[Image Recovery] Failed for "${productName}": ${err.message}`);
-                    replyText = replyText.split(fullMatch).join('').trim();
-                }
-            }
-            
-            // FINAL SCRUBBING: Remove ANY remaining IMAGE: or ##PRODUCT tags that might have survived
-            replyText = replyText.replace(/IMAGE:\s*[^|\n]*\s*\|?[^\n]*/gi, '').trim();
-            replyText = replyText.replace(/##PRODUCT\s*["'](.+?)["']/gi, '').trim();
-        }
-
-        if (
-            replyText &&
-            aiResponse.foundProducts &&
-            Array.isArray(aiResponse.foundProducts) &&
-            aiResponse.foundProducts.length > 0
-        ) {
-            const p = aiResponse.foundProducts[0];
-            if (replyText.includes('[Price not available in inventory list]')) {
-                const priceText = p.price ? `${p.price} ${p.currency || 'BDT'}` : 'Ask for Price';
-                replyText = replyText.replace(/\[Price not available in inventory list\]/gi, priceText);
-            }
-            if (replyText.includes('[Description not available in inventory list]')) {
-                const descText = p.description || 'No description available.';
-                replyText = replyText.replace(/\[Description not available in inventory list\]/gi, descText);
-            }
-        }
-
-        // 2. STRICT FORMAT: IMAGE: Title | URL
-        // Matches: IMAGE: Basic Plan | https://...
-        let strictMatch;
-        while ((strictMatch = strictImageRegex.exec(replyText)) !== null) {
-            const fullMatch = strictMatch[0];
-            const title = strictMatch[1].trim();
-            let url = strictMatch[2].trim();
-            
-            // Remove trailing punctuation (comma, dot) if accidentally matched
-            url = url.replace(/[,.]$/, '');
-
-            // Allow any image URL (local or remote)
-            const isImage = /\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(url);
-            
-            // STRICT VALIDATION: Check if this URL is known
-            const isKnownProduct = validProductUrls.has(url);
-            const isLocal = url.includes(process.env.PUBLIC_BASE_URL || 'localhost');
-            const isFbCdn = url.includes('fbcdn.net') || url.includes('cdn.fbsbx.com'); // Allow user images if echoed
-            const isTrustedStorage = url.includes('supabase.co'); // Whitelist Supabase
-            
-            // If it's an external link (like ibb.co) and NOT in our product list, it's likely a hallucination.
-            const isSuspicious = !isKnownProduct && !isLocal && !isFbCdn && !isTrustedStorage;
-
-            if (isImage && !isSuspicious) {
-                if (!extractedImages.some(img => img.url === url)) {
-                    // Try to find product description if this is a known product URL
-                    let description = '';
-                    if (isKnownProduct && promptProductMap) {
-                        const product = Object.values(promptProductMap).find(p => p.image_url === url);
-                        if (product) description = product.description || '';
-                    }
-                    extractedImages.push({ url: url, title: title, description: description });
-                }
-                // ALWAYS remove from text now to prevent "IMAGE: Image |" showing up
-                replyText = replyText.replace(fullMatch, '').trim();
-            } else if (isSuspicious) {
-                 // If it's suspicious, we still keep it as text unless it's a known internal storage link
-                 if (url.includes('supabase.co')) {
-                    console.log(`[Image Extraction] Removing internal Supabase link: ${url}`);
-                    replyText = replyText.replace(fullMatch, '').trim();
-                 } else {
-                    console.log(`[Image Extraction] Keeping "suspicious" link as text: ${url}`);
-                    // Replace the IMAGE: tag with just the URL to keep it readable
-                    replyText = replyText.replace(fullMatch, `${title}: ${url}`).trim();
-                 }
-            } else {
-                // Non-Image URLs stay as normal text
-                console.log(`[Image Extraction] Keeping non-Image URL as text: ${url}`);
-                replyText = replyText.replace(fullMatch, `${title}: ${url}`).trim();
-            }
-        }
-
-        // -----------------------------------------------------
-
-        // --- AGENTIC DELIVERY SYSTEM (BACKEND-DRIVEN) ---
-        // User Requirement: Only send one relevant image. If tags exist, prioritize them.
-        if (!hasTagsInText && aiResponse.action && aiResponse.action !== "NONE" && aiResponse.product_id) {
-            try {
-                const product = await dbService.getProductById(aiResponse.product_id);
-                if (product) {
-                    const alreadyHasImages = extractedImages.length > 0;
-
-                    if (aiResponse.action === "SEND_DETAILS" || aiResponse.action === "SEND_BOTH") {
-                        if (!replyText || replyText.length < 50) {
-                            const numericPrice = parsePrice(product.price);
-                            const priceDisplay = numericPrice > 0 ? `${numericPrice} ${product.currency || 'BDT'}` : "Ask for Price";
-                            const details = `🛍️ *${product.name}*\n💰 Price: ${priceDisplay}\n📝 Info: ${product.description || 'No details available.'}`;
-                            replyText = `${replyText}\n\n${details}`;
-                        }
-                    }
-
-                    if ((aiResponse.action === "SEND_PHOTO" || aiResponse.action === "SEND_BOTH") && product.image_url) {
-                        // SMART FILTER: If the AI returned multiple images in JSON but also a specific product_id,
-                        // we should prioritize the specific product's image to avoid irrelevant dumps.
-                        if (alreadyHasImages) {
-                            console.log(`[Image Selection] Overriding JSON images with specific Product ID image: ${product.name}`);
-                            extractedImages = [{
-                                url: product.image_url,
-                                title: product.name,
-                                description: product.description || ''
-                            }];
-                        } else {
-                            extractedImages.push({
-                                url: product.image_url,
-                                title: product.name,
-                                description: product.description || ''
-                            });
-                        }
-                    }
-                }
-            } catch (err) {
-                console.error(`[Agentic Delivery] Failed for ID ${aiResponse.product_id}:`, err.message);
-            }
-        }
-
-        // --- DEDUPLICATION LOGIC REMOVED (User Request) ---
-        // We now rely entirely on the System Prompt / AI to decide whether to send an image or not.
-        // If the AI outputs "IMAGE: ...", we send it.
-        // --------------------------------------------------
-
-        // --- SMART EXTRACTION & DEDUPLICATION ---
-        aiResponse.images = extractedImages;
-
-        // Ensure images are also deduplicated against what's already being sent
-        if (aiResponse.images && aiResponse.images.length > 0) {
-            const uniqueUrls = new Set();
-            aiResponse.images = aiResponse.images.filter(img => {
-                if (!img.url || uniqueUrls.has(img.url)) return false;
-                uniqueUrls.add(img.url);
-                return true;
-            });
-        }
-        // ----------------------------------------
+        // --- FINAL DEDUPLICATION ---
+        const uniqueUrls = new Set();
+        aiResponse.images = extractedImages.filter(img => {
+            if (!img.url || uniqueUrls.has(img.url)) return false;
+            uniqueUrls.add(img.url);
+            return true;
+        });
 
         const promptMode = decisionMode || detectImageMode(pagePrompts?.text_prompt);
         // FIX: NEVER wipe out text unless it's strictly requested. 
