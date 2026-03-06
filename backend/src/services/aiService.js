@@ -1895,7 +1895,7 @@ async function processImageWithVision(imageUrl, pageConfig = {}, customOptions =
         }
     };
 
-    const maxTokens = Number(customOptions?.max_tokens) > 0 ? Number(customOptions.max_tokens) : 120;
+    const maxTokens = Number(customOptions?.max_tokens) > 0 ? Number(customOptions.max_tokens) : 1000;
 
     // Determine System Prompt
     let systemPrompt = typeof customOptions?.prompt === 'string' && customOptions.prompt.trim() !== "" 

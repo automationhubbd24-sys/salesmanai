@@ -1774,7 +1774,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                     const imagesToAnalyze = msg.images.slice(0, 2);
                     const perMsgResults = await Promise.all(
                         imagesToAnalyze.map(img =>
-                            aiService.processImageWithVision(img, pageConfig, { prompt: productAnalysisPrompt || "", max_tokens: 120 })
+                            aiService.processImageWithVision(img, pageConfig, { prompt: productAnalysisPrompt || "", max_tokens: 1000 })
                         )
                     );
                     const perMsgText = perMsgResults.map((res) => {
