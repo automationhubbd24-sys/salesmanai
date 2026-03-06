@@ -1840,7 +1840,7 @@ STRICT RULES:
             replyText = replyText.replace(tagRegex, '').trim();
         }
 
-        // 1. BROKEN IMAGE TAG RECOVERY: IMAGE: Title | (missing URL)
+        // 1. BROKEN IMAGE TAG RECOVERY & CLEANUP
         if (replyText) {
             const brokenTagRegex = /IMAGE:\s*([^|]+?)\s*\|\s*(?=\s|$)/gi;
             let brokenMatch;
@@ -1851,7 +1851,6 @@ STRICT RULES:
                 const fullMatch = brokenMatch[0];
                 const productName = brokenMatch[1].trim();
                 
-                // Prevent infinite loop if we already tried to fix this specific string
                 if (seenBrokenTags.has(fullMatch)) continue;
                 seenBrokenTags.add(fullMatch);
 
@@ -1861,15 +1860,21 @@ STRICT RULES:
                         const product = products[0];
                         const fullImgUrl = normalizeImageUrl(product.image_url);
                         if (fullImgUrl) {
-                            // Use split/join to replace ALL identical broken tags at once safely
                             replyText = replyText.split(fullMatch).join(`IMAGE: ${product.name} | ${fullImgUrl}`);
                             console.log(`[Image Recovery] Fixed broken tag for: ${product.name}`);
                             validProductUrls.add(fullImgUrl);
                             if (product.image_url) validProductUrls.add(product.image_url);
+                        } else {
+                            // If no valid URL, scrub the tag to prevent it showing up in UI
+                            replyText = replyText.split(fullMatch).join('').trim();
                         }
+                    } else {
+                        // If product not found, scrub the tag
+                        replyText = replyText.split(fullMatch).join('').trim();
                     }
                 } catch (err) {
                     console.warn(`[Image Recovery] Failed for "${productName}": ${err.message}`);
+                    replyText = replyText.split(fullMatch).join('').trim();
                 }
             }
         }
@@ -1948,15 +1953,14 @@ STRICT RULES:
         // -----------------------------------------------------
 
         // --- AGENTIC DELIVERY SYSTEM (BACKEND-DRIVEN) ---
-        // User Requirement: "osud er sobi den bolar por sudu ##PRODUCT \"MED60-GX\" eta patano ucit silo maybe duita product load hoyate duitai send kore felse"
-        // Fix: Backend should NOT auto-inject images unless the AI explicitly uses ##PRODUCT tag OR it's a very clear action.
+        // User Requirement: Only send one relevant image. If tags exist, prioritize them.
         if (aiResponse.action && aiResponse.action !== "NONE" && aiResponse.product_id) {
             try {
                 const product = await dbService.getProductById(aiResponse.product_id);
                 if (product) {
-                    // Only auto-inject details/photo if NO other images were extracted from text
-                    // This gives the AI full control via ##PRODUCT or IMAGE: tags.
-                    const noImagesExtracted = extractedImages.length === 0;
+                    // Logic: If AI already extracted images via tags (##PRODUCT or IMAGE:),
+                    // we do NOT auto-inject the product photo to avoid duplicates/irrelevant images.
+                    const alreadyHasImages = extractedImages.length > 0;
 
                     if (aiResponse.action === "SEND_DETAILS" || aiResponse.action === "SEND_BOTH") {
                         if (!replyText || replyText.length < 50) {
@@ -1967,7 +1971,7 @@ STRICT RULES:
                         }
                     }
 
-                    if (noImagesExtracted && (aiResponse.action === "SEND_PHOTO" || aiResponse.action === "SEND_BOTH") && product.image_url) {
+                    if (!alreadyHasImages && (aiResponse.action === "SEND_PHOTO" || aiResponse.action === "SEND_BOTH") && product.image_url) {
                         if (!aiResponse.images) aiResponse.images = [];
                         if (!aiResponse.images.some(img => img.url === product.image_url)) {
                             aiResponse.images.push({
