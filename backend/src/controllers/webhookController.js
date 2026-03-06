@@ -860,15 +860,16 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             console.log(`[Batch] Per-message analysis for ${allImages.length} images...`);
             let combinedImageAnalysis = "";
 
-            let productAnalysisPrompt = `Analyze this image and describe it in Bengali as a professional salesperson.
-1. Count the number of products.
-2. Identify exact product names and their positions/visual details.
-3. Identify the purpose (e.g., skin brightening combo).
-4. Use this EXACT format:
+            let productAnalysisPrompt = `Analyze this image and describe it EXACTLY in this Bengali format:
 এই ছবিতে মোট **[সংখ্যা]টি** প্রোডাক্ট রয়েছে। প্রোডাক্টগুলোর নাম নিচে দেওয়া হলো:
-১. **[প্রোডাক্ট নাম]** ([পজিশন বা টিউবের বিবরণ])
+১. **[প্রোডাক্টের পুরো নাম]** ([পজিশন বা টিউবের রঙ ও আকারের ছোট বিবরণ])
 ২. ...
-এটি মূলত একটি **"[কম্বো বা অফার নাম]"** হিসেবে সাজানো হয়েছে। [একটি বাক্যে সারসংক্ষেপ বা উদ্দেশ্য]`;
+এটি মূলত একটি **"[কম্বো বা অফার নাম]"** হিসেবে সাজানো হয়েছে। [একটি ছোট বাক্যে সারসংক্ষেপ]
+
+Rules:
+1. Keep product descriptions very short (e.g., "বামে রাখা বড় পিঙ্কিশ সাদা টিউবটি").
+2. Don't add extra sentences or detailed text-on-image analysis unless asked.
+3. Use professional Bengali.`;
 
             if (pagePrompts && (pagePrompts.image_prompt || pagePrompts.vision_prompt)) {
                 productAnalysisPrompt = pagePrompts.image_prompt || pagePrompts.vision_prompt;
