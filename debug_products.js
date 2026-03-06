@@ -21,19 +21,19 @@ async function checkProducts() {
             console.log("-----------------------------------");
         });
 
-        console.log("\n--- Checking for product 'mony' ---");
-        const monyRes = await client.query(`
+        console.log("\n--- Checking for product 'money_wpp' ---");
+        const moneyWppRes = await client.query(`
             SELECT id, name, allowed_page_ids, allowed_wa_sessions, is_active 
             FROM products 
-            WHERE name ILIKE '%mony%'
+            WHERE name ILIKE '%money_wpp%'
         `);
-        if (monyRes.rows.length === 0) {
-            console.log("Product 'mony' not found in database.");
+        if (moneyWppRes.rows.length === 0) {
+            console.log("Product 'money_wpp' not found in database.");
         } else {
-            monyRes.rows.forEach(p => {
+            moneyWppRes.rows.forEach(p => {
                 console.log(`ID: ${p.id} | Name: ${p.name} | Active: ${p.is_active}`);
-                console.log(`  Allowed Page IDs: ${JSON.stringify(p.allowed_page_ids)}`);
-                console.log(`  Allowed WA Sessions: ${JSON.stringify(p.allowed_wa_sessions)}`);
+                console.log(`  Allowed Page IDs (FB): ${JSON.stringify(p.allowed_page_ids)}`);
+                console.log(`  Allowed WA Sessions (WA): ${JSON.stringify(p.allowed_wa_sessions)}`);
             });
         }
     } catch (e) {
