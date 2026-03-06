@@ -875,7 +875,8 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs) {
                 candidates.sort((a, b) => b.match_score - a.match_score);
 
                 if (candidates.length > 0) {
-                    const formattedCandidates = candidates.slice(0, 5).map(c => 
+                    // Limit to top 3 candidates to optimize token usage
+                    const formattedCandidates = candidates.slice(0, 3).map(c => 
                         `PRODUCT_DATA:
                          ID: ${c.product_id}
                          Name: ${c.name}

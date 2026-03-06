@@ -1711,7 +1711,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
         if (!imageDetectionEnabled) {
             imageAnalyzeText = `[System Note: User sent ${allImages.length} images. Image detection is disabled, so they were not analyzed. Ask the user to describe what they want.]`;
         } else {
-        let productAnalysisPrompt = "";
+        let productAnalysisPrompt = "Analyze this image for a salesperson. CRITICAL: 1. Identify ALL individual products in the image. 2. Extract any VISIBLE PRICES (e.g. '১৬৫০', 'Offer Price: 1650'). 3. If it is a COMBO, list all items in it. 4. Extract Brand Names and exact product names. 5. If there is text on the image like 'Student Budget Combo', capture it exactly. Be extremely precise to distinguish between similar-looking combos based on price or specific items.";
         try {
             // Use WhatsApp Config which includes page_prompts
             // const pageConfig = await dbService.getWhatsAppConfig(sessionName); // Optim: Already loaded
