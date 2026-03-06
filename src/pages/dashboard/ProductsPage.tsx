@@ -1218,78 +1218,98 @@ export default function ProductsPage() {
                                 {(() => {
                                   const waPages = filteredPages.filter(p => p.type === 'whatsapp');
                                   const fbPages = filteredPages.filter(p => p.type === 'messenger');
+                                  
+                                  // Determine what to show based on platform
+                                  const showWa = !platform || platform === 'whatsapp';
+                                  const showFb = !platform || platform === 'messenger';
+
                                   return (
                                     <div className="space-y-3">
-                                      <div>
-                                        <Label className="text-xs font-semibold text-muted-foreground">WhatsApp Sessions Access</Label>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border p-3 rounded-md max-h-32 overflow-y-auto bg-muted/5 mt-1">
-                                          {waPages.length === 0 ? (
-                                            <p className="text-xs text-muted-foreground col-span-full text-center">No WhatsApp sessions.</p>
-                                          ) : waPages.map(page => {
-                                            const isSelected = allowedWASessions.includes(page.page_id);
-                                            const toggleSelection = () => {
-                                              if (isSelected) {
-                                                setAllowedWASessions(allowedWASessions.filter(id => id !== page.page_id));
-                                              } else {
-                                                setAllowedWASessions([...allowedWASessions, page.page_id]);
-                                              }
-                                            };
-                                            return (
-                                              <div 
-                                                key={`wa-${page.page_id}`} 
-                                                className="flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors"
-                                              >
-                                                <Checkbox 
-                                                  id={`wa-page-${page.page_id}`}
-                                                  checked={isSelected}
-                                                  onCheckedChange={() => toggleSelection()} 
-                                                />
-                                                <Label 
-                                                  htmlFor={`wa-page-${page.page_id}`} 
-                                                  className="text-sm font-normal cursor-pointer select-none flex-1 truncate"
+                                      {showWa && (
+                                        <div>
+                                          <Label className="text-xs font-semibold text-muted-foreground">WhatsApp Sessions Access</Label>
+                                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border p-3 rounded-md max-h-32 overflow-y-auto bg-muted/5 mt-1">
+                                            {waPages.length === 0 ? (
+                                              <p className="text-xs text-muted-foreground col-span-full text-center">No WhatsApp sessions.</p>
+                                            ) : waPages.map(page => {
+                                              const isSelected = allowedWASessions.includes(page.page_id);
+                                              const toggleSelection = () => {
+                                                if (isSelected) {
+                                                  setAllowedWASessions(allowedWASessions.filter(id => id !== page.page_id));
+                                                } else {
+                                                  setAllowedWASessions([...allowedWASessions, page.page_id]);
+                                                }
+                                              };
+                                              return (
+                                                <div 
+                                                  key={`wa-${page.page_id}`} 
+                                                  className="flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors"
+                                                  onClick={(e) => {
+                                                    if ((e.target as HTMLElement).closest('button')) return;
+                                                    toggleSelection();
+                                                  }}
                                                 >
-                                                  {page.name}
-                                                </Label>
-                                              </div>
-                                            );
-                                          })}
+                                                  <Checkbox 
+                                                    id={`wa-page-${page.page_id}`}
+                                                    checked={isSelected}
+                                                    onCheckedChange={() => toggleSelection()} 
+                                                  />
+                                                  <Label 
+                                                    htmlFor={`wa-page-${page.page_id}`} 
+                                                    className="text-sm font-normal cursor-pointer select-none flex-1 truncate"
+                                                    onClick={(e) => e.stopPropagation()}
+                                                  >
+                                                    {page.name}
+                                                  </Label>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
                                         </div>
-                                      </div>
-                                      <div>
-                                        <Label className="text-xs font-semibold text-muted-foreground">Facebook Pages Access</Label>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border p-3 rounded-md max-h-32 overflow-y-auto bg-muted/5 mt-1">
-                                          {fbPages.length === 0 ? (
-                                            <p className="text-xs text-muted-foreground col-span-full text-center">No Facebook pages.</p>
-                                          ) : fbPages.map(page => {
-                                            const isSelected = allowedPages.includes(page.page_id);
-                                            const toggleSelection = () => {
-                                              if (isSelected) {
-                                                setAllowedPages(allowedPages.filter(id => id !== page.page_id));
-                                              } else {
-                                                setAllowedPages([...allowedPages, page.page_id]);
-                                              }
-                                            };
-                                            return (
-                                              <div 
-                                                key={`fb-${page.page_id}`} 
-                                                className="flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors"
-                                              >
-                                                <Checkbox 
-                                                  id={`fb-page-${page.page_id}`}
-                                                  checked={isSelected}
-                                                  onCheckedChange={() => toggleSelection()} 
-                                                />
-                                                <Label 
-                                                  htmlFor={`fb-page-${page.page_id}`} 
-                                                  className="text-sm font-normal cursor-pointer select-none flex-1 truncate"
+                                      )}
+                                      
+                                      {showFb && (
+                                        <div>
+                                          <Label className="text-xs font-semibold text-muted-foreground">Facebook Pages Access</Label>
+                                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border p-3 rounded-md max-h-32 overflow-y-auto bg-muted/5 mt-1">
+                                            {fbPages.length === 0 ? (
+                                              <p className="text-xs text-muted-foreground col-span-full text-center">No Facebook pages.</p>
+                                            ) : fbPages.map(page => {
+                                              const isSelected = allowedPages.includes(page.page_id);
+                                              const toggleSelection = () => {
+                                                if (isSelected) {
+                                                  setAllowedPages(allowedPages.filter(id => id !== page.page_id));
+                                                } else {
+                                                  setAllowedPages([...allowedPages, page.page_id]);
+                                                }
+                                              };
+                                              return (
+                                                <div 
+                                                  key={`fb-${page.page_id}`} 
+                                                  className="flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors"
+                                                  onClick={(e) => {
+                                                    if ((e.target as HTMLElement).closest('button')) return;
+                                                    toggleSelection();
+                                                  }}
                                                 >
-                                                  {page.name}
-                                                </Label>
-                                              </div>
-                                            );
-                                          })}
+                                                  <Checkbox 
+                                                    id={`fb-page-${page.page_id}`}
+                                                    checked={isSelected}
+                                                    onCheckedChange={() => toggleSelection()} 
+                                                  />
+                                                  <Label 
+                                                    htmlFor={`fb-page-${page.page_id}`} 
+                                                    className="text-sm font-normal cursor-pointer select-none flex-1 truncate"
+                                                    onClick={(e) => e.stopPropagation()}
+                                                  >
+                                                    {page.name}
+                                                  </Label>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
                                         </div>
-                                      </div>
+                                      )}
                                     </div>
                                   );
                                 })()}

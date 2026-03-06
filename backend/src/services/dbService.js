@@ -2458,7 +2458,8 @@ async function createProduct(productData) {
         'keywords',
         'is_combo',
         'combo_items',
-        'allow_description'
+        'allow_description',
+        'platform'
     ];
 
     const values = [];
@@ -2471,7 +2472,7 @@ async function createProduct(productData) {
         values.push(
             field === 'variants' || field === 'allowed_page_ids' || field === 'allowed_wa_sessions' || field === 'combo_items' || field === 'additional_images'
                 ? (productData[field] || (field === 'additional_images' ? '[]' : '[]'))
-                : (productData[field] ?? null)
+                : (productData[field] ?? (field === 'platform' ? 'global' : null))
         );
     });
 
