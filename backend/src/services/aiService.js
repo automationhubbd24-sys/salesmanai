@@ -329,11 +329,10 @@ function logDebug(msg) {
     }
 }
 
-// --- IN-MEMORY CACHE FOR ZERO COST ---
-// Map<hash, { reply: string, timestamp: number }>
-const responseCache = new Map();
-const CACHE_TTL_MS = 1000 * 60 * 60; // 1 Hour Cache
-const CACHE_SIZE_LIMIT = 500; // Prevent memory leaks
+// --- IN-MEMORY CACHE FOR ZERO COST (DISABLED PER USER REQUEST) ---
+// const responseCache = new Map();
+// const CACHE_TTL_MS = 1000 * 60 * 60; // 1 Hour Cache
+// const CACHE_SIZE_LIMIT = 500; // Prevent memory leaks
 
 function getCacheKey(pageId, message, senderName) {
     // Normalize message: lowercase, remove special chars
@@ -1725,13 +1724,9 @@ ${productContext || "No specific product context provided yet."}
         let usedCache = false;
         const isFreeModel = typeof currentModel === 'string' && currentModel.includes(':free');
 
-        // --- GEMINI CACHING PATH ---
-        // User Requirement: "suno amader gemini engine e eta disable tak but use own api e enable tak"
-        // Meaning: Only enable caching if the user provided their own API key (Phase 1 or Own API Mode).
-        // If we are using System Keys (Phase 2), caching MUST be disabled to avoid hitting limits on free tier keys.
-        
+        // --- GEMINI CACHING PATH (DISABLED PER USER REQUEST) ---
         const isUserKey = pageConfig.api_key && pageConfig.api_key !== 'MANAGED_SECRET_KEY' && apiKey === pageConfig.api_key;
-        const shouldUseCache = isUserKey && (finalProvider === 'google' || finalProvider === 'gemini');
+        const shouldUseCache = false; // Disabled to ensure fresh responses during testing
 
         if (shouldUseCache && messages.length > 0 && messages[0].role === 'system') {
             const systemContent = messages[0].content;
