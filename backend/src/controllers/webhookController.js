@@ -65,7 +65,6 @@ function sanitizeReplyText(text) {
         .replace(/\[.*?\]\s*\(\s*https?:\/\/[^\s)]+\s*\)/gi, '')
         .replace(/\[\s*\/?[^\]]*\]/gi, '')
         .replace(/\(\s*\)/g, '')
-        .replace(/\n\s*\n/g, '\n')
         .trim();
 }
 
