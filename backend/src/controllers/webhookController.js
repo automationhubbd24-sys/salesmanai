@@ -1116,7 +1116,7 @@ STRICT RULES:
                     const key = rawName.toLowerCase();
                     if (promptProductMap[key]) continue;
                     try {
-                        const productsForPrompt = await dbService.searchProducts(pageConfig.user_id, rawName, pageConfig.page_id);
+                        const productsForPrompt = await dbService.searchProducts(pageConfig.user_id, rawName, pageConfig.page_id, 'messenger');
                         if (productsForPrompt && productsForPrompt.length > 0) {
                             promptProductMap[key] = productsForPrompt[0];
                         }

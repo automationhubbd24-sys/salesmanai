@@ -2490,7 +2490,7 @@ async function resolvePageContextType(pageId) {
     const sId = String(pageId);
     
     // 1. Check common WA session prefixes/patterns
-    if (sId.startsWith('bottow_') || sId.includes('wa_') || sId.startsWith('session_')) return 'whatsapp';
+    if (sId.startsWith('bottow_') || sId.includes('wa_') || sId.startsWith('session_') || sId.startsWith('waba_') || sId.includes('_wa')) return 'whatsapp';
     
     // 2. Check Database for Session Existence
     try {
@@ -2728,7 +2728,7 @@ async function deleteProduct(id, userId) {
 }
 
 // 30.5 Get Products by Exact Names (For System Prompt Injection)
-async function getProductsByNames(userId, productNames, pageId = null) {
+async function getProductsByNames(userId, productNames, pageId = null, platform = null) {
     if (!productNames || productNames.length === 0) return [];
     
     // Normalize names to lowercase for comparison if needed, 
@@ -2744,11 +2744,36 @@ async function getProductsByNames(userId, productNames, pageId = null) {
     const params = [userId, productNames];
 
     if (pageId) {
-        const contextType = await resolvePageContextType(pageId);
+        const normalizedPlatform = platform ? String(platform).toLowerCase() : null;
+        const contextType = (normalizedPlatform === 'whatsapp' || normalizedPlatform === 'messenger')
+            ? normalizedPlatform
+            : await resolvePageContextType(pageId);
         const isWhatsapp = contextType === 'whatsapp';
         const pageCol = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_page_ids';
+        const otherCol = isWhatsapp ? 'allowed_page_ids' : 'allowed_wa_sessions';
+        
         params.push(String(pageId));
-        sql += ` AND (${pageCol} IS NULL OR ${pageCol}::jsonb = '[]'::jsonb OR ${pageCol}::jsonb @> jsonb_build_array($${params.length}::text))`;
+        const pIdx = params.length;
+        
+        // Strict Isolation: 
+        // 1. Show if explicitly assigned to THIS specific page/session
+        // 2. OR show if it is a TRUE GLOBAL product (not assigned to ANY platform)
+        // 3. EXCLUDE if it belongs to OTHER platforms but NOT this one.
+        sql += ` AND (
+            (
+                (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))
+            )
+            OR
+            (
+                (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb)
+                AND
+                (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
+            )
+        ) AND (
+            (${otherCol} IS NULL OR ${otherCol}::jsonb = '[]'::jsonb)
+            OR
+            (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))
+        )`;
     }
     
     try {
@@ -2761,8 +2786,7 @@ async function getProductsByNames(userId, productNames, pageId = null) {
 }
 
     // 31. Search Products (For AI) - Enhanced with Smart Fallback & Visual Search
-async function searchProducts(userId, queryText, pageId = null) {
-    console.log(`[DB] searchProducts called for User: ${userId}, Page: ${pageId}, Query: "${queryText}"`);
+async function searchProducts(userId, queryText, pageId = null, platform = null) {
     try {
         if (!userId) {
             console.warn("[DB] searchProducts aborted: No User ID provided.");
@@ -2773,7 +2797,10 @@ async function searchProducts(userId, queryText, pageId = null) {
         const cleanQuery = queryText.trim();
         if (!cleanQuery) return [];
 
-        const contextType = pageId ? await resolvePageContextType(pageId) : null;
+        const normalizedPlatform = platform ? String(platform).toLowerCase() : null;
+        const contextType = (normalizedPlatform === 'whatsapp' || normalizedPlatform === 'messenger')
+            ? normalizedPlatform
+            : (pageId ? await resolvePageContextType(pageId) : null);
         const isWhatsapp = contextType === 'whatsapp';
         const pageColumn = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_page_ids';
 
@@ -2818,11 +2845,33 @@ async function searchProducts(userId, queryText, pageId = null) {
         // Helper to get base query context (params and where clause)
         const getBaseContext = () => {
             const params = [userId];
-            let where = 'user_id = $1 AND is_active = true';
+            let where = 'user_id = $1::uuid AND is_active = true';
 
             if (pageId) {
                 params.push(String(pageId));
-                where += ` AND (${pageColumn} IS NULL OR ${pageColumn}::jsonb = '[]'::jsonb OR ${pageColumn}::jsonb @> jsonb_build_array($${params.length}::text))`;
+                const pIdx = params.length;
+                
+                // Strict Isolation for AI Search: 
+                // 1. Show if explicitly assigned to THIS specific page/session
+                // 2. OR show if it is a TRUE GLOBAL product (not assigned to ANY platform)
+                // 3. EXCLUDE if it belongs to OTHER platforms but NOT this one.
+                const otherColumn = isWhatsapp ? 'allowed_page_ids' : 'allowed_wa_sessions';
+                
+                where += ` AND (
+                    (
+                        (${pageColumn}::jsonb @> jsonb_build_array($${pIdx}::text))
+                    )
+                    OR
+                    (
+                        (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb)
+                        AND
+                        (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
+                    )
+                ) AND (
+                    (${otherColumn} IS NULL OR ${otherColumn}::jsonb = '[]'::jsonb)
+                    OR
+                    (${pageColumn}::jsonb @> jsonb_build_array($${pIdx}::text))
+                )`;
             }
             return { where, params };
         };

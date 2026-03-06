@@ -821,14 +821,14 @@ function extractReplyFromText(text) {
 }
 
 // --- AGENTIC TOOL EXECUTOR ---
-async function executeTool(toolCall, pageConfig, userIdFromArgs) {
+async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null) {
     const { name, arguments: argsString } = toolCall.function;
     const args = JSON.parse(argsString || '{}');
     const userId = pageConfig.user_id; // Store Owner ID
     const pageId = pageConfig.page_id;
     const senderId = userIdFromArgs; // Actual Customer ID
 
-    console.log(`[AgentLoop] Executing tool: ${name}`, args);
+    console.log(`[AgentLoop] Executing tool: ${name} (Platform: ${platform})`, args);
 
     try {
         switch (name) {
@@ -836,7 +836,7 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs) {
                 const query = args.query;
                 const scope = args.candidates_scope;
                 
-                let products = await dbService.searchProducts(userId, query, pageId);
+                let products = await dbService.searchProducts(userId, query, pageId, platform);
                 
                 // If scope provided, filter products
                 if (Array.isArray(scope) && scope.length > 0) {
@@ -1009,7 +1009,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 console.log(`[AgentLoop] AI requested ${toolCalls.length} tool calls.`);
                 
                 for (const toolCall of toolCalls) {
-                    const result = await executeTool(toolCall, pageConfig, userId);
+                    const result = await executeTool(toolCall, pageConfig, userId, platform);
                     
                     // Push tool result back to context
                     messages.push({
