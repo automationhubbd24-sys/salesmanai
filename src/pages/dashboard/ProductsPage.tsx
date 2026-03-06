@@ -34,6 +34,7 @@ interface Product {
     currency?: string;
     stock?: number;
     allowed_page_ids?: string[];
+    allowed_messenger_ids?: string[];
     allowed_wa_sessions?: string[];
     is_combo?: boolean;
     combo_items?: string[];

@@ -417,36 +417,36 @@ async function initTables() {
 
         // 1. Rename allowed_page_ids to allowed_messenger_ids if it exists
         // Or just add allowed_messenger_ids as a clear column
-        await query(\`
+        await query(`
             DO $$ 
             BEGIN 
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='allowed_messenger_ids') THEN
                     ALTER TABLE products ADD COLUMN allowed_messenger_ids JSONB DEFAULT '[]'::jsonb;
                 END IF;
             END $$;
-        \`);
+        `);
         console.log("[DB] 'products.allowed_messenger_ids' column checked.");
 
-        await query(\`
+        await query(`
             DO $$ 
             BEGIN 
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='allow_description') THEN
                     ALTER TABLE products ADD COLUMN allow_description BOOLEAN DEFAULT FALSE;
                 END IF;
             END $$;
-        \`);
+        `);
         console.log("[DB] 'products.allow_description' column checked.");
 
-        await query(\`
+        await query(`
             DO $$ 
             BEGIN 
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='allowed_wa_sessions') THEN
                     ALTER TABLE products ADD COLUMN allowed_wa_sessions JSONB DEFAULT '[]'::jsonb;
                 END IF;
             END $$;
-        \`);
-        await query(\`UPDATE products SET allowed_wa_sessions = '[]'::jsonb WHERE allowed_wa_sessions IS NULL\`);
-        await query(\`UPDATE products SET allowed_messenger_ids = '[]'::jsonb WHERE allowed_messenger_ids IS NULL\`);
+        `);
+        await query(`UPDATE products SET allowed_wa_sessions = '[]'::jsonb WHERE allowed_wa_sessions IS NULL`);
+        await query(`UPDATE products SET allowed_messenger_ids = '[]'::jsonb WHERE allowed_messenger_ids IS NULL`);
         console.log("[DB] 'products.allowed_wa_sessions' column checked.");
 
         // Error Logs Table
