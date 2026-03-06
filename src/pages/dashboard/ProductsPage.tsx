@@ -33,7 +33,6 @@ interface Product {
     price?: number;
     currency?: string;
     stock?: number;
-    allowed_page_ids?: string[];
     allowed_messenger_ids?: string[];
     allowed_wa_sessions?: string[];
     is_combo?: boolean;
@@ -150,8 +149,8 @@ export default function ProductsPage() {
 
     const handleSelectAllPages = () => {
         // Only select filtered pages to respect search
-        const newFbIds = filteredPages.filter(p => p.type === 'messenger').map(p => p.page_id);
-        const newWaIds = filteredPages.filter(p => p.type === 'whatsapp').map(p => p.page_id);
+        const newFbIds = filteredPages.filter(p => p.type === 'messenger').map(p => String(p.page_id));
+        const newWaIds = filteredPages.filter(p => p.type === 'whatsapp').map(p => String(p.page_id));
         
         // Add to respective arrays
         setAllowedMessengerIds(prev => Array.from(new Set([...prev, ...newFbIds])));
@@ -160,8 +159,8 @@ export default function ProductsPage() {
 
     const handleDeselectAllPages = () => {
         // Remove filtered pages from selection
-        const fbIdsToRemove = filteredPages.filter(p => p.type === 'messenger').map(p => p.page_id);
-        const waIdsToRemove = filteredPages.filter(p => p.type === 'whatsapp').map(p => p.page_id);
+        const fbIdsToRemove = filteredPages.filter(p => p.type === 'messenger').map(p => String(p.page_id));
+        const waIdsToRemove = filteredPages.filter(p => p.type === 'whatsapp').map(p => String(p.page_id));
         
         setAllowedMessengerIds(prev => prev.filter(id => !fbIdsToRemove.includes(id)));
         setAllowedWASessions(prev => prev.filter(id => !waIdsToRemove.includes(id)));
@@ -1212,12 +1211,12 @@ export default function ProductsPage() {
                                             {waPages.length === 0 ? (
                                               <p className="text-xs text-muted-foreground col-span-full text-center">No WhatsApp sessions.</p>
                                             ) : waPages.map(page => {
-                                              const isSelected = allowedWASessions.includes(page.page_id);
+                                              const isSelected = allowedWASessions.includes(String(page.page_id));
                                               const toggleSelection = () => {
                                                 if (isSelected) {
-                                                  setAllowedWASessions(allowedWASessions.filter(id => id !== page.page_id));
+                                                  setAllowedWASessions(allowedWASessions.filter(id => id !== String(page.page_id)));
                                                 } else {
-                                                  setAllowedWASessions([...allowedWASessions, page.page_id]);
+                                                  setAllowedWASessions([...allowedWASessions, String(page.page_id)]);
                                                 }
                                               };
                                               return (
@@ -1255,12 +1254,12 @@ export default function ProductsPage() {
                                             {fbPages.length === 0 ? (
                                               <p className="text-xs text-muted-foreground col-span-full text-center">No Facebook pages.</p>
                                             ) : fbPages.map(page => {
-                                              const isSelected = allowedMessengerIds.includes(page.page_id);
+                                              const isSelected = allowedMessengerIds.includes(String(page.page_id));
                                               const toggleSelection = () => {
                                                 if (isSelected) {
-                                                  setAllowedMessengerIds(allowedMessengerIds.filter(id => id !== page.page_id));
+                                                  setAllowedMessengerIds(allowedMessengerIds.filter(id => id !== String(page.page_id)));
                                                 } else {
-                                                  setAllowedMessengerIds([...allowedMessengerIds, page.page_id]);
+                                                  setAllowedMessengerIds([...allowedMessengerIds, String(page.page_id)]);
                                                 }
                                               };
                                               return (
@@ -1430,7 +1429,7 @@ export default function ProductsPage() {
                                         <div className="flex flex-col gap-1">
                                             <span>{product.name}</span>
                                             <div className="flex flex-wrap gap-1">
-                                                {product.allowed_page_ids && product.allowed_page_ids.length > 0 && (
+                                                {product.allowed_messenger_ids && product.allowed_messenger_ids.length > 0 && (
                                                     <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
                                                         FB
                                                     </span>
@@ -1440,7 +1439,7 @@ export default function ProductsPage() {
                                                         WA
                                                     </span>
                                                 )}
-                                                {(!product.allowed_page_ids || product.allowed_page_ids.length === 0) && 
+                                                {(!product.allowed_messenger_ids || product.allowed_messenger_ids.length === 0) && 
                                                  (!product.allowed_wa_sessions || product.allowed_wa_sessions.length === 0) && (
                                                     <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400">
                                                         All Pages

@@ -2641,13 +2641,13 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
         } else {
             whereClause += ` AND (
                 (
-                    (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb)
+                    (allowed_messenger_ids IS NULL OR allowed_messenger_ids::jsonb = '[]'::jsonb)
                     AND
                     (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
                 )
                 OR 
                 EXISTS (
-                    SELECT 1 FROM jsonb_array_elements_text(COALESCE(allowed_page_ids, '[]'::jsonb)) AS elem WHERE elem = ANY($${pIdx}::text[])
+                    SELECT 1 FROM jsonb_array_elements_text(COALESCE(allowed_messenger_ids, '[]'::jsonb)) AS elem WHERE elem = ANY($${pIdx}::text[])
                 )
                 OR
                 EXISTS (
@@ -2777,8 +2777,8 @@ async function getProductsByNames(userId, productNames, pageId = null, platform 
             ? normalizedPlatform
             : await resolvePageContextType(pageId);
         const isWhatsapp = contextType === 'whatsapp';
-        const pageCol = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_page_ids';
-        const otherCol = isWhatsapp ? 'allowed_page_ids' : 'allowed_wa_sessions';
+        const pageCol = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_messenger_ids';
+        const otherCol = isWhatsapp ? 'allowed_messenger_ids' : 'allowed_wa_sessions';
         
         params.push(String(pageId));
         const pIdx = params.length;
@@ -2793,7 +2793,7 @@ async function getProductsByNames(userId, productNames, pageId = null, platform 
             )
             OR
             (
-                (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb)
+                (allowed_messenger_ids IS NULL OR allowed_messenger_ids::jsonb = '[]'::jsonb)
                 AND
                 (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
             )
@@ -2830,7 +2830,7 @@ async function searchProducts(userId, queryText, pageId = null, platform = null)
             ? normalizedPlatform
             : (pageId ? await resolvePageContextType(pageId) : null);
         const isWhatsapp = contextType === 'whatsapp';
-        const pageColumn = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_page_ids';
+        const pageColumn = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_messenger_ids';
 
         const normalize = (s) => (s || '').toString().toLowerCase().trim().replace(/\s+/g, ' ');
 
@@ -2883,7 +2883,7 @@ async function searchProducts(userId, queryText, pageId = null, platform = null)
                 // 1. Show if explicitly assigned to THIS specific page/session
                 // 2. OR show if it is a TRUE GLOBAL product (not assigned to ANY platform)
                 // 3. EXCLUDE if it belongs to OTHER platforms but NOT this one.
-                const otherColumn = isWhatsapp ? 'allowed_page_ids' : 'allowed_wa_sessions';
+                const otherColumn = isWhatsapp ? 'allowed_messenger_ids' : 'allowed_wa_sessions';
                 
                 where += ` AND (
                     (
@@ -2891,7 +2891,7 @@ async function searchProducts(userId, queryText, pageId = null, platform = null)
                     )
                     OR
                     (
-                        (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb)
+                        (allowed_messenger_ids IS NULL OR allowed_messenger_ids::jsonb = '[]'::jsonb)
                         AND
                         (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
                     )
