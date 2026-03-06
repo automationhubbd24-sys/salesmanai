@@ -34,6 +34,7 @@ interface Product {
     currency?: string;
     stock?: number;
     allowed_page_ids?: string[];
+    allowed_wa_sessions?: string[];
     is_combo?: boolean;
     combo_items?: string[];
     allow_description?: boolean;
@@ -107,6 +108,7 @@ export default function ProductsPage() {
         setAllowedPages(allowedPages.filter(id => !idsToRemove.includes(id)));
     };
     const [allowedPages, setAllowedPages] = useState<string[]>([]);
+    const [allowedWASessions, setAllowedWASessions] = useState<string[]>([]);
 
     const [isCombo, setIsCombo] = useState(false);
     const [comboItems, setComboItems] = useState<string[]>([]);
@@ -156,10 +158,7 @@ export default function ProductsPage() {
     useEffect(() => {
         if (userId) {
             const timer = setTimeout(async () => {
-                let token: string | null = null;
-                if (typeof window !== "undefined") {
-                    token = localStorage.getItem("auth_token");
-                }
+                const token = typeof window !== "undefined" ? localStorage.getItem("auth_token") : null;
                 fetchProducts(userId, searchQuery, token || undefined);
             }, 500);
             return () => clearTimeout(timer);
@@ -236,6 +235,7 @@ export default function ProductsPage() {
 
             if (pageId) {
                 params.set("page_id", pageId);
+                params.set("strict", "1");
             }
 
             const url = `${BACKEND_URL}/api/products?${params.toString()}`;
@@ -420,6 +420,7 @@ export default function ProductsPage() {
         setImagePreviews(product.image_url ? [product.image_url] : []);
         setProductImages([]);
         setAllowedPages(product.allowed_page_ids || []);
+        setAllowedWASessions(product.allowed_wa_sessions || []);
         setIsCombo(!!product.is_combo);
         setComboItems(Array.isArray(product.combo_items) ? product.combo_items : []);
         setComboItemInput("");
@@ -454,6 +455,7 @@ export default function ProductsPage() {
             formData.append("stock", productStock);
             formData.append("is_active", "true");
             formData.append("allowed_page_ids", JSON.stringify(allowedPages));
+            formData.append("allowed_wa_sessions", JSON.stringify(allowedWASessions));
             formData.append("is_combo", String(isCombo));
             formData.append("combo_items", JSON.stringify(comboItems));
             formData.append("allow_description", String(allowDescription));
@@ -498,10 +500,7 @@ export default function ProductsPage() {
                 ? `${BACKEND_URL}/api/products/${editProductId}${query}`
                 : `${BACKEND_URL}/api/products${query}`;
 
-            let token: string | null = null;
-            if (typeof window !== "undefined") {
-                token = localStorage.getItem("auth_token");
-            }
+            const token = typeof window !== "undefined" ? localStorage.getItem("auth_token") : null;
 
             const headers: HeadersInit = {};
             if (token) {
@@ -522,7 +521,10 @@ export default function ProductsPage() {
             toast.success(`Product ${editProductId ? 'updated' : 'saved'} successfully!`);
             setIsDialogOpen(false);
             resetForm();
-            fetchProducts(userId);
+            
+            // Re-fetch with token
+            const refreshToken = typeof window !== "undefined" ? localStorage.getItem("auth_token") : null;
+            fetchProducts(userId, searchQuery, refreshToken || undefined);
 
         } catch (error: any) {
             toast.error(error.message);
@@ -539,10 +541,7 @@ export default function ProductsPage() {
         
         setIsSubmitting(true);
         try {
-            let token: string | null = null;
-            if (typeof window !== "undefined") {
-                token = localStorage.getItem("auth_token");
-            }
+            const token = typeof window !== "undefined" ? localStorage.getItem("auth_token") : null;
 
             const headers: HeadersInit = {
                 'Content-Type': 'application/json'
@@ -565,7 +564,8 @@ export default function ProductsPage() {
             
             toast.success(data.message || "Products imported!");
             setIsWCDialogOpen(false);
-            fetchProducts(userId);
+            const refreshToken = typeof window !== "undefined" ? localStorage.getItem("auth_token") : null;
+            fetchProducts(userId, searchQuery, refreshToken || undefined);
         } catch (error: any) {
             toast.error(error.message);
         } finally {
@@ -577,10 +577,7 @@ export default function ProductsPage() {
         if (!userId) return;
 
         try {
-            let token: string | null = null;
-            if (typeof window !== "undefined") {
-                token = localStorage.getItem("auth_token");
-            }
+            const token = typeof window !== "undefined" ? localStorage.getItem("auth_token") : null;
 
             const params = new URLSearchParams();
             params.set("user_id", userId);
@@ -610,7 +607,8 @@ export default function ProductsPage() {
 
             if (res.ok) {
                 toast.success("Product deleted");
-                fetchProducts(userId);
+                const token = localStorage.getItem("auth_token");
+                fetchProducts(userId, searchQuery, token || undefined);
             } else {
                 toast.error(data?.error || "Failed to delete product");
             }
@@ -668,6 +666,7 @@ export default function ProductsPage() {
         setProductImages([]);
         setImagePreviews([]);
         setAllowedPages([]);
+        setAllowedWASessions([]);
         setIsCombo(false);
         setComboItems([]);
         setComboItemInput("");
@@ -1097,20 +1096,20 @@ export default function ProductsPage() {
                                               key={`wa-${page.page_id}`} 
                                               className="flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors"
                                               onClick={() => {
-                                                if (allowedPages.includes(page.page_id)) {
-                                                  setAllowedPages(allowedPages.filter(id => id !== page.page_id));
+                                                if (allowedWASessions.includes(page.page_id)) {
+                                                  setAllowedWASessions(allowedWASessions.filter(id => id !== page.page_id));
                                                 } else {
-                                                  setAllowedPages([...allowedPages, page.page_id]);
+                                                  setAllowedWASessions([...allowedWASessions, page.page_id]);
                                                 }
                                               }}
                                             >
                                               <Checkbox 
-                                                id={`page-${page.page_id}`}
-                                                checked={allowedPages.includes(page.page_id)}
+                                                id={`wa-page-${page.page_id}`}
+                                                checked={allowedWASessions.includes(page.page_id)}
                                                 onCheckedChange={() => {}} 
                                               />
                                               <Label 
-                                                htmlFor={`page-${page.page_id}`} 
+                                                htmlFor={`wa-page-${page.page_id}`} 
                                                 className="text-sm font-normal cursor-pointer select-none pointer-events-none flex-1 truncate"
                                               >
                                                 {page.name}
@@ -1137,12 +1136,12 @@ export default function ProductsPage() {
                                               }}
                                             >
                                               <Checkbox 
-                                                id={`page-${page.page_id}`}
+                                                id={`fb-page-${page.page_id}`}
                                                 checked={allowedPages.includes(page.page_id)}
                                                 onCheckedChange={() => {}} 
                                               />
                                               <Label 
-                                                htmlFor={`page-${page.page_id}`} 
+                                                htmlFor={`fb-page-${page.page_id}`} 
                                                 className="text-sm font-normal cursor-pointer select-none pointer-events-none flex-1 truncate"
                                               >
                                                 {page.name}
@@ -1288,10 +1287,28 @@ export default function ProductsPage() {
                                         </div>
                                     </TableCell>
                                     <TableCell className="font-medium">
-                                        <div className="flex flex-col">
+                                        <div className="flex flex-col gap-1">
                                             <span>{product.name}</span>
+                                            <div className="flex flex-wrap gap-1">
+                                                {product.allowed_page_ids && product.allowed_page_ids.length > 0 && (
+                                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+                                                        FB
+                                                    </span>
+                                                )}
+                                                {product.allowed_wa_sessions && product.allowed_wa_sessions.length > 0 && (
+                                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                                                        WA
+                                                    </span>
+                                                )}
+                                                {(!product.allowed_page_ids || product.allowed_page_ids.length === 0) && 
+                                                 (!product.allowed_wa_sessions || product.allowed_wa_sessions.length === 0) && (
+                                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400">
+                                                        All Pages
+                                                    </span>
+                                                )}
+                                            </div>
                                             {product.variants && product.variants.length > 0 && (
-                                                <span className="text-xs text-muted-foreground">
+                                                <span className="text-[10px] text-muted-foreground">
                                                     {product.variants.length} variants
                                                 </span>
                                             )}

@@ -39,10 +39,10 @@ Rules:
 - Do not add extra words.
 - Single line output only.`;
                 
-                // Use Gemini 2.0 Flash (or 2.5 if available) for best results
+                // Use Gemini 2.5 Flash for best results
                 const description = await aiService.processImageWithVision(
                     product.image_url, 
-                    { chatmodel: 'gemini-2.0-flash' }, // Explicitly request Flash 2.0
+                    { chatmodel: 'gemini-2.5-flash' }, // Explicitly request Flash 2.5
                     { prompt: prompt }
                 );
 

@@ -33,9 +33,9 @@ export default function ApiManagementPage() {
     const [selectedConfigProvider, setSelectedConfigProvider] = useState("google");
     const [configValues, setConfigValues] = useState<GlobalConfig>({
         provider: "google",
-        text_model: "gemini-2.0-flash",
-        vision_model: "gemini-2.0-flash",
-        voice_model: "gemini-2.0-flash-lite"
+        text_model: "gemini-2.5-flash",
+        vision_model: "gemini-2.5-flash",
+        voice_model: "gemini-2.5-flash-lite"
     });
 
     useEffect(() => {
@@ -88,9 +88,9 @@ export default function ApiManagementPage() {
         } else {
             setConfigValues({
                 provider: newProvider,
-                text_model: newProvider === "mistral" ? "mistral-small-latest" : "gemini-2.0-flash",
-                vision_model: newProvider === "mistral" ? "mistral-small-latest" : "gemini-2.0-flash",
-                voice_model: newProvider === "mistral" ? "mistral-small-latest" : "gemini-2.0-flash-lite"
+                text_model: newProvider === "mistral" ? "mistral-small-latest" : "gemini-2.5-flash",
+                vision_model: newProvider === "mistral" ? "mistral-small-latest" : "gemini-2.5-flash",
+                voice_model: newProvider === "mistral" ? "mistral-small-latest" : "gemini-2.5-flash-lite"
             });
         }
     };
@@ -257,7 +257,7 @@ export default function ApiManagementPage() {
                                     className="bg-black/40 border-white/10 text-xs"
                                     value={configValues.text_model}
                                     onChange={(e) => setConfigValues({...configValues, text_model: e.target.value})}
-                                    placeholder="e.g. gemini-2.0-flash"
+                                    placeholder="e.g. gemini-2.5-flash"
                                 />
                             </div>
 
@@ -267,7 +267,7 @@ export default function ApiManagementPage() {
                                     className="bg-black/40 border-white/10 text-xs"
                                     value={configValues.vision_model}
                                     onChange={(e) => setConfigValues({...configValues, vision_model: e.target.value})}
-                                    placeholder="e.g. gemini-2.0-flash"
+                                    placeholder="e.g. gemini-2.5-flash"
                                 />
                             </div>
 
@@ -277,7 +277,7 @@ export default function ApiManagementPage() {
                                     className="bg-black/40 border-white/10 text-xs"
                                     value={configValues.voice_model}
                                     onChange={(e) => setConfigValues({...configValues, voice_model: e.target.value})}
-                                    placeholder="e.g. gemini-2.0-flash-lite"
+                                    placeholder="e.g. gemini-2.5-flash-lite"
                                 />
                             </div>
                         </div>

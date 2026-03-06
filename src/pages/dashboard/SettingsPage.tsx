@@ -40,7 +40,7 @@ export default function SettingsPage() {
     defaultValues: {
       provider: "openrouter",
       api_key: "",
-      chatmodel: "gemini-2.5-flash",
+      chatmodel: "arcee-ai/trinity-large-preview",
       text_prompt: "You are a helpful assistant for a WhatsApp store.",
     },
   });
@@ -205,7 +205,7 @@ export default function SettingsPage() {
                             field.onChange(val);
                             // Auto-set recommended models
                             if (val === 'openai') form.setValue('chatmodel', 'openai/gpt-4o');
-                            if (val === 'google') form.setValue('chatmodel', 'google/gemini-2.0-flash-lite-preview-02-05:free');
+                            if (val === 'google') form.setValue('chatmodel', 'google/gemini-2.5-flash:free');
                             if (val === 'groq') form.setValue('chatmodel', 'groq/llama-3.3-70b-versatile');
                             if (val === 'openrouter') form.setValue('chatmodel', 'arcee-ai/trinity-large-preview');
                             if (val === 'xai') form.setValue('chatmodel', 'xai/grok-beta');
@@ -270,7 +270,7 @@ export default function SettingsPage() {
                                   <FormItem>
                                     <FormLabel>Model Name</FormLabel>
                                     <FormControl>
-                                      <Input placeholder="e.g. google/gemini-2.0-flash-lite-preview-02-05:free" {...field} className="font-mono" />
+                                      <Input placeholder="e.g. google/gemini-2.5-flash:free" {...field} className="font-mono" />
                                     </FormControl>
                                     <FormDescription className="text-xs">
                                       The specific AI model ID to use.

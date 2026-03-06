@@ -280,6 +280,7 @@ export default function MessengerSettingsPage() {
       const params = new URLSearchParams();
       params.set("page_id", pageId);
       params.set("limit", "50");
+      params.set("strict", "1");
 
       const mode = localStorage.getItem("messenger_view_mode");
       const teamOwner = localStorage.getItem("active_team_owner");

@@ -2439,6 +2439,7 @@ async function createProduct(productData) {
         'currency',
         'stock',
         'allowed_page_ids',
+        'allowed_wa_sessions',
         'keywords',
         'is_combo',
         'combo_items',
@@ -2467,7 +2468,20 @@ async function createProduct(productData) {
     return result.rows[0];
 }
 
-async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pageId = null, allowedPageIds = null) {
+async function resolvePageContextType(pageId) {
+    if (!pageId) return null;
+    try {
+        const waRes = await query('SELECT 1 FROM whatsapp_message_database WHERE session_name = $1 LIMIT 1', [String(pageId)]);
+        if (waRes.rows.length > 0) return 'whatsapp';
+    } catch (e) {}
+    try {
+        const waRes2 = await query('SELECT 1 FROM whatsapp_sessions WHERE session_name = $1 LIMIT 1', [String(pageId)]);
+        if (waRes2.rows.length > 0) return 'whatsapp';
+    } catch (e) {}
+    return 'messenger';
+}
+
+async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pageId = null, allowedPageIds = null, strictMode = false) {
     console.log(`[DB] getProducts Called - User: ${userId}, PageID: ${pageId}, AllowedPages: ${JSON.stringify(allowedPageIds)}`);
     const offset = (page - 1) * limit;
 
@@ -2476,6 +2490,8 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
 
     // 1. Base Filter: Page/Session Context
     if (pageId) {
+        const contextType = await resolvePageContextType(pageId);
+        const isWhatsapp = contextType === 'whatsapp';
         // Check if user owns this page/session
         let isOwner = false;
         try {
@@ -2487,35 +2503,67 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
             }
         } catch (e) { console.error("[DB] Owner check failed", e); }
 
+        if (strictMode) {
+            params.push(String(pageId));
+            const idx = params.length;
+            if (isWhatsapp) {
+                whereClause += ` AND (allowed_wa_sessions::jsonb @> jsonb_build_array($${idx}::text))`;
+            } else {
+                whereClause += ` AND (allowed_page_ids::jsonb @> jsonb_build_array($${idx}::text))`;
+            }
+        }
+
         if (!isOwner && allowedPageIds && allowedPageIds.length > 0) {
             // TEAM MEMBER RESTRICTED VIEW
             params.push(String(pageId)); // $2
             const perms = allowedPageIds.map(String);
             params.push(perms); // $3
             
-            whereClause += ` AND (
-                (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb)
-                OR
-                (allowed_page_ids::jsonb @> jsonb_build_array($2::text) AND allowed_page_ids::jsonb ?| $3::text[] )
-            )`;
+            if (isWhatsapp) {
+                whereClause += ` AND (
+                    (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
+                    OR
+                    (allowed_wa_sessions::jsonb @> jsonb_build_array($2::text) AND allowed_wa_sessions::jsonb ?| $3::text[] )
+                )`;
+            } else {
+                whereClause += ` AND (
+                    (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb)
+                    OR
+                    (allowed_page_ids::jsonb @> jsonb_build_array($2::text) AND allowed_page_ids::jsonb ?| $3::text[] )
+                )`;
+            }
         }
     }
 
     // 2. Global Permission Filter (for Team Members)
     if (allowedPageIds !== null && allowedPageIds.length > 0) {
+        const contextType = await resolvePageContextType(pageId);
+        const isWhatsapp = contextType === 'whatsapp';
         const perms = allowedPageIds.map(String);
         params.push(perms);
         const pIdx = params.length;
         
-        whereClause += ` AND (
-            (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb)
-            OR 
-            EXISTS (
-                SELECT 1 
-                FROM jsonb_array_elements_text(COALESCE(allowed_page_ids, '[]'::jsonb)) AS elem 
-                WHERE elem = ANY($${pIdx}::text[])
-            )
-        )`;
+        if (isWhatsapp) {
+            whereClause += ` AND (
+                (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
+                OR 
+                EXISTS (
+                    SELECT 1 
+                    FROM jsonb_array_elements_text(COALESCE(allowed_wa_sessions, '[]'::jsonb)) AS elem 
+                    WHERE elem = ANY($${pIdx}::text[])
+                )
+            )`;
+        } else {
+            whereClause += ` AND (
+                (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb)
+                OR 
+                EXISTS (
+                    SELECT 1 
+                    FROM jsonb_array_elements_text(COALESCE(allowed_page_ids, '[]'::jsonb)) AS elem 
+                    WHERE elem = ANY($${pIdx}::text[])
+                )
+            )`;
+        }
     }
 
     // 3. Search Filter
@@ -2633,8 +2681,14 @@ async function getProductsByNames(userId, productNames, pageId = null) {
     const params = [userId, productNames];
 
     if (pageId) {
+        const contextType = await resolvePageContextType(pageId);
+        const isWhatsapp = contextType === 'whatsapp';
         params.push(String(pageId));
-        sql += ` AND (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb OR allowed_page_ids::jsonb @> jsonb_build_array($${params.length}::text))`;
+        if (isWhatsapp) {
+            sql += ` AND (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb OR allowed_wa_sessions::jsonb @> jsonb_build_array($${params.length}::text))`;
+        } else {
+            sql += ` AND (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb OR allowed_page_ids::jsonb @> jsonb_build_array($${params.length}::text))`;
+        }
     }
     
     try {
@@ -2658,6 +2712,10 @@ async function searchProducts(userId, queryText, pageId = null) {
 
         const cleanQuery = queryText.trim();
         if (!cleanQuery) return [];
+
+        const contextType = pageId ? await resolvePageContextType(pageId) : null;
+        const isWhatsapp = contextType === 'whatsapp';
+        const pageColumn = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_page_ids';
 
         const normalize = (s) => (s || '').toString().toLowerCase().trim().replace(/\s+/g, ' ');
 
@@ -2704,7 +2762,7 @@ async function searchProducts(userId, queryText, pageId = null) {
 
             if (pageId) {
                 params.push(String(pageId));
-                where += ` AND (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb OR allowed_page_ids::jsonb @> jsonb_build_array($${params.length}::text))`;
+                where += ` AND (${pageColumn} IS NULL OR ${pageColumn}::jsonb = '[]'::jsonb OR ${pageColumn}::jsonb @> jsonb_build_array($${params.length}::text))`;
             }
             return { where, params };
         };

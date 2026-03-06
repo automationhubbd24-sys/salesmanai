@@ -138,9 +138,9 @@ export default function AdminPage() {
   const [selectedConfigProvider, setSelectedConfigProvider] = useState("google");
   const [configValues, setConfigValues] = useState<GlobalEngineConfig>({
     provider: "google",
-    text_model: "gemini-2.0-flash",
-    vision_model: "gemini-2.0-flash",
-    voice_model: "gemini-2.0-flash-lite",
+    text_model: "gemini-2.5-flash",
+    vision_model: "gemini-2.5-flash",
+    voice_model: "gemini-2.5-flash-lite",
     text_provider_override: null,
     vision_provider_override: null,
     voice_provider_override: null,
@@ -1661,9 +1661,9 @@ export default function AdminPage() {
                         } else {
                           setConfigValues({
                             provider: val,
-                            text_model: val === 'google' ? 'gemini-2.0-flash' : val === 'mistral' ? 'mistral-small-latest' : '',
-                            vision_model: val === 'google' ? 'gemini-2.0-flash' : val === 'mistral' ? 'mistral-small-latest' : '',
-                            voice_model: val === 'google' ? 'gemini-2.0-flash-lite' : val === 'mistral' ? 'mistral-small-latest' : '',
+                            text_model: val === 'google' ? 'gemini-2.5-flash' : val === 'mistral' ? 'mistral-small-latest' : '',
+                            vision_model: val === 'google' ? 'gemini-2.5-flash' : val === 'mistral' ? 'mistral-small-latest' : '',
+                            voice_model: val === 'google' ? 'gemini-2.5-flash-lite' : val === 'mistral' ? 'mistral-small-latest' : '',
                             text_provider_override: null,
                             vision_provider_override: null,
                             voice_provider_override: null,
@@ -1710,7 +1710,7 @@ export default function AdminPage() {
                     <Input 
                       value={configValues.text_model} 
                       onChange={(e) => setConfigValues({...configValues, text_model: e.target.value})}
-                      placeholder="e.g. gemini-2.0-flash"
+                      placeholder="e.g. gemini-2.5-flash"
                       className="bg-black/40 border-white/10 h-9"
                     />
                   </div>
@@ -1774,7 +1774,7 @@ export default function AdminPage() {
                     <Input 
                       value={configValues.vision_model} 
                       onChange={(e) => setConfigValues({...configValues, vision_model: e.target.value})}
-                      placeholder="e.g. gemini-2.0-flash"
+                      placeholder="e.g. gemini-2.5-flash"
                       className="bg-black/40 border-white/10 h-9"
                     />
                   </div>
@@ -1838,7 +1838,7 @@ export default function AdminPage() {
                     <Input 
                       value={configValues.voice_model} 
                       onChange={(e) => setConfigValues({...configValues, voice_model: e.target.value})}
-                      placeholder="e.g. gemini-2.0-flash-lite"
+                      placeholder="e.g. gemini-2.5-flash-lite"
                       className="bg-black/40 border-white/10 h-9"
                     />
                   </div>
