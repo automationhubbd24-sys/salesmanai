@@ -432,16 +432,15 @@ exports.createProduct = async (req, res) => {
         
         const isActive = req.body.is_active === 'true' || req.body.is_active === true;
 
-        let allowedPages = null;
-        if (req.body.allowed_page_ids) {
+        let allowedMessengerIds = null;
+        if (req.body.allowed_messenger_ids) {
             try {
-                const parsed = JSON.parse(req.body.allowed_page_ids);
+                const parsed = JSON.parse(req.body.allowed_messenger_ids);
                 if (Array.isArray(parsed)) {
-                    // Force all IDs to be strings for consistent JSONB querying
-                    allowedPages = parsed.map(String);
+                    allowedMessengerIds = parsed.map(String);
                 }
             } catch (e) {
-                console.error("Invalid allowed_page_ids format", e);
+                console.error("Invalid allowed_messenger_ids format", e);
             }
         }
 
@@ -472,7 +471,7 @@ exports.createProduct = async (req, res) => {
             price,
             currency,
             stock,
-            allowed_page_ids: allowedPages ? JSON.stringify(allowedPages) : null,
+            allowed_messenger_ids: allowedMessengerIds ? JSON.stringify(allowedMessengerIds) : null,
             allowed_wa_sessions: allowedWASessions ? JSON.stringify(allowedWASessions) : null,
             keywords,
             platform: req.body.platform || 'global',
@@ -763,19 +762,19 @@ exports.updateProduct = async (req, res) => {
             }
         }
 
-        if (req.body.allowed_page_ids) {
+        if (req.body.allowed_messenger_ids) {
             try {
                 // Parse to validate, then re-stringify for DB
-                const parsedAllowed = JSON.parse(req.body.allowed_page_ids);
+                const parsedAllowed = JSON.parse(req.body.allowed_messenger_ids);
                 if (Array.isArray(parsedAllowed)) {
                     // Force all IDs to be strings for consistent JSONB querying
                     const stringAllowed = parsedAllowed.map(String);
-                    updates.allowed_page_ids = JSON.stringify(stringAllowed);
+                    updates.allowed_messenger_ids = JSON.stringify(stringAllowed);
                 } else {
-                    updates.allowed_page_ids = '[]';
+                    updates.allowed_messenger_ids = '[]';
                 }
             } catch (e) {
-                return res.status(400).json({ error: "Invalid allowed_page_ids JSON format" });
+                return res.status(400).json({ error: "Invalid allowed_messenger_ids JSON format" });
             }
         }
 

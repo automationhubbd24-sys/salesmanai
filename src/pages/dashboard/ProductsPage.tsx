@@ -153,7 +153,7 @@ export default function ProductsPage() {
         const newWaIds = filteredPages.filter(p => p.type === 'whatsapp').map(p => p.page_id);
         
         // Add to respective arrays
-        setAllowedPages(prev => Array.from(new Set([...prev, ...newFbIds])));
+        setAllowedMessengerIds(prev => Array.from(new Set([...prev, ...newFbIds])));
         setAllowedWASessions(prev => Array.from(new Set([...prev, ...newWaIds])));
     };
 
@@ -162,11 +162,11 @@ export default function ProductsPage() {
         const fbIdsToRemove = filteredPages.filter(p => p.type === 'messenger').map(p => p.page_id);
         const waIdsToRemove = filteredPages.filter(p => p.type === 'whatsapp').map(p => p.page_id);
         
-        setAllowedPages(prev => prev.filter(id => !fbIdsToRemove.includes(id)));
+        setAllowedMessengerIds(prev => prev.filter(id => !fbIdsToRemove.includes(id)));
         setAllowedWASessions(prev => prev.filter(id => !waIdsToRemove.includes(id)));
     };
-    const [allowedPages, setAllowedPages] = useState<string[]>([]);
     const [allowedWASessions, setAllowedWASessions] = useState<string[]>([]);
+    const [allowedMessengerIds, setAllowedMessengerIds] = useState<string[]>([]);
 
     const [isCombo, setIsCombo] = useState(false);
     const [comboItems, setComboItems] = useState<string[]>([]);
@@ -509,8 +509,8 @@ export default function ProductsPage() {
             }
         };
 
-        setAllowedPages(parseAssignment(product.allowed_page_ids));
         setAllowedWASessions(parseAssignment(product.allowed_wa_sessions));
+        setAllowedMessengerIds(parseAssignment(product.allowed_messenger_ids));
 
         setIsCombo(!!product.is_combo);
         setComboItems(Array.isArray(product.combo_items) ? product.combo_items : []);
@@ -560,7 +560,7 @@ export default function ProductsPage() {
             formData.append("platform", currentPlatform);
 
             // Directly use the state values - NO MORE confusing normalization
-            formData.append("allowed_page_ids", JSON.stringify(allowedPages));
+            formData.append("allowed_messenger_ids", JSON.stringify(allowedMessengerIds)); // NEW clear column
             formData.append("allowed_wa_sessions", JSON.stringify(allowedWASessions));
             formData.append("is_combo", String(isCombo));
             formData.append("combo_items", JSON.stringify(comboItems));
@@ -766,13 +766,13 @@ export default function ProductsPage() {
         
         // Auto-select current page/session if available
         if (platform === "messenger" && pageId) {
-            setAllowedPages([pageId]);
+            setAllowedMessengerIds([pageId]);
             setAllowedWASessions([]);
         } else if (platform === "whatsapp" && pageId) {
             setAllowedWASessions([pageId]);
-            setAllowedPages([]);
+            setAllowedMessengerIds([]);
         } else {
-            setAllowedPages([]);
+            setAllowedMessengerIds([]);
             setAllowedWASessions([]);
         }
 
@@ -1254,12 +1254,12 @@ export default function ProductsPage() {
                                             {fbPages.length === 0 ? (
                                               <p className="text-xs text-muted-foreground col-span-full text-center">No Facebook pages.</p>
                                             ) : fbPages.map(page => {
-                                              const isSelected = allowedPages.includes(page.page_id);
+                                              const isSelected = allowedMessengerIds.includes(page.page_id);
                                               const toggleSelection = () => {
                                                 if (isSelected) {
-                                                  setAllowedPages(allowedPages.filter(id => id !== page.page_id));
+                                                  setAllowedMessengerIds(allowedMessengerIds.filter(id => id !== page.page_id));
                                                 } else {
-                                                  setAllowedPages([...allowedPages, page.page_id]);
+                                                  setAllowedMessengerIds([...allowedMessengerIds, page.page_id]);
                                                 }
                                               };
                                               return (

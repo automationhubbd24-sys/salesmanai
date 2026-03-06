@@ -415,29 +415,38 @@ async function initTables() {
         `);
         console.log("[DB] 'fb_message_database.allow_description' column checked.");
 
-        await query(`
+        // 1. Rename allowed_page_ids to allowed_messenger_ids if it exists
+        // Or just add allowed_messenger_ids as a clear column
+        await query(\`
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='allowed_messenger_ids') THEN
+                    ALTER TABLE products ADD COLUMN allowed_messenger_ids JSONB DEFAULT '[]'::jsonb;
+                END IF;
+            END $$;
+        \`);
+        console.log("[DB] 'products.allowed_messenger_ids' column checked.");
+
+        await query(\`
             DO $$ 
             BEGIN 
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='allow_description') THEN
                     ALTER TABLE products ADD COLUMN allow_description BOOLEAN DEFAULT FALSE;
                 END IF;
             END $$;
-        `);
+        \`);
         console.log("[DB] 'products.allow_description' column checked.");
 
-        await query(`
+        await query(\`
             DO $$ 
             BEGIN 
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='allowed_wa_sessions') THEN
                     ALTER TABLE products ADD COLUMN allowed_wa_sessions JSONB DEFAULT '[]'::jsonb;
                 END IF;
-                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='allowed_page_ids') THEN
-                    ALTER TABLE products ALTER COLUMN allowed_page_ids SET DEFAULT '[]'::jsonb;
-                END IF;
             END $$;
-        `);
-        await query(`UPDATE products SET allowed_wa_sessions = '[]'::jsonb WHERE allowed_wa_sessions IS NULL`);
-        await query(`UPDATE products SET allowed_page_ids = '[]'::jsonb WHERE allowed_page_ids IS NULL`);
+        \`);
+        await query(\`UPDATE products SET allowed_wa_sessions = '[]'::jsonb WHERE allowed_wa_sessions IS NULL\`);
+        await query(\`UPDATE products SET allowed_messenger_ids = '[]'::jsonb WHERE allowed_messenger_ids IS NULL\`);
         console.log("[DB] 'products.allowed_wa_sessions' column checked.");
 
         // Error Logs Table
@@ -2453,7 +2462,7 @@ async function createProduct(productData) {
         'price',
         'currency',
         'stock',
-        'allowed_page_ids',
+        'allowed_messenger_ids',
         'allowed_wa_sessions',
         'keywords',
         'is_combo',
@@ -2470,7 +2479,7 @@ async function createProduct(productData) {
         if (field === 'user_id') p += '::uuid';
         placeholders.push(p);
         values.push(
-            field === 'variants' || field === 'allowed_page_ids' || field === 'allowed_wa_sessions' || field === 'combo_items' || field === 'additional_images'
+            field === 'variants' || field === 'allowed_messenger_ids' || field === 'allowed_wa_sessions' || field === 'combo_items' || field === 'additional_images'
                 ? (productData[field] || (field === 'additional_images' ? '[]' : '[]'))
                 : (productData[field] ?? (field === 'platform' ? 'global' : null))
         );
@@ -2541,24 +2550,21 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
         const contextType = (normalizedPlatform === 'whatsapp' || normalizedPlatform === 'messenger')
             ? normalizedPlatform
             : await resolvePageContextType(pageId);
+        const isWhatsapp = contextType === 'whatsapp';
+        const pageCol = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_messenger_ids';
         
-        // Robustness Fix: Check BOTH columns for the pageId, as data might be misassigned
-        // but the ID itself is unique enough to identify the target.
-        const pageColMatch = `(
-            (allowed_page_ids::jsonb @> jsonb_build_array($${pIdx}::text))
-            OR
-            (allowed_wa_sessions::jsonb @> jsonb_build_array($${pIdx}::text))
-        )`;
+        params.push(String(pageId));
+        const pIdx = params.length;
 
         if (strictMode) {
             // Strict Isolation (Session-specific view):
-            // 1. Show if explicitly assigned to THIS specific page/session (in either column)
+            // 1. Show if explicitly assigned to THIS specific page/session
             // 2. OR show if it is a TRUE GLOBAL product (not assigned to ANY platform)
             whereClause += ` AND (
-                ${pageColMatch}
+                (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))
                 OR
                 (
-                    (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb)
+                    (allowed_messenger_ids IS NULL OR allowed_messenger_ids::jsonb = '[]'::jsonb)
                     AND
                     (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
                 )
@@ -2569,29 +2575,27 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
             // 2. Show products explicitly assigned to THIS specific page/session
             // 3. EXCLUDE products that are assigned to OTHER platforms but NOT this one.
             
-            const isWhatsapp = contextType === 'whatsapp';
-            const otherCol = isWhatsapp ? 'allowed_page_ids' : 'allowed_wa_sessions';
-            const thisCol = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_page_ids';
+            const otherCol = isWhatsapp ? 'allowed_messenger_ids' : 'allowed_wa_sessions';
             
             whereClause += ` AND (
                 (
-                    (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb)
+                    (allowed_messenger_ids IS NULL OR allowed_messenger_ids::jsonb = '[]'::jsonb)
                     AND
                     (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
                 )
                 OR
-                ${pageColMatch}
+                (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))
             ) AND (
                 (${otherCol} IS NULL OR ${otherCol}::jsonb = '[]'::jsonb)
                 OR
-                ${pageColMatch}
+                (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))
             )`;
         }
     } else if (platform) {
         // If platform is specified but no specific page/session is selected,
         // we should still isolate by platform to prevent leakage.
         const isWhatsapp = platform.toLowerCase() === 'whatsapp';
-        const otherCol = isWhatsapp ? 'allowed_page_ids' : 'allowed_wa_sessions';
+        const otherCol = isWhatsapp ? 'allowed_messenger_ids' : 'allowed_wa_sessions';
         
         // Exclude products explicitly assigned to OTHER platforms
         whereClause += ` AND (${otherCol} IS NULL OR ${otherCol}::jsonb = '[]'::jsonb)`;
@@ -2613,8 +2617,8 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
                 ? normalizedPlatform
                 : await resolvePageContextType(pageId);
             const isWhatsapp = contextType === 'whatsapp';
-            const pageCol = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_page_ids';
-            const otherCol = isWhatsapp ? 'allowed_page_ids' : 'allowed_wa_sessions';
+            const pageCol = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_messenger_ids';
+            const otherCol = isWhatsapp ? 'allowed_messenger_ids' : 'allowed_wa_sessions';
             
             // Re-use pIdx for the specific pageId (already in params at index 2 usually)
             // Let's find it or just push it again for simplicity
@@ -2623,7 +2627,7 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
 
             whereClause += ` AND (
                 (
-                    (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb)
+                    (allowed_messenger_ids IS NULL OR allowed_messenger_ids::jsonb = '[]'::jsonb)
                     AND
                     (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
                 )
