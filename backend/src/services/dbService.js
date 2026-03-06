@@ -2451,8 +2451,8 @@ async function createProduct(productData) {
     fields.forEach((field, index) => {
         placeholders.push(`$${index + 1}`);
         values.push(
-            field === 'variants' || field === 'allowed_page_ids' || field === 'combo_items' || field === 'additional_images'
-                ? (productData[field] || (field === 'additional_images' ? '[]' : null))
+            field === 'variants' || field === 'allowed_page_ids' || field === 'allowed_wa_sessions' || field === 'combo_items' || field === 'additional_images'
+                ? (productData[field] || (field === 'additional_images' ? '[]' : '[]'))
                 : (productData[field] ?? null)
         );
     });
@@ -2471,101 +2471,62 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
     console.log(`[DB] getProducts Called - User: ${userId}, PageID: ${pageId}, AllowedPages: ${JSON.stringify(allowedPageIds)}`);
     const offset = (page - 1) * limit;
 
-    let params = [];
-    let whereClause = '';
+    let params = [userId]; // $1 always userId
+    let whereClause = 'user_id = $1';
 
-    // 1. Base Filter: User & Page Context
-    let isPageOwner = false;
+    // 1. Base Filter: Page/Session Context
     if (pageId) {
+        // Check if user owns this page/session
+        let isOwner = false;
         try {
-            // Check if the current user is the owner of this page
-            const ownerCheck = await query('SELECT user_id FROM page_access_token_message WHERE page_id = $1', [String(pageId)]);
-            if (ownerCheck.rows.length > 0 && ownerCheck.rows[0].user_id === userId) {
-                isPageOwner = true;
-                console.log(`[DB] User ${userId} is OWNER of Page ${pageId}. Forcing full visibility.`);
+            const fbCheck = await query('SELECT 1 FROM page_access_token_message WHERE page_id = $1 AND user_id = $2', [String(pageId), userId]);
+            if (fbCheck.rows.length > 0) isOwner = true;
+            else {
+                const waCheck = await query('SELECT 1 FROM whatsapp_message_database WHERE session_name = $1 AND user_id = $2', [String(pageId), userId]);
+                if (waCheck.rows.length > 0) isOwner = true;
             }
-        } catch (e) {
-            console.error("[DB] Page Owner Check Failed:", e);
-        }
-    }
+        } catch (e) { console.error("[DB] Owner check failed", e); }
 
-    if (pageId) {
-        // params.push(userId); // REMOVED: Pushed conditionally below
-        // params.push(String(pageId)); // REMOVED: Pushed conditionally below
-        
-        // Complex Logic for Page View:
-        // 1. If User is Owner (allowedPageIds is null/undefined OR empty array OR Explicit Owner Check): Show ALL products owned by them
-        // 2. If User is Team Member (allowedPageIds has values): Show products linked to their allowed pages
-        
-        if (isPageOwner || !allowedPageIds || (Array.isArray(allowedPageIds) && allowedPageIds.length === 0)) {
-             // OWNER VIEW: Show everything owned by this user
-             params.push(userId); // $1
-             params.push(String(pageId)); // $2
-             whereClause = `user_id = $1 AND (
-                (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb) 
-                OR (allowed_page_ids::jsonb @> jsonb_build_array($2::text))
-                OR (allowed_wa_sessions::jsonb @> jsonb_build_array($2::text))
-             )`;
-        } else {
-            // TEAM MEMBER VIEW: Restricted by allowed_page_ids
-            params.push(userId); // $1
+        if (!isOwner && allowedPageIds && allowedPageIds.length > 0) {
+            // TEAM MEMBER RESTRICTED VIEW
             params.push(String(pageId)); // $2
             const perms = allowedPageIds.map(String);
             params.push(perms); // $3
             
-            whereClause = `(
-                (user_id = $1 AND (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb))
+            whereClause += ` AND (
+                (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb)
                 OR
                 (allowed_page_ids::jsonb @> jsonb_build_array($2::text) AND allowed_page_ids::jsonb ?| $3::text[] )
             )`;
         }
-    } else {
-        // Standard "All Products" View
-        if (Array.isArray(userId)) {
-            params.push(userId); // $1
-            whereClause = 'user_id = ANY($1)';
-        } else {
-            params.push(userId); // $1
-            whereClause = 'user_id = $1';
-        }
     }
 
-    // 2. Search Filter
-    if (searchQuery) {
-        params.push(`%${searchQuery}%`, `%${searchQuery}%`);
-        // params length changes dynamically based on previous pushes
-        const idx1 = params.length - 1;
-        const idx2 = params.length;
-        whereClause += ` AND (name ILIKE $${idx1} OR description ILIKE $${idx2})`;
-    }
-
-    // 3. Permission Filter (for Team Members)
+    // 2. Global Permission Filter (for Team Members)
     if (allowedPageIds !== null && allowedPageIds.length > 0) {
-        // Hybrid Filtering:
-        // 1. General Products -> Visible
-        // 2. Page-Specific Products -> Only visible if in allowedPageIds
-        
         const perms = allowedPageIds.map(String);
         params.push(perms);
+        const pIdx = params.length;
         
         whereClause += ` AND (
             (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb)
             OR 
             EXISTS (
                 SELECT 1 
-                FROM jsonb_array_elements_text(allowed_page_ids) AS elem 
-                WHERE elem = ANY($${params.length}::text[])
-            )
-            OR
-            EXISTS (
-                SELECT 1 
-                FROM jsonb_array_elements_text(allowed_wa_sessions) AS elem 
-                WHERE elem = ANY($${params.length}::text[])
+                FROM jsonb_array_elements_text(COALESCE(allowed_page_ids, '[]'::jsonb)) AS elem 
+                WHERE elem = ANY($${pIdx}::text[])
             )
         )`;
     }
 
-    console.log(`[DBDebug] getProducts Query: WHERE ${whereClause} | Params: ${JSON.stringify(params)}`);
+    // 3. Search Filter
+    if (searchQuery) {
+        params.push(`%${searchQuery}%`, `%${searchQuery}%`);
+        const idx1 = params.length - 1;
+        const idx2 = params.length;
+        whereClause += ` AND (name ILIKE $${idx1} OR description ILIKE $${idx2})`;
+    }
+
+    console.log(`[DBDebug] getProducts Final: WHERE ${whereClause} | Params: ${JSON.stringify(params)}`);
 
     const countResult = await query(
         `SELECT COUNT(*)::int AS cnt
@@ -2673,11 +2634,7 @@ async function getProductsByNames(userId, productNames, pageId = null) {
 
     if (pageId) {
         params.push(String(pageId));
-        sql += ` AND (
-            (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb OR allowed_page_ids::jsonb @> jsonb_build_array($${params.length}::text))
-            OR
-            (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb OR allowed_wa_sessions::jsonb @> jsonb_build_array($${params.length}::text))
-        )`;
+        sql += ` AND (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb OR allowed_page_ids::jsonb @> jsonb_build_array($${params.length}::text))`;
     }
     
     try {
@@ -2747,11 +2704,7 @@ async function searchProducts(userId, queryText, pageId = null) {
 
             if (pageId) {
                 params.push(String(pageId));
-                where += ` AND (
-                    (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb OR allowed_page_ids::jsonb @> jsonb_build_array($${params.length}::text))
-                    OR
-                    (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb OR allowed_wa_sessions::jsonb @> jsonb_build_array($${params.length}::text))
-                )`;
+                where += ` AND (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb OR allowed_page_ids::jsonb @> jsonb_build_array($${params.length}::text))`;
             }
             return { where, params };
         };
