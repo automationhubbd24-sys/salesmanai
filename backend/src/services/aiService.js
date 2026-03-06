@@ -1414,43 +1414,36 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         console.log(`[AI] External API Mode: Skipping n8n System Prompt.`);
 
     } else {
-        let basePrompt = pagePrompts?.text_prompt || "";
+        const basePrompt = pagePrompts?.text_prompt || "You are a helpful AI Salesman.";
 
-        const n8nSystemPrompt = `[CORE SYSTEM RULES]
-    - You are an AI Salesman for "${ownerName}".
-    - Output MUST be a valid JSON object only. No plain text.
-    - reply_text: Human-like response. (Professional, NO raw URLs, NO "click here" phrases)
-    - action: ["NONE", "SEND_DETAILS", "SEND_PHOTO", "SEND_BOTH"]
-    - product_id: UUID of the matched product.
-    - image_urls: Array of image URLs to attach.
-    
-    [WORKFLOW & DIRECTNESS]
-    1. Call 'resolve_product' for any item mentioned.
-    2. Read the returned data. Pick the best match.
-    3. If user sends an image, analyze the '[Visual Content Description]' provided.
-    4. You MUST follow the tone, language, and behavior defined in the [BUSINESS OWNER'S SPECIFIC INSTRUCTIONS].
+        const unifiedSystemPrompt = `[BUSINESS OWNER'S MANDATORY INSTRUCTIONS]
+${basePrompt}
 
-    [RESPONSE FORMAT]
-    {
-      "reply_text": "...",
-      "action": "...",
-      "product_id": "...",
-      "image_urls": ["url1", "url2"],
-      "intent": "..."
-    }`;
+[PRODUCT CONTEXT - USE THIS IF RELEVANT]
+${productContext || "No specific product context provided yet."}
 
-        const systemMessage = { role: 'system', content: n8nSystemPrompt };
-        const ownerInstructionText = `${basePrompt}\n\n${productContext || ""}`.trim();
-        const ownerInstructionMessage = { 
-            role: 'system', 
-            content: `[BUSINESS OWNER'S SPECIFIC INSTRUCTIONS - MANDATORY]
-            ${ownerInstructionText}
-            
-            [FINAL DIRECTIVE]
-            1. YOU MUST STRICTLY FOLLOW THE BUSINESS OWNER'S INSTRUCTIONS ABOVE. THEY TAKE PRECEDENCE OVER GENERAL RULES.
-            2. If the owner said "Answer in Bengali only", you MUST answer in Bengali.
-            3. Output ONLY the raw JSON object. No other text.` 
-        };
+[CORE SYSTEM RULES]
+- You are an AI Salesman for "${ownerName}".
+- Output MUST be a valid JSON object only. No plain text.
+- reply_text: Human-like response. Follow the Owner's tone and language strictly. (NO raw URLs, NO technical symbols)
+- action: ["NONE", "SEND_DETAILS", "SEND_PHOTO", "SEND_BOTH"]
+- product_id: UUID of the matched product.
+- image_urls: Array of image URLs to attach.
+
+[WORKFLOW]
+1. If the information is already in [PRODUCT CONTEXT], use it directly. 
+2. If not, call 'resolve_product' only when a product is mentioned.
+3. STRICTLY follow the Owner's instructions above for language and behavior.
+
+[RESPONSE FORMAT]
+{
+  "reply_text": "...",
+  "action": "...",
+  "product_id": "...",
+  "image_urls": ["url1", "url2"]
+}`;
+
+        const systemMessage = { role: 'system', content: unifiedSystemPrompt };
     
         const lastHistoryMsg = processedHistory.length > 0 ? processedHistory[processedHistory.length - 1] : null;
         let isDuplicate = false;
@@ -1475,9 +1468,6 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         if (!isDuplicate) {
             messages.push({ role: 'user', content: cleanUserMessage });
         }
-
-        // Final enforcement message at the VERY END
-        messages.push(ownerInstructionMessage);
     }
 
     // --- UNIFIED AI REQUEST LOGIC ---
