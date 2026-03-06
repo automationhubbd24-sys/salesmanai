@@ -1789,7 +1789,7 @@ STRICT RULES:
 
                     if (perMsgText) {
                         collectedTexts.push(perMsgText);
-                        // Parallel Save (No await)
+                        // Parallel Save (No await) with specific token count
                         dbService.saveWhatsAppChat({
                             session_name: sessionName,
                             sender_id: pageId || sessionName, // Bot (Page) is sender
@@ -1801,7 +1801,9 @@ STRICT RULES:
                             reply_by: 'bot', // Mark as BOT reply
                             is_group: isGroup,
                             group_id: null,
-                            group_name: null
+                            group_name: null,
+                            token: totalVisionTokens, // Specific tokens for vision
+                            ai_model: 'gemini-vision'
                         }).catch(e => console.error(`[WA] Failed to save per-message analysis:`, e.message));
                     }
                 } catch (err) {

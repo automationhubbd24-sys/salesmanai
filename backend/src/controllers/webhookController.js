@@ -894,7 +894,7 @@ STRICT RULES:
                         
                         if (perMsgText) {
                             combinedImageAnalysis += `${perMsgText}\n\n`;
-                            // Parallel Save (No await)
+                            // Parallel Save (No await) with specific token count
                             dbService.saveFbChat({
                                 page_id: pageId,
                                 sender_id: pageId, // Bot (Page) is sender
@@ -903,7 +903,9 @@ STRICT RULES:
                                 text: `[Visual Data]:\n${perMsgText}`,
                                 timestamp: Date.now(),
                                 status: 'bot_reply',
-                                reply_by: 'bot'
+                                reply_by: 'bot',
+                                token: totalVisionTokens, // Specific tokens for vision
+                                ai_model: 'gemini-vision'
                             }).catch(e => console.error(`[FB] Failed to save per-message analysis:`, e.message));
                         }
                     } catch (err) {
@@ -946,7 +948,8 @@ STRICT RULES:
                 
                 try {
                     const audioMsgText = `[Voice Transcript] ${combinedAudioTranscript}`;
-                    await dbService.saveFbChat({
+                    // Parallel Save (No await) with specific token count
+                    dbService.saveFbChat({
                         page_id: pageId,
                         sender_id: pageId, // Bot (Page) is sender
                         recipient_id: senderId, // User is recipient
@@ -954,9 +957,11 @@ STRICT RULES:
                         text: audioMsgText,
                         timestamp: Date.now(),
                         status: 'bot_reply',
-                        reply_by: 'bot'
-                    });
-                    console.log(`[FB] Saved audio transcript to DB for ${senderId}`);
+                        reply_by: 'bot',
+                        token: totalAudioTokens, // Specific tokens for audio
+                        ai_model: 'google-whisper-style'
+                    }).catch(e => console.error(`[FB] Failed to save audio transcript:`, e.message));
+                    console.log(`[FB] Scheduled audio transcript save to DB for ${senderId}`);
                 } catch (e) {
                     console.error(`[FB] Failed to save audio transcript:`, e.message);
                 }
