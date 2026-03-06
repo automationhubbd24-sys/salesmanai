@@ -235,7 +235,7 @@ const extractImageUrlsFromText = (text) => {
         return '';
     });
     return {
-        cleanText: cleanText.replace(/\n\s*\n/g, '\n').trim(),
+        cleanText: cleanText.trim(),
         urls
     };
 };

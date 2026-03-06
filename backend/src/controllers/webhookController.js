@@ -53,7 +53,7 @@ function extractImageUrlsFromText(text) {
         return '';
     });
     return {
-        cleanText: cleanText.replace(/\n\s*\n/g, '\n').trim(),
+        cleanText: cleanText.trim(),
         urls
     };
 }
@@ -1859,13 +1859,6 @@ STRICT RULES:
             uniqueUrls.add(img.url);
             return true;
         });
-
-        // Normalize spaces only (Keep all original newlines \n\n\n+)
-        if (replyText) {
-            replyText = replyText
-                .replace(/[ \t]+/g, ' ') // multiple spaces/tabs -> single space
-                .trim();
-        }
 
         const promptMode = decisionMode || detectImageMode(pagePrompts?.text_prompt);
         // FIX: NEVER wipe out text unless it's strictly requested. 

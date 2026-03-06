@@ -435,7 +435,7 @@ const functionTools = [
     }
 ];
 
-const normalizeText = (value) => (value || '').toString().toLowerCase().trim().replace(/\s+/g, ' ');
+const normalizeText = (value) => (value || '').toString().toLowerCase().trim();
 
 const computeCandidateScore = (query, product) => {
     const q = normalizeText(query);
