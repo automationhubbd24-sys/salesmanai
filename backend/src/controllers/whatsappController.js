@@ -1743,16 +1743,16 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
         if (!imageDetectionEnabled) {
             imageAnalyzeText = `[System Note: User sent ${allImages.length} images. Image detection is disabled, so they were not analyzed. Ask the user to describe what they want.]`;
         } else {
-         let productAnalysisPrompt = `Analyze this image and describe it EXACTLY in this Bengali format:
+         let productAnalysisPrompt = `Analyze this image with 100% precision. Look at every product carefully.
+STRICT RULES:
+1. READ the actual text printed on each product. DO NOT guess names based on color (e.g., don't call a pink tube "Glow Recipe" if it says "Japan Sakura").
+2. Identify ALL products, even if they are small or partially hidden.
+3. If the text is too blurry to read, describe the product visual details instead of guessing a brand.
+4. Output EXACTLY in this Bengali format:
 এই ছবিতে মোট **[সংখ্যা]টি** প্রোডাক্ট রয়েছে। প্রোডাক্টগুলোর নাম নিচে দেওয়া হলো:
-১. **[প্রোডাক্টের পুরো নাম]** ([পজিশন বা টিউবের রঙ ও আকারের ছোট বিবরণ])
+১. **[প্রোডাক্টের পুরো নাম যা প্যাকেজে লেখা আছে]** ([পজিশন ও ছোট ভিজ্যুয়াল বিবরণ])
 ২. ...
-এটি মূলত একটি **"[কম্বো বা অফার নাম]"** হিসেবে সাজানো হয়েছে। [একটি ছোট বাক্যে সারসংক্ষেপ]
-
-Rules:
-1. Keep product descriptions very short (e.g., "বামে রাখা বড় পিঙ্কিশ সাদা টিউবটি").
-2. Don't add extra sentences or detailed text-on-image analysis unless asked.
-3. Use professional Bengali.`;
+এটি মূলত একটি **"[কম্বো বা অফার নাম]"** হিসেবে সাজানো হয়েছে। [একটি ছোট বাক্যে সারসংক্ষেপ]`;
 
         try {
             // Use WhatsApp Config which includes page_prompts
