@@ -43,33 +43,56 @@ interface Product {
 export default function ProductsPage() {
     const location = useLocation();
     
-    // Robust platform detection
-    const getPlatformFromPath = () => {
+    // 1. Initial State Resolution
+    const getPlatform = () => {
         const parts = location.pathname.split('/');
-        // URL can be /dashboard/whatsapp/products OR /dashboard/products
         if (parts.includes('whatsapp')) return 'whatsapp';
         if (parts.includes('messenger')) return 'messenger';
         if (parts.includes('instagram')) return 'instagram';
-        
-        // If not in platform path, check active context in localStorage
-        if (localStorage.getItem('active_wa_session_id')) return 'whatsapp';
-        if (localStorage.getItem('active_fb_page_id')) return 'messenger';
-        
         return null;
     };
-    const platform = getPlatformFromPath();
+
+    const getInitialPageId = () => {
+        const p = getPlatform();
+        if (p === 'whatsapp') return localStorage.getItem('active_wa_session_id');
+        if (p === 'messenger') return localStorage.getItem('active_fb_page_id');
+        return null;
+    };
 
     const [loading, setLoading] = useState(true);
     const [userId, setUserId] = useState<string | null>(null);
     const [products, setProducts] = useState<Product[]>([]);
     const [searchQuery, setSearchQuery] = useState("");
-    const [pageId, setPageId] = useState<string | null>(null);
+    const [pageId, setPageId] = useState<string | null>(getInitialPageId());
+    const [platform, setPlatform] = useState<string | null>(getPlatform());
+
+    // 2. Sync Platform/PageId when path or localStorage changes
+    useEffect(() => {
+        const p = getPlatform();
+        const pid = p === 'whatsapp' ? localStorage.getItem('active_wa_session_id') : localStorage.getItem('active_fb_page_id');
+        setPlatform(p);
+        setPageId(pid);
+        
+        console.log(`[ProductsDebug] Platform: ${p}, PageId: ${pid}`);
+    }, [location.pathname]);
+
+    // 3. Force re-sync when localStorage changes (from other components)
+    useEffect(() => {
+        const handleSync = () => {
+            const p = getPlatform();
+            const pid = p === 'whatsapp' ? localStorage.getItem('active_wa_session_id') : localStorage.getItem('active_fb_page_id');
+            setPageId(pid);
+        };
+        window.addEventListener("db-connection-changed", handleSync);
+        window.addEventListener("storage", handleSync);
+        return () => {
+            window.removeEventListener("db-connection-changed", handleSync);
+            window.removeEventListener("storage", handleSync);
+        };
+    }, []);
 
     const getActiveId = () => {
-        const currentPlatform = getPlatformFromPath();
-        if (currentPlatform === 'whatsapp') return localStorage.getItem('active_wa_session_id');
-        if (currentPlatform === 'messenger') return localStorage.getItem('active_fb_page_id');
-        return null;
+        return pageId;
     };
     
     // Form State
@@ -177,37 +200,33 @@ export default function ProductsPage() {
         fetchPages();
     }, []);
 
+    // 4. Trigger fetch on search or context changes
     useEffect(() => {
         if (userId) {
             const timer = setTimeout(async () => {
-                const token = typeof window !== "undefined" ? localStorage.getItem("auth_token") : null;
-                const activeId = getActiveId();
-                fetchProducts(userId, searchQuery, token || undefined, activeId);
+                const token = localStorage.getItem("auth_token");
+                fetchProducts(userId, searchQuery, token || undefined, pageId);
             }, 500);
             return () => clearTimeout(timer);
         }
-    }, [searchQuery, userId, platform]);
+    }, [searchQuery, userId, pageId, platform]);
 
     // Auto-reload on page change
     useEffect(() => {
         const handleReload = () => {
             if (userId) {
                 const token = localStorage.getItem("auth_token");
-                const platform = getPlatformFromPath();
-                const activeId = getActiveId();
-                
-                fetchProducts(userId, searchQuery, token || undefined, activeId);
+                const currentPid = getInitialPageId();
+                fetchProducts(userId, searchQuery, token || undefined, currentPid);
             }
         };
         
-        window.addEventListener("db-connection-changed", handleReload);
         window.addEventListener("dashboard:reload", handleReload);
         
         return () => {
-            window.removeEventListener("db-connection-changed", handleReload);
             window.removeEventListener("dashboard:reload", handleReload);
         };
-    }, [userId, searchQuery, platform]);
+    }, [userId, searchQuery, platform, pageId]);
 
     const checkAccess = async () => {
         try {

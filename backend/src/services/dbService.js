@@ -2528,8 +2528,9 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
     console.log(`[DB] getProducts - User: ${userId}, Page: ${pageId}, Strict: ${strictMode}`);
     const offset = (page - 1) * limit;
 
+    // USE CASTING TO UUID FOR POSTGRES COMPATIBILITY
     let params = [userId]; // $1
-    let whereClause = 'user_id = $1';
+    let whereClause = 'user_id = $1::uuid';
 
     // 1. Page/Session Filtering
     if (pageId && pageId !== 'null' && pageId !== 'undefined') {
