@@ -63,8 +63,13 @@ export default function ProductsPage() {
     const [userId, setUserId] = useState<string | null>(null);
     const [products, setProducts] = useState<Product[]>([]);
     const [searchQuery, setSearchQuery] = useState("");
-    const [pageId, setPageId] = useState<string | null>(getInitialPageId());
-    const [platform, setPlatform] = useState<string | null>(getPlatform());
+    
+    // Initialize immediately to avoid initial render without context
+    const initialPlatform = getPlatform();
+    const initialPageId = getInitialPageId();
+    
+    const [pageId, setPageId] = useState<string | null>(initialPageId);
+    const [platform, setPlatform] = useState<string | null>(initialPlatform);
 
     // 2. Sync Platform/PageId when path or localStorage changes
     useEffect(() => {
@@ -76,15 +81,20 @@ export default function ProductsPage() {
         console.log(`[ProductsDebug] Platform: ${p}, PageId: ${pid}`);
     }, [location.pathname]);
 
-    // 3. Force re-sync when localStorage changes (from other components)
     useEffect(() => {
         const handleSync = () => {
             const p = getPlatform();
             const pid = p === 'whatsapp' ? localStorage.getItem('active_wa_session_id') : localStorage.getItem('active_fb_page_id');
             setPageId(pid);
+            setPlatform(p);
         };
         window.addEventListener("db-connection-changed", handleSync);
         window.addEventListener("storage", handleSync);
+
+        // Initial check and load with immediate context
+        checkAccess(initialPlatform, initialPageId);
+        fetchPages();
+
         return () => {
             window.removeEventListener("db-connection-changed", handleSync);
             window.removeEventListener("storage", handleSync);
@@ -195,11 +205,6 @@ export default function ProductsPage() {
         return null;
     };
 
-    useEffect(() => {
-        checkAccess();
-        fetchPages();
-    }, []);
-
     // 4. Trigger fetch on search or context changes
     useEffect(() => {
         if (userId) {
@@ -228,7 +233,7 @@ export default function ProductsPage() {
         };
     }, [userId, searchQuery, platform, pageId]);
 
-    const checkAccess = async () => {
+    const checkAccess = async (forcedPlatform?: string | null, forcedPageId?: string | null) => {
         try {
             if (typeof window === "undefined") {
                 return;
@@ -249,8 +254,12 @@ export default function ProductsPage() {
                 return;
             }
             setUserId(uid);
-            const activeId = getActiveId();
-            fetchProducts(uid, "", storedToken, activeId);
+            
+            // Priority: provided arguments > current state
+            const activePlatform = forcedPlatform !== undefined ? forcedPlatform : platform;
+            const activeId = forcedPageId !== undefined ? forcedPageId : pageId;
+            
+            fetchProducts(uid, "", storedToken, activeId, activePlatform);
         } catch (error) {
             console.error("Access check failed:", error);
         } finally {
@@ -258,7 +267,7 @@ export default function ProductsPage() {
         }
     };
 
-    const fetchProducts = async (uid: string, query: string = "", token?: string, explicitPageId?: string | null) => {
+    const fetchProducts = async (uid: string, query: string = "", token?: string, explicitPageId?: string | null, explicitPlatform?: string | null) => {
         try {
             const params = new URLSearchParams();
             params.set("user_id", uid);
@@ -266,14 +275,15 @@ export default function ProductsPage() {
                 params.set("search", query);
             }
 
-            let resolvedPageId: string | null = explicitPageId !== undefined ? explicitPageId : null;
+            const currentPlatform = explicitPlatform !== undefined ? explicitPlatform : platform;
+            let resolvedPageId: string | null = explicitPageId !== undefined ? explicitPageId : pageId;
             let teamOwner: string | null = null;
             
             if (typeof window !== "undefined") {
                 if (resolvedPageId === null) {
-                    if (platform === "messenger") {
+                    if (currentPlatform === "messenger") {
                         resolvedPageId = localStorage.getItem("active_fb_page_id");
-                    } else if (platform === "whatsapp") {
+                    } else if (currentPlatform === "whatsapp") {
                         resolvedPageId = localStorage.getItem("active_wa_session_id");
                     }
                 }
@@ -283,11 +293,12 @@ export default function ProductsPage() {
                 if (teamOwner) params.set("team_owner", teamOwner);
             }
 
-            if (platform) {
-                params.set("platform", platform);
+            if (currentPlatform) {
+                params.set("platform", currentPlatform);
             }
 
-            if ((platform === "whatsapp" || platform === "messenger") && !resolvedPageId) {
+            // --- CRITICAL GUARD: Only allow products if session is selected OR it's truly global ---
+            if ((currentPlatform === "whatsapp" || currentPlatform === "messenger") && !resolvedPageId) {
                 setProducts([]);
                 return;
             }

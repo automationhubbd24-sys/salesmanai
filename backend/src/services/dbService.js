@@ -2571,6 +2571,14 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
                 (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))
             )`;
         }
+    } else if (platform) {
+        // If platform is specified but no specific page/session is selected,
+        // we should still isolate by platform to prevent leakage.
+        const isWhatsapp = platform.toLowerCase() === 'whatsapp';
+        const otherCol = isWhatsapp ? 'allowed_page_ids' : 'allowed_wa_sessions';
+        
+        // Exclude products explicitly assigned to OTHER platforms
+        whereClause += ` AND (${otherCol} IS NULL OR ${otherCol}::jsonb = '[]'::jsonb)`;
     }
 
     // 2. Permission Filter (for Team Members)
