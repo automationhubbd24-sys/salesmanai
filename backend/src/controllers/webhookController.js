@@ -1852,7 +1852,7 @@ STRICT RULES:
             });
         }
 
-        // --- FINAL DEDUPLICATION & CLEANING ---
+        // --- FINAL DEDUPLICATION ---
         const uniqueUrls = new Set();
         aiResponse.images = extractedImages.filter(img => {
             if (!img.url || uniqueUrls.has(img.url)) return false;
@@ -1860,11 +1860,10 @@ STRICT RULES:
             return true;
         });
 
-        // FIX: Remove double/triple newlines (\n\n\n+) and normalize spaces
+        // Normalize spaces only (Keep all original newlines \n\n\n+)
         if (replyText) {
             replyText = replyText
-                .replace(/\n\s*\n\s*\n+/g, '\n\n') // 3+ newlines -> 2 newlines
-                .replace(/[ \t]+/g, ' ')           // multiple spaces/tabs -> single space
+                .replace(/[ \t]+/g, ' ') // multiple spaces/tabs -> single space
                 .trim();
         }
 
