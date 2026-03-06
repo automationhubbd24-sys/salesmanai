@@ -42,13 +42,22 @@ interface Product {
 
 export default function ProductsPage() {
     const location = useLocation();
-    const pathParts = location.pathname.split('/');
-    const platform = ['whatsapp', 'messenger', 'instagram'].includes(pathParts[2]) ? pathParts[2] : null;
+    
+    // Robust platform detection
+    const getPlatformFromPath = () => {
+        const parts = location.pathname.split('/');
+        if (parts.includes('whatsapp')) return 'whatsapp';
+        if (parts.includes('messenger')) return 'messenger';
+        if (parts.includes('instagram')) return 'instagram';
+        return null;
+    };
+    const platform = getPlatformFromPath();
 
     const [loading, setLoading] = useState(true);
     const [userId, setUserId] = useState<string | null>(null);
     const [products, setProducts] = useState<Product[]>([]);
     const [searchQuery, setSearchQuery] = useState("");
+    const [pageId, setPageId] = useState<string | null>(null);
     
     // Form State
     const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -170,7 +179,12 @@ export default function ProductsPage() {
         const handleReload = () => {
             if (userId) {
                 const token = localStorage.getItem("auth_token");
-                fetchProducts(userId, searchQuery, token || undefined);
+                const platform = getPlatformFromPath();
+                const activeId = platform === 'whatsapp' 
+                    ? localStorage.getItem('active_wa_session_id') 
+                    : localStorage.getItem('active_fb_page_id');
+                
+                fetchProducts(userId, searchQuery, token || undefined, activeId);
             }
         };
         
@@ -181,7 +195,7 @@ export default function ProductsPage() {
             window.removeEventListener("db-connection-changed", handleReload);
             window.removeEventListener("dashboard:reload", handleReload);
         };
-    }, [userId, searchQuery]);
+    }, [userId, searchQuery, platform]);
 
     const checkAccess = async () => {
         try {
@@ -212,7 +226,7 @@ export default function ProductsPage() {
         }
     };
 
-    const fetchProducts = async (uid: string, query: string = "", token?: string) => {
+    const fetchProducts = async (uid: string, query: string = "", token?: string, explicitPageId?: string | null) => {
         try {
             const params = new URLSearchParams();
             params.set("user_id", uid);
@@ -220,21 +234,25 @@ export default function ProductsPage() {
                 params.set("search", query);
             }
 
-            let pageId: string | null = null;
+            let resolvedPageId: string | null = explicitPageId !== undefined ? explicitPageId : null;
             let teamOwner: string | null = null;
             
             if (typeof window !== "undefined") {
-                if (platform === "messenger") {
-                    pageId = localStorage.getItem("active_fb_page_id");
-                } else if (platform === "whatsapp") {
-                    pageId = localStorage.getItem("active_wa_session_id");
+                if (resolvedPageId === null) {
+                    if (platform === "messenger") {
+                        resolvedPageId = localStorage.getItem("active_fb_page_id");
+                    } else if (platform === "whatsapp") {
+                        resolvedPageId = localStorage.getItem("active_wa_session_id");
+                    }
                 }
+                
+                setPageId(resolvedPageId);
                 teamOwner = getTeamOwnerForContext();
                 if (teamOwner) params.set("team_owner", teamOwner);
             }
 
-            if (pageId) {
-                params.set("page_id", pageId);
+            if (resolvedPageId) {
+                params.set("page_id", resolvedPageId);
                 params.set("strict", "1");
             }
 

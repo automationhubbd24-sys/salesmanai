@@ -563,8 +563,8 @@ exports.getProducts = async (req, res) => {
         if (pageId && !isTeamMember) {
             const pgClient = require('../services/pgClient');
             
-            // Check Messenger Pages
-            const pageRes = await pgClient.query(
+            // 1. Check Messenger Pages
+            let pageRes = await pgClient.query(
                 'SELECT user_id, email FROM page_access_token_message WHERE page_id = $1 AND user_id IS NOT NULL LIMIT 1',
                 [pageId]
             );
@@ -583,44 +583,55 @@ exports.getProducts = async (req, res) => {
                         // Check if Page Owner is a MEMBER of Current User (Team Owner)
                         let isMyMember = false;
 
-                    try {
-                        // Get Current User Email
-                        const userRes = await pgClient.query('SELECT email FROM users WHERE id = $1', [effectiveUserId]);
-                        if (userRes.rows.length > 0) {
-                            const currentUserEmail = userRes.rows[0].email;
-                            const teamCheck = await pgClient.query(
-                                'SELECT 1 FROM team_members WHERE LOWER(owner_email) = LOWER($1) AND LOWER(member_email) = LOWER($2)',
-                                [currentUserEmail, pageOwnerEmail]
-                            );
-                            if (teamCheck.rows.length > 0) {
-                                isMyMember = true;
+                        try {
+                            // Get Current User Email
+                            const userRes = await pgClient.query('SELECT email FROM users WHERE id = $1', [effectiveUserId]);
+                            if (userRes.rows.length > 0) {
+                                const currentUserEmail = userRes.rows[0].email;
+                                const teamCheck = await pgClient.query(
+                                    'SELECT 1 FROM team_members WHERE LOWER(owner_email) = LOWER($1) AND LOWER(member_email) = LOWER($2)',
+                                    [currentUserEmail, pageOwnerEmail]
+                                );
+                                if (teamCheck.rows.length > 0) {
+                                    isMyMember = true;
+                                }
                             }
+                        } catch (err) {
+                            console.error("[ProductFetch] Team check failed:", err);
                         }
-                    } catch (err) {
-                        console.error("[ProductFetch] Team check failed:", err);
-                    }
 
-                    if (isMyMember) {
-                        console.log(`[ProductFetch] Page ${pageId} belongs to team member ${pageOwnerEmail}. Keeping Owner Context: ${effectiveUserId}`);
-                        targetUserId = effectiveUserId;
-                    } else {
-                        console.log(`[ProductFetch] Page ${pageId} belongs to external user ${pageOwnerEmail}. Switching context.`);
-                        targetUserId = pageOwnerId;
+                        if (isMyMember) {
+                            console.log(`[ProductFetch] Page ${pageId} belongs to team member ${pageOwnerEmail}. Keeping Owner Context: ${effectiveUserId}`);
+                            targetUserId = effectiveUserId;
+                        } else {
+                            console.log(`[ProductFetch] Page ${pageId} belongs to external user ${pageOwnerEmail}. Switching context.`);
+                            targetUserId = pageOwnerId;
+                        }
+                    }
+                }
+            } else {
+                // 2. Check WhatsApp Sessions (Fallback if not found in Messenger)
+                const waRes = await pgClient.query(
+                    'SELECT user_id, email FROM whatsapp_message_database WHERE session_name = $1 AND user_id IS NOT NULL LIMIT 1',
+                    [pageId]
+                );
+                if (waRes.rows.length > 0) {
+                    const waOwnerId = waRes.rows[0].user_id;
+                    const waOwnerEmail = waRes.rows[0].email;
+
+                    if (waOwnerId !== effectiveUserId) {
+                        // Safety: Email match override
+                        if (waOwnerEmail && viewerEmail && waOwnerEmail.trim().toLowerCase() === viewerEmail.trim().toLowerCase()) {
+                             console.log(`[ProductFetch] Email match override for WhatsApp Owner. Keeping context.`);
+                             targetUserId = effectiveUserId;
+                        } else {
+                             console.log(`[ProductFetch] WhatsApp session match for targetUserId: ${waOwnerId}`);
+                             targetUserId = waOwnerId;
+                        }
                     }
                 }
             }
-        } else {
-            // Check WhatsApp Sessions
-            const waRes = await pgClient.query(
-                'SELECT user_id FROM whatsapp_message_database WHERE session_name = $1 AND user_id IS NOT NULL LIMIT 1',
-                [pageId]
-            );
-            if (waRes.rows.length > 0) {
-                targetUserId = waRes.rows[0].user_id;
-                console.log(`[ProductFetch] WhatsApp session match for targetUserId: ${targetUserId}`);
-            }
         }
-    }
 
         if (!targetUserId) {
             return res.status(400).json({ error: "user_id is required" });
