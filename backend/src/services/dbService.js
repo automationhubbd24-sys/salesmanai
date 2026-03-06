@@ -2485,8 +2485,11 @@ async function createProduct(productData) {
 
 async function resolvePageContextType(pageId) {
     if (!pageId) return null;
+    const sId = String(pageId);
+    if (sId.startsWith('bottow_') || sId.includes('wa_')) return 'whatsapp';
+    
     try {
-        const waRes = await query('SELECT 1 FROM whatsapp_message_database WHERE session_name = $1 LIMIT 1', [String(pageId)]);
+        const waRes = await query('SELECT 1 FROM whatsapp_message_database WHERE session_name = $1 LIMIT 1', [sId]);
         if (waRes.rows.length > 0) return 'whatsapp';
     } catch (e) {}
     try {
@@ -2497,64 +2500,60 @@ async function resolvePageContextType(pageId) {
 }
 
 async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pageId = null, allowedPageIds = null, strictMode = false) {
-    console.log(`[DB] getProducts Called - User: ${userId}, PageID: ${pageId}, AllowedPages: ${JSON.stringify(allowedPageIds)}, Strict: ${strictMode}`);
+    console.log(`[DB] getProducts - User: ${userId}, Page: ${pageId}, Strict: ${strictMode}`);
     const offset = (page - 1) * limit;
 
-    let params = [userId]; // $1 always userId
+    let params = [userId]; // $1
     let whereClause = 'user_id = $1';
 
-    // 1. Base Filter: Page/Session Context
+    // 1. Page/Session Filtering
     if (pageId) {
         const contextType = await resolvePageContextType(pageId);
         const isWhatsapp = contextType === 'whatsapp';
         const pageCol = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_page_ids';
         
-        // Check if user owns this page/session
-        let isOwner = false;
-        try {
-            const fbCheck = await query('SELECT 1 FROM page_access_token_message WHERE page_id = $1 AND user_id = $2', [String(pageId), userId]);
-            if (fbCheck.rows.length > 0) isOwner = true;
-            else {
-                const waCheck = await query('SELECT 1 FROM whatsapp_message_database WHERE session_name = $1 AND user_id = $2', [String(pageId), userId]);
-                if (waCheck.rows.length > 0) isOwner = true;
-            }
-        } catch (e) { console.error("[DB] Owner check failed", e); }
+        params.push(String(pageId));
+        const pIdx = params.length;
 
         if (strictMode) {
-            // STRICT MODE: Only show products specifically assigned to THIS page/session
-            params.push(String(pageId));
-            const idx = params.length;
-            whereClause += ` AND (${pageCol}::jsonb @> jsonb_build_array($${idx}::text))`;
-        } else if (!isOwner && allowedPageIds && allowedPageIds.length > 0) {
-            // TEAM MEMBER RESTRICTED VIEW (Non-Strict)
-            params.push(String(pageId)); // $2
-            const perms = allowedPageIds.map(String);
-            params.push(perms); // $3
-            
+            // ONLY show products specifically assigned to THIS page/session
+            whereClause += ` AND (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))`;
+        } else {
+            // Global/Non-strict: Show products for THIS page OR products with NO page assigned (True Global)
             whereClause += ` AND (
-                (${pageCol} IS NULL OR ${pageCol}::jsonb = '[]'::jsonb)
+                (
+                    (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb)
+                    AND
+                    (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
+                )
                 OR
-                (${pageCol}::jsonb @> jsonb_build_array($2::text) AND ${pageCol}::jsonb ?| $3::text[] )
+                (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))
             )`;
         }
     }
 
-    // 2. Global Permission Filter (for Team Members) - Only if not in strict mode
-    if (!strictMode && allowedPageIds !== null && allowedPageIds.length > 0) {
-        const contextType = await resolvePageContextType(pageId);
-        const isWhatsapp = contextType === 'whatsapp';
-        const pageCol = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_page_ids';
+    // 2. Permission Filter (for Team Members)
+    if (allowedPageIds !== null && allowedPageIds.length > 0) {
         const perms = allowedPageIds.map(String);
         params.push(perms);
         const pIdx = params.length;
         
+        // Team members should only see products that are either:
+        // a) Global (no pages assigned to ANY platform)
+        // b) Assigned to a page/session they have access to
         whereClause += ` AND (
-            (${pageCol} IS NULL OR ${pageCol}::jsonb = '[]'::jsonb)
+            (
+                (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb)
+                AND
+                (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
+            )
             OR 
             EXISTS (
-                SELECT 1 
-                FROM jsonb_array_elements_text(COALESCE(${pageCol}, '[]'::jsonb)) AS elem 
-                WHERE elem = ANY($${pIdx}::text[])
+                SELECT 1 FROM jsonb_array_elements_text(COALESCE(allowed_page_ids, '[]'::jsonb)) AS elem WHERE elem = ANY($${pIdx}::text[])
+            )
+            OR
+            EXISTS (
+                SELECT 1 FROM jsonb_array_elements_text(COALESCE(allowed_wa_sessions, '[]'::jsonb)) AS elem WHERE elem = ANY($${pIdx}::text[])
             )
         )`;
     }
@@ -2567,7 +2566,7 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
         whereClause += ` AND (name ILIKE $${idx1} OR description ILIKE $${idx2})`;
     }
 
-    console.log(`[DBDebug] getProducts Final: WHERE ${whereClause} | Params: ${JSON.stringify(params)}`);
+    console.log(`[DBDebug] getProducts Final WHERE: ${whereClause}`);
 
     const countResult = await query(
         `SELECT COUNT(*)::int AS cnt
