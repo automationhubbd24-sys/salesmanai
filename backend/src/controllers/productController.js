@@ -362,10 +362,11 @@ exports.createProduct = async (req, res) => {
     try {
         const baseUserId = req.body.user_id || null;
         const pageId = req.body?.page_id || null;
+        const explicitPlatform = req.body?.platform || null;
         
         // Use resolveProductOwnerUserId to ensure products are always attached to the OWNER
         const userId = await resolveProductOwnerUserId(req, baseUserId, pageId);
-        console.log(`[ProductCreate] Resolved Owner ID: ${userId} for Request User: ${baseUserId} (Page: ${pageId})`);
+        console.log(`[ProductCreate] Resolved Owner ID: ${userId} for Request User: ${baseUserId} (Page: ${pageId}, Platform: ${explicitPlatform})`);
         
         if (!userId) return res.status(400).json({ error: "user_id is required" });
 
@@ -710,8 +711,10 @@ exports.updateProduct = async (req, res) => {
         const { id } = req.params;
         const baseUserId = req.body.user_id || null;
         const pageId = req.body?.page_id || null;
+        const explicitPlatform = req.body?.platform || null;
         const userId = await resolveProductOwnerUserId(req, baseUserId, pageId);
         if (!userId) return res.status(400).json({ error: "user_id is required for verification" });
+        console.log(`[ProductUpdate] ID: ${id}, Owner: ${userId}, Page: ${pageId}, Platform: ${explicitPlatform}`);
 
         // 1. Handle Image Upload if present
         let imageUrl = undefined; // undefined means no change

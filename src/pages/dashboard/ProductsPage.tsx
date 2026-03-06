@@ -475,7 +475,7 @@ export default function ProductsPage() {
     };
 
     const handleEdit = (product: Product) => {
-        setEditProductId(product.id);
+        setEditProductId(product.id || null);
         setProductName(product.name);
         setProductDesc(product.description || "");
         setProductKeywords(product.keywords ? normalizeKeywords(product.keywords) : []);
@@ -493,11 +493,25 @@ export default function ProductsPage() {
         }
 
         setProductStock(product.stock?.toString() || "0");
-        setImagePreview(product.image_url);
+        setImagePreview(product.image_url || null);
         setImagePreviews(product.image_url ? [product.image_url] : []);
         setProductImages([]);
-        setAllowedPages(product.allowed_page_ids || []);
-        setAllowedWASessions(product.allowed_wa_sessions || []);
+
+        // Ensure they are arrays and handle possible JSON strings
+        const parseAssignment = (val: any) => {
+            if (!val) return [];
+            if (Array.isArray(val)) return val.map(String);
+            try {
+                const parsed = JSON.parse(val);
+                return Array.isArray(parsed) ? parsed.map(String) : [];
+            } catch (e) {
+                return [];
+            }
+        };
+
+        setAllowedPages(parseAssignment(product.allowed_page_ids));
+        setAllowedWASessions(parseAssignment(product.allowed_wa_sessions));
+
         setIsCombo(!!product.is_combo);
         setComboItems(Array.isArray(product.combo_items) ? product.combo_items : []);
         setComboItemInput("");
@@ -531,22 +545,28 @@ export default function ProductsPage() {
             formData.append("currency", productCurrency);
             formData.append("stock", productStock);
             formData.append("is_active", "true");
+            
+            // Explicitly pass platform to help backend resolution
+            if (platform) {
+                formData.append("platform", platform);
+            }
+
             formData.append("allowed_page_ids", JSON.stringify(allowedPages));
             formData.append("allowed_wa_sessions", JSON.stringify(allowedWASessions));
             formData.append("is_combo", String(isCombo));
             formData.append("combo_items", JSON.stringify(comboItems));
             formData.append("allow_description", String(allowDescription));
 
-            let pageId: string | null = null;
+            let currentContextId: string | null = null;
             if (typeof window !== "undefined") {
                 if (platform === "messenger") {
-                    pageId = localStorage.getItem("active_fb_page_id");
+                    currentContextId = localStorage.getItem("active_fb_page_id");
                 } else if (platform === "whatsapp") {
-                    pageId = localStorage.getItem("active_wa_session_id");
+                    currentContextId = localStorage.getItem("active_wa_session_id");
                 }
             }
-            if (pageId) {
-                formData.append("page_id", pageId);
+            if (currentContextId) {
+                formData.append("page_id", currentContextId);
             }
             
             // If variants are enabled, send them. Otherwise send default/empty.
