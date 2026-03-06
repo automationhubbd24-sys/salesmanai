@@ -1852,13 +1852,21 @@ STRICT RULES:
             });
         }
 
-        // --- FINAL DEDUPLICATION ---
+        // --- FINAL DEDUPLICATION & CLEANING ---
         const uniqueUrls = new Set();
         aiResponse.images = extractedImages.filter(img => {
             if (!img.url || uniqueUrls.has(img.url)) return false;
             uniqueUrls.add(img.url);
             return true;
         });
+
+        // FIX: Remove double/triple newlines (\n\n\n+) and normalize spaces
+        if (replyText) {
+            replyText = replyText
+                .replace(/\n\s*\n\s*\n+/g, '\n\n') // 3+ newlines -> 2 newlines
+                .replace(/[ \t]+/g, ' ')           // multiple spaces/tabs -> single space
+                .trim();
+        }
 
         const promptMode = decisionMode || detectImageMode(pagePrompts?.text_prompt);
         // FIX: NEVER wipe out text unless it's strictly requested. 
