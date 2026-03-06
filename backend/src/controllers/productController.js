@@ -677,7 +677,7 @@ exports.getProducts = async (req, res) => {
                      const userRes = await pgClient.query('SELECT id FROM users WHERE email = $1', [viewerEmail]);
                      if (userRes.rows.length > 0) {
                          const viewerUserId = userRes.rows[0].id;
-                         const personalPagesRes = await pgClient.query('SELECT page_id FROM page_access_token_message WHERE user_id = $1', [viewerUserId]);
+                         const personalPagesRes = await pgClient.query('SELECT page_id FROM page_access_token_message WHERE user_id = $1::uuid', [viewerUserId]);
                          personalPages = personalPagesRes.rows.map(r => r.page_id);
                      }
                 } catch (err) {

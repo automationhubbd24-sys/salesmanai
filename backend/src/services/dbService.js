@@ -27,7 +27,7 @@ async function getPageConfig(pageId) {
       }
     } else if (data.user_id) {
       const creditResult = await query(
-        'SELECT message_credit FROM user_configs WHERE user_id = $1 LIMIT 1',
+        'SELECT message_credit FROM user_configs WHERE user_id = $1::uuid LIMIT 1',
         [data.user_id]
       );
 
@@ -2465,7 +2465,9 @@ async function createProduct(productData) {
     const placeholders = [];
 
     fields.forEach((field, index) => {
-        placeholders.push(`$${index + 1}`);
+        let p = `$${index + 1}`;
+        if (field === 'user_id') p += '::uuid';
+        placeholders.push(p);
         values.push(
             field === 'variants' || field === 'allowed_page_ids' || field === 'allowed_wa_sessions' || field === 'combo_items' || field === 'additional_images'
                 ? (productData[field] || (field === 'additional_images' ? '[]' : '[]'))
@@ -2545,7 +2547,8 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
             // ONLY show products specifically assigned to THIS page/session
             whereClause += ` AND (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))`;
         } else {
-            // Global/Non-strict: Show products for THIS page OR products with NO page assigned (True Global)
+            // Non-strict: Show products for THIS page OR Global products
+            // A product is Global ONLY if it has NO assignments at all (to ANY platform)
             whereClause += ` AND (
                 (
                     (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb)
@@ -2656,7 +2659,7 @@ async function updateProduct(id, userId, updates) {
     const sql = `
         UPDATE products
         SET ${setFragments.join(', ')}
-        WHERE user_id = $${idx} AND id = $${idx + 1}
+        WHERE user_id = $${idx}::uuid AND id = $${idx + 1}
         RETURNING *`;
 
     const result = await query(sql, values);
@@ -2691,7 +2694,7 @@ async function getProductsByNames(userId, productNames, pageId = null) {
     
     let sql = `
         SELECT * FROM products 
-        WHERE user_id = $1 
+        WHERE user_id = $1::uuid 
         AND is_active = true 
         AND name ILIKE ANY($2)
     `;
