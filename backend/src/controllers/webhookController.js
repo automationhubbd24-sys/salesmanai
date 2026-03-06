@@ -1725,15 +1725,15 @@ STRICT RULES:
             replyText = lines.join('\n');
         }
 
-        // --- SMART IMAGE EXTRACTION & CLEANING ---
+        // --- SMART IMAGE EXTRACTION & CLEANING (REFINED LOGIC) ---
         if (!aiResponse.images) aiResponse.images = [];
         
-        let extractedImages = []; // Start fresh, tags have priority
+        let extractedImages = []; 
         const tagRegex = /##PRODUCT\s*["'](.+?)["']/gi;
         const strictImageRegex = /IMAGE:\s*(.+?)\s*\|\s*(https?:\/\/[^\s,]+)/gi;
         const brokenTagRegex = /IMAGE:\s*([^|]+?)\s*\|\s*(?!\s*https?:\/\/)(.*)/gi;
         
-        // Detect if ANY form of image tag exists in the text (Broken or Strict or Product Tag)
+        // Detect if ANY form of image tag exists in the text
         const hasTagsInText = tagRegex.test(replyText) || strictImageRegex.test(replyText) || brokenTagRegex.test(replyText);
         
         // Reset regex indices
@@ -1741,8 +1741,16 @@ STRICT RULES:
         strictImageRegex.lastIndex = 0;
         brokenTagRegex.lastIndex = 0;
 
-        // If NO tags are in the text, only then we fallback to AI's JSON image_urls/tools
-        if (!hasTagsInText) {
+        // SMART SELECTION: Prioritize Tags > Agentic Product ID > JSON image_urls Array
+        if (hasTagsInText) {
+            console.log(`[Image Selection] Tags detected in text. Disabling auto-injection from JSON fields.`);
+            // extractedImages will be populated by tag extraction logic below
+        } else if (aiResponse.action && aiResponse.action !== "NONE" && aiResponse.product_id) {
+            console.log(`[Image Selection] No tags, but Product ID found. Using Agentic Delivery for ID: ${aiResponse.product_id}`);
+            // extractedImages will be populated by Agentic Delivery logic below
+        } else {
+            // Fallback: Use AI's JSON image_urls or tools only if no tags and no product_id
+            console.log(`[Image Selection] No tags or product_id. Using JSON image_urls/tools.`);
             if (Array.isArray(aiResponse.image_urls)) {
                 aiResponse.image_urls.forEach(url => {
                     if (url && typeof url === 'string' && url.startsWith('http')) {
@@ -1944,10 +1952,18 @@ STRICT RULES:
                         }
                     }
 
-                    if (!alreadyHasImages && (aiResponse.action === "SEND_PHOTO" || aiResponse.action === "SEND_BOTH") && product.image_url) {
-                        if (!aiResponse.images) aiResponse.images = [];
-                        if (!aiResponse.images.some(img => img.url === product.image_url)) {
-                            aiResponse.images.push({
+                    if ((aiResponse.action === "SEND_PHOTO" || aiResponse.action === "SEND_BOTH") && product.image_url) {
+                        // SMART FILTER: If the AI returned multiple images in JSON but also a specific product_id,
+                        // we should prioritize the specific product's image to avoid irrelevant dumps.
+                        if (alreadyHasImages) {
+                            console.log(`[Image Selection] Overriding JSON images with specific Product ID image: ${product.name}`);
+                            extractedImages = [{
+                                url: product.image_url,
+                                title: product.name,
+                                description: product.description || ''
+                            }];
+                        } else {
+                            extractedImages.push({
                                 url: product.image_url,
                                 title: product.name,
                                 description: product.description || ''
