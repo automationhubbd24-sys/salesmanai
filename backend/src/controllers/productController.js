@@ -641,6 +641,7 @@ exports.getProducts = async (req, res) => {
         const limit = parseInt(req.query.limit) || 20;
         const search = req.query.search || null;
         const strict = req.query.strict === '1' || req.query.strict === 'true';
+        const platform = req.query?.platform || null;
 
         // 2. Permission Check for Team Members
         let allowedPageIds = null; // null means "all pages" (for Owner)
@@ -696,7 +697,7 @@ exports.getProducts = async (req, res) => {
 
         // 3. Fetch Products (Pass allowedPageIds to filter)
         console.log(`[ProductFetch] Final Call: User=${targetUserId}, Page=${pageId}, Strict=${strict}, AllowedCount=${allowedPageIds ? allowedPageIds.length : 'null'}`);
-        const result = await dbService.getProducts(targetUserId, page, limit, search, pageId, allowedPageIds, strict);
+        const result = await dbService.getProducts(targetUserId, page, limit, search, pageId, allowedPageIds, strict, platform);
         res.json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });

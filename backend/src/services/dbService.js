@@ -2526,7 +2526,7 @@ async function resolvePageContextType(pageId) {
     return 'messenger';
 }
 
-async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pageId = null, allowedPageIds = null, strictMode = false) {
+async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pageId = null, allowedPageIds = null, strictMode = false, platform = null) {
     console.log(`[DB] getProducts - User: ${userId}, Page: ${pageId}, Strict: ${strictMode}`);
     const offset = (page - 1) * limit;
 
@@ -2536,7 +2536,10 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
 
     // 1. Page/Session Filtering
     if (pageId && pageId !== 'null' && pageId !== 'undefined') {
-        const contextType = await resolvePageContextType(pageId);
+        const normalizedPlatform = platform ? String(platform).toLowerCase() : null;
+        const contextType = (normalizedPlatform === 'whatsapp' || normalizedPlatform === 'messenger')
+            ? normalizedPlatform
+            : await resolvePageContextType(pageId);
         const isWhatsapp = contextType === 'whatsapp';
         const pageCol = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_page_ids';
         

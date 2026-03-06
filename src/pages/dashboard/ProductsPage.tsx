@@ -283,6 +283,15 @@ export default function ProductsPage() {
                 if (teamOwner) params.set("team_owner", teamOwner);
             }
 
+            if (platform) {
+                params.set("platform", platform);
+            }
+
+            if ((platform === "whatsapp" || platform === "messenger") && !resolvedPageId) {
+                setProducts([]);
+                return;
+            }
+
             if (resolvedPageId) {
                 params.set("page_id", resolvedPageId);
                 params.set("strict", "1");
