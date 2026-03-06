@@ -2550,14 +2550,23 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
             // ONLY show products specifically assigned to THIS page/session
             whereClause += ` AND (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))`;
         } else {
-            // Non-strict: Show products for THIS page OR Global products
-            // A product is Global ONLY if it has NO assignments at all (to ANY platform)
+            // Non-strict Logic (Dashboard/Manual View):
+            // 1. Show Global products (No assignments to ANY platform)
+            // 2. Show products explicitly assigned to THIS specific page/session
+            // 3. EXCLUDE products that are assigned to OTHER platforms but NOT this one.
+            
+            const otherCol = isWhatsapp ? 'allowed_page_ids' : 'allowed_wa_sessions';
+            
             whereClause += ` AND (
                 (
                     (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb)
                     AND
                     (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
                 )
+                OR
+                (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))
+            ) AND (
+                (${otherCol} IS NULL OR ${otherCol}::jsonb = '[]'::jsonb)
                 OR
                 (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))
             )`;
@@ -2573,21 +2582,51 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
         // Team members should only see products that are either:
         // a) Global (no pages assigned to ANY platform)
         // b) Assigned to a page/session they have access to
-        whereClause += ` AND (
-            (
-                (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb)
-                AND
-                (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
-            )
-            OR 
-            EXISTS (
-                SELECT 1 FROM jsonb_array_elements_text(COALESCE(allowed_page_ids, '[]'::jsonb)) AS elem WHERE elem = ANY($${pIdx}::text[])
-            )
-            OR
-            EXISTS (
-                SELECT 1 FROM jsonb_array_elements_text(COALESCE(allowed_wa_sessions, '[]'::jsonb)) AS elem WHERE elem = ANY($${pIdx}::text[])
-            )
-        )`;
+        // BUG FIX: If we are in a specific page/session context, filter team permissions by that context too
+        if (pageId && pageId !== 'null' && pageId !== 'undefined') {
+            const normalizedPlatform = platform ? String(platform).toLowerCase() : null;
+            const contextType = (normalizedPlatform === 'whatsapp' || normalizedPlatform === 'messenger')
+                ? normalizedPlatform
+                : await resolvePageContextType(pageId);
+            const isWhatsapp = contextType === 'whatsapp';
+            const pageCol = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_page_ids';
+            const otherCol = isWhatsapp ? 'allowed_page_ids' : 'allowed_wa_sessions';
+            
+            // Re-use pIdx for the specific pageId (already in params at index 2 usually)
+            // Let's find it or just push it again for simplicity
+            params.push(String(pageId));
+            const activePageIdx = params.length;
+
+            whereClause += ` AND (
+                (
+                    (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb)
+                    AND
+                    (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
+                )
+                OR
+                (${pageCol}::jsonb @> jsonb_build_array($${activePageIdx}::text))
+            ) AND (
+                (${otherCol} IS NULL OR ${otherCol}::jsonb = '[]'::jsonb)
+                OR
+                (${pageCol}::jsonb @> jsonb_build_array($${activePageIdx}::text))
+            )`;
+        } else {
+            whereClause += ` AND (
+                (
+                    (allowed_page_ids IS NULL OR allowed_page_ids::jsonb = '[]'::jsonb)
+                    AND
+                    (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
+                )
+                OR 
+                EXISTS (
+                    SELECT 1 FROM jsonb_array_elements_text(COALESCE(allowed_page_ids, '[]'::jsonb)) AS elem WHERE elem = ANY($${pIdx}::text[])
+                )
+                OR
+                EXISTS (
+                    SELECT 1 FROM jsonb_array_elements_text(COALESCE(allowed_wa_sessions, '[]'::jsonb)) AS elem WHERE elem = ANY($${pIdx}::text[])
+                )
+            )`;
+        }
     }
 
     // 3. Search Filter
