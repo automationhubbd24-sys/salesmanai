@@ -46,9 +46,15 @@ export default function ProductsPage() {
     // Robust platform detection
     const getPlatformFromPath = () => {
         const parts = location.pathname.split('/');
+        // URL can be /dashboard/whatsapp/products OR /dashboard/products
         if (parts.includes('whatsapp')) return 'whatsapp';
         if (parts.includes('messenger')) return 'messenger';
         if (parts.includes('instagram')) return 'instagram';
+        
+        // If not in platform path, check active context in localStorage
+        if (localStorage.getItem('active_wa_session_id')) return 'whatsapp';
+        if (localStorage.getItem('active_fb_page_id')) return 'messenger';
+        
         return null;
     };
     const platform = getPlatformFromPath();
@@ -58,6 +64,13 @@ export default function ProductsPage() {
     const [products, setProducts] = useState<Product[]>([]);
     const [searchQuery, setSearchQuery] = useState("");
     const [pageId, setPageId] = useState<string | null>(null);
+
+    const getActiveId = () => {
+        const currentPlatform = getPlatformFromPath();
+        if (currentPlatform === 'whatsapp') return localStorage.getItem('active_wa_session_id');
+        if (currentPlatform === 'messenger') return localStorage.getItem('active_fb_page_id');
+        return null;
+    };
     
     // Form State
     const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -168,11 +181,12 @@ export default function ProductsPage() {
         if (userId) {
             const timer = setTimeout(async () => {
                 const token = typeof window !== "undefined" ? localStorage.getItem("auth_token") : null;
-                fetchProducts(userId, searchQuery, token || undefined);
+                const activeId = getActiveId();
+                fetchProducts(userId, searchQuery, token || undefined, activeId);
             }, 500);
             return () => clearTimeout(timer);
         }
-    }, [searchQuery, userId]);
+    }, [searchQuery, userId, platform]);
 
     // Auto-reload on page change
     useEffect(() => {
@@ -180,9 +194,7 @@ export default function ProductsPage() {
             if (userId) {
                 const token = localStorage.getItem("auth_token");
                 const platform = getPlatformFromPath();
-                const activeId = platform === 'whatsapp' 
-                    ? localStorage.getItem('active_wa_session_id') 
-                    : localStorage.getItem('active_fb_page_id');
+                const activeId = getActiveId();
                 
                 fetchProducts(userId, searchQuery, token || undefined, activeId);
             }
@@ -218,7 +230,8 @@ export default function ProductsPage() {
                 return;
             }
             setUserId(uid);
-            fetchProducts(uid, "", storedToken);
+            const activeId = getActiveId();
+            fetchProducts(uid, "", storedToken, activeId);
         } catch (error) {
             console.error("Access check failed:", error);
         } finally {
