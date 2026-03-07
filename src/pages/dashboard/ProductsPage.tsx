@@ -534,8 +534,8 @@ export default function ProductsPage() {
 
             const formData = new FormData();
             
-            // --- NEW METHOD: PACK EVERYTHING INTO A METADATA OBJECT ---
-            // This is more reliable for Multer than sending individual fields.
+            // --- HYBRID METHOD: SEND BOTH METADATA AND INDIVIDUAL FIELDS ---
+            // This ensures maximum compatibility with Multer and our backend parsing logic.
             const metadata = {
                 user_id: String(userId),
                 name: String(productName),
@@ -570,8 +570,16 @@ export default function ProductsPage() {
                 return;
             }
 
-            // Append metadata as a single JSON string
+            // 1. Append metadata as a single JSON string
             formData.append("metadata", JSON.stringify(metadata));
+
+            // 2. Append individual fields for backward compatibility
+            formData.append("user_id", metadata.user_id);
+            formData.append("name", metadata.name);
+            formData.append("description", metadata.description);
+            formData.append("allowed_messenger_ids", JSON.stringify(metadata.allowed_messenger_ids));
+            formData.append("allowed_wa_sessions", JSON.stringify(metadata.allowed_wa_sessions));
+            formData.append("page_id", String(metadata.page_id || ""));
 
             // --- FILES LAST (Best practice for Multer) ---
             if (productImage) {

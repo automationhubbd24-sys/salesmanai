@@ -360,29 +360,32 @@ exports.checkStatus = async (req, res) => {
 
 exports.createProduct = async (req, res) => {
     try {
-        // --- NEW METHOD SUPPORT: Parse Metadata JSON if present ---
+        console.log("[ProductCreate] Request received. Body keys:", Object.keys(req.body));
+        
+        // --- RESILIENT PARSING: Check Metadata and Individual Fields ---
+        let rawMetadata = {};
         if (req.body.metadata) {
             try {
-                const metadata = JSON.parse(req.body.metadata);
-                // Merge metadata into req.body to maintain compatibility with existing code
-                Object.assign(req.body, metadata);
+                rawMetadata = JSON.parse(req.body.metadata);
+                console.log("[ProductCreate] Metadata parsed successfully.");
             } catch (e) {
-                console.error("[ProductCreate] Failed to parse metadata JSON:", e.message);
+                console.error("[ProductCreate] Metadata JSON parse failed:", e.message);
             }
         }
 
-        const baseUserId = req.body.user_id || null;
-        const pageId = req.body?.page_id || null;
+        // Merge metadata into req.body but prioritize metadata for key fields
+        const body = { ...req.body, ...rawMetadata };
         
+        const baseUserId = body.user_id || null;
+        const pageId = body.page_id || null;
+        
+        console.log(`[ProductCreate] Resolved baseUserId: ${baseUserId}, pageId: ${pageId}`);
+
         // Use resolveProductOwnerUserId to ensure products are always attached to the OWNER
         const userId = await resolveProductOwnerUserId(req, baseUserId, pageId);
-        console.log(`[ProductCreate] Resolved Owner ID: ${userId} for Request User: ${baseUserId} (Page: ${pageId})`);
+        console.log(`[ProductCreate] Resolved Owner ID: ${userId}`);
         
         if (!userId) return res.status(400).json({ error: "user_id is required" });
-
-        // --- VALIDATE TEAM OWNERSHIP RULE ---
-        // If the request came from a member, we already resolved the Team Owner ID above.
-        // The product will be saved with the Team Owner's user_id.
 
         const hasAccess = await dbService.checkProductFeatureAccess(userId);
         if (!hasAccess) {
@@ -394,7 +397,6 @@ exports.createProduct = async (req, res) => {
         // 1. Handle Image Upload
         let imageUrl = null;
         let additionalImages = [];
-        console.log("[ProductCreate] Checking for file uploads...");
         
         const envBaseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL;
         const protocol = req.headers['x-forwarded-proto'] || req.protocol;
@@ -402,60 +404,49 @@ exports.createProduct = async (req, res) => {
         const reqBaseUrl = `${protocol}://${host}`;
         const baseUrl = envBaseUrl || reqBaseUrl;
 
-        // Handle Primary Image
         if (req.files && req.files.image && req.files.image[0]) {
-            const primaryFile = req.files.image[0];
-            console.log("[ProductCreate] Primary file found:", primaryFile.originalname);
             try {
-                imageUrl = await imageService.uploadProductImage(primaryFile.buffer, primaryFile.mimetype, userId, baseUrl);
-                console.log("[ProductCreate] Primary image uploaded. URL:", imageUrl);
+                imageUrl = await imageService.uploadProductImage(req.files.image[0].buffer, req.files.image[0].mimetype, userId, baseUrl);
             } catch (imgError) {
-                console.error("[ProductCreate] Primary image upload failed:", imgError);
-                return res.status(500).json({ error: "Primary image upload failed: " + imgError.message });
+                console.error("[ProductCreate] Image upload failed:", imgError);
             }
         }
 
-        // Handle Additional Images
         if (req.files && req.files.images) {
-            console.log(`[ProductCreate] Found ${req.files.images.length} additional images.`);
             const uploadPromises = req.files.images.map(file => 
                 imageService.uploadProductImage(file.buffer, file.mimetype, userId, baseUrl)
             );
             try {
                 additionalImages = await Promise.all(uploadPromises);
-                console.log(`[ProductCreate] ${additionalImages.length} additional images uploaded.`);
             } catch (imgError) {
                 console.error("[ProductCreate] Additional images upload failed:", imgError);
             }
         }
 
-        // 2. Parse Body
-        const name = req.body.name;
-        const description = req.body.description || '';
-        const price = req.body.price ? parseFloat(req.body.price) : 0;
-        const currency = req.body.currency || 'USD';
-        const stock = req.body.stock ? parseInt(req.body.stock) : 0;
-        const keywords = req.body.keywords || '';
+        // 2. Parse Data (Resilient)
+        const name = body.name;
+        const description = body.description || '';
+        const price = body.price ? parseFloat(body.price) : 0;
+        const currency = body.currency || 'USD';
+        const stock = body.stock ? parseInt(body.stock) : 0;
+        const keywords = body.keywords || '';
 
         let variants = [];
-        try {
-            variants = req.body.variants ? JSON.parse(req.body.variants) : [];
-        } catch (e) {
-            return res.status(400).json({ error: "Invalid variants JSON format" });
+        if (body.variants) {
+            if (Array.isArray(body.variants)) {
+                variants = body.variants;
+            } else {
+                try {
+                    variants = JSON.parse(body.variants);
+                } catch (e) {
+                    console.error("[ProductCreate] Variants parse failed:", e.message);
+                }
+            }
         }
         
-        const isActive = req.body.is_active === 'true' || req.body.is_active === true;
+        const isActive = body.is_active === 'true' || body.is_active === true;
 
-        // 2. Validate Assignments (MANDATORY)
-        let allowedMessengerIds = [];
-        let allowedWASessions = [];
-
-        console.log("[ProductCreateDebug] Full Request Body:", {
-            ...req.body,
-            image: req.files?.image ? 'present' : 'missing',
-            images: req.files?.images ? req.files.images.length : 0
-        });
-
+        // 3. Validate Assignments (MANDATORY)
         const parseIds = (val) => {
             if (!val) return [];
             let arr = [];
@@ -477,23 +468,19 @@ exports.createProduct = async (req, res) => {
             return arr
                 .map(id => {
                     if (!id) return null;
-                    if (typeof id === 'object') {
-                        // Handle legacy object storage
-                        return String(id.id || id.page_id || id.name || "");
-                    }
+                    if (typeof id === 'object') return String(id.id || id.page_id || id.name || "");
                     return String(id);
                 })
                 .filter(id => id && id !== 'null' && id !== 'undefined' && id !== '[object Object]');
         };
 
-        allowedMessengerIds = parseIds(req.body.allowed_messenger_ids);
-        allowedWASessions = parseIds(req.body.allowed_wa_sessions);
+        const allowedMessengerIds = parseIds(body.allowed_messenger_ids);
+        const allowedWASessions = parseIds(body.allowed_wa_sessions);
 
-        console.log("[ProductCreateDebug] Final Parsed Messenger IDs:", allowedMessengerIds);
-        console.log("[ProductCreateDebug] Final Parsed WA Sessions:", allowedWASessions);
+        console.log("[ProductCreate] Final Assignments:", { messenger: allowedMessengerIds, wa: allowedWASessions });
 
         if (allowedMessengerIds.length === 0 && allowedWASessions.length === 0) {
-            console.error("[ProductCreate] Validation Failed: No valid assignments found.");
+            console.error("[ProductCreate] Validation Failed: Assignments are empty.");
             return res.status(400).json({ 
                 error: "At least one Facebook Page or WhatsApp Session must be selected. Assignments cannot be empty. Please check your selections." 
             });
@@ -501,14 +488,14 @@ exports.createProduct = async (req, res) => {
 
         if (!name) return res.status(400).json({ error: "Product name is required" });
 
-        // 3. Save to DB
+        // 4. Save to DB
         const product = await dbService.createProduct({
             user_id: userId,
             name,
             description,
             image_url: imageUrl,
             additional_images: additionalImages,
-            variants: Array.isArray(variants) ? variants : (variants ? JSON.parse(variants) : []),
+            variants: variants,
             is_active: isActive,
             price,
             currency,
@@ -516,9 +503,9 @@ exports.createProduct = async (req, res) => {
             allowed_messenger_ids: allowedMessengerIds,
             allowed_wa_sessions: allowedWASessions,
             keywords,
-            is_combo: req.body.is_combo === 'true' || req.body.is_combo === true,
-            combo_items: Array.isArray(req.body.combo_items) ? req.body.combo_items : (req.body.combo_items ? JSON.parse(req.body.combo_items) : []),
-            allow_description: req.body.allow_description === 'true' || req.body.allow_description === true
+            is_combo: body.is_combo === 'true' || body.is_combo === true,
+            combo_items: Array.isArray(body.combo_items) ? body.combo_items : (body.combo_items ? JSON.parse(body.combo_items) : []),
+            allow_description: body.allow_description === 'true' || body.allow_description === true
         });
 
         res.status(201).json(product);
