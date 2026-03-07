@@ -57,7 +57,6 @@ export default function ProductsPage() {
     const [pageId, setPageId] = useState<string | null>(initialPageId);
 
     useEffect(() => {
-        console.log("!!! FRONTEND VERSION: FIX_FINAL_V6 !!!");
         const handleSync = () => {
             const pid = getInitialPageId();
             setPageId(pid);
@@ -234,7 +233,7 @@ export default function ProductsPage() {
             const user = JSON.parse(localStorage.getItem("auth_user") || "{}");
             if (user.email && teamOwner === user.email) return null;
         } catch (e) {
-            console.error("Failed to parse auth_user", e);
+            
         }
 
         const activeWa = localStorage.getItem("active_wa_session_id");
@@ -309,7 +308,7 @@ export default function ProductsPage() {
             const activeId = forcedPageId !== undefined ? forcedPageId : pageId;
             fetchProducts(uid, "", storedToken, activeId);
         } catch (error) {
-            console.error("Access check failed:", error);
+            
         } finally {
             setLoading(false);
         }
@@ -371,7 +370,6 @@ export default function ProductsPage() {
                 setDebugLogText(prev => `${prev}\n[Client] PRODUCTS_FETCH page=${resolvedPageId} count=0`);
             }
         } catch (error) {
-            console.error("Fetch products failed:", error);
             const message = error instanceof Error ? error.message : "Products load failed";
             toast.error(message);
             recordError("GET /api/products", message);
@@ -425,7 +423,6 @@ export default function ProductsPage() {
             setDebugLogText(prev => `${prev}\n[Client] PAGES_FETCH fb=${fbCount} wa=${waCount}`);
             return combinedPages;
         } catch (error) {
-            console.error("Failed to fetch pages:", error);
             const message = error instanceof Error ? error.message : "Failed to fetch pages";
             recordError("GET /api/messenger/pages | GET /api/whatsapp/sessions", message);
             return [];
@@ -603,10 +600,6 @@ export default function ProductsPage() {
         setSelectedWA(new Set(waSessions.map(id => normalizeId(id))));
         setSelectedFB(new Set(messengerIds.map(id => normalizeId(id))));
 
-        console.log("[ProductEditDebug] Loaded WA Sessions:", product.allowed_wa_sessions);
-        console.log("[ProductEditDebug] Parsed WA Sessions:", waSessions);
-        console.log("[ProductEditDebug] Loaded Messenger IDs:", product.allowed_messenger_ids);
-        console.log("[ProductEditDebug] Parsed Messenger IDs:", messengerIds);
         setDebugLogText(prev => `${prev}\n[Client] EDIT_SELECTED wa=${JSON.stringify(waSessions)} fb=${JSON.stringify(messengerIds)}`);
         setDebugLogOpen(true);
 
@@ -651,10 +644,6 @@ export default function ProductsPage() {
             const cleanMessengerIds = Array.from(selectedFB);
             const cleanWASessions = Array.from(selectedWA);
 
-            console.log("!!! SANITIZED IDS !!!", { 
-                messenger: cleanMessengerIds, 
-                wa: cleanWASessions 
-            });
             setDebugLogText(prev => `${prev}\n[Client] SANITIZED_IDS messenger=${JSON.stringify(cleanMessengerIds)} wa=${JSON.stringify(cleanWASessions)}`);
 
             // --- TYPE-BASED SEPARATION ---
@@ -679,10 +668,6 @@ export default function ProductsPage() {
                 finalWASessions = Array.from(new Set([...onlyWA, ...waFromMessenger]));
             }
             
-            console.log("!!! TYPE SEPARATED IDS !!!", { 
-                messenger: finalMessengerIds, 
-                wa: finalWASessions 
-            });
             setDebugLogText(prev => `${prev}\n[Client] TYPE_SEPARATED messenger=${JSON.stringify(finalMessengerIds)} wa=${JSON.stringify(finalWASessions)}`);
 
             if (cleanMessengerIds.length === 0 && cleanWASessions.length === 0) {
@@ -738,7 +723,7 @@ export default function ProductsPage() {
                 });
             }
 
-            console.log("[ProductSubmitDebug] FormData (Metadata) populated. Sending request...", metadata);
+            
 
             const url = editProductId 
                 ? `${BACKEND_URL}/api/products/${editProductId}${query}`
@@ -884,7 +869,6 @@ export default function ProductsPage() {
             const refreshToken = typeof window !== "undefined" ? localStorage.getItem("auth_token") : null;
             fetchProducts(userId, searchQuery, refreshToken || undefined);
         } catch (error) {
-            console.error(error);
             toast.error("Error deleting product");
             recordError("DELETE /api/products", String(error));
         }
@@ -917,7 +901,6 @@ export default function ProductsPage() {
                 prev.map((p) => (p.id === product.id ? { ...p, allow_description: enabled } : p))
             );
         } catch (error) {
-            console.error(error);
             toast.error("Error updating product");
             recordError("PUT /api/products allow_description", String(error));
         } finally {
@@ -952,7 +935,6 @@ export default function ProductsPage() {
                 prev.map((p) => (p.id === product.id ? { ...p, is_active: enabled } : p))
             );
         } catch (error) {
-            console.error(error);
             toast.error("Error updating product");
             recordError("PUT /api/products is_active", String(error));
         } finally {
