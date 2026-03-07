@@ -296,11 +296,7 @@ export default function ProductsPage() {
                 if (teamOwner) params.set("team_owner", teamOwner);
             }
 
-            if (currentPlatform) {
-                params.set("platform", currentPlatform);
-            }
-
-            // --- CRITICAL GUARD: Only allow products if session is selected OR it's truly global ---
+            // --- CRITICAL GUARD: Only allow products if session is selected ---
             if ((currentPlatform === "whatsapp" || currentPlatform === "messenger") && !resolvedPageId) {
                 setProducts([]);
                 return;
@@ -308,7 +304,6 @@ export default function ProductsPage() {
 
             if (resolvedPageId) {
                 params.set("page_id", resolvedPageId);
-                params.set("strict", "1");
             }
 
             const url = `${BACKEND_URL}/api/products?${params.toString()}`;
@@ -558,10 +553,13 @@ export default function ProductsPage() {
             const normalizedMessengerIds = Array.from(new Set(allowedMessengerIds.map(String))).filter(Boolean);
             const normalizedWASessions = Array.from(new Set(allowedWASessions.map(String))).filter(Boolean);
 
-            // Visibility is controlled by ID arrays. Platform field is kept for informational purposes.
+            // Validation: Must have at least one assignment
+            if (normalizedMessengerIds.length === 0 && normalizedWASessions.length === 0 && !currentContextId) {
+                throw new Error("Please select at least one Facebook Page or WhatsApp Session for this product.");
+            }
+
             formData.append("allowed_messenger_ids", JSON.stringify(normalizedMessengerIds));
             formData.append("allowed_wa_sessions", JSON.stringify(normalizedWASessions));
-            formData.append("platform", platform || "global");
 
             formData.append("is_combo", String(!!isCombo));
             formData.append("combo_items", JSON.stringify(comboItems || []));

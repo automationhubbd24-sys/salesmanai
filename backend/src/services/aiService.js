@@ -836,7 +836,7 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null
                 const query = args.query;
                 const scope = args.candidates_scope;
                 
-                let products = await dbService.searchProducts(userId, query, pageId, platform);
+                let products = await dbService.searchProducts(userId, query, pageId);
                 
                 // If scope provided, filter products
                 if (Array.isArray(scope) && scope.length > 0) {

@@ -415,8 +415,7 @@ async function initTables() {
         `);
         console.log("[DB] 'fb_message_database.allow_description' column checked.");
 
-        // 1. Rename allowed_page_ids to allowed_messenger_ids if it exists
-        // Or just add allowed_messenger_ids as a clear column
+        // Ensure allowed_messenger_ids and allowed_wa_sessions columns exist
         await query(`
             DO $$ 
             BEGIN 
@@ -2467,8 +2466,7 @@ async function createProduct(productData) {
         'keywords',
         'is_combo',
         'combo_items',
-        'allow_description',
-        'platform'
+        'allow_description'
     ];
 
     const values = [];
@@ -2490,7 +2488,7 @@ async function createProduct(productData) {
                 val = (field === 'additional_images' ? '[]' : '[]');
             }
         } else if (val === undefined) {
-            val = (field === 'platform' ? 'global' : null);
+            val = null;
         }
         
         values.push(val);
@@ -2547,7 +2545,7 @@ async function resolvePageContextType(pageId) {
     return 'messenger';
 }
 
-async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pageId = null, allowedPageIds = null, strictMode = false, platform = null) {
+async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pageId = null, allowedPageIds = null) {
     console.log(`[DB] getProducts - User: ${userId}, Page: ${pageId}`);
     const offset = (page - 1) * limit;
 
@@ -2556,7 +2554,7 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
     let whereClause = 'user_id = $1::uuid';
 
     // 1. Context Filtering (ID Array based)
-    // If pageId is provided, show products assigned to THIS pageId OR Global products.
+    // If pageId is provided, show products assigned to THIS pageId.
     if (pageId && pageId !== 'null' && pageId !== 'undefined') {
         const contextType = await resolvePageContextType(pageId);
         const isWhatsapp = contextType === 'whatsapp';
@@ -2566,17 +2564,12 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
         const pIdx = params.length;
 
         // Visibility Rule:
-        // 1. Explicitly assigned to THIS page/session.
-        // 2. OR Global (assigned to NO page/session on ANY platform).
-        whereClause += ` AND (
-            (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))
-            OR
-            (
-                (allowed_messenger_ids IS NULL OR allowed_messenger_ids::jsonb = '[]'::jsonb)
-                AND
-                (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
-            )
-        )`;
+        // Must be explicitly assigned to THIS page/session.
+        whereClause += ` AND (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))`;
+    } else {
+        // If no specific pageId is provided (e.g., Global Products page),
+        // we show ALL products for the user (since new products MUST have an assignment,
+        // we'll just show them all).
     }
 
     // 2. Search Query
@@ -2587,18 +2580,13 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
     }
 
     // 3. Permission Filter (for Team Members)
+    // Team members should see products assigned to a page/session they have access to.
     if (allowedPageIds !== null && allowedPageIds.length > 0) {
         const perms = allowedPageIds.map(String);
         params.push(perms);
         const pIdx = params.length;
         
         whereClause += ` AND (
-            (
-                (allowed_messenger_ids IS NULL OR allowed_messenger_ids::jsonb = '[]'::jsonb)
-                AND
-                (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
-            )
-            OR 
             EXISTS (
                 SELECT 1 FROM jsonb_array_elements_text(COALESCE(allowed_messenger_ids, '[]'::jsonb)) AS elem WHERE elem = ANY($${pIdx}::text[])
             )
@@ -2704,11 +2692,8 @@ async function deleteProduct(id, userId) {
 }
 
 // 30.5 Get Products by Exact Names (For System Prompt Injection)
-async function getProductsByNames(userId, productNames, pageId = null, platform = null) {
+async function getProductsByNames(userId, productNames, pageId = null) {
     if (!productNames || productNames.length === 0) return [];
-    
-    // Normalize names to lowercase for comparison if needed, 
-    // but ILIKE ANY handles case insensitivity.
     
     let sql = `
         SELECT * FROM products 
@@ -2720,36 +2705,15 @@ async function getProductsByNames(userId, productNames, pageId = null, platform 
     const params = [userId, productNames];
 
     if (pageId) {
-        const normalizedPlatform = platform ? String(platform).toLowerCase() : null;
-        const contextType = (normalizedPlatform === 'whatsapp' || normalizedPlatform === 'messenger')
-            ? normalizedPlatform
-            : await resolvePageContextType(pageId);
+        const contextType = await resolvePageContextType(pageId);
         const isWhatsapp = contextType === 'whatsapp';
         const pageCol = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_messenger_ids';
-        const otherCol = isWhatsapp ? 'allowed_messenger_ids' : 'allowed_wa_sessions';
         
         params.push(String(pageId));
         const pIdx = params.length;
         
-        // Strict Isolation: 
-        // 1. Show if explicitly assigned to THIS specific page/session
-        // 2. OR show if it is a TRUE GLOBAL product (not assigned to ANY platform)
-        // 3. EXCLUDE if it belongs to OTHER platforms but NOT this one.
-        sql += ` AND (
-            (
-                (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))
-            )
-            OR
-            (
-                (allowed_messenger_ids IS NULL OR allowed_messenger_ids::jsonb = '[]'::jsonb)
-                AND
-                (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
-            )
-        ) AND (
-            (${otherCol} IS NULL OR ${otherCol}::jsonb = '[]'::jsonb)
-            OR
-            (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))
-        )`;
+        // Visibility Rule: Must be explicitly assigned to THIS page/session.
+        sql += ` AND (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))`;
     }
     
     try {
@@ -2761,8 +2725,8 @@ async function getProductsByNames(userId, productNames, pageId = null, platform 
     }
 }
 
-    // 31. Search Products (For AI) - Enhanced with Smart Fallback & Visual Search
-async function searchProducts(userId, queryText, pageId = null, platform = null) {
+// 31. Search Products (For AI) - Enhanced with Smart Fallback & Visual Search
+async function searchProducts(userId, queryText, pageId = null) {
     try {
         if (!userId) {
             console.warn("[DB] searchProducts aborted: No User ID provided.");
@@ -2773,10 +2737,7 @@ async function searchProducts(userId, queryText, pageId = null, platform = null)
         const cleanQuery = queryText.trim();
         if (!cleanQuery) return [];
 
-        const normalizedPlatform = platform ? String(platform).toLowerCase() : null;
-        const contextType = (normalizedPlatform === 'whatsapp' || normalizedPlatform === 'messenger')
-            ? normalizedPlatform
-            : (pageId ? await resolvePageContextType(pageId) : null);
+        const contextType = pageId ? await resolvePageContextType(pageId) : null;
         const isWhatsapp = contextType === 'whatsapp';
         const pageColumn = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_messenger_ids';
 
@@ -2827,27 +2788,8 @@ async function searchProducts(userId, queryText, pageId = null, platform = null)
                 params.push(String(pageId));
                 const pIdx = params.length;
                 
-                // Strict Isolation for AI Search: 
-                // 1. Show if explicitly assigned to THIS specific page/session
-                // 2. OR show if it is a TRUE GLOBAL product (not assigned to ANY platform)
-                // 3. EXCLUDE if it belongs to OTHER platforms but NOT this one.
-                const otherColumn = isWhatsapp ? 'allowed_messenger_ids' : 'allowed_wa_sessions';
-                
-                where += ` AND (
-                    (
-                        (${pageColumn}::jsonb @> jsonb_build_array($${pIdx}::text))
-                    )
-                    OR
-                    (
-                        (allowed_messenger_ids IS NULL OR allowed_messenger_ids::jsonb = '[]'::jsonb)
-                        AND
-                        (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
-                    )
-                ) AND (
-                    (${otherColumn} IS NULL OR ${otherColumn}::jsonb = '[]'::jsonb)
-                    OR
-                    (${pageColumn}::jsonb @> jsonb_build_array($${pIdx}::text))
-                )`;
+                // Visibility Rule: Must be explicitly assigned to THIS page/session.
+                where += ` AND (${pageColumn}::jsonb @> jsonb_build_array($${pIdx}::text))`;
             }
             return { where, params };
         };
