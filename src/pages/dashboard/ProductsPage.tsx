@@ -57,6 +57,7 @@ export default function ProductsPage() {
     const [pageId, setPageId] = useState<string | null>(initialPageId);
 
     useEffect(() => {
+        console.log("!!! FRONTEND VERSION: FIX_FINAL_V6 !!!");
         const handleSync = () => {
             const pid = getInitialPageId();
             setPageId(pid);
@@ -534,8 +535,37 @@ export default function ProductsPage() {
 
             const formData = new FormData();
             
+            // --- STRICT ID SANITIZATION ---
+            // Ensure we only have valid string IDs, no objects, no nulls.
+            const cleanMessengerIds = Array.from(new Set(allowedMessengerIds.map(id => {
+                if (typeof id === 'object') {
+                    // This handles the [object Object] case by extracting the ID property if present
+                    const obj = id as any;
+                    return String(obj.id || obj.page_id || obj.value || "");
+                }
+                return String(id);
+            }))).filter(id => id && id !== 'null' && id !== 'undefined' && id !== '[object Object]' && id.length > 0);
+
+            const cleanWASessions = Array.from(new Set(allowedWASessions.map(id => {
+                if (typeof id === 'object') {
+                    const obj = id as any;
+                    return String(obj.id || obj.page_id || obj.value || "");
+                }
+                return String(id);
+            }))).filter(id => id && id !== 'null' && id !== 'undefined' && id !== '[object Object]' && id.length > 0);
+
+            console.log("!!! SANITIZED IDS !!!", { 
+                messenger: cleanMessengerIds, 
+                wa: cleanWASessions 
+            });
+
+            if (cleanMessengerIds.length === 0 && cleanWASessions.length === 0) {
+                toast.error("Error: At least one assignment is required. Please select a Facebook Page or WhatsApp Session.");
+                setIsSubmitting(false);
+                return;
+            }
+            
             // --- HYBRID METHOD: SEND BOTH METADATA AND INDIVIDUAL FIELDS ---
-            // This ensures maximum compatibility with Multer and our backend parsing logic.
             const metadata = {
                 user_id: String(userId),
                 name: String(productName),
@@ -545,8 +575,8 @@ export default function ProductsPage() {
                 currency: String(productCurrency || "USD"),
                 stock: Number(productStock || 0),
                 is_active: true,
-                allowed_messenger_ids: Array.from(new Set(allowedMessengerIds.map(String))).filter(id => id && id !== 'null' && id !== 'undefined'),
-                allowed_wa_sessions: Array.from(new Set(allowedWASessions.map(String))).filter(id => id && id !== 'null' && id !== 'undefined'),
+                allowed_messenger_ids: cleanMessengerIds,
+                allowed_wa_sessions: cleanWASessions,
                 is_combo: !!isCombo,
                 combo_items: comboItems || [],
                 allow_description: !!allowDescription,
@@ -559,26 +589,16 @@ export default function ProductsPage() {
                 }]
             };
 
-            console.log("[ProductSubmitDebug] IDs to send:", { 
-                messenger: metadata.allowed_messenger_ids, 
-                wa: metadata.allowed_wa_sessions 
-            });
-
-            if (metadata.allowed_messenger_ids.length === 0 && metadata.allowed_wa_sessions.length === 0) {
-                toast.error("Error: At least one assignment is required. Please select a Facebook Page or WhatsApp Session.");
-                setIsSubmitting(false);
-                return;
-            }
-
             // 1. Append metadata as a single JSON string
             formData.append("metadata", JSON.stringify(metadata));
 
             // 2. Append individual fields for backward compatibility
+            // IMPORTANT: Sending as STRINGIFIED ARRAYS to avoid Multer array parsing issues
             formData.append("user_id", metadata.user_id);
             formData.append("name", metadata.name);
             formData.append("description", metadata.description);
-            formData.append("allowed_messenger_ids", JSON.stringify(metadata.allowed_messenger_ids));
-            formData.append("allowed_wa_sessions", JSON.stringify(metadata.allowed_wa_sessions));
+            formData.append("allowed_messenger_ids", JSON.stringify(cleanMessengerIds));
+            formData.append("allowed_wa_sessions", JSON.stringify(cleanWASessions));
             formData.append("page_id", String(metadata.page_id || ""));
 
             // --- FILES LAST (Best practice for Multer) ---
@@ -592,7 +612,7 @@ export default function ProductsPage() {
                 });
             }
 
-            console.log("[ProductSubmitDebug] FormData (Metadata) populated. Sending request...");
+            console.log("[ProductSubmitDebug] FormData (Metadata) populated. Sending request...", metadata);
 
             const url = editProductId 
                 ? `${BACKEND_URL}/api/products/${editProductId}${query}`

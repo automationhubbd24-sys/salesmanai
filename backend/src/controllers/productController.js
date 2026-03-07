@@ -361,6 +361,7 @@ exports.checkStatus = async (req, res) => {
 exports.createProduct = async (req, res) => {
     try {
         console.log("[ProductCreate] Request received. Body keys:", Object.keys(req.body));
+        if (req.body.metadata) console.log("[ProductCreate] Raw Metadata Length:", req.body.metadata.length);
         
         // --- RESILIENT PARSING: Check Metadata and Individual Fields ---
         let rawMetadata = {};
@@ -375,6 +376,12 @@ exports.createProduct = async (req, res) => {
 
         // Merge metadata into req.body but prioritize metadata for key fields
         const body = { ...req.body, ...rawMetadata };
+        
+        // BACKWARD COMPATIBILITY: Map old 'allowed_page_ids' to messenger ids if present
+        if (body.allowed_page_ids && !body.allowed_messenger_ids) {
+            console.log("[ProductCreate] Legacy 'allowed_page_ids' found. Mapping to messenger_ids.");
+            body.allowed_messenger_ids = body.allowed_page_ids;
+        }
         
         const baseUserId = body.user_id || null;
         const pageId = body.page_id || null;
