@@ -1348,11 +1348,13 @@ export default function ProductsPage() {
                                                   id={`wa-page-${page.page_id}`}
                                                   checked={isSelected}
                                                   onCheckedChange={(checked) => {
-                                                    setAllowedWASessions(prev =>
-                                                      checked
-                                                        ? Array.from(new Set([...prev, pageKey.trim()]))
-                                                        : prev.filter(id => id !== pageKey)
-                                                    );
+                                                    setAllowedWASessions(prev => {
+                                                      const next = checked
+                                                        ? Array.from(new Set([...prev.map(x => String(x).trim()), pageKey.trim()]))
+                                                        : prev.filter(id => String(id).trim().toLowerCase() !== pageKey.toLowerCase());
+                                                      return next;
+                                                    });
+                                                    setAllowedMessengerIds(prev => prev.filter(id => String(id).trim().toLowerCase() !== pageKey.toLowerCase()));
                                                   }}
                                                   className={cn(
                                                     "data-[state=checked]:bg-[#00ff88] data-[state=checked]:border-[#00ff88]",
@@ -1395,11 +1397,13 @@ export default function ProductsPage() {
                                                   id={`fb-page-${page.page_id}`}
                                                   checked={isSelected}
                                                   onCheckedChange={(checked) => {
-                                                    setAllowedMessengerIds(prev =>
-                                                      checked
-                                                        ? Array.from(new Set([...prev, pageKey.trim()]))
-                                                        : prev.filter(id => id !== pageKey)
-                                                    );
+                                                    setAllowedMessengerIds(prev => {
+                                                      const next = checked
+                                                        ? Array.from(new Set([...prev.map(x => String(x).trim()), pageKey.trim()]))
+                                                        : prev.filter(id => String(id).trim().toLowerCase() !== pageKey.toLowerCase());
+                                                      return next;
+                                                    });
+                                                    setAllowedWASessions(prev => prev.filter(id => String(id).trim().toLowerCase() !== pageKey.toLowerCase()));
                                                   }}
                                                   className={cn(
                                                     "data-[state=checked]:bg-[#00ff88] data-[state=checked]:border-[#00ff88]",
