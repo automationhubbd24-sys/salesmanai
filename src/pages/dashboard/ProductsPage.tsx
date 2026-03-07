@@ -555,6 +555,9 @@ export default function ProductsPage() {
             formData.append("stock", productStock);
             formData.append("is_active", "true");
 
+            console.log("[SaveDebug] allowedWASessions:", allowedWASessions);
+            console.log("[SaveDebug] allowedMessengerIds:", allowedMessengerIds);
+
             // Directly use the state values - NO MORE confusing normalization
             formData.append("allowed_messenger_ids", JSON.stringify(allowedMessengerIds)); 
             formData.append("allowed_wa_sessions", JSON.stringify(allowedWASessions));
