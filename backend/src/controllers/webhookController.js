@@ -579,15 +579,15 @@ async function queueMessage(event, entryPageId = null) {
 
     console.log(`Queued message for ${sessionId}. Buffer size: ${sessionData.messages.length} (Processing: ${sessionData.isProcessing})`);
     
-    // If we are currently processing this session, don't set a new timer.
-    // The processBufferedMessages function will check for new messages when it finishes.
-    if (sessionData.isProcessing && !isSwipeReply) {
+    // If we are currently processing this session, just append the message to the buffer.
+    // The existing 'finally' block in processBufferedMessages will pick it up after finishing the current call.
+    if (sessionData.isProcessing) {
         console.log(`[Debounce] Session ${sessionId} is busy processing. Message appended to current buffer.`);
         return;
     }
 
     if (sessionData.timer) {
-        clearTimeout(sessionData.timer); // Reset timer on new message
+        clearTimeout(sessionData.timer); // Reset timer on new message (Bundling: Text + Image + Swipe)
     }
 
     // Dynamic Debounce from DB
