@@ -119,21 +119,28 @@ export default function ProductsPage() {
 
     const handleSelectAllPages = () => {
         // Only select filtered pages to respect search
-        const newFbIds = filteredPages.filter(p => p.type === 'messenger').map(p => String(p.page_id));
-        const newWaIds = filteredPages.filter(p => p.type === 'whatsapp').map(p => String(p.page_id));
+        const newFbIds = filteredPages.filter(p => p.type === 'messenger').map(p => String(p.page_id).trim());
+        const newWaIds = filteredPages.filter(p => p.type === 'whatsapp').map(p => String(p.page_id).trim());
         
         // Add to respective arrays
-        setAllowedMessengerIds(prev => Array.from(new Set([...prev, ...newFbIds])));
-        setAllowedWASessions(prev => Array.from(new Set([...prev, ...newWaIds])));
+        setAllowedMessengerIds(prev => {
+            const base = prev.map(x => String(x).trim().toLowerCase());
+            const merged = [...prev.map(x => String(x).trim()), ...newFbIds];
+            return Array.from(new Set(merged.filter((id, idx, arr) => arr.indexOf(id) === idx)));
+        });
+        setAllowedWASessions(prev => {
+            const merged = [...prev.map(x => String(x).trim()), ...newWaIds];
+            return Array.from(new Set(merged.filter((id, idx, arr) => arr.indexOf(id) === idx)));
+        });
     };
 
     const handleDeselectAllPages = () => {
         // Remove filtered pages from selection
-        const fbIdsToRemove = filteredPages.filter(p => p.type === 'messenger').map(p => String(p.page_id));
-        const waIdsToRemove = filteredPages.filter(p => p.type === 'whatsapp').map(p => String(p.page_id));
+        const fbIdsToRemove = filteredPages.filter(p => p.type === 'messenger').map(p => String(p.page_id).trim().toLowerCase());
+        const waIdsToRemove = filteredPages.filter(p => p.type === 'whatsapp').map(p => String(p.page_id).trim().toLowerCase());
         
-        setAllowedMessengerIds(prev => prev.filter(id => !fbIdsToRemove.includes(id)));
-        setAllowedWASessions(prev => prev.filter(id => !waIdsToRemove.includes(id)));
+        setAllowedMessengerIds(prev => prev.filter(id => !fbIdsToRemove.includes(String(id).trim().toLowerCase())));
+        setAllowedWASessions(prev => prev.filter(id => !waIdsToRemove.includes(String(id).trim().toLowerCase())));
     };
     const [allowedWASessions, setAllowedWASessions] = useState<string[]>([]);
     const [allowedMessengerIds, setAllowedMessengerIds] = useState<string[]>([]);
