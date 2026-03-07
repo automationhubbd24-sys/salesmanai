@@ -85,7 +85,7 @@ export default function WhatsAppSettingsPage() {
 
   // Behavior Settings
   const [wait, setWait] = useState<number>(8);
-  const [historyLimit, setHistoryLimit] = useState<number>(20); // Restored State
+  const [historyLimit, setHistoryLimit] = useState<number>(10);
   const [behaviorSaving, setBehaviorSaving] = useState(false);
   
   // Optimization
@@ -179,8 +179,8 @@ export default function WhatsAppSettingsPage() {
       });
 
       // Behavior
-      setWait(dbRow.wait || 8);
-      setHistoryLimit(dbRow.history_limit || 20); // Restored Fetch
+      setWait(dbRow.wait ?? 8);
+      setHistoryLimit(dbRow.check_conversion ?? 10);
 
       // Credits (Joined from user_configs)
       const credits = Number(dbRow.message_credit || 0);
@@ -362,7 +362,7 @@ export default function WhatsAppSettingsPage() {
         },
         body: JSON.stringify({
           wait: wait,
-          history_limit: historyLimit // Restored Save
+          check_conversion: historyLimit
         })
       });
 
@@ -815,8 +815,8 @@ export default function WhatsAppSettingsPage() {
                             <Input 
                                 type="number" 
                                 value={wait} 
-                                onChange={(e) => setWait(Number(e.target.value) || 1)} 
-                                min={1} 
+                                onChange={(e) => setWait(Number(e.target.value) || 0)} 
+                                min={0} 
                                 max={60}
                                 className="w-24 font-mono"
                             />
@@ -833,7 +833,7 @@ export default function WhatsAppSettingsPage() {
                             <Input 
                                 type="number" 
                                 value={historyLimit} 
-                                onChange={(e) => setHistoryLimit(Number(e.target.value) || 20)} 
+                                onChange={(e) => setHistoryLimit(Number(e.target.value) || 10)} 
                                 min={1} 
                                 max={50}
                                 className="w-24 font-mono"
@@ -841,7 +841,7 @@ export default function WhatsAppSettingsPage() {
                             <span className="text-sm text-muted-foreground">messages</span>
                         </div>
                         <p className="text-sm text-muted-foreground">
-                            Controls how many previous messages the AI remembers for context. (Default: 20)
+                            Controls how many previous messages the AI remembers for context. (Default: 10)
                         </p>
                     </div>
 

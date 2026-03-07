@@ -821,6 +821,10 @@ async function getWhatsAppConfig(sessionName) {
 
     const data = mainResult.rows[0];
 
+    if (!data.text_prompt) {
+        data.text_prompt = 'You are a helpful sales assistant.';
+    }
+
     if (data.user_id) {
         const creditResult = await query(
             'SELECT message_credit FROM user_configs WHERE user_id::text = $1::text LIMIT 1',

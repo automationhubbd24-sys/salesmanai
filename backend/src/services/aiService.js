@@ -1855,7 +1855,8 @@ async function processImageWithVision(imageUrl, pageConfig = {}, customOptions =
                 const response = await axios.get(imageUrl, { 
                     responseType: 'arraybuffer',
                     headers: headers,
-                    timeout: 10000 
+                    timeout: 10000,
+                    proxy: false 
                 });
                 base64Image = Buffer.from(response.data).toString('base64');
                 mimeType = response.headers['content-type'] || 'image/jpeg';

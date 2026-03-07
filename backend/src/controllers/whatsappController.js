@@ -64,11 +64,6 @@ function extractDecisionMode(text) {
     const cleaned = text.replace(match[0], '').trim();
     return { mode, cleaned };
 }
-function extractProductCode(text) {
-    if (!text || typeof text !== 'string') return null;
-    const m = text.match(/##product\s*["']?([A-Za-z0-9\-_]+)["']?/i);
-    return m ? m[1] : null;
-}
 
 // --- ORDER TRACKING HELPERS ---
 const normalizeBanglaDigits = (value) => {
@@ -1422,7 +1417,7 @@ async function queueMessage(session, messagePayload) {
         }
     }
     
-    if (debounceTime < 1000) debounceTime = 1000;
+    if (debounceTime < 0) debounceTime = 0;
 
     sessionData.timer = setTimeout(() => {
         const messagesToProcess = [...sessionData.messages];
@@ -2092,7 +2087,13 @@ STRICT RULES:
         */
         // -------------------------------------
 
-        let historyLimit = 20;
+        let historyLimit = 10;
+        if (pageConfig && pageConfig.check_conversion) {
+            const parsed = parseInt(pageConfig.check_conversion, 10);
+            if (!isNaN(parsed)) {
+                historyLimit = Math.min(50, Math.max(1, parsed));
+            }
+        }
         
         const history = await dbService.getWhatsAppChatHistory(sessionName, senderId, historyLimit);
         
@@ -2187,24 +2188,6 @@ STRICT RULES:
                 console.warn(`[WA JSON Rescuer] Failed to parse: ${e.message}`);
             }
         }
-        let forcedCode = aiResponse.product_code || aiResponse.productCode || extractProductCode(finalReplyText) || extractProductCode(aiResponse.output || aiResponse.message || '');
-        if (forcedCode) {
-            try {
-                const ownerId = pageConfig && pageConfig.user_id;
-                if (ownerId) {
-                    const found = await dbService.searchProducts(ownerId, forcedCode, sessionName);
-                    if (Array.isArray(found) && found.length > 0) {
-                        const pick = found.find(p => String(p.name || '').toLowerCase() === String(forcedCode).toLowerCase() || String(p.keywords || '').toLowerCase().includes(String(forcedCode).toLowerCase())) || found[0];
-                        aiResponse.product_id = pick.id;
-                        if (pick.image_url) {
-                            aiResponse.images = [{ url: normalizeImageUrl(pick.image_url), title: pick.name, description: pick.description || '' }];
-                        } else {
-                            aiResponse.images = [];
-                        }
-                    }
-                }
-            } catch {}
-        }
 
         // --- AGENTIC DELIVERY SYSTEM (BACKEND-DRIVEN) ---
         if (aiResponse.action && aiResponse.action !== "NONE" && aiResponse.product_id) {
@@ -2239,7 +2222,7 @@ STRICT RULES:
         }
 
         // --- NEW: Add images from structured image_urls array (Professional JSON mode) ---
-        if (!forcedCode && Array.isArray(aiResponse.image_urls)) {
+        if (Array.isArray(aiResponse.image_urls)) {
             if (!aiResponse.images) aiResponse.images = [];
             aiResponse.image_urls.forEach(url => {
                 if (url && typeof url === 'string' && url.startsWith('http')) {
@@ -2276,9 +2259,7 @@ STRICT RULES:
                     const additional = Array.isArray(product.additional_images)
                         ? product.additional_images.map(normalizeImageUrl).filter(Boolean)
                         : [];
-                    const urls = (forcedCode || aiResponse.product_id)
-                        ? [primaryUrl].filter(Boolean)
-                        : [primaryUrl, ...additional].filter(Boolean);
+                    const urls = [primaryUrl, ...additional].filter(Boolean);
                     aiResponse.images = urls.map((url, idx) => ({
                         url,
                         title: product.name || (idx === 0 ? 'Product Image' : `Product Image ${idx + 1}`),
@@ -2539,35 +2520,46 @@ STRICT RULES:
 
         // 2. Legacy Regex Fallback (In case AI puts it in text)
         const strictImageRegex = /IMAGE:\s*(.+?)\s*\|\s*(https?:\/\/[^\s,]+)/gi;
-        if (!forcedCode) {
-            let strictMatch;
-            while ((strictMatch = strictImageRegex.exec(finalReplyText)) !== null) {
-                const fullMatch = strictMatch[0];
-                const title = strictMatch[1].trim();
-                const url = strictMatch[2].trim();
-                let extractedSuccessfully = false;
-                if (!extractedImages.some(img => img.url === url)) {
-                    const isImageExtension = /\.(jpg|jpeg|png|gif|webp|bmp|tiff)(\?.*)?$/i.test(url);
-                    if (isImageExtension) {
-                        extractedImages.push({ url: url, title: title });
-                        extractedSuccessfully = true;
-                    } else {
-                        try {
-                            const ogImage = await aiService.fetchOgImage(url);
-                            if (ogImage) {
-                                extractedImages.push({ url: ogImage, title: title });
-                                extractedSuccessfully = true;
-                            }
-                        } catch {}
-                    }
-                } else {
+        let strictMatch;
+        while ((strictMatch = strictImageRegex.exec(finalReplyText)) !== null) {
+            const fullMatch = strictMatch[0];
+            const title = strictMatch[1].trim();
+            const url = strictMatch[2].trim();
+            
+            let extractedSuccessfully = false;
+            if (!extractedImages.some(img => img.url === url)) {
+                // Check if it's a direct image or a product page
+                const isImageExtension = /\.(jpg|jpeg|png|gif|webp|bmp|tiff)(\?.*)?$/i.test(url);
+                if (isImageExtension) {
+                    extractedImages.push({ url: url, title: title });
                     extractedSuccessfully = true;
-                }
-                if (extractedSuccessfully && url.includes('supabase.co')) {
-                    finalReplyText = finalReplyText.replace(fullMatch, '').trim();
                 } else {
-                    finalReplyText = finalReplyText.replace(fullMatch, `${title}: ${url}`).trim();
+                    // Try to fetch OG image for product pages labeled as IMAGE
+                    try {
+                        console.log(`[WA] Labeled link detected, fetching OG image for: ${url}`);
+                        const ogImage = await aiService.fetchOgImage(url);
+                        if (ogImage) {
+                            extractedImages.push({ url: ogImage, title: title });
+                            console.log(`[WA] Successfully fetched OG Image for labeled link: ${ogImage}`);
+                            extractedSuccessfully = true;
+                        } else {
+                            // If no OG image, keep the link but maybe not send as image
+                            console.warn(`[WA] No OG Image found for labeled link: ${url}`);
+                        }
+                    } catch (ogError) {
+                        console.warn(`[WA] OG Image fetch failed for ${url}:`, ogError.message);
+                    }
                 }
+            } else {
+                extractedSuccessfully = true;
+            }
+            
+            // Only remove from text if it's a Supabase link. 
+            // For all other links, keep them in the text so the customer can click them.
+            if (extractedSuccessfully && url.includes('supabase.co')) {
+                finalReplyText = finalReplyText.replace(fullMatch, '').trim();
+            } else {
+                finalReplyText = finalReplyText.replace(fullMatch, `${title}: ${url}`).trim();
             }
         }
 
