@@ -555,13 +555,23 @@ export default function ProductsPage() {
             formData.append("stock", productStock);
             formData.append("is_active", "true");
 
-            // Use the current platform from state
-            const currentPlatform = platform || 'global';
-            formData.append("platform", currentPlatform);
-
             // Directly use the state values - NO MORE confusing normalization
-            formData.append("allowed_messenger_ids", JSON.stringify(allowedMessengerIds)); // NEW clear column
+            formData.append("allowed_messenger_ids", JSON.stringify(allowedMessengerIds)); 
             formData.append("allowed_wa_sessions", JSON.stringify(allowedWASessions));
+            
+            // If the user hasn't selected anything, it's global.
+            // If selected, we must ensure it stays within that platform's visibility.
+            const isAssignedToWa = allowedWASessions.length > 0;
+            const isAssignedToFb = allowedMessengerIds.length > 0;
+            
+            if (isAssignedToWa && !isAssignedToFb) {
+                formData.append("platform", "whatsapp");
+            } else if (isAssignedToFb && !isAssignedToWa) {
+                formData.append("platform", "messenger");
+            } else {
+                formData.append("platform", "global");
+            }
+
             formData.append("is_combo", String(isCombo));
             formData.append("combo_items", JSON.stringify(comboItems));
             formData.append("allow_description", String(allowDescription));

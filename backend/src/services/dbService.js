@@ -2557,9 +2557,11 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
         const pIdx = params.length;
 
         if (strictMode) {
-            // Strict Isolation (Session-specific view):
-            // 1. Show if explicitly assigned to THIS specific page/session
-            // 2. OR show if it is a TRUE GLOBAL product (not assigned to ANY platform)
+            // STRICT ISOLATION PLAN (V14):
+            // 1. Show if explicitly assigned to THIS specific page/session (ID exists in its respective column)
+            // 2. AND ENSURE it is NOT assigned to ANY other platform if we want pure isolation, 
+            //    BUT based on requirement: "If selected for a session, only show in that session".
+            //    Global products (nothing selected) show everywhere.
             whereClause += ` AND (
                 (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))
                 OR
@@ -2568,6 +2570,15 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
                     AND
                     (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
                 )
+            )`;
+            
+            // Critical part for strict isolation: if it belongs to other platforms, hide it here 
+            // unless it's explicitly assigned to this page.
+            const otherCol = isWhatsapp ? 'allowed_messenger_ids' : 'allowed_wa_sessions';
+            whereClause += ` AND (
+                (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))
+                OR
+                (${otherCol} IS NULL OR ${otherCol}::jsonb = '[]'::jsonb)
             )`;
         } else {
             // Non-strict Logic (Dashboard/Manual View):
