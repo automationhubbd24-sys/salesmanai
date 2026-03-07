@@ -2239,7 +2239,7 @@ STRICT RULES:
         }
 
         // --- NEW: Add images from structured image_urls array (Professional JSON mode) ---
-        if (Array.isArray(aiResponse.image_urls)) {
+        if (!forcedCode && Array.isArray(aiResponse.image_urls)) {
             if (!aiResponse.images) aiResponse.images = [];
             aiResponse.image_urls.forEach(url => {
                 if (url && typeof url === 'string' && url.startsWith('http')) {
@@ -2276,7 +2276,9 @@ STRICT RULES:
                     const additional = Array.isArray(product.additional_images)
                         ? product.additional_images.map(normalizeImageUrl).filter(Boolean)
                         : [];
-                    const urls = [primaryUrl, ...additional].filter(Boolean);
+                    const urls = (forcedCode || aiResponse.product_id)
+                        ? [primaryUrl].filter(Boolean)
+                        : [primaryUrl, ...additional].filter(Boolean);
                     aiResponse.images = urls.map((url, idx) => ({
                         url,
                         title: product.name || (idx === 0 ? 'Product Image' : `Product Image ${idx + 1}`),
