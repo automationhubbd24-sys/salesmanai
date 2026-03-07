@@ -133,6 +133,9 @@ export default function ProductsPage() {
             newWaIds.forEach(id => next.add(id));
             return next;
         });
+        if (editProductId) {
+            persistAssignments();
+        }
     };
 
     const handleDeselectAllPages = () => {
@@ -148,6 +151,9 @@ export default function ProductsPage() {
             waIdsToRemove.forEach(id => next.delete(id));
             return next;
         });
+        if (editProductId) {
+            persistAssignments();
+        }
     };
 
     const [isCombo, setIsCombo] = useState(false);
@@ -185,6 +191,38 @@ export default function ProductsPage() {
             setDebugLogOpen(true);
         };
         reader.readAsText(file);
+    };
+
+    const persistAssignments = async () => {
+        if (!userId || !editProductId) return;
+        try {
+            setIsSubmitting(true);
+            const token = localStorage.getItem("auth_token");
+            const params = new URLSearchParams();
+            params.set("user_id", userId);
+            const formData = new FormData();
+            formData.append("allowed_messenger_ids", JSON.stringify(Array.from(selectedFB)));
+            formData.append("allowed_wa_sessions", JSON.stringify(Array.from(selectedWA)));
+            const res = await fetch(`${BACKEND_URL}/api/products/${editProductId}?${params.toString()}`, {
+                method: "PUT",
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
+                body: formData
+            });
+            const data = await res.json().catch(() => null);
+            if (!res.ok) {
+                toast.error(data?.error || "Failed to update assignments");
+                recordError("PUT /api/products assignments", data?.error || "Failed to update assignments", res.status);
+                return;
+            }
+            setDebugLogText(prev => `${prev}\n[Client] ASSIGNMENTS_UPDATED fb=${JSON.stringify(Array.from(selectedFB))} wa=${JSON.stringify(Array.from(selectedWA))}`);
+            const refreshToken = typeof window !== "undefined" ? localStorage.getItem("auth_token") : null;
+            fetchProducts(userId, searchQuery, refreshToken || undefined);
+        } catch (error) {
+            toast.error("Error updating assignments");
+            recordError("PUT /api/products assignments", String(error));
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
     const getTeamOwnerForContext = () => {
@@ -1399,6 +1437,9 @@ export default function ProductsPage() {
                                                       next.delete(key);
                                                       return next;
                                                     });
+                                                    if (editProductId) {
+                                                        persistAssignments();
+                                                    }
                                                   }}
                                                   className={cn(
                                                     "data-[state=checked]:bg-[#00ff88] data-[state=checked]:border-[#00ff88]",
@@ -1452,6 +1493,9 @@ export default function ProductsPage() {
                                                       next.delete(key);
                                                       return next;
                                                     });
+                                                    if (editProductId) {
+                                                        persistAssignments();
+                                                    }
                                                   }}
                                                   className={cn(
                                                     "data-[state=checked]:bg-[#00ff88] data-[state=checked]:border-[#00ff88]",
