@@ -836,6 +836,39 @@ export default function ProductsPage() {
             setIsSubmitting(false);
         }
     };
+    
+    const handleToggleActive = async (product: Product, enabled: boolean) => {
+        if (!userId) return;
+        try {
+            setIsSubmitting(true);
+            const token = localStorage.getItem("auth_token");
+            const params = new URLSearchParams();
+            params.set("user_id", userId);
+            const formData = new FormData();
+            formData.append("is_active", String(enabled));
+
+            const res = await fetch(`${BACKEND_URL}/api/products/${product.id}?${params.toString()}`, {
+                method: "PUT",
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
+                body: formData
+            });
+
+            const data = await res.json().catch(() => null);
+            if (!res.ok) {
+                toast.error(data?.error || "Failed to update product");
+                return;
+            }
+
+            setProducts((prev) =>
+                prev.map((p) => (p.id === product.id ? { ...p, is_active: enabled } : p))
+            );
+        } catch (error) {
+            console.error(error);
+            toast.error("Error updating product");
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
 
     const resetForm = () => {
         setEditProductId(null);
@@ -1471,6 +1504,7 @@ export default function ProductsPage() {
                             <TableHead>Product Name</TableHead>
                             <TableHead className="hidden md:table-cell">Description</TableHead>
                             <TableHead className="hidden md:table-cell">Desc</TableHead>
+                                <TableHead className="hidden md:table-cell">Active</TableHead>
                             <TableHead>Price</TableHead>
                             <TableHead>Stock</TableHead>
                             <TableHead className="text-right">Actions</TableHead>
@@ -1547,6 +1581,13 @@ export default function ProductsPage() {
                                         <Switch
                                             checked={product.allow_description === true}
                                             onCheckedChange={(v) => handleToggleDescription(product, v)}
+                                            className="data-[state=checked]:bg-[#00ff88]"
+                                        />
+                                    </TableCell>
+                                    <TableCell className="hidden md:table-cell">
+                                        <Switch
+                                            checked={product.is_active === true}
+                                            onCheckedChange={(v) => handleToggleActive(product, v)}
                                             className="data-[state=checked]:bg-[#00ff88]"
                                         />
                                     </TableCell>
