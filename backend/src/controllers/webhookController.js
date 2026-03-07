@@ -526,6 +526,7 @@ async function queueMessage(event, entryPageId = null) {
     if (!messageText && !event.message?.attachments) return; // Ignore if empty and no attachments
 
     const replyToId = event.message?.reply_to?.mid || null;
+    const isSwipeReply = !!replyToId;
 
     // --- SAVE USER MESSAGE TO fb_chats (Immediate - Raw) ---
     try {
@@ -580,7 +581,7 @@ async function queueMessage(event, entryPageId = null) {
     
     // If we are currently processing this session, don't set a new timer.
     // The processBufferedMessages function will check for new messages when it finishes.
-    if (sessionData.isProcessing) {
+    if (sessionData.isProcessing && !isSwipeReply) {
         console.log(`[Debounce] Session ${sessionId} is busy processing. Message appended to current buffer.`);
         return;
     }

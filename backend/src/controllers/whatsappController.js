@@ -1388,6 +1388,7 @@ async function queueMessage(session, messagePayload) {
     if (!replyToId && messagePayload._data?.message?.extendedTextMessage?.contextInfo?.stanzaId) {
         replyToId = messagePayload._data.message.extendedTextMessage.contextInfo.stanzaId;
     }
+    const isSwipeReply = !!replyToId;
 
     sessionData.messages.push({
         id: messageId,
@@ -1403,7 +1404,7 @@ async function queueMessage(session, messagePayload) {
     
     // If we are currently processing this session, don't set a new timer.
     // The processBufferedMessages function will check for new messages when it finishes.
-    if (sessionData.isProcessing) {
+    if (sessionData.isProcessing && !isSwipeReply) {
         console.log(`[WA] Session ${sessionId} is busy processing. Message appended to current buffer.`);
         return;
     }

@@ -2070,7 +2070,7 @@ Rules:
                     'HTTP-Referer': 'https://orderly-conversations.com', 
                     'X-Title': 'Orderly Conversations'
                 },
-                timeout: 30000
+                timeout: 10000
             });
 
             result = response.data?.choices?.[0]?.message?.content;
@@ -2092,14 +2092,12 @@ Rules:
             const geminiProxyAgent = getGeminiProxyAgent(url, useProxy);
             const visionResponse = await axios.post(url, payload, {
                     headers: { 'Content-Type': 'application/json' },
-                    timeout: 20000,
+                    timeout: 10000,
                     ...(geminiProxyAgent ? { 
                         httpsAgent: geminiProxyAgent, 
                         httpAgent: geminiProxyAgent, 
                         proxy: false 
                     } : {})
-                }, {
-                    timeout: 60000 // Increased timeout for Vision
                 });
 
             result = visionResponse.data?.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -2169,7 +2167,7 @@ Rules:
                 'HTTP-Referer': 'https://orderly-conversations.com', 
                 'X-Title': 'Orderly Conversations'
             },
-            timeout: 40000 // Increased timeout for heavy models
+            timeout: 10000
         });
 
         const result = response.data?.choices?.[0]?.message?.content;
