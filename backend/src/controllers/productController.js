@@ -360,6 +360,17 @@ exports.checkStatus = async (req, res) => {
 
 exports.createProduct = async (req, res) => {
     try {
+        // --- NEW METHOD SUPPORT: Parse Metadata JSON if present ---
+        if (req.body.metadata) {
+            try {
+                const metadata = JSON.parse(req.body.metadata);
+                // Merge metadata into req.body to maintain compatibility with existing code
+                Object.assign(req.body, metadata);
+            } catch (e) {
+                console.error("[ProductCreate] Failed to parse metadata JSON:", e.message);
+            }
+        }
+
         const baseUserId = req.body.user_id || null;
         const pageId = req.body?.page_id || null;
         
@@ -733,6 +744,18 @@ exports.getProducts = async (req, res) => {
 exports.updateProduct = async (req, res) => {
     try {
         const { id } = req.params;
+
+        // --- NEW METHOD SUPPORT: Parse Metadata JSON if present ---
+        if (req.body.metadata) {
+            try {
+                const metadata = JSON.parse(req.body.metadata);
+                // Merge metadata into req.body to maintain compatibility with existing code
+                Object.assign(req.body, metadata);
+            } catch (e) {
+                console.error("[ProductUpdate] Failed to parse metadata JSON:", e.message);
+            }
+        }
+
         const baseUserId = req.body.user_id || null;
         const pageId = req.body?.page_id || null;
         const userId = await resolveProductOwnerUserId(req, baseUserId, pageId);

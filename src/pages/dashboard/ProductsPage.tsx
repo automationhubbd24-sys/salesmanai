@@ -533,45 +533,45 @@ export default function ProductsPage() {
             const query = teamOwner ? `?team_owner=${teamOwner}` : "";
 
             const formData = new FormData();
-            formData.append("user_id", String(userId));
-            formData.append("name", String(productName));
-            formData.append("description", String(productDesc || ""));
-            formData.append("keywords", String(productKeywords.join(", ") || ""));
-            formData.append("price", String(productPrice || "0"));
-            formData.append("currency", String(productCurrency || "USD"));
-            formData.append("stock", String(productStock || "0"));
-            formData.append("is_active", "true");
+            
+            // --- NEW METHOD: PACK EVERYTHING INTO A METADATA OBJECT ---
+            // This is more reliable for Multer than sending individual fields.
+            const metadata = {
+                user_id: String(userId),
+                name: String(productName),
+                description: String(productDesc || ""),
+                keywords: String(productKeywords.join(", ") || ""),
+                price: Number(productPrice || 0),
+                currency: String(productCurrency || "USD"),
+                stock: Number(productStock || 0),
+                is_active: true,
+                allowed_messenger_ids: Array.from(new Set(allowedMessengerIds.map(String))).filter(id => id && id !== 'null' && id !== 'undefined'),
+                allowed_wa_sessions: Array.from(new Set(allowedWASessions.map(String))).filter(id => id && id !== 'null' && id !== 'undefined'),
+                is_combo: !!isCombo,
+                combo_items: comboItems || [],
+                allow_description: !!allowDescription,
+                page_id: currentContextId || null,
+                variants: showVariants ? variants : [{
+                    name: "Standard",
+                    price: productPrice,
+                    currency: productCurrency,
+                    available: parseInt(productStock) > 0
+                }]
+            };
 
-            const normalizedMessengerIds = Array.from(new Set(allowedMessengerIds.map(String))).filter(id => id && id !== 'null' && id !== 'undefined');
-            const normalizedWASessions = Array.from(new Set(allowedWASessions.map(String))).filter(id => id && id !== 'null' && id !== 'undefined');
+            console.log("[ProductSubmitDebug] IDs to send:", { 
+                messenger: metadata.allowed_messenger_ids, 
+                wa: metadata.allowed_wa_sessions 
+            });
 
-            console.log("[ProductSubmitDebug] IDs to send:", { normalizedMessengerIds, normalizedWASessions });
-
-            if (normalizedMessengerIds.length === 0 && normalizedWASessions.length === 0) {
+            if (metadata.allowed_messenger_ids.length === 0 && metadata.allowed_wa_sessions.length === 0) {
                 toast.error("Error: At least one assignment is required. Please select a Facebook Page or WhatsApp Session.");
                 setIsSubmitting(false);
                 return;
             }
 
-            formData.append("allowed_messenger_ids", JSON.stringify(normalizedMessengerIds));
-            formData.append("allowed_wa_sessions", JSON.stringify(normalizedWASessions));
-
-            formData.append("is_combo", String(!!isCombo));
-            formData.append("combo_items", JSON.stringify(comboItems || []));
-            formData.append("allow_description", String(!!allowDescription));
-
-            if (currentContextId) {
-                formData.append("page_id", String(currentContextId));
-            }
-            
-            // Variants
-            const finalVariants = showVariants ? variants : [{
-                name: "Standard",
-                price: productPrice,
-                currency: productCurrency,
-                available: parseInt(productStock) > 0
-            }];
-            formData.append("variants", JSON.stringify(finalVariants || []));
+            // Append metadata as a single JSON string
+            formData.append("metadata", JSON.stringify(metadata));
 
             // --- FILES LAST (Best practice for Multer) ---
             if (productImage) {
@@ -584,7 +584,7 @@ export default function ProductsPage() {
                 });
             }
 
-            console.log("[ProductSubmitDebug] FormData fields populated. Sending request...");
+            console.log("[ProductSubmitDebug] FormData (Metadata) populated. Sending request...");
 
             const url = editProductId 
                 ? `${BACKEND_URL}/api/products/${editProductId}${query}`
