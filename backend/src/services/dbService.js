@@ -446,6 +446,11 @@ async function initTables() {
         `);
         await query(`UPDATE products SET allowed_wa_sessions = '[]'::jsonb WHERE allowed_wa_sessions IS NULL`);
         await query(`UPDATE products SET allowed_messenger_ids = '[]'::jsonb WHERE allowed_messenger_ids IS NULL`);
+        
+        // --- CLEANUP: Delete all existing products as requested ---
+        await query(`DELETE FROM products`);
+        console.log("[DB] All existing products deleted.");
+        
         console.log("[DB] 'products.allowed_wa_sessions' column checked.");
 
         // Error Logs Table
@@ -2555,7 +2560,9 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
     let whereClause = 'user_id = $1::uuid';
 
     // 1. Context Filtering (ID Array based)
-    // If pageId is provided, show products assigned to THIS pageId.
+    // Visibility Rule (V25): 
+    // - If pageId is provided, ONLY show products assigned to THIS pageId.
+    // - If no pageId is provided (e.g., Global Dashboard), show products for ALL pages owned by the user.
     if (pageId && pageId !== 'null' && pageId !== 'undefined') {
         const contextType = await resolvePageContextType(pageId);
         const isWhatsapp = contextType === 'whatsapp';
@@ -2564,13 +2571,8 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
         params.push(String(pageId));
         const pIdx = params.length;
 
-        // Visibility Rule:
-        // Must be explicitly assigned to THIS page/session.
+        // Visibility Rule: Must be explicitly assigned to THIS page/session.
         whereClause += ` AND (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))`;
-    } else {
-        // If no specific pageId is provided (e.g., Global Products page),
-        // we show ALL products for the user (since new products MUST have an assignment,
-        // we'll just show them all).
     }
 
     // 2. Search Query
