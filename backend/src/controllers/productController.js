@@ -369,6 +369,10 @@ exports.createProduct = async (req, res) => {
         
         if (!userId) return res.status(400).json({ error: "user_id is required" });
 
+        // --- VALIDATE TEAM OWNERSHIP RULE ---
+        // If the request came from a member, we already resolved the Team Owner ID above.
+        // The product will be saved with the Team Owner's user_id.
+
         const hasAccess = await dbService.checkProductFeatureAccess(userId);
         if (!hasAccess) {
             return res.status(403).json({ 

@@ -49,7 +49,6 @@ export function DashboardSidebar({ isMobile, onLinkClick }: { isMobile?: boolean
   const getMenuItems = () => {
     // Define Global Tools
     const globalTools = [
-      { title: "Product Entry", icon: Package, path: platform ? `/dashboard/${platform}/products` : "/dashboard/products" },
       { title: "Ads Library", icon: Megaphone, path: platform ? `/dashboard/${platform}/ads` : "/dashboard/ads" },
       { title: "Reseller", icon: Users, path: platform ? `/dashboard/${platform}/reseller` : "/dashboard/reseller" },
       { title: "Payment / Topup", icon: CreditCard, path: platform ? `/dashboard/${platform}/payment` : "/dashboard/payment" },
@@ -73,6 +72,7 @@ export function DashboardSidebar({ isMobile, onLinkClick }: { isMobile?: boolean
     const platformItems = [
       { title: "Dashboard", icon: LayoutDashboard, path: base },
       { title: platform === 'whatsapp' ? "Sessions" : "Integration", icon: Plug, path: platform === 'whatsapp' ? `${base}/sessions` : `${base}/integration` },
+      { title: "Product Entry", icon: Package, path: `${base}/products` },
       { title: "Database Connect", icon: Database, path: `${base}/database` },
       { title: "Control Page", icon: Settings, path: `${base}/control` },
     ];

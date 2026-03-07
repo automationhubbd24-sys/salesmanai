@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Lock, Plus, Trash2, Package, Search, Image as ImageIcon, Loader2, ShoppingBag, Download, Edit, X } from "lucide-react";
 import { BACKEND_URL } from "@/config";
+import { cn } from "@/lib/utils";
 
 // Types
 interface Variant {
@@ -456,22 +457,30 @@ export default function ProductsPage() {
         // Ensure they are arrays and handle possible JSON strings
         const parseAssignment = (val: any) => {
             if (!val) return [];
-            if (Array.isArray(val)) return val.map(String);
+            if (Array.isArray(val)) return val.map(String).filter(id => id && id !== 'null' && id !== 'undefined');
             try {
-                const parsed = JSON.parse(val);
-                return Array.isArray(parsed) ? parsed.map(String) : [];
-            } catch (e) {
+                const parsed = typeof val === 'string' ? JSON.parse(val) : val;
+                if (Array.isArray(parsed)) return parsed.map(String).filter(id => id && id !== 'null' && id !== 'undefined');
+                if (typeof parsed === 'string') return [parsed].filter(id => id && id !== 'null' && id !== 'undefined');
                 return [];
+            } catch (e) {
+                if (typeof val === 'string' && val.includes(',')) {
+                    return val.split(',').map(s => s.trim()).filter(id => id && id !== 'null' && id !== 'undefined');
+                }
+                return typeof val === 'string' ? [val].filter(id => id && id !== 'null' && id !== 'undefined') : [];
             }
         };
 
-        setAllowedWASessions(parseAssignment(product.allowed_wa_sessions));
-        setAllowedMessengerIds(parseAssignment(product.allowed_messenger_ids));
+        const messengerIds = parseAssignment(product.allowed_messenger_ids);
+        const waSessions = parseAssignment(product.allowed_wa_sessions);
+
+        setAllowedWASessions(waSessions);
+        setAllowedMessengerIds(messengerIds);
 
         console.log("[ProductEditDebug] Loaded WA Sessions:", product.allowed_wa_sessions);
-        console.log("[ProductEditDebug] Parsed WA Sessions:", parseAssignment(product.allowed_wa_sessions));
+        console.log("[ProductEditDebug] Parsed WA Sessions:", waSessions);
         console.log("[ProductEditDebug] Loaded Messenger IDs:", product.allowed_messenger_ids);
-        console.log("[ProductEditDebug] Parsed Messenger IDs:", parseAssignment(product.allowed_messenger_ids));
+        console.log("[ProductEditDebug] Parsed Messenger IDs:", messengerIds);
 
         setIsCombo(!!product.is_combo);
         setComboItems(Array.isArray(product.combo_items) ? product.combo_items : []);
@@ -521,7 +530,7 @@ export default function ProductsPage() {
             console.log("[ProductSubmitDebug] IDs to send:", { normalizedMessengerIds, normalizedWASessions });
 
             if (normalizedMessengerIds.length === 0 && normalizedWASessions.length === 0) {
-                alert("Error: At least one assignment is required. Please select a Facebook Page or WhatsApp Session.");
+                toast.error("Error: At least one assignment is required. Please select a Facebook Page or WhatsApp Session.");
                 setIsSubmitting(false);
                 return;
             }
@@ -722,8 +731,10 @@ export default function ProductsPage() {
         setProductImages([]);
         setImagePreviews([]);
         
-        setAllowedMessengerIds([]);
+        // --- MANUAL SELECTION REQUIRED ---
+        // As per user instruction: "add kroar somoi o sekan tekei add korte hobe auto nibe na"
         setAllowedWASessions([]);
+        setAllowedMessengerIds([]);
 
         setIsCombo(false);
         setComboItems([]);
@@ -1163,20 +1174,34 @@ export default function ProductsPage() {
                                             return (
                                               <div 
                                                 key={`wa-${page.page_id}`} 
-                                                className="flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors"
+                                                className={cn(
+                                                  "flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors border border-transparent",
+                                                  isSelected && "bg-[#00ff88]/10 border-[#00ff88]/30 shadow-[0_0_10px_rgba(0,255,136,0.1)]"
+                                                )}
                                                 onClick={(e) => {
-                                                  e.preventDefault();
-                                                  e.stopPropagation();
+                                                  // Row click toggle
                                                   toggleSelection();
                                                 }}
                                               >
                                                 <Checkbox 
                                                   id={`wa-page-${page.page_id}`}
                                                   checked={isSelected}
-                                                  className="pointer-events-none"
+                                                  className={cn(
+                                                    "pointer-events-none data-[state=checked]:bg-[#00ff88] data-[state=checked]:border-[#00ff88]",
+                                                    isSelected && "ring-1 ring-[#00ff88]/40"
+                                                  )}
+                                                  onCheckedChange={(val) => {
+                                                      // Already handled by row click, but just in case
+                                                      toggleSelection();
+                                                  }}
                                                 />
                                                 <Label 
-                                                  className="text-sm font-normal cursor-pointer select-none flex-1 truncate"
+                                                  htmlFor={`wa-page-${page.page_id}`}
+                                                  className={cn(
+                                                    "text-sm font-normal cursor-pointer select-none flex-1 truncate",
+                                                    isSelected && "text-[#00ff88] font-medium"
+                                                  )}
+                                                  onClick={(e) => e.preventDefault()} // Prevent double toggle
                                                 >
                                                   {page.name}
                                                 </Label>
@@ -1204,20 +1229,34 @@ export default function ProductsPage() {
                                             return (
                                               <div 
                                                 key={`fb-${page.page_id}`} 
-                                                className="flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors"
+                                                className={cn(
+                                                  "flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors border border-transparent",
+                                                  isSelected && "bg-[#00ff88]/10 border-[#00ff88]/30 shadow-[0_0_10px_rgba(0,255,136,0.1)]"
+                                                )}
                                                 onClick={(e) => {
-                                                  e.preventDefault();
-                                                  e.stopPropagation();
+                                                  // Row click toggle
                                                   toggleSelection();
                                                 }}
                                               >
                                                 <Checkbox 
                                                   id={`fb-page-${page.page_id}`}
                                                   checked={isSelected}
-                                                  className="pointer-events-none"
+                                                  className={cn(
+                                                    "pointer-events-none data-[state=checked]:bg-[#00ff88] data-[state=checked]:border-[#00ff88]",
+                                                    isSelected && "ring-1 ring-[#00ff88]/40"
+                                                  )}
+                                                  onCheckedChange={(val) => {
+                                                      // Already handled by row click, but just in case
+                                                      toggleSelection();
+                                                  }}
                                                 />
                                                 <Label 
-                                                  className="text-sm font-normal cursor-pointer select-none flex-1 truncate"
+                                                  htmlFor={`fb-page-${page.page_id}`}
+                                                  className={cn(
+                                                    "text-sm font-normal cursor-pointer select-none flex-1 truncate",
+                                                    isSelected && "text-[#00ff88] font-medium"
+                                                  )}
+                                                  onClick={(e) => e.preventDefault()} // Prevent double toggle
                                                 >
                                                   {page.name}
                                                 </Label>
@@ -1374,12 +1413,6 @@ export default function ProductsPage() {
                                                 {product.allowed_wa_sessions && product.allowed_wa_sessions.length > 0 && (
                                                     <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
                                                         WA
-                                                    </span>
-                                                )}
-                                                {(!product.allowed_messenger_ids || product.allowed_messenger_ids.length === 0) && 
-                                                 (!product.allowed_wa_sessions || product.allowed_wa_sessions.length === 0) && (
-                                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400">
-                                                        All Pages
                                                     </span>
                                                 )}
                                             </div>
