@@ -2397,6 +2397,7 @@ module.exports = {
     searchProducts,
     getProductsByNames,
     checkProductFeatureAccess,
+    resolvePageContextType,
 
     // --- ADMIN TOOLS ---
     addBalanceByEmail,
