@@ -432,10 +432,7 @@ exports.createProduct = async (req, res) => {
         
         const isActive = req.body.is_active === 'true' || req.body.is_active === true;
 
-        console.log(`[ProductCreate] Raw allowed_messenger_ids: ${req.body.allowed_messenger_ids}`);
-        console.log(`[ProductCreate] Raw allowed_wa_sessions: ${req.body.allowed_wa_sessions}`);
-
-        let allowedMessengerIds = null;
+        let allowedMessengerIds = [];
         if (req.body.allowed_messenger_ids) {
             try {
                 const parsed = JSON.parse(req.body.allowed_messenger_ids);
@@ -447,7 +444,7 @@ exports.createProduct = async (req, res) => {
             }
         }
 
-        let allowedWASessions = null;
+        let allowedWASessions = [];
         if (req.body.allowed_wa_sessions) {
             try {
                 const parsed = JSON.parse(req.body.allowed_wa_sessions);
@@ -474,8 +471,8 @@ exports.createProduct = async (req, res) => {
             price,
             currency,
             stock,
-            allowed_messenger_ids: allowedMessengerIds ? JSON.stringify(allowedMessengerIds) : null,
-            allowed_wa_sessions: allowedWASessions ? JSON.stringify(allowedWASessions) : null,
+            allowed_messenger_ids: JSON.stringify(allowedMessengerIds),
+            allowed_wa_sessions: JSON.stringify(allowedWASessions),
             keywords,
             platform: req.body.platform || 'global',
             is_combo: req.body.is_combo === 'true' || req.body.is_combo === true,

@@ -19,9 +19,6 @@ function getPool() {
 
 async function query(text, params) {
     const client = getPool();
-    
-    // Log query for debugging if needed (can be noisy, so we'll keep it simple)
-    // console.log("[DBQuery]", text.substring(0, 200), params);
 
     try {
         return await client.query(text, params);

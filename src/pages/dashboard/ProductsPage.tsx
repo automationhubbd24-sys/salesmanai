@@ -555,17 +555,16 @@ export default function ProductsPage() {
             formData.append("stock", productStock);
             formData.append("is_active", "true");
 
-            console.log("[SaveDebug] allowedWASessions:", allowedWASessions);
-            console.log("[SaveDebug] allowedMessengerIds:", allowedMessengerIds);
+            const normalizedMessengerIds = Array.from(new Set(allowedMessengerIds.map(String))).filter(Boolean);
+            const normalizedWASessions = Array.from(new Set(allowedWASessions.map(String))).filter(Boolean);
 
-            // Directly use the state values - NO MORE confusing normalization
-            formData.append("allowed_messenger_ids", JSON.stringify(allowedMessengerIds)); 
-            formData.append("allowed_wa_sessions", JSON.stringify(allowedWASessions));
+            formData.append("allowed_messenger_ids", JSON.stringify(normalizedMessengerIds)); 
+            formData.append("allowed_wa_sessions", JSON.stringify(normalizedWASessions));
             
             // If the user hasn't selected anything, it's global.
             // If selected, we must ensure it stays within that platform's visibility.
-            const isAssignedToWa = allowedWASessions.length > 0;
-            const isAssignedToFb = allowedMessengerIds.length > 0;
+            const isAssignedToWa = normalizedWASessions.length > 0;
+            const isAssignedToFb = normalizedMessengerIds.length > 0;
             
             if (isAssignedToWa && !isAssignedToFb) {
                 formData.append("platform", "whatsapp");
@@ -1224,14 +1223,10 @@ export default function ProductsPage() {
                                             {waPages.length === 0 ? (
                                               <p className="text-xs text-muted-foreground col-span-full text-center">No WhatsApp sessions.</p>
                                             ) : waPages.map(page => {
-                                              const isSelected = allowedWASessions.includes(String(page.page_id));
+                                              const pageKey = String(page.page_id);
+                                              const isSelected = allowedWASessions.includes(pageKey);
                                               const toggleSelection = () => {
-                                                console.log("[SelectionDebug] Toggling WA:", page.page_id, "Current:", allowedWASessions);
-                                                if (isSelected) {
-                                                  setAllowedWASessions(allowedWASessions.filter(id => id !== String(page.page_id)));
-                                                } else {
-                                                  setAllowedWASessions([...allowedWASessions, String(page.page_id)]);
-                                                }
+                                                setAllowedWASessions(prev => prev.includes(pageKey) ? prev.filter(id => id !== pageKey) : [...prev, pageKey]);
                                               };
                                               return (
                                                 <div 
@@ -1264,14 +1259,10 @@ export default function ProductsPage() {
                                             {fbPages.length === 0 ? (
                                               <p className="text-xs text-muted-foreground col-span-full text-center">No Facebook pages.</p>
                                             ) : fbPages.map(page => {
-                                              const isSelected = allowedMessengerIds.includes(String(page.page_id));
+                                              const pageKey = String(page.page_id);
+                                              const isSelected = allowedMessengerIds.includes(pageKey);
                                               const toggleSelection = () => {
-                                                console.log("[SelectionDebug] Toggling FB:", page.page_id, "Current:", allowedMessengerIds);
-                                                if (isSelected) {
-                                                  setAllowedMessengerIds(allowedMessengerIds.filter(id => id !== String(page.page_id)));
-                                                } else {
-                                                  setAllowedMessengerIds([...allowedMessengerIds, String(page.page_id)]);
-                                                }
+                                                setAllowedMessengerIds(prev => prev.includes(pageKey) ? prev.filter(id => id !== pageKey) : [...prev, pageKey]);
                                               };
                                               return (
                                                 <div 
