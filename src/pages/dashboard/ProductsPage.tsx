@@ -558,30 +558,10 @@ export default function ProductsPage() {
             const normalizedMessengerIds = Array.from(new Set(allowedMessengerIds.map(String))).filter(Boolean);
             const normalizedWASessions = Array.from(new Set(allowedWASessions.map(String))).filter(Boolean);
 
-            // --- CANONICAL PLAN: Platform Specific Isolation ---
-            // If in Messenger context, we ONLY care about FB assignments.
-            // If in WhatsApp context, we ONLY care about WA assignments.
-            // This prevents "cross-platform leakage" where a product might end up assigned to both by mistake.
-
-            if (platform === "messenger") {
-                formData.append("allowed_messenger_ids", JSON.stringify(normalizedMessengerIds));
-                formData.append("allowed_wa_sessions", JSON.stringify([]));
-                formData.append("platform", normalizedMessengerIds.length > 0 ? "messenger" : "global");
-            } else if (platform === "whatsapp") {
-                formData.append("allowed_wa_sessions", JSON.stringify(normalizedWASessions));
-                formData.append("allowed_messenger_ids", JSON.stringify([]));
-                formData.append("platform", normalizedWASessions.length > 0 ? "whatsapp" : "global");
-            } else {
-                // Global context or no platform specified
-                formData.append("allowed_messenger_ids", JSON.stringify(normalizedMessengerIds));
-                formData.append("allowed_wa_sessions", JSON.stringify(normalizedWASessions));
-                
-                const hasWa = normalizedWASessions.length > 0;
-                const hasFb = normalizedMessengerIds.length > 0;
-                if (hasWa && !hasFb) formData.append("platform", "whatsapp");
-                else if (hasFb && !hasWa) formData.append("platform", "messenger");
-                else formData.append("platform", "global");
-            }
+            // Visibility is controlled by ID arrays. Platform field is kept for informational purposes.
+            formData.append("allowed_messenger_ids", JSON.stringify(normalizedMessengerIds));
+            formData.append("allowed_wa_sessions", JSON.stringify(normalizedWASessions));
+            formData.append("platform", platform || "global");
 
             formData.append("is_combo", String(!!isCombo));
             formData.append("combo_items", JSON.stringify(comboItems || []));
@@ -1246,39 +1226,29 @@ export default function ProductsPage() {
                                             ) : waPages.map(page => {
                                               const pageKey = String(page.page_id);
                                               const isSelected = allowedWASessions.includes(pageKey);
-                                              const toggleSelection = (e?: React.MouseEvent) => {
-                                                if (e) {
-                                                  e.preventDefault();
-                                                  e.stopPropagation();
-                                                }
-                                                console.log("[SelectionDebug] Toggling WA Session:", pageKey, "from", isSelected);
-                                                setAllowedWASessions(prev => {
-                                                  const newSelection = prev.includes(pageKey) 
+                                              const toggleSelection = () => {
+                                                setAllowedWASessions(prev => 
+                                                  prev.includes(pageKey) 
                                                     ? prev.filter(id => id !== pageKey) 
-                                                    : [...prev, pageKey];
-                                                  console.log("[SelectionDebug] New WA Selection:", newSelection);
-                                                  return newSelection;
-                                                });
+                                                    : [...prev, pageKey]
+                                                );
                                               };
                                               return (
                                                 <div 
                                                   key={`wa-${page.page_id}`} 
                                                   className="flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors"
-                                                  onClick={(e) => toggleSelection(e)}
+                                                  onClick={toggleSelection}
                                                 >
                                                   <Checkbox 
                                                     id={`wa-page-${page.page_id}`}
                                                     checked={isSelected}
-                                                    onCheckedChange={() => toggleSelection()}
-                                                    onClick={(e) => e.stopPropagation()}
+                                                    onCheckedChange={(checked) => {
+                                                      // onCheckedChange already handles the toggle logic
+                                                      // but we use our toggleSelection for consistency with div click
+                                                    }}
                                                   />
                                                   <Label 
                                                     className="text-sm font-normal cursor-pointer select-none flex-1 truncate"
-                                                    onClick={(e) => {
-                                                      e.preventDefault();
-                                                      e.stopPropagation();
-                                                      toggleSelection();
-                                                    }}
                                                   >
                                                     {page.name}
                                                   </Label>
@@ -1298,39 +1268,28 @@ export default function ProductsPage() {
                                             ) : fbPages.map(page => {
                                               const pageKey = String(page.page_id);
                                               const isSelected = allowedMessengerIds.includes(pageKey);
-                                              const toggleSelection = (e?: React.MouseEvent) => {
-                                                if (e) {
-                                                  e.preventDefault();
-                                                  e.stopPropagation();
-                                                }
-                                                console.log("[SelectionDebug] Toggling Messenger Page:", pageKey, "from", isSelected);
-                                                setAllowedMessengerIds(prev => {
-                                                  const newSelection = prev.includes(pageKey) 
+                                              const toggleSelection = () => {
+                                                setAllowedMessengerIds(prev => 
+                                                  prev.includes(pageKey) 
                                                     ? prev.filter(id => id !== pageKey) 
-                                                    : [...prev, pageKey];
-                                                  console.log("[SelectionDebug] New Messenger Selection:", newSelection);
-                                                  return newSelection;
-                                                });
+                                                    : [...prev, pageKey]
+                                                );
                                               };
                                               return (
                                                 <div 
                                                   key={`fb-${page.page_id}`} 
                                                   className="flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors"
-                                                  onClick={(e) => toggleSelection(e)}
+                                                  onClick={toggleSelection}
                                                 >
                                                   <Checkbox 
                                                     id={`fb-page-${page.page_id}`}
                                                     checked={isSelected}
-                                                    onCheckedChange={() => toggleSelection()}
-                                                    onClick={(e) => e.stopPropagation()}
+                                                    onCheckedChange={(checked) => {
+                                                      // Toggled via div click
+                                                    }}
                                                   />
                                                   <Label 
                                                     className="text-sm font-normal cursor-pointer select-none flex-1 truncate"
-                                                    onClick={(e) => {
-                                                      e.preventDefault();
-                                                      e.stopPropagation();
-                                                      toggleSelection();
-                                                    }}
                                                   >
                                                     {page.name}
                                                   </Label>

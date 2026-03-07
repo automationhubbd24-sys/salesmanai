@@ -2474,28 +2474,6 @@ async function createProduct(productData) {
     const values = [];
     const placeholders = [];
 
-    // AUTO-RESOLVE PLATFORM IF NOT PROVIDED OR IF GLOBAL BUT HAS ASSIGNMENTS
-    let finalPlatform = productData.platform || 'global';
-    
-    try {
-        const waSessions = typeof productData.allowed_wa_sessions === 'string' 
-            ? JSON.parse(productData.allowed_wa_sessions) 
-            : productData.allowed_wa_sessions;
-        const messengerIds = typeof productData.allowed_messenger_ids === 'string' 
-            ? JSON.parse(productData.allowed_messenger_ids) 
-            : productData.allowed_messenger_ids;
-            
-        const hasWa = Array.isArray(waSessions) && waSessions.length > 0;
-        const hasFb = Array.isArray(messengerIds) && messengerIds.length > 0;
-        
-        if (hasWa && !hasFb) finalPlatform = 'whatsapp';
-        else if (hasFb && !hasWa) finalPlatform = 'messenger';
-        else if (hasWa && hasFb) finalPlatform = 'global';
-        else if (!hasWa && !hasFb && !productData.platform) finalPlatform = 'global';
-    } catch (e) {
-        console.error("[DB] Failed to auto-resolve platform in createProduct:", e.message);
-    }
-
     fields.forEach((field, index) => {
         let p = `$${index + 1}`;
         if (field === 'user_id') p += '::uuid';
@@ -2511,10 +2489,8 @@ async function createProduct(productData) {
             } else if (!val) {
                 val = (field === 'additional_images' ? '[]' : '[]');
             }
-        } else if (field === 'platform') {
-            val = finalPlatform;
         } else if (val === undefined) {
-            val = null;
+            val = (field === 'platform' ? 'global' : null);
         }
         
         values.push(val);
@@ -2572,157 +2548,75 @@ async function resolvePageContextType(pageId) {
 }
 
 async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pageId = null, allowedPageIds = null, strictMode = false, platform = null) {
-    console.log(`[DB] getProducts - User: ${userId}, Page: ${pageId}, Strict: ${strictMode}`);
+    console.log(`[DB] getProducts - User: ${userId}, Page: ${pageId}`);
     const offset = (page - 1) * limit;
 
     // USE CASTING TO UUID FOR POSTGRES COMPATIBILITY
     let params = [userId]; // $1
     let whereClause = 'user_id = $1::uuid';
 
-    // 1. Page/Session Filtering
+    // 1. Context Filtering (ID Array based)
+    // If pageId is provided, show products assigned to THIS pageId OR Global products.
     if (pageId && pageId !== 'null' && pageId !== 'undefined') {
-        const normalizedPlatform = platform ? String(platform).toLowerCase() : null;
-        const contextType = (normalizedPlatform === 'whatsapp' || normalizedPlatform === 'messenger')
-            ? normalizedPlatform
-            : await resolvePageContextType(pageId);
+        const contextType = await resolvePageContextType(pageId);
         const isWhatsapp = contextType === 'whatsapp';
         const pageCol = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_messenger_ids';
         
         params.push(String(pageId));
         const pIdx = params.length;
 
-        if (strictMode) {
-            // STRICT ISOLATION PLAN (V14):
-            // 1. Show if explicitly assigned to THIS specific page/session (ID exists in its respective column)
-            // 2. AND ENSURE it is NOT assigned to ANY other platform if we want pure isolation, 
-            //    BUT based on requirement: "If selected for a session, only show in that session".
-            //    Global products (nothing selected) show everywhere.
-            whereClause += ` AND (
-                (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))
-                OR
-                (
-                    (allowed_messenger_ids IS NULL OR allowed_messenger_ids::jsonb = '[]'::jsonb)
-                    AND
-                    (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
-                )
-            )`;
-            
-            // Critical part for strict isolation: if it belongs to other platforms, hide it here 
-            // unless it's explicitly assigned to this page.
-            const otherCol = isWhatsapp ? 'allowed_messenger_ids' : 'allowed_wa_sessions';
-            whereClause += ` AND (
-                (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))
-                OR
-                (${otherCol} IS NULL OR ${otherCol}::jsonb = '[]'::jsonb)
-            )`;
-        } else {
-            // Non-strict Logic (Dashboard/Manual View):
-            // 1. Show Global products (No assignments to ANY platform)
-            // 2. Show products explicitly assigned to THIS specific page/session
-            // 3. EXCLUDE products that are assigned to OTHER platforms but NOT this one.
-            
-            const otherCol = isWhatsapp ? 'allowed_messenger_ids' : 'allowed_wa_sessions';
-            
-            whereClause += ` AND (
-                (
-                    (allowed_messenger_ids IS NULL OR allowed_messenger_ids::jsonb = '[]'::jsonb)
-                    AND
-                    (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
-                )
-                OR
-                (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))
-            ) AND (
-                (${otherCol} IS NULL OR ${otherCol}::jsonb = '[]'::jsonb)
-                OR
-                (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))
-            )`;
-        }
-    } else if (platform) {
-        // If platform is specified but no specific page/session is selected,
-        // we should still isolate by platform to prevent leakage.
-        const isWhatsapp = platform.toLowerCase() === 'whatsapp';
-        const otherCol = isWhatsapp ? 'allowed_messenger_ids' : 'allowed_wa_sessions';
-        
-        // Exclude products explicitly assigned to OTHER platforms
-        whereClause += ` AND (${otherCol} IS NULL OR ${otherCol}::jsonb = '[]'::jsonb)`;
+        // Visibility Rule:
+        // 1. Explicitly assigned to THIS page/session.
+        // 2. OR Global (assigned to NO page/session on ANY platform).
+        whereClause += ` AND (
+            (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))
+            OR
+            (
+                (allowed_messenger_ids IS NULL OR allowed_messenger_ids::jsonb = '[]'::jsonb)
+                AND
+                (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
+            )
+        )`;
     }
 
-    // 2. Permission Filter (for Team Members)
+    // 2. Search Query
+    if (searchQuery) {
+        params.push(`%${searchQuery}%`);
+        const sIdx = params.length;
+        whereClause += ` AND (name ILIKE $${sIdx} OR description ILIKE $${sIdx} OR keywords ILIKE $${sIdx})`;
+    }
+
+    // 3. Permission Filter (for Team Members)
     if (allowedPageIds !== null && allowedPageIds.length > 0) {
         const perms = allowedPageIds.map(String);
         params.push(perms);
         const pIdx = params.length;
         
-        // Team members should only see products that are either:
-        // a) Global (no pages assigned to ANY platform)
-        // b) Assigned to a page/session they have access to
-        // BUG FIX: If we are in a specific page/session context, filter team permissions by that context too
-        if (pageId && pageId !== 'null' && pageId !== 'undefined') {
-            const normalizedPlatform = platform ? String(platform).toLowerCase() : null;
-            const contextType = (normalizedPlatform === 'whatsapp' || normalizedPlatform === 'messenger')
-                ? normalizedPlatform
-                : await resolvePageContextType(pageId);
-            const isWhatsapp = contextType === 'whatsapp';
-            const pageCol = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_messenger_ids';
-            const otherCol = isWhatsapp ? 'allowed_messenger_ids' : 'allowed_wa_sessions';
-            
-            // Re-use pIdx for the specific pageId (already in params at index 2 usually)
-            // Let's find it or just push it again for simplicity
-            params.push(String(pageId));
-            const activePageIdx = params.length;
-
-            whereClause += ` AND (
-                (
-                    (allowed_messenger_ids IS NULL OR allowed_messenger_ids::jsonb = '[]'::jsonb)
-                    AND
-                    (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
-                )
-                OR
-                (${pageCol}::jsonb @> jsonb_build_array($${activePageIdx}::text))
-            ) AND (
-                (${otherCol} IS NULL OR ${otherCol}::jsonb = '[]'::jsonb)
-                OR
-                (${pageCol}::jsonb @> jsonb_build_array($${activePageIdx}::text))
-            )`;
-        } else {
-            whereClause += ` AND (
-                (
-                    (allowed_messenger_ids IS NULL OR allowed_messenger_ids::jsonb = '[]'::jsonb)
-                    AND
-                    (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
-                )
-                OR 
-                EXISTS (
-                    SELECT 1 FROM jsonb_array_elements_text(COALESCE(allowed_messenger_ids, '[]'::jsonb)) AS elem WHERE elem = ANY($${pIdx}::text[])
-                )
-                OR
-                EXISTS (
-                    SELECT 1 FROM jsonb_array_elements_text(COALESCE(allowed_wa_sessions, '[]'::jsonb)) AS elem WHERE elem = ANY($${pIdx}::text[])
-                )
-            )`;
-        }
+        whereClause += ` AND (
+            (
+                (allowed_messenger_ids IS NULL OR allowed_messenger_ids::jsonb = '[]'::jsonb)
+                AND
+                (allowed_wa_sessions IS NULL OR allowed_wa_sessions::jsonb = '[]'::jsonb)
+            )
+            OR 
+            EXISTS (
+                SELECT 1 FROM jsonb_array_elements_text(COALESCE(allowed_messenger_ids, '[]'::jsonb)) AS elem WHERE elem = ANY($${pIdx}::text[])
+            )
+            OR
+            EXISTS (
+                SELECT 1 FROM jsonb_array_elements_text(COALESCE(allowed_wa_sessions, '[]'::jsonb)) AS elem WHERE elem = ANY($${pIdx}::text[])
+            )
+        )`;
     }
 
-    // 3. Search Filter
-    if (searchQuery) {
-        params.push(`%${searchQuery}%`, `%${searchQuery}%`);
-        const idx1 = params.length - 1;
-        const idx2 = params.length;
-        whereClause += ` AND (name ILIKE $${idx1} OR description ILIKE $${idx2})`;
-    }
-
-    console.log(`[DBDebug] getProducts Final WHERE: ${whereClause} | Params: ${JSON.stringify(params)}`);
-
+    // 4. Get Total Count
     const countResult = await query(
-        `SELECT COUNT(*)::int AS cnt
-         FROM products
-         WHERE ${whereClause}`,
+        `SELECT COUNT(*)::int AS cnt FROM products WHERE ${whereClause}`,
         params
     );
+    const totalCount = countResult.rows[0]?.cnt || 0;
 
-    const totalCount = countResult.rows.length > 0 ? countResult.rows[0].cnt : 0;
-    console.log(`[DB] Found ${totalCount} products for query. WhereClause: ${whereClause} Params: ${JSON.stringify(params)}`);
-
+    // 5. Get Paginated Data
     const dataResult = await query(
         `SELECT *
          FROM products
@@ -2752,33 +2646,6 @@ async function getProductById(id) {
 async function updateProduct(id, userId, updates) {
     const keys = Object.keys(updates || {});
     
-    // AUTO-RESOLVE PLATFORM ON UPDATE
-    if (updates.allowed_wa_sessions || updates.allowed_messenger_ids) {
-        try {
-            const existing = await getProductById(id);
-            if (existing) {
-                const waSessions = updates.allowed_wa_sessions 
-                    ? (typeof updates.allowed_wa_sessions === 'string' ? JSON.parse(updates.allowed_wa_sessions) : updates.allowed_wa_sessions)
-                    : (existing.allowed_wa_sessions || []);
-                const messengerIds = updates.allowed_messenger_ids 
-                    ? (typeof updates.allowed_messenger_ids === 'string' ? JSON.parse(updates.allowed_messenger_ids) : updates.allowed_messenger_ids)
-                    : (existing.allowed_messenger_ids || []);
-                
-                const hasWa = Array.isArray(waSessions) && waSessions.length > 0;
-                const hasFb = Array.isArray(messengerIds) && messengerIds.length > 0;
-                
-                if (hasWa && !hasFb) updates.platform = 'whatsapp';
-                else if (hasFb && !hasWa) updates.platform = 'messenger';
-                else if (hasWa && hasFb) updates.platform = 'global';
-                else if (!hasWa && !hasFb) updates.platform = 'global';
-                
-                if (!keys.includes('platform')) keys.push('platform');
-            }
-        } catch (e) {
-            console.error("[DB] Failed to auto-resolve platform in updateProduct:", e.message);
-        }
-    }
-
     if (keys.length === 0) {
         const existing = await getProductById(id);
         if (!existing || existing.user_id !== userId) {
