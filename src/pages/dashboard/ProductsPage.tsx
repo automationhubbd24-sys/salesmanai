@@ -490,9 +490,25 @@ export default function ProductsPage() {
         setImagePreviews(product.image_url ? [product.image_url] : []);
         setProductImages([]);
 
-        const messengerIds = parseAssignment(product.allowed_messenger_ids);
-        const waSessions = parseAssignment(product.allowed_wa_sessions);
-
+        const messengerIdsRaw = parseAssignment(product.allowed_messenger_ids);
+        const waSessionsRaw = parseAssignment(product.allowed_wa_sessions);
+        let messengerIds = messengerIdsRaw;
+        let waSessions = waSessionsRaw;
+        if (availablePages && availablePages.length > 0) {
+            const messengerSet = new Set(availablePages.filter(p => p.type === 'messenger').map(p => String(p.page_id)));
+            const waSet = new Set(availablePages.filter(p => p.type === 'whatsapp').map(p => String(p.page_id)));
+            const waInMessenger = messengerIds.filter(id => waSet.has(id));
+            const messengerInWA = waSessions.filter(id => messengerSet.has(id));
+            messengerIds = Array.from(new Set(messengerIds.filter(id => messengerSet.has(id)).concat(messengerInWA)));
+            waSessions = Array.from(new Set(waSessions.filter(id => waSet.has(id)).concat(waInMessenger)));
+        } else {
+            const isNumeric = (s: string) => /^\d+$/.test(s);
+            const onlyMessenger = messengerIds.filter(isNumeric);
+            const waFromMessenger = messengerIds.filter(id => !isNumeric(id));
+            const onlyWA = waSessions.filter(id => !isNumeric(id));
+            messengerIds = Array.from(new Set(onlyMessenger));
+            waSessions = Array.from(new Set([...onlyWA, ...waFromMessenger]));
+        }
         setAllowedWASessions(waSessions);
         setAllowedMessengerIds(messengerIds);
 
@@ -572,6 +588,13 @@ export default function ProductsPage() {
                 
                 finalMessengerIds = Array.from(new Set(finalMessengerIds.filter(id => messengerSet.has(id)).concat(messengerInWA)));
                 finalWASessions = Array.from(new Set(finalWASessions.filter(id => waSet.has(id)).concat(waInMessenger)));
+            } else {
+                const isNumeric = (s: string) => /^\d+$/.test(s);
+                const onlyMessenger = finalMessengerIds.filter(isNumeric);
+                const waFromMessenger = finalMessengerIds.filter(id => !isNumeric(id));
+                const onlyWA = finalWASessions.filter(id => !isNumeric(id));
+                finalMessengerIds = Array.from(new Set(onlyMessenger));
+                finalWASessions = Array.from(new Set([...onlyWA, ...waFromMessenger]));
             }
             
             console.log("!!! TYPE SEPARATED IDS !!!", { 
@@ -713,36 +736,68 @@ export default function ProductsPage() {
 
     const handleDelete = async (id: number) => {
         if (!userId) return;
-
         try {
             const token = typeof window !== "undefined" ? localStorage.getItem("auth_token") : null;
-
+            const teamOwner = getTeamOwnerForContext();
+            const currentId = typeof window !== "undefined" ? getInitialPageId() : null;
+            const currentType = (() => {
+                if (typeof window === "undefined") return null;
+                const wa = localStorage.getItem("active_wa_session_id");
+                const fb = localStorage.getItem("active_fb_page_id");
+                if (currentId && wa && currentId === wa) return "whatsapp";
+                if (currentId && fb && currentId === fb) return "messenger";
+                return null;
+            })();
+            const product = products.find(p => p.id === id);
+            if (!product) {
+                toast.error("Product not found");
+                return;
+            }
+            const messengerIds = parseAssignment(product.allowed_messenger_ids);
+            const waSessions = parseAssignment(product.allowed_wa_sessions);
+            let newMessenger = messengerIds;
+            let newWA = waSessions;
+            if (currentType === "messenger" && currentId) {
+                newMessenger = messengerIds.filter(pid => pid !== String(currentId));
+            } else if (currentType === "whatsapp" && currentId) {
+                newWA = waSessions.filter(pid => pid !== String(currentId));
+            }
+            const combinedEmpty = newMessenger.length === 0 && newWA.length === 0;
             const params = new URLSearchParams();
             params.set("user_id", userId);
-
-            const teamOwner = getTeamOwnerForContext();
             if (teamOwner) params.set("team_owner", teamOwner);
-
-            const pageId = typeof window !== "undefined" ? getInitialPageId() : null;
-
-            if (pageId) {
-                params.set("page_id", pageId);
-            }
-
-            const res = await fetch(`${BACKEND_URL}/api/products/${id}?${params.toString()}`, {
-                method: "DELETE",
-                headers: token ? { Authorization: `Bearer ${token}` } : {}
-            });
-
-            const data = await res.json().catch(() => null);
-
-            if (res.ok) {
+            if (currentId) params.set("page_id", String(currentId));
+            if (combinedEmpty) {
+                const res = await fetch(`${BACKEND_URL}/api/products/${id}?${params.toString()}`, {
+                    method: "DELETE",
+                    headers: token ? { Authorization: `Bearer ${token}` } : {}
+                });
+                const data = await res.json().catch(() => null);
+                if (!res.ok) {
+                    toast.error(data?.error || "Failed to delete product");
+                    return;
+                }
                 toast.success("Product deleted");
-                const token = localStorage.getItem("auth_token");
-                fetchProducts(userId, searchQuery, token || undefined);
             } else {
-                toast.error(data?.error || "Failed to delete product");
+                const formData = new FormData();
+                formData.append("allowed_messenger_ids", JSON.stringify(newMessenger));
+                formData.append("allowed_wa_sessions", JSON.stringify(newWA));
+                if (currentId) formData.append("page_id", String(currentId));
+                formData.append("user_id", userId);
+                const res = await fetch(`${BACKEND_URL}/api/products/${id}?${params.toString()}`, {
+                    method: "PUT",
+                    headers: token ? { Authorization: `Bearer ${token}` } : {},
+                    body: formData
+                });
+                const data = await res.json().catch(() => null);
+                if (!res.ok) {
+                    toast.error(data?.error || "Failed to update product");
+                    return;
+                }
+                toast.success("Removed from current page");
             }
+            const refreshToken = typeof window !== "undefined" ? localStorage.getItem("auth_token") : null;
+            fetchProducts(userId, searchQuery, refreshToken || undefined);
         } catch (error) {
             console.error(error);
             toast.error("Error deleting product");
