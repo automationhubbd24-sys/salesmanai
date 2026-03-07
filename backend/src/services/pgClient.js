@@ -19,13 +19,13 @@ function getPool() {
 
 async function query(text, params) {
     const client = getPool();
-
     try {
         return await client.query(text, params);
     } catch (err) {
-        if (err.message.includes('operator does not exist: text = uuid') || err.message.includes('code: \'42883\'')) {
-            console.error("[PGClient] UUID Type Mismatch detected. Attempting to log context...");
-            console.error("[PGClient] Failed Query:", text);
+        // Log detailed info for UUID/Type mismatch errors to help debugging
+        if (err.message.includes('operator does not exist') || err.code === '42883') {
+            console.error("[PGClient] Query Error:", err.message);
+            console.error("[PGClient] SQL:", text);
             console.error("[PGClient] Params:", JSON.stringify(params));
         }
         throw err;

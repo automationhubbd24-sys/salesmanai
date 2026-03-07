@@ -2474,6 +2474,28 @@ async function createProduct(productData) {
     const values = [];
     const placeholders = [];
 
+    // AUTO-RESOLVE PLATFORM IF NOT PROVIDED OR IF GLOBAL BUT HAS ASSIGNMENTS
+    let finalPlatform = productData.platform || 'global';
+    
+    try {
+        const waSessions = typeof productData.allowed_wa_sessions === 'string' 
+            ? JSON.parse(productData.allowed_wa_sessions) 
+            : productData.allowed_wa_sessions;
+        const messengerIds = typeof productData.allowed_messenger_ids === 'string' 
+            ? JSON.parse(productData.allowed_messenger_ids) 
+            : productData.allowed_messenger_ids;
+            
+        const hasWa = Array.isArray(waSessions) && waSessions.length > 0;
+        const hasFb = Array.isArray(messengerIds) && messengerIds.length > 0;
+        
+        if (hasWa && !hasFb) finalPlatform = 'whatsapp';
+        else if (hasFb && !hasWa) finalPlatform = 'messenger';
+        else if (hasWa && hasFb) finalPlatform = 'global';
+        else if (!hasWa && !hasFb && !productData.platform) finalPlatform = 'global';
+    } catch (e) {
+        console.error("[DB] Failed to auto-resolve platform in createProduct:", e.message);
+    }
+
     fields.forEach((field, index) => {
         let p = `$${index + 1}`;
         if (field === 'user_id') p += '::uuid';
@@ -2481,7 +2503,7 @@ async function createProduct(productData) {
         values.push(
             field === 'variants' || field === 'allowed_messenger_ids' || field === 'allowed_wa_sessions' || field === 'combo_items' || field === 'additional_images'
                 ? (productData[field] || (field === 'additional_images' ? '[]' : '[]'))
-                : (productData[field] ?? (field === 'platform' ? 'global' : null))
+                : (field === 'platform' ? finalPlatform : (productData[field] ?? null))
         );
     });
 
@@ -2716,6 +2738,34 @@ async function getProductById(id) {
 // 29. Update Product
 async function updateProduct(id, userId, updates) {
     const keys = Object.keys(updates || {});
+    
+    // AUTO-RESOLVE PLATFORM ON UPDATE
+    if (updates.allowed_wa_sessions || updates.allowed_messenger_ids) {
+        try {
+            const existing = await getProductById(id);
+            if (existing) {
+                const waSessions = updates.allowed_wa_sessions 
+                    ? (typeof updates.allowed_wa_sessions === 'string' ? JSON.parse(updates.allowed_wa_sessions) : updates.allowed_wa_sessions)
+                    : (existing.allowed_wa_sessions || []);
+                const messengerIds = updates.allowed_messenger_ids 
+                    ? (typeof updates.allowed_messenger_ids === 'string' ? JSON.parse(updates.allowed_messenger_ids) : updates.allowed_messenger_ids)
+                    : (existing.allowed_messenger_ids || []);
+                
+                const hasWa = Array.isArray(waSessions) && waSessions.length > 0;
+                const hasFb = Array.isArray(messengerIds) && messengerIds.length > 0;
+                
+                if (hasWa && !hasFb) updates.platform = 'whatsapp';
+                else if (hasFb && !hasWa) updates.platform = 'messenger';
+                else if (hasWa && hasFb) updates.platform = 'global';
+                else if (!hasWa && !hasFb) updates.platform = 'global';
+                
+                if (!keys.includes('platform')) keys.push('platform');
+            }
+        } catch (e) {
+            console.error("[DB] Failed to auto-resolve platform in updateProduct:", e.message);
+        }
+    }
+
     if (keys.length === 0) {
         const existing = await getProductById(id);
         if (!existing || existing.user_id !== userId) {

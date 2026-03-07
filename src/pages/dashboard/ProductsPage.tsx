@@ -1225,23 +1225,39 @@ export default function ProductsPage() {
                                             ) : waPages.map(page => {
                                               const pageKey = String(page.page_id);
                                               const isSelected = allowedWASessions.includes(pageKey);
-                                              const toggleSelection = () => {
-                                                setAllowedWASessions(prev => prev.includes(pageKey) ? prev.filter(id => id !== pageKey) : [...prev, pageKey]);
+                                              const toggleSelection = (e?: React.MouseEvent) => {
+                                                if (e) {
+                                                  e.preventDefault();
+                                                  e.stopPropagation();
+                                                }
+                                                console.log("[SelectionDebug] Toggling WA Session:", pageKey, "from", isSelected);
+                                                setAllowedWASessions(prev => {
+                                                  const newSelection = prev.includes(pageKey) 
+                                                    ? prev.filter(id => id !== pageKey) 
+                                                    : [...prev, pageKey];
+                                                  console.log("[SelectionDebug] New WA Selection:", newSelection);
+                                                  return newSelection;
+                                                });
                                               };
                                               return (
                                                 <div 
                                                   key={`wa-${page.page_id}`} 
                                                   className="flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors"
-                                                  onClick={() => toggleSelection()}
+                                                  onClick={(e) => toggleSelection(e)}
                                                 >
                                                   <Checkbox 
                                                     id={`wa-page-${page.page_id}`}
                                                     checked={isSelected}
-                                                    className="pointer-events-none"
+                                                    onCheckedChange={() => toggleSelection()}
+                                                    onClick={(e) => e.stopPropagation()}
                                                   />
                                                   <Label 
-                                                    htmlFor={`wa-page-${page.page_id}`} 
                                                     className="text-sm font-normal cursor-pointer select-none flex-1 truncate"
+                                                    onClick={(e) => {
+                                                      e.preventDefault();
+                                                      e.stopPropagation();
+                                                      toggleSelection();
+                                                    }}
                                                   >
                                                     {page.name}
                                                   </Label>
@@ -1261,23 +1277,39 @@ export default function ProductsPage() {
                                             ) : fbPages.map(page => {
                                               const pageKey = String(page.page_id);
                                               const isSelected = allowedMessengerIds.includes(pageKey);
-                                              const toggleSelection = () => {
-                                                setAllowedMessengerIds(prev => prev.includes(pageKey) ? prev.filter(id => id !== pageKey) : [...prev, pageKey]);
+                                              const toggleSelection = (e?: React.MouseEvent) => {
+                                                if (e) {
+                                                  e.preventDefault();
+                                                  e.stopPropagation();
+                                                }
+                                                console.log("[SelectionDebug] Toggling Messenger Page:", pageKey, "from", isSelected);
+                                                setAllowedMessengerIds(prev => {
+                                                  const newSelection = prev.includes(pageKey) 
+                                                    ? prev.filter(id => id !== pageKey) 
+                                                    : [...prev, pageKey];
+                                                  console.log("[SelectionDebug] New Messenger Selection:", newSelection);
+                                                  return newSelection;
+                                                });
                                               };
                                               return (
                                                 <div 
                                                   key={`fb-${page.page_id}`} 
                                                   className="flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors"
-                                                  onClick={() => toggleSelection()}
+                                                  onClick={(e) => toggleSelection(e)}
                                                 >
                                                   <Checkbox 
                                                     id={`fb-page-${page.page_id}`}
                                                     checked={isSelected}
-                                                    className="pointer-events-none"
+                                                    onCheckedChange={() => toggleSelection()}
+                                                    onClick={(e) => e.stopPropagation()}
                                                   />
                                                   <Label 
-                                                    htmlFor={`fb-page-${page.page_id}`} 
                                                     className="text-sm font-normal cursor-pointer select-none flex-1 truncate"
+                                                    onClick={(e) => {
+                                                      e.preventDefault();
+                                                      e.stopPropagation();
+                                                      toggleSelection();
+                                                    }}
                                                   >
                                                     {page.name}
                                                   </Label>
