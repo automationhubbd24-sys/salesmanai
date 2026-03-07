@@ -431,28 +431,40 @@ exports.createProduct = async (req, res) => {
         
         const isActive = req.body.is_active === 'true' || req.body.is_active === true;
 
+        // 2. Validate Assignments (MANDATORY)
         let allowedMessengerIds = [];
         if (req.body.allowed_messenger_ids) {
             try {
-                const parsed = JSON.parse(req.body.allowed_messenger_ids);
+                const val = req.body.allowed_messenger_ids;
+                const parsed = typeof val === 'string' ? JSON.parse(val) : val;
                 if (Array.isArray(parsed)) {
-                    allowedMessengerIds = parsed.map(String);
+                    allowedMessengerIds = parsed.map(String).filter(id => id && id !== 'null' && id !== 'undefined');
                 }
-            } catch (e) {}
+            } catch (e) {
+                console.error("[ProductCreate] Messenger IDs Parse Error:", e.message);
+            }
         }
 
         let allowedWASessions = [];
         if (req.body.allowed_wa_sessions) {
             try {
-                const parsed = JSON.parse(req.body.allowed_wa_sessions);
+                const val = req.body.allowed_wa_sessions;
+                const parsed = typeof val === 'string' ? JSON.parse(val) : val;
                 if (Array.isArray(parsed)) {
-                    allowedWASessions = parsed.map(String);
+                    allowedWASessions = parsed.map(String).filter(id => id && id !== 'null' && id !== 'undefined');
                 }
-            } catch (e) {}
+            } catch (e) {
+                console.error("[ProductCreate] WA Sessions Parse Error:", e.message);
+            }
         }
 
+        console.log("[ProductCreateDebug] Received Messenger IDs:", allowedMessengerIds);
+        console.log("[ProductCreateDebug] Received WA Sessions:", allowedWASessions);
+
         if (allowedMessengerIds.length === 0 && allowedWASessions.length === 0) {
-            return res.status(400).json({ error: "At least one Facebook Page or WhatsApp Session must be selected." });
+            return res.status(400).json({ 
+                error: "At least one Facebook Page or WhatsApp Session must be selected. Assignments cannot be empty." 
+            });
         }
 
         if (!name) return res.status(400).json({ error: "Product name is required" });
@@ -464,7 +476,7 @@ exports.createProduct = async (req, res) => {
             description,
             image_url: imageUrl,
             additional_images: additionalImages,
-            variants: variants,
+            variants: Array.isArray(variants) ? variants : (variants ? JSON.parse(variants) : []),
             is_active: isActive,
             price,
             currency,
@@ -473,7 +485,7 @@ exports.createProduct = async (req, res) => {
             allowed_wa_sessions: allowedWASessions,
             keywords,
             is_combo: req.body.is_combo === 'true' || req.body.is_combo === true,
-            combo_items: req.body.combo_items || [],
+            combo_items: Array.isArray(req.body.combo_items) ? req.body.combo_items : (req.body.combo_items ? JSON.parse(req.body.combo_items) : []),
             allow_description: req.body.allow_description === 'true' || req.body.allow_description === true
         });
 

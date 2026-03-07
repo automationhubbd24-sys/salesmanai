@@ -512,21 +512,21 @@ export default function ProductsPage() {
             formData.append("stock", String(productStock || "0"));
             formData.append("is_active", "true");
 
-            const normalizedMessengerIds = Array.from(new Set(allowedMessengerIds.map(String))).filter(Boolean);
-            const normalizedWASessions = Array.from(new Set(allowedWASessions.map(String))).filter(Boolean);
+            const normalizedMessengerIds = Array.from(new Set(allowedMessengerIds.map(String))).filter(id => id && id !== 'null' && id !== 'undefined');
+            const normalizedWASessions = Array.from(new Set(allowedWASessions.map(String))).filter(id => id && id !== 'null' && id !== 'undefined');
 
-            let finalMessengerIds = normalizedMessengerIds;
-            let finalWASessions = normalizedWASessions;
+            console.log("[ProductSubmitDebug] Normalized Messenger IDs:", normalizedMessengerIds);
+            console.log("[ProductSubmitDebug] Normalized WA Sessions:", normalizedWASessions);
 
             // Validation: Must have at least one assignment
-            if (finalMessengerIds.length === 0 && finalWASessions.length === 0) {
+            if (normalizedMessengerIds.length === 0 && normalizedWASessions.length === 0) {
                 alert("Error: At least one assignment is required. Please select a Facebook Page or WhatsApp Session.");
                 setIsSubmitting(false);
                 return;
             }
 
-            formData.append("allowed_messenger_ids", JSON.stringify(finalMessengerIds));
-            formData.append("allowed_wa_sessions", JSON.stringify(finalWASessions));
+            formData.append("allowed_messenger_ids", JSON.stringify(normalizedMessengerIds));
+            formData.append("allowed_wa_sessions", JSON.stringify(normalizedWASessions));
 
             formData.append("is_combo", String(!!isCombo));
             formData.append("combo_items", JSON.stringify(comboItems || []));

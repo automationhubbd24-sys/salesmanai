@@ -2646,8 +2646,11 @@ async function updateProduct(id, userId, updates) {
         
         let val = updates[key];
         const jsonFields = ['variants', 'allowed_messenger_ids', 'allowed_wa_sessions', 'combo_items', 'additional_images'];
-        if (jsonFields.includes(key) && val && typeof val === 'object') {
-            val = JSON.stringify(val);
+        if (jsonFields.includes(key) && val !== undefined) {
+            // Ensure JSONB fields are strings for Postgres
+            if (typeof val === 'object') {
+                val = JSON.stringify(val);
+            }
         }
         
         values.push(val);
