@@ -1333,8 +1333,9 @@ export default function ProductsPage() {
                                           {waPages.length === 0 ? (
                                             <p className="text-xs text-muted-foreground col-span-full text-center">No WhatsApp sessions.</p>
                                           ) : waPages.map(page => {
-                                            const pageKey = String(page.page_id);
-                                            const isSelected = allowedWASessions.includes(pageKey);
+                                            const pageKeyRaw = String(page.page_id);
+                                            const pageKey = pageKeyRaw.trim();
+                                            const isSelected = allowedWASessions.some(id => String(id).trim().toLowerCase() === pageKey.toLowerCase());
                                             return (
                                               <div 
                                                 key={`wa-${page.page_id}`} 
@@ -1349,7 +1350,7 @@ export default function ProductsPage() {
                                                   onCheckedChange={(checked) => {
                                                     setAllowedWASessions(prev =>
                                                       checked
-                                                        ? Array.from(new Set([...prev, pageKey]))
+                                                        ? Array.from(new Set([...prev, pageKey.trim()]))
                                                         : prev.filter(id => id !== pageKey)
                                                     );
                                                   }}
@@ -1379,8 +1380,9 @@ export default function ProductsPage() {
                                           {fbPages.length === 0 ? (
                                             <p className="text-xs text-muted-foreground col-span-full text-center">No Facebook pages.</p>
                                           ) : fbPages.map(page => {
-                                            const pageKey = String(page.page_id);
-                                            const isSelected = allowedMessengerIds.includes(pageKey);
+                                            const pageKeyRaw = String(page.page_id);
+                                            const pageKey = pageKeyRaw.trim();
+                                            const isSelected = allowedMessengerIds.some(id => String(id).trim().toLowerCase() === pageKey.toLowerCase());
                                             return (
                                               <div 
                                                 key={`fb-${page.page_id}`} 
@@ -1395,7 +1397,7 @@ export default function ProductsPage() {
                                                   onCheckedChange={(checked) => {
                                                     setAllowedMessengerIds(prev =>
                                                       checked
-                                                        ? Array.from(new Set([...prev, pageKey]))
+                                                        ? Array.from(new Set([...prev, pageKey.trim()]))
                                                         : prev.filter(id => id !== pageKey)
                                                     );
                                                   }}
