@@ -322,8 +322,8 @@ exports.getMyPayments = async (req, res) => {
         }
 
         const configResult = await pgClient.query(
-            'SELECT balance FROM user_configs WHERE user_id = $1::uuid LIMIT 1',
-            [userId]
+            'SELECT balance FROM user_configs WHERE user_id::text = $1::text LIMIT 1',
+            [String(userId)]
         );
 
         const balance = configResult.rows[0]?.balance || 0;

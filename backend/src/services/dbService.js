@@ -27,7 +27,7 @@ async function getPageConfig(pageId) {
       }
     } else if (data.user_id) {
       const creditResult = await query(
-        'SELECT message_credit FROM user_configs WHERE user_id = $1::text::uuid LIMIT 1',
+        'SELECT message_credit FROM user_configs WHERE user_id::text = $1::text LIMIT 1',
         [String(data.user_id)]
       );
 
@@ -36,7 +36,7 @@ async function getPageConfig(pageId) {
         data.credit_source = 'shared_user_balance';
       } else {
         await query(
-          'INSERT INTO user_configs (user_id, email, message_credit, balance) VALUES ($1::text::uuid, $2, $3, $4) ON CONFLICT (user_id) DO NOTHING',
+          'INSERT INTO user_configs (user_id, email, message_credit, balance) VALUES ($1, $2, $3, $4) ON CONFLICT (user_id) DO NOTHING',
           [String(data.user_id), data.email || null, 100, 0]
         );
         data.message_credit = 100;
@@ -188,8 +188,8 @@ async function deductCredit(pageId, currentCredit) {
         const pageData = pageResult.rows[0];
 
         const userConfigResult = await query(
-            'SELECT message_credit FROM user_configs WHERE user_id::uuid = $1::uuid LIMIT 1',
-            [pageData.user_id]
+            'SELECT message_credit FROM user_configs WHERE user_id::text = $1::text LIMIT 1',
+            [String(pageData.user_id)]
         );
 
         if (userConfigResult.rows.length === 0) {
@@ -204,8 +204,8 @@ async function deductCredit(pageId, currentCredit) {
         }
 
         await query(
-            'UPDATE user_configs SET message_credit = $2 WHERE user_id::uuid = $1::uuid',
-            [pageData.user_id, credit - 1]
+            'UPDATE user_configs SET message_credit = $2 WHERE user_id::text = $1::text',
+            [String(pageData.user_id), credit - 1]
         );
 
         console.log(`[Credit] Deducted 1 credit from User ${pageData.user_id}`);
@@ -564,7 +564,7 @@ async function addBalanceByEmail(email, amount) {
         }
 
         const balanceResult = await query(
-            'SELECT balance FROM user_configs WHERE user_id::uuid = $1::uuid LIMIT 1',
+            'SELECT balance FROM user_configs WHERE user_id::text = $1::text LIMIT 1',
             [String(userId)]
         );
         if (balanceResult.rows.length === 0) {
@@ -575,7 +575,7 @@ async function addBalanceByEmail(email, amount) {
         const newBalance = currentBalance + Number(amount);
 
         await query(
-            'UPDATE user_configs SET balance = $2 WHERE user_id::uuid = $1::uuid',
+            'UPDATE user_configs SET balance = $2 WHERE user_id::text = $1::text',
             [String(userId), newBalance]
         );
 
@@ -823,14 +823,14 @@ async function getWhatsAppConfig(sessionName) {
 
     if (data.user_id) {
         const creditResult = await query(
-            'SELECT message_credit FROM user_configs WHERE user_id::uuid = $1::uuid LIMIT 1',
+            'SELECT message_credit FROM user_configs WHERE user_id::text = $1::text LIMIT 1',
             [String(data.user_id)]
         );
         if (creditResult.rows.length > 0) {
             data.message_credit = creditResult.rows[0].message_credit;
         } else {
             await query(
-                'INSERT INTO user_configs (user_id, email, message_credit, balance) VALUES ($1::uuid, $2, $3, $4) ON CONFLICT (user_id) DO NOTHING',
+                'INSERT INTO user_configs (user_id, email, message_credit, balance) VALUES ($1, $2, $3, $4) ON CONFLICT (user_id) DO NOTHING',
                 [String(data.user_id), data.email || null, 100, 0]
             );
             data.message_credit = 100;
@@ -1235,7 +1235,7 @@ async function deductWhatsAppCredit(sessionName, amount = 1) {
     const userId = sessionResult.rows[0].user_id;
 
     const configResult = await query(
-        'SELECT message_credit FROM user_configs WHERE user_id::uuid = $1::uuid LIMIT 1',
+        'SELECT message_credit FROM user_configs WHERE user_id::text = $1::text LIMIT 1',
         [String(userId)]
     );
     if (configResult.rows.length === 0) {
@@ -1250,7 +1250,7 @@ async function deductWhatsAppCredit(sessionName, amount = 1) {
     }
 
     await query(
-        'UPDATE user_configs SET message_credit = $2 WHERE user_id::uuid = $1::uuid',
+        'UPDATE user_configs SET message_credit = $2 WHERE user_id::text = $1::text',
         [String(userId), currentCredit - amount]
     );
 
@@ -1943,7 +1943,7 @@ async function getExpiredWhatsAppSessions() {
 // 24. Deduct User Balance (for Plans)
 async function deductUserBalance(userId, amount, description = 'Plan Purchase') {
     const result = await query(
-        'SELECT balance FROM user_configs WHERE user_id::uuid = $1::uuid LIMIT 1',
+        'SELECT balance FROM user_configs WHERE user_id::text = $1::text LIMIT 1',
         [String(userId)]
     );
 
@@ -1957,7 +1957,7 @@ async function deductUserBalance(userId, amount, description = 'Plan Purchase') 
     }
 
     await query(
-        'UPDATE user_configs SET balance = $2 WHERE user_id::uuid = $1::uuid',
+        'UPDATE user_configs SET balance = $2 WHERE user_id::text = $1::text',
         [String(userId), balance - amount]
     );
 
@@ -2410,7 +2410,7 @@ module.exports = {
 // 32. Check Product Feature Access (Unlock Check)
 async function checkProductFeatureAccess(userId) {
     const userConfigResult = await query(
-        'SELECT message_credit, balance FROM user_configs WHERE user_id::uuid = $1::uuid LIMIT 1',
+        'SELECT message_credit, balance FROM user_configs WHERE user_id::text = $1::text LIMIT 1',
         [String(userId)]
     );
 
@@ -2425,7 +2425,7 @@ async function checkProductFeatureAccess(userId) {
     const waResult = await query(
         `SELECT COUNT(*)::int AS cnt
          FROM whatsapp_sessions
-         WHERE user_id::uuid = $1::uuid
+         WHERE user_id::text = $1::text
            AND expires_at > NOW()`,
         [String(userId)]
     );
@@ -2437,7 +2437,7 @@ async function checkProductFeatureAccess(userId) {
     const fbResult = await query(
         `SELECT COUNT(*)::int AS cnt
          FROM page_access_token_message
-         WHERE user_id::uuid = $1::uuid
+         WHERE user_id::text = $1::text
            AND subscription_status IN ('active','trial','active_trial','active_paid')`,
         [String(userId)]
     );
@@ -2475,7 +2475,6 @@ async function createProduct(productData) {
 
     fields.forEach((field, index) => {
         let p = `$${index + 1}`;
-        if (field === 'user_id') p += '::uuid';
         placeholders.push(p);
         
         let val = productData[field];
@@ -2550,9 +2549,9 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
     console.log(`[DB] getProducts - User: ${userId}, Page: ${pageId}`);
     const offset = (page - 1) * limit;
 
-    // USE CASTING TO UUID FOR POSTGRES COMPATIBILITY
-    let params = [userId]; // $1
-    let whereClause = 'user_id = $1::uuid';
+    // USE CASTING TO TEXT FOR POSTGRES COMPATIBILITY (Handles both TEXT and UUID schemas)
+    let params = [String(userId)]; // $1
+    let whereClause = 'user_id::text = $1::text';
 
     // 1. Context Filtering (ID Array based)
     // If pageId is provided, show products assigned to THIS pageId.
@@ -2660,13 +2659,13 @@ async function updateProduct(id, userId, updates) {
         idx++;
     }
 
-    values.push(userId);
+    values.push(String(userId));
     values.push(id);
 
     const sql = `
         UPDATE products
         SET ${setFragments.join(', ')}
-        WHERE user_id = $${idx}::uuid AND id = $${idx + 1}
+        WHERE user_id::text = $${idx}::text AND id = $${idx + 1}
         RETURNING *`;
 
     const result = await query(sql, values);
@@ -2681,8 +2680,8 @@ async function updateProduct(id, userId, updates) {
 // 30. Delete Product
 async function deleteProduct(id, userId) {
     const result = await query(
-        'DELETE FROM products WHERE id = $1 AND user_id = $2::uuid RETURNING id',
-        [id, userId]
+        'DELETE FROM products WHERE id = $1 AND user_id::text = $2::text RETURNING id',
+        [id, String(userId)]
     );
 
     if (result.rows.length === 0) {
@@ -2698,12 +2697,12 @@ async function getProductsByNames(userId, productNames, pageId = null) {
     
     let sql = `
         SELECT * FROM products 
-        WHERE user_id = $1::uuid 
+        WHERE user_id::text = $1::text 
         AND is_active = true 
         AND name ILIKE ANY($2)
     `;
     
-    const params = [userId, productNames];
+    const params = [String(userId), productNames];
 
     if (pageId) {
         const contextType = await resolvePageContextType(pageId);
@@ -2782,8 +2781,8 @@ async function searchProducts(userId, queryText, pageId = null) {
 
         // Helper to get base query context (params and where clause)
         const getBaseContext = () => {
-            const params = [userId];
-            let where = 'user_id = $1::uuid AND is_active = true';
+            const params = [String(userId)];
+            let where = 'user_id::text = $1::text AND is_active = true';
 
             if (pageId) {
                 params.push(String(pageId));
