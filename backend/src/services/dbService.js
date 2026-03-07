@@ -2410,7 +2410,7 @@ module.exports = {
 // 32. Check Product Feature Access (Unlock Check)
 async function checkProductFeatureAccess(userId) {
     const userConfigResult = await query(
-        'SELECT message_credit, balance FROM user_configs WHERE user_id = $1::text::uuid LIMIT 1',
+        'SELECT message_credit, balance FROM user_configs WHERE user_id = $1::uuid LIMIT 1',
         [String(userId)]
     );
 
@@ -2425,7 +2425,7 @@ async function checkProductFeatureAccess(userId) {
     const waResult = await query(
         `SELECT COUNT(*)::int AS cnt
          FROM whatsapp_sessions
-         WHERE user_id = $1::text::uuid
+         WHERE user_id = $1::uuid
            AND expires_at > NOW()`,
         [String(userId)]
     );
@@ -2437,7 +2437,7 @@ async function checkProductFeatureAccess(userId) {
     const fbResult = await query(
         `SELECT COUNT(*)::int AS cnt
          FROM page_access_token_message
-         WHERE user_id = $1::text::uuid
+         WHERE user_id = $1::uuid
            AND subscription_status IN ('active','trial','active_trial','active_paid')`,
         [String(userId)]
     );
