@@ -47,7 +47,7 @@ async function getEffectiveUserIdFromRequest(req, baseUserId) {
     const lookupId = baseUserId || userId;
     if (!viewerEmail && lookupId) {
          try {
-             const userRes = await pgClient.query('SELECT email FROM users WHERE id = $1', [lookupId]);
+             const userRes = await pgClient.query('SELECT email FROM users WHERE id = $1::uuid', [lookupId]);
              if (userRes.rows.length > 0) {
                  viewerEmail = userRes.rows[0].email;
                  console.log(`[AuthDebug] Resolved Email from ID (${lookupId}): ${viewerEmail}`);
@@ -252,7 +252,7 @@ async function resolveProductOwnerUserId(req, baseUserId, pageId) {
             if (pageOwnerId !== effectiveUserId) {
                 try {
                     // Get Current User Email
-                    const userRes = await pgClient.query('SELECT email FROM users WHERE id = $1', [effectiveUserId]);
+                    const userRes = await pgClient.query('SELECT email FROM users WHERE id = $1::uuid', [effectiveUserId]);
                     if (userRes.rows.length > 0) {
                         const currentUserEmail = userRes.rows[0].email;
                         
@@ -304,7 +304,7 @@ async function resolveProductOwnerUserId(req, baseUserId, pageId) {
             const waOwnerId = waRes.rows[0].user_id;
              if (waOwnerId !== effectiveUserId) {
                 try {
-                     const userRes = await pgClient.query('SELECT email FROM users WHERE id = $1', [effectiveUserId]);
+                     const userRes = await pgClient.query('SELECT email FROM users WHERE id = $1::uuid', [effectiveUserId]);
                      if (userRes.rows.length > 0) {
                          const currentUserEmail = userRes.rows[0].email;
                          // Need email for WA owner. whatsapp_message_database has 'email' column? Yes.

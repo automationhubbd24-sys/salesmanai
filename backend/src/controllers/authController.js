@@ -322,7 +322,7 @@ exports.getMyPayments = async (req, res) => {
         }
 
         const configResult = await pgClient.query(
-            'SELECT balance FROM user_configs WHERE user_id = $1 LIMIT 1',
+            'SELECT balance FROM user_configs WHERE user_id = $1::uuid LIMIT 1',
             [userId]
         );
 
@@ -582,7 +582,7 @@ exports.redeemCoupon = async (req, res) => {
         }
 
         const configResult = await pgClient.query(
-            'SELECT id, balance FROM user_configs WHERE user_id = $1 LIMIT 1',
+            'SELECT id, balance FROM user_configs WHERE user_id = $1::uuid LIMIT 1',
             [userId]
         );
 
@@ -591,12 +591,12 @@ exports.redeemCoupon = async (req, res) => {
             const currentBalance = Number(configResult.rows[0].balance) || 0;
             newBalance = currentBalance + amount;
             await pgClient.query(
-                'UPDATE user_configs SET balance = $1 WHERE user_id = $2',
+                'UPDATE user_configs SET balance = $1 WHERE user_id = $2::uuid',
                 [newBalance, userId]
             );
         } else {
             await pgClient.query(
-                'INSERT INTO user_configs (user_id, email, balance) VALUES ($1, $2, $3)',
+                'INSERT INTO user_configs (user_id, email, balance) VALUES ($1::uuid, $2, $3)',
                 [userId, email, newBalance]
             );
         }

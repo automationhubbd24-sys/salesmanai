@@ -85,7 +85,7 @@ async function importProducts(userId, url, consumerKey, consumerSecret) {
             const { query } = require('./pgClient');
 
             const existingRes = await query(
-                'SELECT id FROM products WHERE user_id = $1 AND name = $2 LIMIT 1',
+                'SELECT id FROM products WHERE user_id = $1::uuid AND name = $2 LIMIT 1',
                 [userId, p.name]
             );
 

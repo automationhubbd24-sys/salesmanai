@@ -188,7 +188,7 @@ async function deductCredit(pageId, currentCredit) {
         const pageData = pageResult.rows[0];
 
         const userConfigResult = await query(
-            'SELECT message_credit FROM user_configs WHERE user_id = $1 LIMIT 1',
+            'SELECT message_credit FROM user_configs WHERE user_id = $1::text::uuid LIMIT 1',
             [pageData.user_id]
         );
 
@@ -204,7 +204,7 @@ async function deductCredit(pageId, currentCredit) {
         }
 
         await query(
-            'UPDATE user_configs SET message_credit = $2 WHERE user_id = $1',
+            'UPDATE user_configs SET message_credit = $2 WHERE user_id = $1::text::uuid',
             [pageData.user_id, credit - 1]
         );
 
@@ -564,8 +564,8 @@ async function addBalanceByEmail(email, amount) {
         }
 
         const balanceResult = await query(
-            'SELECT balance FROM user_configs WHERE user_id = $1 LIMIT 1',
-            [userId]
+            'SELECT balance FROM user_configs WHERE user_id = $1::text::uuid LIMIT 1',
+            [String(userId)]
         );
         if (balanceResult.rows.length === 0) {
             throw new Error("User config not found");
@@ -575,8 +575,8 @@ async function addBalanceByEmail(email, amount) {
         const newBalance = currentBalance + Number(amount);
 
         await query(
-            'UPDATE user_configs SET balance = $2 WHERE user_id = $1',
-            [userId, newBalance]
+            'UPDATE user_configs SET balance = $2 WHERE user_id = $1::text::uuid',
+            [String(userId), newBalance]
         );
 
         await query(
@@ -823,15 +823,15 @@ async function getWhatsAppConfig(sessionName) {
 
     if (data.user_id) {
         const creditResult = await query(
-            'SELECT message_credit FROM user_configs WHERE user_id = $1 LIMIT 1',
-            [data.user_id]
+            'SELECT message_credit FROM user_configs WHERE user_id = $1::text::uuid LIMIT 1',
+            [String(data.user_id)]
         );
         if (creditResult.rows.length > 0) {
             data.message_credit = creditResult.rows[0].message_credit;
         } else {
             await query(
-                'INSERT INTO user_configs (user_id, email, message_credit, balance) VALUES ($1, $2, $3, $4) ON CONFLICT (user_id) DO NOTHING',
-                [data.user_id, data.email || null, 100, 0]
+                'INSERT INTO user_configs (user_id, email, message_credit, balance) VALUES ($1::text::uuid, $2, $3, $4) ON CONFLICT (user_id) DO NOTHING',
+                [String(data.user_id), data.email || null, 100, 0]
             );
             data.message_credit = 100;
         }
@@ -1235,8 +1235,8 @@ async function deductWhatsAppCredit(sessionName, amount = 1) {
     const userId = sessionResult.rows[0].user_id;
 
     const configResult = await query(
-        'SELECT message_credit FROM user_configs WHERE user_id = $1 LIMIT 1',
-        [userId]
+        'SELECT message_credit FROM user_configs WHERE user_id = $1::text::uuid LIMIT 1',
+        [String(userId)]
     );
     if (configResult.rows.length === 0) {
         console.error(`[WA Credit] User config not found for ${userId}.`);
@@ -1250,8 +1250,8 @@ async function deductWhatsAppCredit(sessionName, amount = 1) {
     }
 
     await query(
-        'UPDATE user_configs SET message_credit = $2 WHERE user_id = $1',
-        [userId, currentCredit - amount]
+        'UPDATE user_configs SET message_credit = $2 WHERE user_id = $1::text::uuid',
+        [String(userId), currentCredit - amount]
     );
 
     console.log(`[WA Credit] Deducted ${amount} credit from User ${userId}`);
@@ -1943,8 +1943,8 @@ async function getExpiredWhatsAppSessions() {
 // 24. Deduct User Balance (for Plans)
 async function deductUserBalance(userId, amount, description = 'Plan Purchase') {
     const result = await query(
-        'SELECT balance FROM user_configs WHERE user_id = $1 LIMIT 1',
-        [userId]
+        'SELECT balance FROM user_configs WHERE user_id = $1::text::uuid LIMIT 1',
+        [String(userId)]
     );
 
     if (result.rows.length === 0) {
@@ -1957,8 +1957,8 @@ async function deductUserBalance(userId, amount, description = 'Plan Purchase') 
     }
 
     await query(
-        'UPDATE user_configs SET balance = $2 WHERE user_id = $1',
-        [userId, balance - amount]
+        'UPDATE user_configs SET balance = $2 WHERE user_id = $1::text::uuid',
+        [String(userId), balance - amount]
     );
 
     return true;
@@ -2755,7 +2755,7 @@ async function updateProduct(id, userId, updates) {
 // 30. Delete Product
 async function deleteProduct(id, userId) {
     const result = await query(
-        'DELETE FROM products WHERE id = $1 AND user_id = $2 RETURNING id',
+        'DELETE FROM products WHERE id = $1 AND user_id = $2::uuid RETURNING id',
         [id, userId]
     );
 

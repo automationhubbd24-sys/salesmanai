@@ -86,7 +86,7 @@ router.get('/sessions', async (req, res) => {
         let mySessions = [];
         if (!requestedOwner || requestedOwner === userEmail) {
             const { rows } = await pgClient.query(
-                'SELECT id, session_name, expires_at, plan_days, status, subscription_status, user_id, email FROM whatsapp_message_database WHERE user_id = $1 OR email = $2',
+                'SELECT id, session_name, expires_at, plan_days, status, subscription_status, user_id, email FROM whatsapp_message_database WHERE user_id = $1::text::uuid OR email = $2',
                 [userId, userEmail]
             );
             mySessions = rows;

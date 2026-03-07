@@ -108,7 +108,7 @@ exports.handleChatCompletion = async (req, res) => {
         try {
             const pgClient = require('../services/pgClient');
             const countResult = await pgClient.query(
-                'SELECT COUNT(*)::int AS cnt FROM api_usage_stats WHERE user_id = $1',
+                'SELECT COUNT(*)::int AS cnt FROM api_usage_stats WHERE user_id = $1::uuid',
                 [userConfig.user_id]
             );
             const totalCount = countResult.rows.length > 0 ? countResult.rows[0].cnt : 0;
@@ -368,7 +368,7 @@ exports.getApiKey = async (req, res) => {
         
         const pgClient = require('../services/pgClient');
         const result = await pgClient.query(
-            'SELECT service_api_key FROM user_configs WHERE user_id = $1 LIMIT 1',
+            'SELECT service_api_key FROM user_configs WHERE user_id = $1::uuid LIMIT 1',
             [userId]
         );
         const row = result.rows[0] || null;
@@ -397,20 +397,20 @@ exports.regenerateApiKey = async (req, res) => {
 
         // Check if config exists
         const checkRes = await pgClient.query(
-            'SELECT id FROM user_configs WHERE user_id = $1 LIMIT 1',
+            'SELECT id FROM user_configs WHERE user_id = $1::uuid LIMIT 1',
             [userId]
         );
 
         if (checkRes.rows.length === 0) {
             // Create new config
             await pgClient.query(
-                'INSERT INTO user_configs (user_id, email, service_api_key) VALUES ($1, $2, $3)',
+                'INSERT INTO user_configs (user_id, email, service_api_key) VALUES ($1::uuid, $2, $3)',
                 [userId, req.user.email, newKey]
             );
         } else {
             // Update existing
             await pgClient.query(
-                'UPDATE user_configs SET service_api_key = $1 WHERE user_id = $2',
+                'UPDATE user_configs SET service_api_key = $1 WHERE user_id = $2::uuid',
                 [newKey, userId]
             );
         }
@@ -434,7 +434,7 @@ exports.updateUserConfig = async (req, res) => {
         // Upsert user config
         const query = `
             INSERT INTO user_configs (user_id, email, ai_provider, api_key, model_name)
-            VALUES ($1, $2, $3, $4, $5)
+            VALUES ($1::uuid, $2, $3, $4, $5)
             ON CONFLICT (user_id)
             DO UPDATE SET
                 ai_provider = COALESCE(EXCLUDED.ai_provider, user_configs.ai_provider),
@@ -462,7 +462,7 @@ exports.getUserConfig = async (req, res) => {
 
         const pgClient = require('../services/pgClient');
         const result = await pgClient.query(
-            'SELECT ai_provider, api_key, model_name FROM user_configs WHERE user_id = $1',
+            'SELECT ai_provider, api_key, model_name FROM user_configs WHERE user_id = $1::uuid',
             [userId]
         );
 
@@ -493,7 +493,7 @@ exports.getUsageStats = async (req, res) => {
         const recentResult = await pgClient.query(
             `SELECT *
              FROM api_usage_stats
-             WHERE user_id = $1
+             WHERE user_id = $1::uuid
              ORDER BY created_at DESC
              LIMIT $2 OFFSET $3`,
             [userId, limit, offset]
@@ -502,7 +502,7 @@ exports.getUsageStats = async (req, res) => {
 
         // 1.5 Fetch Total Count for Pagination
         const countResult = await pgClient.query(
-            'SELECT COUNT(*)::int as total FROM api_usage_stats WHERE user_id = $1',
+            'SELECT COUNT(*)::int as total FROM api_usage_stats WHERE user_id = $1::uuid',
             [userId]
         );
         const totalCount = countResult.rows[0]?.total || 0;
@@ -511,7 +511,7 @@ exports.getUsageStats = async (req, res) => {
         // 2. Calculate Totals (Same as before)
 
         const totalResult = await pgClient.query(
-            'SELECT cost, tokens FROM api_usage_stats WHERE user_id = $1',
+            'SELECT cost, tokens FROM api_usage_stats WHERE user_id = $1::uuid',
             [userId]
         );
         const totalRows = totalResult.rows || [];
@@ -525,7 +525,7 @@ exports.getUsageStats = async (req, res) => {
         const todayResult = await pgClient.query(
             `SELECT cost, tokens
              FROM api_usage_stats
-             WHERE user_id = $1
+             WHERE user_id = $1::uuid
                AND created_at >= $2::timestamptz`,
             [userId, `${today}T00:00:00Z`]
         );
@@ -542,7 +542,7 @@ exports.getUsageStats = async (req, res) => {
         const yesterdayResult = await pgClient.query(
             `SELECT cost, tokens
              FROM api_usage_stats
-             WHERE user_id = $1
+             WHERE user_id = $1::uuid
                AND created_at >= $2::timestamptz
                AND created_at <= $3::timestamptz`,
             [userId, `${yesterday}T00:00:00Z`, `${yesterday}T23:59:59Z`]
@@ -561,7 +561,7 @@ exports.getUsageStats = async (req, res) => {
             const rangeResult = await pgClient.query(
                 `SELECT cost, tokens
                  FROM api_usage_stats
-                 WHERE user_id = $1
+                 WHERE user_id = $1::uuid
                    AND created_at >= $2::timestamptz
                    AND created_at <= $3::timestamptz`,
                 [userId, `${startDate}T00:00:00Z`, `${endDate}T23:59:59Z`]
