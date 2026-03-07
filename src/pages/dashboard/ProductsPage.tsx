@@ -502,6 +502,9 @@ export default function ProductsPage() {
                 currentContextId = getInitialPageId();
             }
 
+            const teamOwner = getTeamOwnerForContext();
+            const query = teamOwner ? `?team_owner=${teamOwner}` : "";
+
             const formData = new FormData();
             formData.append("user_id", String(userId));
             formData.append("name", String(productName));
@@ -515,10 +518,8 @@ export default function ProductsPage() {
             const normalizedMessengerIds = Array.from(new Set(allowedMessengerIds.map(String))).filter(id => id && id !== 'null' && id !== 'undefined');
             const normalizedWASessions = Array.from(new Set(allowedWASessions.map(String))).filter(id => id && id !== 'null' && id !== 'undefined');
 
-            console.log("[ProductSubmitDebug] Normalized Messenger IDs:", normalizedMessengerIds);
-            console.log("[ProductSubmitDebug] Normalized WA Sessions:", normalizedWASessions);
+            console.log("[ProductSubmitDebug] IDs to send:", { normalizedMessengerIds, normalizedWASessions });
 
-            // Validation: Must have at least one assignment
             if (normalizedMessengerIds.length === 0 && normalizedWASessions.length === 0) {
                 alert("Error: At least one assignment is required. Please select a Facebook Page or WhatsApp Session.");
                 setIsSubmitting(false);
@@ -536,8 +537,7 @@ export default function ProductsPage() {
                 formData.append("page_id", String(currentContextId));
             }
             
-            // If variants are enabled, send them. Otherwise send default/empty.
-            // Or construct variants from main fields if needed for backward compatibility
+            // Variants
             const finalVariants = showVariants ? variants : [{
                 name: "Standard",
                 price: productPrice,
@@ -545,25 +545,19 @@ export default function ProductsPage() {
                 available: parseInt(productStock) > 0
             }];
             formData.append("variants", JSON.stringify(finalVariants || []));
-            
+
+            // --- FILES LAST (Best practice for Multer) ---
             if (productImage) {
                 formData.append("image", productImage);
             }
 
-            // Additional Images
             if (productImages && productImages.length > 0) {
                 productImages.forEach((file) => {
                     formData.append("images", file);
                 });
             }
 
-            console.log("[ProductSubmitDebug] Payload Preview:");
-            for (let pair of (formData as any).entries()) {
-                console.log(`[ProductSubmitDebug] ${pair[0]}:`, pair[1]);
-            }
-
-            const teamOwner = getTeamOwnerForContext();
-            const query = teamOwner ? `?team_owner=${teamOwner}` : "";
+            console.log("[ProductSubmitDebug] FormData fields populated. Sending request...");
 
             const url = editProductId 
                 ? `${BACKEND_URL}/api/products/${editProductId}${query}`

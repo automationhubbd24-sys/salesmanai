@@ -433,6 +433,10 @@ exports.createProduct = async (req, res) => {
 
         // 2. Validate Assignments (MANDATORY)
         let allowedMessengerIds = [];
+        let allowedWASessions = [];
+
+        console.log("[ProductCreateDebug] Full Request Body Keys:", Object.keys(req.body));
+
         if (req.body.allowed_messenger_ids) {
             try {
                 const val = req.body.allowed_messenger_ids;
@@ -441,11 +445,10 @@ exports.createProduct = async (req, res) => {
                     allowedMessengerIds = parsed.map(String).filter(id => id && id !== 'null' && id !== 'undefined');
                 }
             } catch (e) {
-                console.error("[ProductCreate] Messenger IDs Parse Error:", e.message);
+                console.error("[ProductCreate] Messenger IDs Parse Error:", e.message, "Value:", req.body.allowed_messenger_ids);
             }
         }
 
-        let allowedWASessions = [];
         if (req.body.allowed_wa_sessions) {
             try {
                 const val = req.body.allowed_wa_sessions;
@@ -454,16 +457,17 @@ exports.createProduct = async (req, res) => {
                     allowedWASessions = parsed.map(String).filter(id => id && id !== 'null' && id !== 'undefined');
                 }
             } catch (e) {
-                console.error("[ProductCreate] WA Sessions Parse Error:", e.message);
+                console.error("[ProductCreate] WA Sessions Parse Error:", e.message, "Value:", req.body.allowed_wa_sessions);
             }
         }
 
-        console.log("[ProductCreateDebug] Received Messenger IDs:", allowedMessengerIds);
-        console.log("[ProductCreateDebug] Received WA Sessions:", allowedWASessions);
+        console.log("[ProductCreateDebug] Processed Messenger IDs:", allowedMessengerIds);
+        console.log("[ProductCreateDebug] Processed WA Sessions:", allowedWASessions);
 
         if (allowedMessengerIds.length === 0 && allowedWASessions.length === 0) {
+            console.error("[ProductCreate] Validation Failed: No assignments found in body.");
             return res.status(400).json({ 
-                error: "At least one Facebook Page or WhatsApp Session must be selected. Assignments cannot be empty." 
+                error: "At least one Facebook Page or WhatsApp Session must be selected. Assignments cannot be empty. Please check your selections." 
             });
         }
 
@@ -767,11 +771,11 @@ exports.updateProduct = async (req, res) => {
                 const val = req.body.allowed_messenger_ids;
                 const parsed = typeof val === 'string' ? JSON.parse(val) : val;
                 if (Array.isArray(parsed)) {
-                    currentMessengerIds = parsed.map(String);
+                    currentMessengerIds = parsed.map(String).filter(id => id && id !== 'null' && id !== 'undefined');
                     updates.allowed_messenger_ids = currentMessengerIds;
                 }
             } catch (e) {
-                console.error("[ProductUpdate] Messenger IDs Parse Error:", e.message);
+                console.error("[ProductUpdate] Messenger IDs Parse Error:", e.message, "Value:", req.body.allowed_messenger_ids);
             }
         }
 
@@ -781,11 +785,11 @@ exports.updateProduct = async (req, res) => {
                 const val = req.body.allowed_wa_sessions;
                 const parsed = typeof val === 'string' ? JSON.parse(val) : val;
                 if (Array.isArray(parsed)) {
-                    currentWASessions = parsed.map(String);
+                    currentWASessions = parsed.map(String).filter(id => id && id !== 'null' && id !== 'undefined');
                     updates.allowed_wa_sessions = currentWASessions;
                 }
             } catch (e) {
-                console.error("[ProductUpdate] WA Sessions Parse Error:", e.message);
+                console.error("[ProductUpdate] WA Sessions Parse Error:", e.message, "Value:", req.body.allowed_wa_sessions);
             }
         }
 
