@@ -1285,31 +1285,26 @@ export default function ProductsPage() {
                                           ) : waPages.map(page => {
                                             const pageKey = String(page.page_id);
                                             const isSelected = allowedWASessions.includes(pageKey);
-                                            const toggleSelection = (e?: React.MouseEvent) => {
-                                              if (e) {
-                                                e.preventDefault();
-                                                e.stopPropagation();
-                                              }
-                                              setAllowedWASessions(prev => 
-                                                prev.includes(pageKey) 
-                                                  ? prev.filter(id => id !== pageKey) 
-                                                  : [...prev, pageKey]
-                                              );
-                                            };
                                             return (
                                               <div 
                                                 key={`wa-${page.page_id}`} 
                                                 className={cn(
-                                                  "flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors border border-transparent",
+                                                  "flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 transition-colors border border-transparent",
                                                   isSelected && "bg-[#00ff88]/10 border-[#00ff88]/30 shadow-[0_0_10px_rgba(0,255,136,0.1)]"
                                                 )}
-                                                onClick={(e) => toggleSelection(e)}
                                               >
                                                 <Checkbox 
                                                   id={`wa-page-${page.page_id}`}
                                                   checked={isSelected}
+                                                  onCheckedChange={(checked) => {
+                                                    setAllowedWASessions(prev =>
+                                                      checked
+                                                        ? Array.from(new Set([...prev, pageKey]))
+                                                        : prev.filter(id => id !== pageKey)
+                                                    );
+                                                  }}
                                                   className={cn(
-                                                    "pointer-events-none data-[state=checked]:bg-[#00ff88] data-[state=checked]:border-[#00ff88]",
+                                                    "data-[state=checked]:bg-[#00ff88] data-[state=checked]:border-[#00ff88]",
                                                     isSelected && "ring-1 ring-[#00ff88]/40"
                                                   )}
                                                 />
@@ -1319,7 +1314,6 @@ export default function ProductsPage() {
                                                     "text-sm font-normal cursor-pointer select-none flex-1 truncate",
                                                     isSelected && "text-[#00ff88] font-medium"
                                                   )}
-                                                  onClick={(e) => e.preventDefault()}
                                                 >
                                                   {page.name}
                                                 </Label>
@@ -1337,31 +1331,26 @@ export default function ProductsPage() {
                                           ) : fbPages.map(page => {
                                             const pageKey = String(page.page_id);
                                             const isSelected = allowedMessengerIds.includes(pageKey);
-                                            const toggleSelection = (e?: React.MouseEvent) => {
-                                              if (e) {
-                                                e.preventDefault();
-                                                e.stopPropagation();
-                                              }
-                                              setAllowedMessengerIds(prev => 
-                                                prev.includes(pageKey) 
-                                                  ? prev.filter(id => id !== pageKey) 
-                                                  : [...prev, pageKey]
-                                              );
-                                            };
                                             return (
                                               <div 
                                                 key={`fb-${page.page_id}`} 
                                                 className={cn(
-                                                  "flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors border border-transparent",
+                                                  "flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 transition-colors border border-transparent",
                                                   isSelected && "bg-[#00ff88]/10 border-[#00ff88]/30 shadow-[0_0_10px_rgba(0,255,136,0.1)]"
                                                 )}
-                                                onClick={(e) => toggleSelection(e)}
                                               >
                                                 <Checkbox 
                                                   id={`fb-page-${page.page_id}`}
                                                   checked={isSelected}
+                                                  onCheckedChange={(checked) => {
+                                                    setAllowedMessengerIds(prev =>
+                                                      checked
+                                                        ? Array.from(new Set([...prev, pageKey]))
+                                                        : prev.filter(id => id !== pageKey)
+                                                    );
+                                                  }}
                                                   className={cn(
-                                                    "pointer-events-none data-[state=checked]:bg-[#00ff88] data-[state=checked]:border-[#00ff88]",
+                                                    "data-[state=checked]:bg-[#00ff88] data-[state=checked]:border-[#00ff88]",
                                                     isSelected && "ring-1 ring-[#00ff88]/40"
                                                   )}
                                                 />
@@ -1371,7 +1360,6 @@ export default function ProductsPage() {
                                                     "text-sm font-normal cursor-pointer select-none flex-1 truncate",
                                                     isSelected && "text-[#00ff88] font-medium"
                                                   )}
-                                                  onClick={(e) => e.preventDefault()}
                                                 >
                                                   {page.name}
                                                 </Label>
