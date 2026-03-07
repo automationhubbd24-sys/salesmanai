@@ -549,7 +549,7 @@ async function queueMessage(event, entryPageId = null) {
 
     // Initialize buffer if not exists
     if (!debounceMap.has(sessionId)) {
-        debounceMap.set(sessionId, { messages: [], timer: null });
+        debounceMap.set(sessionId, { messages: [], timer: null, isProcessing: false });
     }
 
     const sessionData = debounceMap.get(sessionId);
@@ -576,8 +576,15 @@ async function queueMessage(event, entryPageId = null) {
         referral: referralData 
     });
 
-    console.log(`Queued message for ${sessionId}. Buffer size: ${sessionData.messages.length}`);
+    console.log(`Queued message for ${sessionId}. Buffer size: ${sessionData.messages.length} (Processing: ${sessionData.isProcessing})`);
     
+    // If we are currently processing this session, don't set a new timer.
+    // The processBufferedMessages function will check for new messages when it finishes.
+    if (sessionData.isProcessing) {
+        console.log(`[Debounce] Session ${sessionId} is busy processing. Message appended to current buffer.`);
+        return;
+    }
+
     if (sessionData.timer) {
         clearTimeout(sessionData.timer); // Reset timer on new message
     }
@@ -601,10 +608,42 @@ async function queueMessage(event, entryPageId = null) {
     console.log(`[Debounce] Using wait time: ${debounceTime}ms for ${sessionId}`);
 
     sessionData.timer = setTimeout(() => {
+        sessionData.isProcessing = true;
         const messagesToProcess = [...sessionData.messages];
-        debounceMap.delete(sessionId);
+        // Clear the internal buffer we just copied
+        sessionData.messages = [];
         
-        schedulePageTask(pageId, () => processBufferedMessages(sessionId, pageId, senderId, messagesToProcess));
+        schedulePageTask(pageId, async () => {
+            try {
+                await processBufferedMessages(sessionId, pageId, senderId, messagesToProcess);
+            } finally {
+                // Check if new messages arrived while we were processing
+                const remaining = debounceMap.get(sessionId);
+                if (remaining && remaining.messages.length > 0) {
+                    console.log(`[Debounce] Session ${sessionId} has ${remaining.messages.length} new messages after processing. Re-triggering.`);
+                    remaining.isProcessing = false;
+                    // Trigger a short delay before next processing to allow more to group
+                    remaining.timer = setTimeout(() => {
+                        // This recursive call is safe because it's wrapped in setTimeout
+                        // and relies on the same logic.
+                        const nextBatch = [...remaining.messages];
+                        remaining.messages = [];
+                        remaining.isProcessing = true;
+                        processBufferedMessages(sessionId, pageId, senderId, nextBatch)
+                            .finally(() => {
+                                const stillRemaining = debounceMap.get(sessionId);
+                                if (!stillRemaining || stillRemaining.messages.length === 0) {
+                                    debounceMap.delete(sessionId);
+                                } else {
+                                    stillRemaining.isProcessing = false;
+                                }
+                            });
+                    }, 2000); 
+                } else {
+                    debounceMap.delete(sessionId);
+                }
+            }
+        });
     }, debounceTime); 
 }
 

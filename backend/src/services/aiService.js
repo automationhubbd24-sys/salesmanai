@@ -1326,12 +1326,16 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                 productContext = "[PRODUCT LIST SNAPSHOT - FROM PRODUCT ENTRY]\n";
                 topCandidates.forEach((p, idx) => {
                     const priceValue = p.price ? `${p.price} ${p.currency || ''}`.trim() : 'Ask for Price';
-                    productContext += `${idx + 1}) ${p.name}\n`;
+                    const comboNote = p.is_combo ? " [COMBO PACKAGE - Contains multiple items]" : "";
+                    productContext += `${idx + 1}) ${p.name}${comboNote}\n`;
                     productContext += `   ID: ${p.id}\n`;
                     productContext += `   Price: ${priceValue}\n`;
                     // Check 'allow_description' switch (default true for safety)
                     if (p.allow_description !== false && p.description) {
                         productContext += `   Description: ${p.description}\n`;
+                        if (p.is_combo) {
+                            productContext += `   Note: This is a combo. Check the description for individual item details or partial pricing if the user asks.\n`;
+                        }
                     }
                     if (p.image_url) productContext += `   Image: ${normalizeUrl(p.image_url)}\n`;
                     if (Array.isArray(p.additional_images) && p.additional_images.length > 0) {
@@ -1425,6 +1429,7 @@ ${productContext || "No specific product context provided yet."}
 - You are an AI Salesman for "${ownerName}".
 - Output MUST be a valid JSON object only. No plain text.
 - reply_text: Human-like response. Follow the Owner's tone and language strictly. (NO raw URLs, NO technical symbols)
+- Combo Logic: If a product is marked as a COMBO, read the description carefully. If the user asks for the price of a single item within the combo, check if the description provides it. If the description doesn't mention partial pricing, politely explain that it's only available as a package.
 - action: ["NONE", "SEND_DETAILS", "SEND_PHOTO", "SEND_BOTH"]
 - product_id: UUID of the matched product.
 - image_urls: Array of image URLs to attach.

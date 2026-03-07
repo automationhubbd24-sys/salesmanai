@@ -1299,7 +1299,7 @@ async function queueMessage(session, messagePayload) {
 
     // Initialize buffer if not exists
     if (!debounceMap.has(sessionId)) {
-        debounceMap.set(sessionId, { messages: [], timer: null, pageId: messagePayload.to, lockSenderId });
+        debounceMap.set(sessionId, { messages: [], timer: null, pageId: messagePayload.to, lockSenderId, isProcessing: false });
     } else {
         const existing = debounceMap.get(sessionId);
         if (existing && !existing.lockSenderId) {
@@ -1399,8 +1399,15 @@ async function queueMessage(session, messagePayload) {
         audios: audioUrls
     });
 
-    console.log(`[WA] Queued message for ${sessionId}. Buffer size: ${sessionData.messages.length}`);
+    console.log(`[WA] Queued message for ${sessionId}. Buffer size: ${sessionData.messages.length} (Processing: ${sessionData.isProcessing})`);
     
+    // If we are currently processing this session, don't set a new timer.
+    // The processBufferedMessages function will check for new messages when it finishes.
+    if (sessionData.isProcessing) {
+        console.log(`[WA] Session ${sessionId} is busy processing. Message appended to current buffer.`);
+        return;
+    }
+
     if (sessionData.timer) {
         clearTimeout(sessionData.timer);
     }
@@ -1419,13 +1426,42 @@ async function queueMessage(session, messagePayload) {
     
     if (debounceTime < 0) debounceTime = 0;
 
-    sessionData.timer = setTimeout(() => {
+    sessionData.timer = setTimeout(async () => {
+        sessionData.isProcessing = true;
         const messagesToProcess = [...sessionData.messages];
+        sessionData.messages = [];
         const pageId = sessionData.pageId;
         const lockSenderId = sessionData.lockSenderId;
-        debounceMap.delete(sessionId);
-        // Pass config to avoid re-fetching
-        processBufferedMessages(sessionId, sessionName, senderId, messagesToProcess, pageId, config, lockSenderId);
+
+        try {
+            // Pass config to avoid re-fetching
+            await processBufferedMessages(sessionId, sessionName, senderId, messagesToProcess, pageId, config, lockSenderId);
+        } finally {
+            // Check if new messages arrived while we were processing
+            const remaining = debounceMap.get(sessionId);
+            if (remaining && remaining.messages.length > 0) {
+                console.log(`[WA] Session ${sessionId} has ${remaining.messages.length} new messages after processing. Re-triggering.`);
+                remaining.isProcessing = false;
+                // Trigger a short delay before next processing to allow more to group
+                remaining.timer = setTimeout(async () => {
+                    const nextBatch = [...remaining.messages];
+                    remaining.messages = [];
+                    remaining.isProcessing = true;
+                    try {
+                        await processBufferedMessages(sessionId, sessionName, senderId, nextBatch, pageId, config, lockSenderId);
+                    } finally {
+                        const stillRemaining = debounceMap.get(sessionId);
+                        if (!stillRemaining || stillRemaining.messages.length === 0) {
+                            debounceMap.delete(sessionId);
+                        } else {
+                            stillRemaining.isProcessing = false;
+                        }
+                    }
+                }, 2000); 
+            } else {
+                debounceMap.delete(sessionId);
+            }
+        }
     }, debounceTime); 
 }
 
