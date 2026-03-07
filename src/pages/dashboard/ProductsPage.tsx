@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -41,11 +42,18 @@ interface Product {
 }
 
 export default function ProductsPage() {
+    const location = useLocation();
     const getInitialPageId = () => {
         const wa = localStorage.getItem('active_wa_session_id');
-        if (wa) return wa;
         const fb = localStorage.getItem('active_fb_page_id');
-        return fb || null;
+        const path = location.pathname || "";
+        if (path.includes("/dashboard/messenger")) {
+            return fb || wa || null;
+        }
+        if (path.includes("/dashboard/whatsapp")) {
+            return wa || fb || null;
+        }
+        return fb || wa || null;
     };
 
     const [loading, setLoading] = useState(true);
