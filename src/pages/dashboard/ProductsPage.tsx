@@ -159,6 +159,17 @@ export default function ProductsPage() {
     const [debugLogText, setDebugLogText] = useState("");
     const [debugLogFilter, setDebugLogFilter] = useState("");
     const logFileInputRef = useRef<HTMLInputElement>(null);
+    const [errorOpen, setErrorOpen] = useState(false);
+    const [errorItems, setErrorItems] = useState<{ time: number; source: string; status?: number; message: string }[]>([]);
+    const [errorFilter, setErrorFilter] = useState("");
+    const [errorBanner, setErrorBanner] = useState("");
+    const recordError = (source: string, message: string, status?: number) => {
+        const entry = { time: Date.now(), source, status, message };
+        setErrorItems(prev => [entry, ...prev].slice(0, 500));
+        setErrorBanner(`${source}${status ? ` [${status}]` : ""}: ${message}`);
+        setErrorOpen(true);
+        setTimeout(() => setErrorBanner(""), 6000);
+    };
     const handleLogFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files && e.target.files[0] ? e.target.files[0] : null;
         if (!file) return;
@@ -317,6 +328,7 @@ export default function ProductsPage() {
             console.error("Fetch products failed:", error);
             const message = error instanceof Error ? error.message : "Products load failed";
             toast.error(message);
+            recordError("GET /api/products", message);
         } finally {
             setLoading(false);
         }
@@ -365,6 +377,8 @@ export default function ProductsPage() {
             return combinedPages;
         } catch (error) {
             console.error("Failed to fetch pages:", error);
+            const message = error instanceof Error ? error.message : "Failed to fetch pages";
+            recordError("GET /api/messenger/pages | GET /api/whatsapp/sessions", message);
             return [];
         }
     };
@@ -723,7 +737,8 @@ export default function ProductsPage() {
 
             if (!res.ok) {
                 const err = await res.json();
-                throw new Error(err.error || `Failed to ${editProductId ? 'update' : 'create'} product`);
+                recordError(editProductId ? "PUT /api/products" : "POST /api/products", err?.error || `Failed (${res.status})`, res.status);
+                throw new Error(err?.error || `Failed to ${editProductId ? 'update' : 'create'} product`);
             }
 
             toast.success(`Product ${editProductId ? 'updated' : 'saved'} successfully!`);
@@ -736,6 +751,7 @@ export default function ProductsPage() {
 
         } catch (error: any) {
             toast.error(error.message);
+            recordError(editProductId ? "PUT /api/products" : "POST /api/products", error.message);
         } finally {
             setIsSubmitting(false);
         }
@@ -848,6 +864,7 @@ export default function ProductsPage() {
         } catch (error) {
             console.error(error);
             toast.error("Error deleting product");
+            recordError("DELETE /api/products", String(error));
         }
     };
 
@@ -870,6 +887,7 @@ export default function ProductsPage() {
             const data = await res.json().catch(() => null);
             if (!res.ok) {
                 toast.error(data?.error || "Failed to update product");
+                recordError("PUT /api/products allow_description", data?.error || "Failed to update product", res.status);
                 return;
             }
 
@@ -879,6 +897,7 @@ export default function ProductsPage() {
         } catch (error) {
             console.error(error);
             toast.error("Error updating product");
+            recordError("PUT /api/products allow_description", String(error));
         } finally {
             setIsSubmitting(false);
         }
@@ -903,6 +922,7 @@ export default function ProductsPage() {
             const data = await res.json().catch(() => null);
             if (!res.ok) {
                 toast.error(data?.error || "Failed to update product");
+                recordError("PUT /api/products is_active", data?.error || "Failed to update product", res.status);
                 return;
             }
 
@@ -912,6 +932,7 @@ export default function ProductsPage() {
         } catch (error) {
             console.error(error);
             toast.error("Error updating product");
+            recordError("PUT /api/products is_active", String(error));
         } finally {
             setIsSubmitting(false);
         }
@@ -1529,6 +1550,32 @@ export default function ProductsPage() {
                                             </TableBody>
                                         </Table>
                                     </div>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="border-t pt-4 space-y-2">
+                            <div className="flex items-center justify-between">
+                                <Label className="text-destructive">Error Monitor</Label>
+                                <div className="flex items-center gap-2">
+                                    <Input value={errorFilter} onChange={(e) => setErrorFilter(e.target.value)} placeholder="Filter..." className="h-8 w-[200px]" />
+                                    <Button variant="outline" size="sm" onClick={() => setErrorOpen(v => !v)}>{errorOpen ? "Hide" : "Show"}</Button>
+                                    <Button variant="outline" size="sm" onClick={() => setErrorItems([])}>Clear</Button>
+                                </div>
+                            </div>
+                            {errorBanner && (
+                                <div className="rounded-md bg-red-500/15 border border-red-500/30 text-red-400 px-3 py-2 text-sm">
+                                    {errorBanner}
+                                </div>
+                            )}
+                            {errorOpen && (
+                                <div className="border rounded-md bg-muted/10 p-2 max-h-40 overflow-auto text-xs font-mono">
+                                    {errorItems.filter(e => !errorFilter || `${e.source} ${e.message}`.toLowerCase().includes(errorFilter.toLowerCase())).map((e, i) => (
+                                        <div key={`err-${i}`} className="whitespace-pre-wrap">
+                                            [{new Date(e.time).toLocaleTimeString()}] {e.source}{e.status ? ` [${e.status}]` : ""}: {e.message}
+                                        </div>
+                                    ))}
+                                    {errorItems.length === 0 && <div className="opacity-60">No errors</div>}
                                 </div>
                             )}
                         </div>
