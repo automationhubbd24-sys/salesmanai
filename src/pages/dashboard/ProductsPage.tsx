@@ -325,16 +325,16 @@ export default function ProductsPage() {
 
             if (Array.isArray(dataMsg)) {
                 combinedPages = [...combinedPages, ...dataMsg.map((p: any) => ({
-                    page_id: p.page_id,
-                    name: `(FB) ${p.name}`,
+                    page_id: String(p.page_id).trim(),
+                    name: `(FB) ${String(p.name).trim()}`,
                     type: 'messenger'
                 }))];
             }
 
             if (Array.isArray(dataWa)) {
                 combinedPages = [...combinedPages, ...dataWa.map((s: any) => ({
-                    page_id: s.name,
-                    name: `(WA) ${s.name}`,
+                    page_id: String(s.name).trim(),
+                    name: `(WA) ${String(s.name).trim()}`,
                     type: 'whatsapp'
                 }))];
             }
@@ -532,6 +532,23 @@ export default function ProductsPage() {
         
         setIsDialogOpen(true);
     };
+    
+    useEffect(() => {
+        if (isDialogOpen && editProductId !== null) {
+            const messengerSet = new Set(availablePages.filter(p => p.type === 'messenger').map(p => String(p.page_id)));
+            const waSet = new Set(availablePages.filter(p => p.type === 'whatsapp').map(p => String(p.page_id)));
+            setAllowedMessengerIds(prev => {
+                const clean = prev.map(s => String(s).trim());
+                const corrected = clean.filter(id => messengerSet.has(id));
+                return Array.from(new Set(corrected));
+            });
+            setAllowedWASessions(prev => {
+                const clean = prev.map(s => String(s).trim());
+                const corrected = clean.filter(id => waSet.has(id));
+                return Array.from(new Set(corrected));
+            });
+        }
+    }, [availablePages, isDialogOpen, editProductId]);
 
     const handleSubmit = async () => {
         if (!productName || !userId) {
