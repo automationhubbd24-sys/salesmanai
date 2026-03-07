@@ -585,8 +585,9 @@ export default function ProductsPage() {
     
     useEffect(() => {
         if (isDialogOpen && editProductId !== null) {
-            const messengerSet = new Set(availablePages.filter(p => p.type === 'messenger').map(p => String(p.page_id)));
-            const waSet = new Set(availablePages.filter(p => p.type === 'whatsapp').map(p => String(p.page_id)));
+            if (!availablePages || availablePages.length === 0) return;
+            const messengerSet = new Set(availablePages.filter(p => p.type === 'messenger').map(p => String(p.page_id).trim()));
+            const waSet = new Set(availablePages.filter(p => p.type === 'whatsapp').map(p => String(p.page_id).trim()));
             setAllowedMessengerIds(prev => {
                 const clean = prev.map(s => String(s).trim());
                 const corrected = clean.filter(id => messengerSet.has(id));
