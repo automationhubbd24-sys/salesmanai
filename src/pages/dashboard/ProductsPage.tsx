@@ -117,33 +117,38 @@ export default function ProductsPage() {
         p.name.toLowerCase().includes(pageSearch.toLowerCase())
     );
 
+    const [selectedWA, setSelectedWA] = useState<Set<string>>(new Set());
+    const [selectedFB, setSelectedFB] = useState<Set<string>>(new Set());
+    const normalizeId = (v: any) => String(v).trim().toLowerCase();
     const handleSelectAllPages = () => {
-        // Only select filtered pages to respect search
-        const newFbIds = filteredPages.filter(p => p.type === 'messenger').map(p => String(p.page_id).trim());
-        const newWaIds = filteredPages.filter(p => p.type === 'whatsapp').map(p => String(p.page_id).trim());
-        
-        // Add to respective arrays
-        setAllowedMessengerIds(prev => {
-            const base = prev.map(x => String(x).trim().toLowerCase());
-            const merged = [...prev.map(x => String(x).trim()), ...newFbIds];
-            return Array.from(new Set(merged.filter((id, idx, arr) => arr.indexOf(id) === idx)));
+        const newFbIds = filteredPages.filter(p => p.type === 'messenger').map(p => normalizeId(p.page_id));
+        const newWaIds = filteredPages.filter(p => p.type === 'whatsapp').map(p => normalizeId(p.page_id));
+        setSelectedFB(prev => {
+            const next = new Set(Array.from(prev));
+            newFbIds.forEach(id => next.add(id));
+            return next;
         });
-        setAllowedWASessions(prev => {
-            const merged = [...prev.map(x => String(x).trim()), ...newWaIds];
-            return Array.from(new Set(merged.filter((id, idx, arr) => arr.indexOf(id) === idx)));
+        setSelectedWA(prev => {
+            const next = new Set(Array.from(prev));
+            newWaIds.forEach(id => next.add(id));
+            return next;
         });
     };
 
     const handleDeselectAllPages = () => {
-        // Remove filtered pages from selection
-        const fbIdsToRemove = filteredPages.filter(p => p.type === 'messenger').map(p => String(p.page_id).trim().toLowerCase());
-        const waIdsToRemove = filteredPages.filter(p => p.type === 'whatsapp').map(p => String(p.page_id).trim().toLowerCase());
-        
-        setAllowedMessengerIds(prev => prev.filter(id => !fbIdsToRemove.includes(String(id).trim().toLowerCase())));
-        setAllowedWASessions(prev => prev.filter(id => !waIdsToRemove.includes(String(id).trim().toLowerCase())));
+        const fbIdsToRemove = filteredPages.filter(p => p.type === 'messenger').map(p => normalizeId(p.page_id));
+        const waIdsToRemove = filteredPages.filter(p => p.type === 'whatsapp').map(p => normalizeId(p.page_id));
+        setSelectedFB(prev => {
+            const next = new Set(Array.from(prev));
+            fbIdsToRemove.forEach(id => next.delete(id));
+            return next;
+        });
+        setSelectedWA(prev => {
+            const next = new Set(Array.from(prev));
+            waIdsToRemove.forEach(id => next.delete(id));
+            return next;
+        });
     };
-    const [allowedWASessions, setAllowedWASessions] = useState<string[]>([]);
-    const [allowedMessengerIds, setAllowedMessengerIds] = useState<string[]>([]);
 
     const [isCombo, setIsCombo] = useState(false);
     const [comboItems, setComboItems] = useState<string[]>([]);
@@ -557,8 +562,8 @@ export default function ProductsPage() {
             messengerIds = Array.from(new Set(onlyMessenger));
             waSessions = Array.from(new Set([...onlyWA, ...waFromMessenger]));
         }
-        setAllowedWASessions(waSessions);
-        setAllowedMessengerIds(messengerIds);
+        setSelectedWA(new Set(waSessions.map(id => normalizeId(id))));
+        setSelectedFB(new Set(messengerIds.map(id => normalizeId(id))));
 
         console.log("[ProductEditDebug] Loaded WA Sessions:", product.allowed_wa_sessions);
         console.log("[ProductEditDebug] Parsed WA Sessions:", waSessions);
@@ -583,23 +588,7 @@ export default function ProductsPage() {
         setIsDialogOpen(true);
     };
     
-    useEffect(() => {
-        if (isDialogOpen && editProductId !== null) {
-            if (!availablePages || availablePages.length === 0) return;
-            const messengerSet = new Set(availablePages.filter(p => p.type === 'messenger').map(p => String(p.page_id).trim()));
-            const waSet = new Set(availablePages.filter(p => p.type === 'whatsapp').map(p => String(p.page_id).trim()));
-            setAllowedMessengerIds(prev => {
-                const clean = prev.map(s => String(s).trim());
-                const corrected = clean.filter(id => messengerSet.has(id));
-                return Array.from(new Set(corrected));
-            });
-            setAllowedWASessions(prev => {
-                const clean = prev.map(s => String(s).trim());
-                const corrected = clean.filter(id => waSet.has(id));
-                return Array.from(new Set(corrected));
-            });
-        }
-    }, [availablePages, isDialogOpen, editProductId]);
+    useEffect(() => {}, [availablePages, isDialogOpen, editProductId]);
 
     const handleSubmit = async () => {
         if (!productName || !userId) {
@@ -621,22 +610,8 @@ export default function ProductsPage() {
             
             // --- STRICT ID SANITIZATION ---
             // Ensure we only have valid string IDs, no objects, no nulls.
-            const cleanMessengerIds = Array.from(new Set(allowedMessengerIds.map(id => {
-                if (typeof id === 'object') {
-                    // This handles the [object Object] case by extracting the ID property if present
-                    const obj = id as any;
-                    return String(obj.id || obj.page_id || obj.value || "");
-                }
-                return String(id);
-            }))).filter(id => id && id !== 'null' && id !== 'undefined' && id !== '[object Object]' && id.length > 0);
-
-            const cleanWASessions = Array.from(new Set(allowedWASessions.map(id => {
-                if (typeof id === 'object') {
-                    const obj = id as any;
-                    return String(obj.id || obj.page_id || obj.value || "");
-                }
-                return String(id);
-            }))).filter(id => id && id !== 'null' && id !== 'undefined' && id !== '[object Object]' && id.length > 0);
+            const cleanMessengerIds = Array.from(selectedFB);
+            const cleanWASessions = Array.from(selectedWA);
 
             console.log("!!! SANITIZED IDS !!!", { 
                 messenger: cleanMessengerIds, 
@@ -964,8 +939,8 @@ export default function ProductsPage() {
         
         // --- MANUAL SELECTION REQUIRED ---
         // As per user instruction: "add kroar somoi o sekan tekei add korte hobe auto nibe na"
-        setAllowedWASessions([]);
-        setAllowedMessengerIds([]);
+        setSelectedWA(new Set());
+        setSelectedFB(new Set());
 
         setIsCombo(false);
         setComboItems([]);
@@ -1400,7 +1375,7 @@ export default function ProductsPage() {
                                           ) : waPages.map(page => {
                                             const pageKeyRaw = String(page.page_id);
                                             const pageKey = pageKeyRaw.trim();
-                                            const isSelected = allowedWASessions.some(id => String(id).trim().toLowerCase() === pageKey.toLowerCase());
+                                            const isSelected = selectedWA.has(pageKey.toLowerCase());
                                             return (
                                               <div 
                                                 key={`wa-${page.page_id}`} 
@@ -1413,13 +1388,17 @@ export default function ProductsPage() {
                                                   id={`wa-page-${page.page_id}`}
                                                   checked={isSelected}
                                                   onCheckedChange={(checked) => {
-                                                    setAllowedWASessions(prev => {
-                                                      const next = checked
-                                                        ? Array.from(new Set([...prev.map(x => String(x).trim()), pageKey.trim()]))
-                                                        : prev.filter(id => String(id).trim().toLowerCase() !== pageKey.toLowerCase());
+                                                    const key = pageKey.toLowerCase();
+                                                    setSelectedWA(prev => {
+                                                      const next = new Set(Array.from(prev));
+                                                      if (checked) next.add(key); else next.delete(key);
                                                       return next;
                                                     });
-                                                    setAllowedMessengerIds(prev => prev.filter(id => String(id).trim().toLowerCase() !== pageKey.toLowerCase()));
+                                                    setSelectedFB(prev => {
+                                                      const next = new Set(Array.from(prev));
+                                                      next.delete(key);
+                                                      return next;
+                                                    });
                                                   }}
                                                   className={cn(
                                                     "data-[state=checked]:bg-[#00ff88] data-[state=checked]:border-[#00ff88]",
@@ -1449,7 +1428,7 @@ export default function ProductsPage() {
                                           ) : fbPages.map(page => {
                                             const pageKeyRaw = String(page.page_id);
                                             const pageKey = pageKeyRaw.trim();
-                                            const isSelected = allowedMessengerIds.some(id => String(id).trim().toLowerCase() === pageKey.toLowerCase());
+                                            const isSelected = selectedFB.has(pageKey.toLowerCase());
                                             return (
                                               <div 
                                                 key={`fb-${page.page_id}`} 
@@ -1462,13 +1441,17 @@ export default function ProductsPage() {
                                                   id={`fb-page-${page.page_id}`}
                                                   checked={isSelected}
                                                   onCheckedChange={(checked) => {
-                                                    setAllowedMessengerIds(prev => {
-                                                      const next = checked
-                                                        ? Array.from(new Set([...prev.map(x => String(x).trim()), pageKey.trim()]))
-                                                        : prev.filter(id => String(id).trim().toLowerCase() !== pageKey.toLowerCase());
+                                                    const key = pageKey.toLowerCase();
+                                                    setSelectedFB(prev => {
+                                                      const next = new Set(Array.from(prev));
+                                                      if (checked) next.add(key); else next.delete(key);
                                                       return next;
                                                     });
-                                                    setAllowedWASessions(prev => prev.filter(id => String(id).trim().toLowerCase() !== pageKey.toLowerCase()));
+                                                    setSelectedWA(prev => {
+                                                      const next = new Set(Array.from(prev));
+                                                      next.delete(key);
+                                                      return next;
+                                                    });
                                                   }}
                                                   className={cn(
                                                     "data-[state=checked]:bg-[#00ff88] data-[state=checked]:border-[#00ff88]",
