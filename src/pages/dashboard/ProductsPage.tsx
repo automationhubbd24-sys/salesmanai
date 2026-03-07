@@ -155,6 +155,21 @@ export default function ProductsPage() {
     ]);
     const [showVariants, setShowVariants] = useState(false);
     const [pendingDeleteProduct, setPendingDeleteProduct] = useState<Product | null>(null);
+    const [debugLogOpen, setDebugLogOpen] = useState(false);
+    const [debugLogText, setDebugLogText] = useState("");
+    const [debugLogFilter, setDebugLogFilter] = useState("");
+    const logFileInputRef = useRef<HTMLInputElement>(null);
+    const handleLogFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files && e.target.files[0] ? e.target.files[0] : null;
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+            const text = String(reader.result || "");
+            setDebugLogText(text);
+            setDebugLogOpen(true);
+        };
+        reader.readAsText(file);
+    };
 
     const getTeamOwnerForContext = () => {
         if (typeof window === "undefined") return null;
@@ -604,6 +619,7 @@ export default function ProductsPage() {
                 messenger: cleanMessengerIds, 
                 wa: cleanWASessions 
             });
+            setDebugLogText(prev => `${prev}\n[Client] SANITIZED_IDS messenger=${JSON.stringify(cleanMessengerIds)} wa=${JSON.stringify(cleanWASessions)}`);
 
             // --- TYPE-BASED SEPARATION ---
             // Ensure WA sessions never leak into Messenger IDs and vice versa
@@ -631,6 +647,7 @@ export default function ProductsPage() {
                 messenger: finalMessengerIds, 
                 wa: finalWASessions 
             });
+            setDebugLogText(prev => `${prev}\n[Client] TYPE_SEPARATED messenger=${JSON.stringify(finalMessengerIds)} wa=${JSON.stringify(finalWASessions)}`);
 
             if (cleanMessengerIds.length === 0 && cleanWASessions.length === 0) {
                 toast.error("Error: At least one assignment is required. Please select a Facebook Page or WhatsApp Session.");
@@ -1512,6 +1529,32 @@ export default function ProductsPage() {
                                             </TableBody>
                                         </Table>
                                     </div>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="border-t pt-4 space-y-2">
+                            <div className="flex items-center justify-between">
+                                <Label className="text-muted-foreground">Debug Logs</Label>
+                                <div className="flex items-center gap-2">
+                                    <Input value={debugLogFilter} onChange={(e) => setDebugLogFilter(e.target.value)} placeholder="Filter..." className="h-8 w-[200px]" />
+                                    <Button variant="outline" size="sm" onClick={() => setDebugLogOpen((v) => !v)}>
+                                        {debugLogOpen ? "Hide" : "Show"}
+                                    </Button>
+                                    <Button variant="outline" size="sm" onClick={() => { if (logFileInputRef.current) (logFileInputRef.current as any).click(); }}>
+                                        Attach Log
+                                    </Button>
+                                    <input ref={logFileInputRef} type="file" accept=".txt" className="hidden" onChange={handleLogFileChange} />
+                                    <Button variant="outline" size="sm" onClick={() => setDebugLogText("")}>
+                                        Clear
+                                    </Button>
+                                </div>
+                            </div>
+                            {debugLogOpen && (
+                                <div className="border rounded-md bg-muted/10 p-2 max-h-48 overflow-auto text-xs font-mono">
+                                    {debugLogText.split(/\r?\n/).filter(l => !debugLogFilter || l.toLowerCase().includes(debugLogFilter.toLowerCase())).map((l, i) => (
+                                        <div key={`log-${i}`} className="whitespace-pre-wrap">{l}</div>
+                                    ))}
                                 </div>
                             )}
                         </div>
