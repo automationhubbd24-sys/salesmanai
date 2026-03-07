@@ -1586,57 +1586,7 @@ export default function ProductsPage() {
                             )}
                         </div>
 
-                        <div className="border-t pt-4 space-y-2">
-                            <div className="flex items-center justify-between">
-                                <Label className="text-destructive">Error Monitor</Label>
-                                <div className="flex items-center gap-2">
-                                    <Input value={errorFilter} onChange={(e) => setErrorFilter(e.target.value)} placeholder="Filter..." className="h-8 w-[200px]" />
-                                    <Button variant="outline" size="sm" onClick={() => setErrorOpen(v => !v)}>{errorOpen ? "Hide" : "Show"}</Button>
-                                    <Button variant="outline" size="sm" onClick={() => setErrorItems([])}>Clear</Button>
-                                </div>
-                            </div>
-                            {errorBanner && (
-                                <div className="rounded-md bg-red-500/15 border border-red-500/30 text-red-400 px-3 py-2 text-sm">
-                                    {errorBanner}
-                                </div>
-                            )}
-                            {errorOpen && (
-                                <div className="border rounded-md bg-muted/10 p-2 max-h-40 overflow-auto text-xs font-mono">
-                                    {errorItems.filter(e => !errorFilter || `${e.source} ${e.message}`.toLowerCase().includes(errorFilter.toLowerCase())).map((e, i) => (
-                                        <div key={`err-${i}`} className="whitespace-pre-wrap">
-                                            [{new Date(e.time).toLocaleTimeString()}] {e.source}{e.status ? ` [${e.status}]` : ""}: {e.message}
-                                        </div>
-                                    ))}
-                                    {errorItems.length === 0 && <div className="opacity-60">No errors</div>}
-                                </div>
-                            )}
-                        </div>
-
-                        <div className="border-t pt-4 space-y-2">
-                            <div className="flex items-center justify-between">
-                                <Label className="text-muted-foreground">Debug Logs</Label>
-                                <div className="flex items-center gap-2">
-                                    <Input value={debugLogFilter} onChange={(e) => setDebugLogFilter(e.target.value)} placeholder="Filter..." className="h-8 w-[200px]" />
-                                    <Button variant="outline" size="sm" onClick={() => setDebugLogOpen((v) => !v)}>
-                                        {debugLogOpen ? "Hide" : "Show"}
-                                    </Button>
-                                    <Button variant="outline" size="sm" onClick={() => { if (logFileInputRef.current) (logFileInputRef.current as any).click(); }}>
-                                        Attach Log
-                                    </Button>
-                                    <input ref={logFileInputRef} type="file" accept=".txt" className="hidden" onChange={handleLogFileChange} />
-                                    <Button variant="outline" size="sm" onClick={() => setDebugLogText("")}>
-                                        Clear
-                                    </Button>
-                                </div>
-                            </div>
-                            {debugLogOpen && (
-                                <div className="border rounded-md bg-muted/10 p-2 max-h-48 overflow-auto text-xs font-mono">
-                                    {debugLogText.split(/\r?\n/).filter(l => !debugLogFilter || l.toLowerCase().includes(debugLogFilter.toLowerCase())).map((l, i) => (
-                                        <div key={`log-${i}`} className="whitespace-pre-wrap">{l}</div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
+                        
 
                         <DialogFooter>
                             <Button variant="outline" className="border-white/20 rounded-md" onClick={() => setIsDialogOpen(false)}>Cancel</Button>
