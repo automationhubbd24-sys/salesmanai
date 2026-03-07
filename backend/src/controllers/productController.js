@@ -883,13 +883,18 @@ exports.deleteProduct = async (req, res) => {
             const waSessions = Array.isArray(existing.allowed_wa_sessions) ? existing.allowed_wa_sessions : (() => { try { return JSON.parse(existing.allowed_wa_sessions || '[]'); } catch { return []; } })();
             const newMessenger = isMessenger ? messengerIds.filter(x => String(x) !== String(pageId)) : messengerIds;
             const newWA = !isMessenger ? waSessions.filter(x => String(x) !== String(pageId)) : waSessions;
-            const platform = (newMessenger.length === 0 && newWA.length === 0) ? 'global' : 'restricted';
-            const updated = await dbService.updateProduct(id, userId, {
-                allowed_messenger_ids: newMessenger,
-                allowed_wa_sessions: newWA,
-                platform
-            });
-            return res.json({ success: true, message: "Unassigned from current page/session", data: updated });
+            if (newMessenger.length === 0 && newWA.length === 0) {
+                await dbService.deleteProduct(id, userId);
+                return res.json({ success: true, message: "Product deleted" });
+            } else {
+                const platform = 'restricted';
+                const updated = await dbService.updateProduct(id, userId, {
+                    allowed_messenger_ids: newMessenger,
+                    allowed_wa_sessions: newWA,
+                    platform
+                });
+                return res.json({ success: true, message: "Unassigned from current page/session", data: updated });
+            }
         } else {
             await dbService.deleteProduct(id, userId);
             return res.json({ success: true, message: "Product deleted" });
