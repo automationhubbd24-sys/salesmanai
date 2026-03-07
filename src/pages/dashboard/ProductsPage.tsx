@@ -405,9 +405,9 @@ export default function ProductsPage() {
                 // If it's an object, try to find an ID or name property, or skip it
                 if (typeof id === 'object') {
                     const obj = id as any;
-                    return String(obj.id || obj.page_id || obj.name || "");
+                    return String(obj.id || obj.page_id || obj.name || "").trim();
                 }
-                return String(id);
+                return String(id).trim();
             })
             .filter(id => id && id !== 'null' && id !== 'undefined' && id !== '[object Object]');
     };

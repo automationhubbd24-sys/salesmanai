@@ -471,8 +471,8 @@ exports.createProduct = async (req, res) => {
             return arr
                 .map(id => {
                     if (!id) return null;
-                    if (typeof id === 'object') return String(id.id || id.page_id || id.name || "");
-                    return String(id);
+                    if (typeof id === 'object') return String(id.id || id.page_id || id.name || "").trim();
+                    return String(id).trim();
                 })
                 .filter(id => id && id !== 'null' && id !== 'undefined' && id !== '[object Object]');
         };
