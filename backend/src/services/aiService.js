@@ -1792,6 +1792,17 @@ ${productContext || "No specific product context provided yet."}
 
         console.log(`[AI] Phase 2: Calling SalesmanChatbot AgentLoop (${finalProvider}/${currentModel})...`);
 
+        // Managed engine: use proxy for Gemini/Groq calls
+        let proxyAgent = null;
+        const isManagedEngine = !(pageConfig && (pageConfig.cheap_engine === false || pageConfig.api_key));
+        if (isManagedEngine) {
+            if (finalProvider === 'google' || finalProvider === 'gemini') {
+                proxyAgent = getGeminiProxyAgent(baseURL, true);
+            } else if (finalProvider === 'groq') {
+                proxyAgent = getGroqProxyAgent(true);
+            }
+        }
+
         const result = await runAgentLoop({
             apiKey: apiKey,
             baseURL: baseURL,
@@ -2432,7 +2443,8 @@ async function transcribeAudio(audioUrl, config) {
                     }]
                 };
                 
-                const geminiProxyAgent = getGeminiProxyAgent(url, !option.key);
+                const isManaged = !(config && (config.cheap_engine === false || config.api_key));
+                const geminiProxyAgent = getGeminiProxyAgent(url, isManaged);
                 
                 const res = await axios.post(url, payload, {
                     ...(geminiProxyAgent ? { 
@@ -2469,7 +2481,8 @@ async function transcribeAudio(audioUrl, config) {
 
                 // NEW: Groq Proxy Support (Similar to Gemini Proxy)
                 // Use proxy if it's a system key (no user key provided in option)
-                const useProxy = !option.key && !(config && (config.cheap_engine === false || config.api_key));
+                const isManaged = !(config && (config.cheap_engine === false || config.api_key));
+                const useProxy = isManaged;
                 const groqProxyAgent = getGroqProxyAgent(useProxy);
                 
                 // Force proxy for system keys as requested
