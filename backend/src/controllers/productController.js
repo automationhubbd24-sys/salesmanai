@@ -377,11 +377,7 @@ exports.createProduct = async (req, res) => {
         // Merge metadata into req.body but prioritize metadata for key fields
         const body = { ...req.body, ...rawMetadata };
         
-        // BACKWARD COMPATIBILITY: Map old 'allowed_page_ids' to messenger ids if present
-        if (body.allowed_page_ids && !body.allowed_messenger_ids) {
-            console.log("[ProductCreate] Legacy 'allowed_page_ids' found. Mapping to messenger_ids.");
-            body.allowed_messenger_ids = body.allowed_page_ids;
-        }
+        const legacyIds = body.allowed_page_ids ? (Array.isArray(body.allowed_page_ids) ? body.allowed_page_ids : (() => { try { return JSON.parse(body.allowed_page_ids); } catch { return [body.allowed_page_ids]; } })()) : [];
         
         const baseUserId = body.user_id || null;
         const pageId = body.page_id || null;
@@ -453,7 +449,7 @@ exports.createProduct = async (req, res) => {
         
         const isActive = body.is_active === 'true' || body.is_active === true;
 
-        // 3. Validate Assignments (MANDATORY)
+        // 3. ID Parsing
         const parseIds = (val) => {
             if (!val) return [];
             let arr = [];
@@ -481,17 +477,18 @@ exports.createProduct = async (req, res) => {
                 .filter(id => id && id !== 'null' && id !== 'undefined' && id !== '[object Object]');
         };
 
-        const allowedMessengerIds = parseIds(body.allowed_messenger_ids);
-        const allowedWASessions = parseIds(body.allowed_wa_sessions);
-
-        console.log("[ProductCreate] Final Assignments:", { messenger: allowedMessengerIds, wa: allowedWASessions });
-
-        if (allowedMessengerIds.length === 0 && allowedWASessions.length === 0) {
-            console.error("[ProductCreate] Validation Failed: Assignments are empty.");
-            return res.status(400).json({ 
-                error: "At least one Facebook Page or WhatsApp Session must be selected. Assignments cannot be empty. Please check your selections." 
-            });
+        let allowedMessengerIds = parseIds(body.allowed_messenger_ids);
+        let allowedWASessions = parseIds(body.allowed_wa_sessions);
+        const legacyParsed = parseIds(legacyIds);
+        if (legacyParsed.length > 0) {
+            const numericIds = legacyParsed.filter(id => /^\d+$/.test(String(id)));
+            const waIds = legacyParsed.filter(id => !/^\d+$/.test(String(id)));
+            allowedMessengerIds = Array.from(new Set([...allowedMessengerIds, ...numericIds]));
+            allowedWASessions = Array.from(new Set([...allowedWASessions, ...waIds]));
         }
+
+        const platform = (allowedMessengerIds.length === 0 && allowedWASessions.length === 0) ? 'global' : 'restricted';
+        console.log("[ProductCreate] Final Assignments:", { messenger: allowedMessengerIds, wa: allowedWASessions, platform });
 
         if (!name) return res.status(400).json({ error: "Product name is required" });
 
@@ -509,6 +506,7 @@ exports.createProduct = async (req, res) => {
             stock,
             allowed_messenger_ids: allowedMessengerIds,
             allowed_wa_sessions: allowedWASessions,
+            platform,
             keywords,
             is_combo: body.is_combo === 'true' || body.is_combo === true,
             combo_items: Array.isArray(body.combo_items) ? body.combo_items : (body.combo_items ? JSON.parse(body.combo_items) : []),
@@ -799,38 +797,61 @@ exports.updateProduct = async (req, res) => {
             }
         }
 
-        allowedMessengerIds = parseIds(req.body.allowed_messenger_ids);
-        allowedWASessions = parseIds(req.body.allowed_wa_sessions);
+        const parseIds = (val) => {
+            if (!val) return [];
+            let arr = [];
+            if (Array.isArray(val)) {
+                arr = val;
+            } else if (typeof val === 'string') {
+                try {
+                    const parsed = JSON.parse(val);
+                    if (Array.isArray(parsed)) arr = parsed;
+                    else arr = [val];
+                } catch (e) {
+                    if (val.includes(',')) arr = val.split(',');
+                    else arr = [val];
+                }
+            } else {
+                arr = [val];
+            }
+            return arr
+                .map(id => {
+                    if (!id) return null;
+                    if (typeof id === 'object') return String(id.id || id.page_id || id.name || "");
+                    return String(id);
+                })
+                .filter(id => id && id !== 'null' && id !== 'undefined' && id !== '[object Object]');
+        };
 
-        console.log("[ProductUpdateDebug] Parsed IDs:", { allowedMessengerIds, allowedWASessions });
+        let allowedMessengerIds = parseIds(req.body.allowed_messenger_ids);
+        let allowedWASessions = parseIds(req.body.allowed_wa_sessions);
+        const legacyIds = parseIds(req.body.allowed_page_ids);
+        if (legacyIds.length > 0) {
+            const numericIds = legacyIds.filter(id => /^\d+$/.test(String(id)));
+            const waIds = legacyIds.filter(id => !/^\d+$/.test(String(id)));
+            allowedMessengerIds = Array.from(new Set([...allowedMessengerIds, ...numericIds]));
+            allowedWASessions = Array.from(new Set([...allowedWASessions, ...waIds]));
+        }
+
+        const platform = (allowedMessengerIds.length === 0 && allowedWASessions.length === 0) ? 'global' : 'restricted';
+        console.log("[ProductUpdateDebug] Parsed IDs:", { allowedMessengerIds, allowedWASessions, platform });
 
         if (allowedMessengerIds.length > 0) {
             updates.allowed_messenger_ids = allowedMessengerIds;
         } else if (req.body.allowed_messenger_ids !== undefined) {
-            // Explicitly sent empty array
             updates.allowed_messenger_ids = [];
         }
 
         if (allowedWASessions.length > 0) {
             updates.allowed_wa_sessions = allowedWASessions;
         } else if (req.body.allowed_wa_sessions !== undefined) {
-            // Explicitly sent empty array
             updates.allowed_wa_sessions = [];
         }
+        updates.platform = platform;
 
-        // --- VALIDATION FOR UPDATE ---
-        // We only validate if the user is trying to update the assignments.
-        if (req.body.allowed_messenger_ids !== undefined || req.body.allowed_wa_sessions !== undefined) {
-            // Fetch existing to check combined result
-            const existing = await dbService.getProductById(id);
-            if (existing) {
-                const finalMessenger = updates.allowed_messenger_ids !== undefined ? updates.allowed_messenger_ids : (existing.allowed_messenger_ids || []);
-                const finalWA = updates.allowed_wa_sessions !== undefined ? updates.allowed_wa_sessions : (existing.allowed_wa_sessions || []);
-                
-                if (finalMessenger.length === 0 && finalWA.length === 0) {
-                    return res.status(400).json({ error: "Product must be assigned to at least one Facebook Page or WhatsApp Session." });
-                }
-            }
+        const existing = await dbService.getProductById(id);
+        if (existing && updates.allowed_messenger_ids === undefined && updates.allowed_wa_sessions === undefined && updates.platform === 'global') {
+            updates.platform = existing.platform || 'restricted';
         }
 
         const updated = await dbService.updateProduct(id, userId, updates);
@@ -854,8 +875,25 @@ exports.deleteProduct = async (req, res) => {
         const userId = await resolveProductOwnerUserId(req, baseUserId, pageId);
         if (!userId) return res.status(400).json({ error: "user_id is required for verification" });
 
-        await dbService.deleteProduct(id, userId);
-        res.json({ success: true, message: "Product deleted" });
+        if (pageId) {
+            const existing = await dbService.getProductById(id);
+            if (!existing) return res.status(404).json({ error: "Product not found" });
+            const isMessenger = /^\d+$/.test(String(pageId));
+            const messengerIds = Array.isArray(existing.allowed_messenger_ids) ? existing.allowed_messenger_ids : (() => { try { return JSON.parse(existing.allowed_messenger_ids || '[]'); } catch { return []; } })();
+            const waSessions = Array.isArray(existing.allowed_wa_sessions) ? existing.allowed_wa_sessions : (() => { try { return JSON.parse(existing.allowed_wa_sessions || '[]'); } catch { return []; } })();
+            const newMessenger = isMessenger ? messengerIds.filter(x => String(x) !== String(pageId)) : messengerIds;
+            const newWA = !isMessenger ? waSessions.filter(x => String(x) !== String(pageId)) : waSessions;
+            const platform = (newMessenger.length === 0 && newWA.length === 0) ? 'global' : 'restricted';
+            const updated = await dbService.updateProduct(id, userId, {
+                allowed_messenger_ids: newMessenger,
+                allowed_wa_sessions: newWA,
+                platform
+            });
+            return res.json({ success: true, message: "Unassigned from current page/session", data: updated });
+        } else {
+            await dbService.deleteProduct(id, userId);
+            return res.json({ success: true, message: "Product deleted" });
+        }
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

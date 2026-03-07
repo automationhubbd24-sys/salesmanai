@@ -2464,6 +2464,7 @@ async function createProduct(productData) {
         'stock',
         'allowed_messenger_ids',
         'allowed_wa_sessions',
+        'platform',
         'keywords',
         'is_combo',
         'combo_items',
@@ -2565,7 +2566,7 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
     params.push(String(pageId));
     const pIdx = params.length;
 
-    whereClause += ` AND (${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text))`;
+    whereClause += ` AND ((${pageCol}::jsonb @> jsonb_build_array($${pIdx}::text)) OR platform = 'global')`;
 
     // 2. Search Query
     if (searchQuery) {
