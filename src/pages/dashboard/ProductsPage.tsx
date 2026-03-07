@@ -507,6 +507,11 @@ export default function ProductsPage() {
         setAllowedWASessions(parseAssignment(product.allowed_wa_sessions));
         setAllowedMessengerIds(parseAssignment(product.allowed_messenger_ids));
 
+        console.log("[ProductEditDebug] Loaded WA Sessions:", product.allowed_wa_sessions);
+        console.log("[ProductEditDebug] Parsed WA Sessions:", parseAssignment(product.allowed_wa_sessions));
+        console.log("[ProductEditDebug] Loaded Messenger IDs:", product.allowed_messenger_ids);
+        console.log("[ProductEditDebug] Parsed Messenger IDs:", parseAssignment(product.allowed_messenger_ids));
+
         setIsCombo(!!product.is_combo);
         setComboItems(Array.isArray(product.combo_items) ? product.combo_items : []);
         setComboItemInput("");
@@ -569,19 +574,9 @@ export default function ProductsPage() {
 
             // Validation: Must have at least one assignment
             if (finalMessengerIds.length === 0 && finalWASessions.length === 0) {
-                if (editProductId) {
-                    const confirmDelete = window.confirm("You have unchecked all pages/sessions. At least one assignment is required. Do you want to delete this product instead?");
-                    if (confirmDelete) {
-                        handleDelete(editProductId);
-                        setIsDialogOpen(false);
-                        return;
-                    } else {
-                        setIsSubmitting(false);
-                        return;
-                    }
-                } else {
-                    throw new Error("Please select at least one Facebook Page or WhatsApp Session for this product.");
-                }
+                alert("Error: At least one assignment is required. Please select a Facebook Page or WhatsApp Session.");
+                setIsSubmitting(false);
+                return;
             }
 
             formData.append("allowed_messenger_ids", JSON.stringify(finalMessengerIds));
