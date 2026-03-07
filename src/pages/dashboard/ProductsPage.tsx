@@ -558,20 +558,29 @@ export default function ProductsPage() {
             const normalizedMessengerIds = Array.from(new Set(allowedMessengerIds.map(String))).filter(Boolean);
             const normalizedWASessions = Array.from(new Set(allowedWASessions.map(String))).filter(Boolean);
 
-            formData.append("allowed_messenger_ids", JSON.stringify(normalizedMessengerIds)); 
-            formData.append("allowed_wa_sessions", JSON.stringify(normalizedWASessions));
-            
-            // If the user hasn't selected anything, it's global.
-            // If selected, we must ensure it stays within that platform's visibility.
-            const isAssignedToWa = normalizedWASessions.length > 0;
-            const isAssignedToFb = normalizedMessengerIds.length > 0;
-            
-            if (isAssignedToWa && !isAssignedToFb) {
-                formData.append("platform", "whatsapp");
-            } else if (isAssignedToFb && !isAssignedToWa) {
-                formData.append("platform", "messenger");
+            // --- CANONICAL PLAN: Platform Specific Isolation ---
+            // If in Messenger context, we ONLY care about FB assignments.
+            // If in WhatsApp context, we ONLY care about WA assignments.
+            // This prevents "cross-platform leakage" where a product might end up assigned to both by mistake.
+
+            if (platform === "messenger") {
+                formData.append("allowed_messenger_ids", JSON.stringify(normalizedMessengerIds));
+                formData.append("allowed_wa_sessions", JSON.stringify([]));
+                formData.append("platform", normalizedMessengerIds.length > 0 ? "messenger" : "global");
+            } else if (platform === "whatsapp") {
+                formData.append("allowed_wa_sessions", JSON.stringify(normalizedWASessions));
+                formData.append("allowed_messenger_ids", JSON.stringify([]));
+                formData.append("platform", normalizedWASessions.length > 0 ? "whatsapp" : "global");
             } else {
-                formData.append("platform", "global");
+                // Global context or no platform specified
+                formData.append("allowed_messenger_ids", JSON.stringify(normalizedMessengerIds));
+                formData.append("allowed_wa_sessions", JSON.stringify(normalizedWASessions));
+                
+                const hasWa = normalizedWASessions.length > 0;
+                const hasFb = normalizedMessengerIds.length > 0;
+                if (hasWa && !hasFb) formData.append("platform", "whatsapp");
+                else if (hasFb && !hasWa) formData.append("platform", "messenger");
+                else formData.append("platform", "global");
             }
 
             formData.append("is_combo", String(isCombo));
@@ -776,12 +785,18 @@ export default function ProductsPage() {
         setProductImages([]);
         setImagePreviews([]);
         
-        // Auto-select current page/session if available
-        if (platform === "messenger" && pageId) {
-            setAllowedMessengerIds([pageId]);
+        // --- CLEAN PLAN: Auto-select based on active context ---
+        // If we are in Messenger context, auto-select current page
+        // If we are in WhatsApp context, auto-select current session
+        
+        const activeFbPage = typeof window !== "undefined" ? localStorage.getItem("active_fb_page_id") : null;
+        const activeWaSession = typeof window !== "undefined" ? localStorage.getItem("active_wa_session_id") : null;
+
+        if (platform === "messenger" && activeFbPage) {
+            setAllowedMessengerIds([activeFbPage]);
             setAllowedWASessions([]);
-        } else if (platform === "whatsapp" && pageId) {
-            setAllowedWASessions([pageId]);
+        } else if (platform === "whatsapp" && activeWaSession) {
+            setAllowedWASessions([activeWaSession]);
             setAllowedMessengerIds([]);
         } else {
             setAllowedMessengerIds([]);
@@ -1211,8 +1226,9 @@ export default function ProductsPage() {
                                   const fbPages = filteredPages.filter(p => p.type === 'messenger');
                                   
                                   // Determine what to show based on platform
-                                  const showWa = !platform || platform === 'whatsapp';
-                                  const showFb = !platform || platform === 'messenger';
+                                  // --- CLEAN UI PLAN: Only show selectors for active context ---
+                                  const showWa = platform === 'whatsapp' || !platform;
+                                  const showFb = platform === 'messenger' || !platform;
 
                                   return (
                                     <div className="space-y-3">
