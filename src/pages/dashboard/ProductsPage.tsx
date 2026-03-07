@@ -553,13 +553,27 @@ export default function ProductsPage() {
             const normalizedMessengerIds = Array.from(new Set(allowedMessengerIds.map(String))).filter(Boolean);
             const normalizedWASessions = Array.from(new Set(allowedWASessions.map(String))).filter(Boolean);
 
+            // --- AUTO-CONTEXT ASSIGNMENT ON SUBMIT ---
+            // If the user is on a specific page/session and has NO manual assignments, 
+            // auto-assign it to the current context.
+            let finalMessengerIds = normalizedMessengerIds;
+            let finalWASessions = normalizedWASessions;
+
+            if (finalMessengerIds.length === 0 && finalWASessions.length === 0 && currentContextId) {
+                if (platform === "messenger") {
+                    finalMessengerIds = [currentContextId];
+                } else if (platform === "whatsapp") {
+                    finalWASessions = [currentContextId];
+                }
+            }
+
             // Validation: Must have at least one assignment
-            if (normalizedMessengerIds.length === 0 && normalizedWASessions.length === 0 && !currentContextId) {
+            if (finalMessengerIds.length === 0 && finalWASessions.length === 0) {
                 throw new Error("Please select at least one Facebook Page or WhatsApp Session for this product.");
             }
 
-            formData.append("allowed_messenger_ids", JSON.stringify(normalizedMessengerIds));
-            formData.append("allowed_wa_sessions", JSON.stringify(normalizedWASessions));
+            formData.append("allowed_messenger_ids", JSON.stringify(finalMessengerIds));
+            formData.append("allowed_wa_sessions", JSON.stringify(finalWASessions));
 
             formData.append("is_combo", String(!!isCombo));
             formData.append("combo_items", JSON.stringify(comboItems || []));

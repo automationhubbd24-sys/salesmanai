@@ -767,7 +767,7 @@ exports.updateProduct = async (req, res) => {
                 const parsed = JSON.parse(req.body.allowed_messenger_ids);
                 if (Array.isArray(parsed)) {
                     currentMessengerIds = parsed.map(String);
-                    updates.allowed_messenger_ids = currentMessengerIds;
+                    updates.allowed_messenger_ids = currentMessengerIds; // Directly store the array
                 }
             } catch (e) {
                 return res.status(400).json({ error: "Invalid allowed_messenger_ids JSON format" });
@@ -780,7 +780,7 @@ exports.updateProduct = async (req, res) => {
                 const parsed = JSON.parse(req.body.allowed_wa_sessions);
                 if (Array.isArray(parsed)) {
                     currentWASessions = parsed.map(String);
-                    updates.allowed_wa_sessions = currentWASessions;
+                    updates.allowed_wa_sessions = currentWASessions; // Directly store the array
                 }
             } catch (e) {
                 return res.status(400).json({ error: "Invalid allowed_wa_sessions JSON format" });
