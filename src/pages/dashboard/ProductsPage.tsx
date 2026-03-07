@@ -319,10 +319,13 @@ export default function ProductsPage() {
 
             if (data && data.data && Array.isArray(data.data)) {
                 setProducts(data.data);
+                setDebugLogText(prev => `${prev}\n[Client] PRODUCTS_FETCH page=${resolvedPageId} count=${data.data.length}`);
             } else if (Array.isArray(data)) {
                 setProducts(data);
+                setDebugLogText(prev => `${prev}\n[Client] PRODUCTS_FETCH page=${resolvedPageId} count=${data.length}`);
             } else {
                 setProducts([]);
+                setDebugLogText(prev => `${prev}\n[Client] PRODUCTS_FETCH page=${resolvedPageId} count=0`);
             }
         } catch (error) {
             console.error("Fetch products failed:", error);
@@ -374,6 +377,9 @@ export default function ProductsPage() {
             }
 
             setAvailablePages(combinedPages);
+            const fbCount = combinedPages.filter(p => p.type === 'messenger').length;
+            const waCount = combinedPages.filter(p => p.type === 'whatsapp').length;
+            setDebugLogText(prev => `${prev}\n[Client] PAGES_FETCH fb=${fbCount} wa=${waCount}`);
             return combinedPages;
         } catch (error) {
             console.error("Failed to fetch pages:", error);
@@ -558,6 +564,8 @@ export default function ProductsPage() {
         console.log("[ProductEditDebug] Parsed WA Sessions:", waSessions);
         console.log("[ProductEditDebug] Loaded Messenger IDs:", product.allowed_messenger_ids);
         console.log("[ProductEditDebug] Parsed Messenger IDs:", messengerIds);
+        setDebugLogText(prev => `${prev}\n[Client] EDIT_SELECTED wa=${JSON.stringify(waSessions)} fb=${JSON.stringify(messengerIds)}`);
+        setDebugLogOpen(true);
 
         setIsCombo(!!product.is_combo);
         setComboItems(Array.isArray(product.combo_items) ? product.combo_items : []);
@@ -976,6 +984,11 @@ export default function ProductsPage() {
 
     return (
         <div className="space-y-6 p-6 pb-24">
+            {errorBanner && (
+                <div className="rounded-md bg-red-500/15 border border-red-500/30 text-red-400 px-3 py-2 text-sm">
+                    {errorBanner}
+                </div>
+            )}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight">Products</h1>
