@@ -559,6 +559,26 @@ export default function ProductsPage() {
                 wa: cleanWASessions 
             });
 
+            // --- TYPE-BASED SEPARATION ---
+            // Ensure WA sessions never leak into Messenger IDs and vice versa
+            let finalMessengerIds = cleanMessengerIds;
+            let finalWASessions = cleanWASessions;
+            if (availablePages && availablePages.length > 0) {
+                const messengerSet = new Set(availablePages.filter(p => p.type === 'messenger').map(p => String(p.page_id)));
+                const waSet = new Set(availablePages.filter(p => p.type === 'whatsapp').map(p => String(p.page_id)));
+                
+                const waInMessenger = finalMessengerIds.filter(id => waSet.has(id));
+                const messengerInWA = finalWASessions.filter(id => messengerSet.has(id));
+                
+                finalMessengerIds = Array.from(new Set(finalMessengerIds.filter(id => messengerSet.has(id)).concat(messengerInWA)));
+                finalWASessions = Array.from(new Set(finalWASessions.filter(id => waSet.has(id)).concat(waInMessenger)));
+            }
+            
+            console.log("!!! TYPE SEPARATED IDS !!!", { 
+                messenger: finalMessengerIds, 
+                wa: finalWASessions 
+            });
+
             if (cleanMessengerIds.length === 0 && cleanWASessions.length === 0) {
                 toast.error("Error: At least one assignment is required. Please select a Facebook Page or WhatsApp Session.");
                 setIsSubmitting(false);
@@ -575,8 +595,8 @@ export default function ProductsPage() {
                 currency: String(productCurrency || "USD"),
                 stock: Number(productStock || 0),
                 is_active: true,
-                allowed_messenger_ids: cleanMessengerIds,
-                allowed_wa_sessions: cleanWASessions,
+                allowed_messenger_ids: finalMessengerIds,
+                allowed_wa_sessions: finalWASessions,
                 is_combo: !!isCombo,
                 combo_items: comboItems || [],
                 allow_description: !!allowDescription,
@@ -597,8 +617,8 @@ export default function ProductsPage() {
             formData.append("user_id", metadata.user_id);
             formData.append("name", metadata.name);
             formData.append("description", metadata.description);
-            formData.append("allowed_messenger_ids", JSON.stringify(cleanMessengerIds));
-            formData.append("allowed_wa_sessions", JSON.stringify(cleanWASessions));
+            formData.append("allowed_messenger_ids", JSON.stringify(finalMessengerIds));
+            formData.append("allowed_wa_sessions", JSON.stringify(finalWASessions));
             formData.append("page_id", String(metadata.page_id || ""));
 
             // --- FILES LAST (Best practice for Multer) ---
