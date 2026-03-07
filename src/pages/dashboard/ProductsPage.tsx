@@ -555,11 +555,11 @@ export default function ProductsPage() {
 
             // --- AUTO-CONTEXT ASSIGNMENT ON SUBMIT ---
             // If the user is on a specific page/session and has NO manual assignments, 
-            // auto-assign it to the current context.
+            // auto-assign it to the current context (FOR NEW PRODUCTS ONLY)
             let finalMessengerIds = normalizedMessengerIds;
             let finalWASessions = normalizedWASessions;
 
-            if (finalMessengerIds.length === 0 && finalWASessions.length === 0 && currentContextId) {
+            if (!editProductId && finalMessengerIds.length === 0 && finalWASessions.length === 0 && currentContextId) {
                 if (platform === "messenger") {
                     finalMessengerIds = [currentContextId];
                 } else if (platform === "whatsapp") {
@@ -569,7 +569,19 @@ export default function ProductsPage() {
 
             // Validation: Must have at least one assignment
             if (finalMessengerIds.length === 0 && finalWASessions.length === 0) {
-                throw new Error("Please select at least one Facebook Page or WhatsApp Session for this product.");
+                if (editProductId) {
+                    const confirmDelete = window.confirm("You have unchecked all pages/sessions. At least one assignment is required. Do you want to delete this product instead?");
+                    if (confirmDelete) {
+                        handleDelete(editProductId);
+                        setIsDialogOpen(false);
+                        return;
+                    } else {
+                        setIsSubmitting(false);
+                        return;
+                    }
+                } else {
+                    throw new Error("Please select at least one Facebook Page or WhatsApp Session for this product.");
+                }
             }
 
             formData.append("allowed_messenger_ids", JSON.stringify(finalMessengerIds));
@@ -1249,15 +1261,16 @@ export default function ProductsPage() {
                                                 <div 
                                                   key={`wa-${page.page_id}`} 
                                                   className="flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors"
-                                                  onClick={toggleSelection}
+                                                  onClick={(e) => {
+                                                    e.preventDefault();
+                                                    e.stopPropagation();
+                                                    toggleSelection();
+                                                  }}
                                                 >
                                                   <Checkbox 
                                                     id={`wa-page-${page.page_id}`}
                                                     checked={isSelected}
-                                                    onCheckedChange={(checked) => {
-                                                      // onCheckedChange already handles the toggle logic
-                                                      // but we use our toggleSelection for consistency with div click
-                                                    }}
+                                                    className="pointer-events-none"
                                                   />
                                                   <Label 
                                                     className="text-sm font-normal cursor-pointer select-none flex-1 truncate"
@@ -1291,14 +1304,16 @@ export default function ProductsPage() {
                                                 <div 
                                                   key={`fb-${page.page_id}`} 
                                                   className="flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors"
-                                                  onClick={toggleSelection}
+                                                  onClick={(e) => {
+                                                    e.preventDefault();
+                                                    e.stopPropagation();
+                                                    toggleSelection();
+                                                  }}
                                                 >
                                                   <Checkbox 
                                                     id={`fb-page-${page.page_id}`}
                                                     checked={isSelected}
-                                                    onCheckedChange={(checked) => {
-                                                      // Toggled via div click
-                                                    }}
+                                                    className="pointer-events-none"
                                                   />
                                                   <Label 
                                                     className="text-sm font-normal cursor-pointer select-none flex-1 truncate"
