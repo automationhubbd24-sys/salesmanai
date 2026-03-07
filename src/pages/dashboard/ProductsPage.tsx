@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from "react";
-import { useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -41,22 +40,11 @@ interface Product {
 }
 
 export default function ProductsPage() {
-    const location = useLocation();
-    
-    // 1. Initial State Resolution
-    const getPlatform = () => {
-        const parts = location.pathname.split('/');
-        if (parts.includes('whatsapp')) return 'whatsapp';
-        if (parts.includes('messenger')) return 'messenger';
-        if (parts.includes('instagram')) return 'instagram';
-        return null;
-    };
-
     const getInitialPageId = () => {
-        const p = getPlatform();
-        if (p === 'whatsapp') return localStorage.getItem('active_wa_session_id');
-        if (p === 'messenger') return localStorage.getItem('active_fb_page_id');
-        return null;
+        const wa = localStorage.getItem('active_wa_session_id');
+        if (wa) return wa;
+        const fb = localStorage.getItem('active_fb_page_id');
+        return fb || null;
     };
 
     const [loading, setLoading] = useState(true);
@@ -64,35 +52,19 @@ export default function ProductsPage() {
     const [products, setProducts] = useState<Product[]>([]);
     const [searchQuery, setSearchQuery] = useState("");
     
-    // Initialize immediately to avoid initial render without context
-    const initialPlatform = getPlatform();
     const initialPageId = getInitialPageId();
-    
     const [pageId, setPageId] = useState<string | null>(initialPageId);
-    const [platform, setPlatform] = useState<string | null>(initialPlatform);
-
-    // 2. Sync Platform/PageId when path or localStorage changes
-    useEffect(() => {
-        const p = getPlatform();
-        const pid = p === 'whatsapp' ? localStorage.getItem('active_wa_session_id') : localStorage.getItem('active_fb_page_id');
-        setPlatform(p);
-        setPageId(pid);
-        
-        console.log(`[ProductsDebug] Platform: ${p}, PageId: ${pid}`);
-    }, [location.pathname]);
 
     useEffect(() => {
         const handleSync = () => {
-            const p = getPlatform();
-            const pid = p === 'whatsapp' ? localStorage.getItem('active_wa_session_id') : localStorage.getItem('active_fb_page_id');
+            const pid = getInitialPageId();
             setPageId(pid);
-            setPlatform(p);
         };
         window.addEventListener("db-connection-changed", handleSync);
         window.addEventListener("storage", handleSync);
 
         // Initial check and load with immediate context
-        checkAccess(initialPlatform, initialPageId);
+        checkAccess(initialPageId);
         fetchPages();
 
         return () => {
@@ -101,10 +73,6 @@ export default function ProductsPage() {
         };
     }, []);
 
-    const getActiveId = () => {
-        return pageId;
-    };
-    
     // Form State
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [isWCDialogOpen, setIsWCDialogOpen] = useState(false);
@@ -191,21 +159,22 @@ export default function ProductsPage() {
             console.error("Failed to parse auth_user", e);
         }
 
-        if (platform === "messenger") {
-            const mode = localStorage.getItem("messenger_view_mode");
-            if (mode === "team") return teamOwner;
-            return null;
-        }
-        if (platform === "whatsapp") {
+        const activeWa = localStorage.getItem("active_wa_session_id");
+        const activeFb = localStorage.getItem("active_fb_page_id");
+
+        if (pageId && activeWa && pageId === activeWa) {
             const mode = localStorage.getItem("whatsapp_view_mode");
             if (mode === "team") return teamOwner;
             return null;
         }
-        
-        // Global View: If team owner is set, use it
-        if (teamOwner) return teamOwner;
-        
-        return null;
+
+        if (pageId && activeFb && pageId === activeFb) {
+            const mode = localStorage.getItem("messenger_view_mode");
+            if (mode === "team") return teamOwner;
+            return null;
+        }
+
+        return teamOwner || null;
     };
 
     // 4. Trigger fetch on search or context changes
@@ -217,7 +186,7 @@ export default function ProductsPage() {
             }, 500);
             return () => clearTimeout(timer);
         }
-    }, [searchQuery, userId, pageId, platform]);
+    }, [searchQuery, userId, pageId]);
 
     // Auto-reload on page change
     useEffect(() => {
@@ -234,9 +203,9 @@ export default function ProductsPage() {
         return () => {
             window.removeEventListener("dashboard:reload", handleReload);
         };
-    }, [userId, searchQuery, platform, pageId]);
+    }, [userId, searchQuery, pageId]);
 
-    const checkAccess = async (forcedPlatform?: string | null, forcedPageId?: string | null) => {
+    const checkAccess = async (forcedPageId?: string | null) => {
         try {
             if (typeof window === "undefined") {
                 return;
@@ -259,10 +228,8 @@ export default function ProductsPage() {
             setUserId(uid);
             
             // Priority: provided arguments > current state
-            const activePlatform = forcedPlatform !== undefined ? forcedPlatform : platform;
             const activeId = forcedPageId !== undefined ? forcedPageId : pageId;
-            
-            fetchProducts(uid, "", storedToken, activeId, activePlatform);
+            fetchProducts(uid, "", storedToken, activeId);
         } catch (error) {
             console.error("Access check failed:", error);
         } finally {
@@ -270,7 +237,7 @@ export default function ProductsPage() {
         }
     };
 
-    const fetchProducts = async (uid: string, query: string = "", token?: string, explicitPageId?: string | null, explicitPlatform?: string | null) => {
+    const fetchProducts = async (uid: string, query: string = "", token?: string, explicitPageId?: string | null) => {
         try {
             const params = new URLSearchParams();
             params.set("user_id", uid);
@@ -278,17 +245,12 @@ export default function ProductsPage() {
                 params.set("search", query);
             }
 
-            const currentPlatform = explicitPlatform !== undefined ? explicitPlatform : platform;
             let resolvedPageId: string | null = explicitPageId !== undefined ? explicitPageId : pageId;
             let teamOwner: string | null = null;
             
             if (typeof window !== "undefined") {
                 if (resolvedPageId === null) {
-                    if (currentPlatform === "messenger") {
-                        resolvedPageId = localStorage.getItem("active_fb_page_id");
-                    } else if (currentPlatform === "whatsapp") {
-                        resolvedPageId = localStorage.getItem("active_wa_session_id");
-                    }
+                    resolvedPageId = getInitialPageId();
                 }
                 
                 setPageId(resolvedPageId);
@@ -296,8 +258,7 @@ export default function ProductsPage() {
                 if (teamOwner) params.set("team_owner", teamOwner);
             }
 
-            // --- CRITICAL GUARD: Only allow products if session is selected ---
-            if ((currentPlatform === "whatsapp" || currentPlatform === "messenger") && !resolvedPageId) {
+            if (!resolvedPageId) {
                 setProducts([]);
                 return;
             }
@@ -538,11 +499,7 @@ export default function ProductsPage() {
         try {
             let currentContextId: string | null = null;
             if (typeof window !== "undefined") {
-                if (platform === "messenger") {
-                    currentContextId = localStorage.getItem("active_fb_page_id");
-                } else if (platform === "whatsapp") {
-                    currentContextId = localStorage.getItem("active_wa_session_id");
-                }
+                currentContextId = getInitialPageId();
             }
 
             const formData = new FormData();
@@ -558,19 +515,8 @@ export default function ProductsPage() {
             const normalizedMessengerIds = Array.from(new Set(allowedMessengerIds.map(String))).filter(Boolean);
             const normalizedWASessions = Array.from(new Set(allowedWASessions.map(String))).filter(Boolean);
 
-            // --- AUTO-CONTEXT ASSIGNMENT ON SUBMIT ---
-            // If the user is on a specific page/session and has NO manual assignments, 
-            // auto-assign it to the current context (FOR NEW PRODUCTS ONLY)
             let finalMessengerIds = normalizedMessengerIds;
             let finalWASessions = normalizedWASessions;
-
-            if (!editProductId && finalMessengerIds.length === 0 && finalWASessions.length === 0 && currentContextId) {
-                if (platform === "messenger") {
-                    finalMessengerIds = [currentContextId];
-                } else if (platform === "whatsapp") {
-                    finalWASessions = [currentContextId];
-                }
-            }
 
             // Validation: Must have at least one assignment
             if (finalMessengerIds.length === 0 && finalWASessions.length === 0) {
@@ -708,14 +654,7 @@ export default function ProductsPage() {
             const teamOwner = getTeamOwnerForContext();
             if (teamOwner) params.set("team_owner", teamOwner);
 
-            let pageId: string | null = null;
-            if (typeof window !== "undefined") {
-                if (platform === "messenger") {
-                    pageId = localStorage.getItem("active_fb_page_id");
-                } else if (platform === "whatsapp") {
-                    pageId = localStorage.getItem("active_wa_session_id");
-                }
-            }
+            const pageId = typeof window !== "undefined" ? getInitialPageId() : null;
 
             if (pageId) {
                 params.set("page_id", pageId);
@@ -789,23 +728,8 @@ export default function ProductsPage() {
         setProductImages([]);
         setImagePreviews([]);
         
-        // --- CLEAN PLAN: Auto-select based on active context ---
-        // If we are in Messenger context, auto-select current page
-        // If we are in WhatsApp context, auto-select current session
-        
-        const activeFbPage = typeof window !== "undefined" ? localStorage.getItem("active_fb_page_id") : null;
-        const activeWaSession = typeof window !== "undefined" ? localStorage.getItem("active_wa_session_id") : null;
-
-        if (platform === "messenger" && activeFbPage) {
-            setAllowedMessengerIds([activeFbPage]);
-            setAllowedWASessions([]);
-        } else if (platform === "whatsapp" && activeWaSession) {
-            setAllowedWASessions([activeWaSession]);
-            setAllowedMessengerIds([]);
-        } else {
-            setAllowedMessengerIds([]);
-            setAllowedWASessions([]);
-        }
+        setAllowedMessengerIds([]);
+        setAllowedWASessions([]);
 
         setIsCombo(false);
         setComboItems([]);
@@ -827,13 +751,9 @@ export default function ProductsPage() {
         <div className="space-y-6 p-6 pb-24">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
-                    <h1 className="text-3xl font-bold tracking-tight">
-                        {platform === 'whatsapp' ? 'WhatsApp Products' : 
-                         platform === 'messenger' ? 'Messenger Products' : 
-                         'Global Products'}
-                    </h1>
+                    <h1 className="text-3xl font-bold tracking-tight">Products</h1>
                     <p className="text-muted-foreground">
-                        Manage products for your {platform === 'whatsapp' ? 'WhatsApp' : platform === 'messenger' ? 'Messenger' : 'AI'} Agents. Images are auto-optimized.
+                        Manage products for your agents. Images are auto-optimized.
                     </p>
                 </div>
                 <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
@@ -1186,9 +1106,9 @@ export default function ProductsPage() {
                                 <div className="space-y-2 pt-2">
                                     <div className="flex items-center justify-between">
                                         <div>
-                                            <Label>Visible on Pages (Optional)</Label>
+                                            <Label>Visible on Pages *</Label>
                                             <p className="text-[10px] text-muted-foreground mt-1">
-                                                If no pages are selected, this product will be visible on <strong>ALL</strong> pages.
+                                                Select at least one WhatsApp session or Facebook page.
                                             </p>
                                         </div>
                                         <div className="flex gap-2">
@@ -1228,99 +1148,90 @@ export default function ProductsPage() {
                                 {(() => {
                                   const waPages = filteredPages.filter(p => p.type === 'whatsapp');
                                   const fbPages = filteredPages.filter(p => p.type === 'messenger');
-                                  
-                                  // Determine what to show based on platform
-                                  // --- CLEAN UI PLAN: Only show selectors for active context ---
-                                  const showWa = platform === 'whatsapp' || !platform;
-                                  const showFb = platform === 'messenger' || !platform;
 
                                   return (
                                     <div className="space-y-3">
-                                      {showWa && (
-                                        <div>
-                                          <Label className="text-xs font-semibold text-muted-foreground">WhatsApp Sessions Access</Label>
-                                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border p-3 rounded-md max-h-32 overflow-y-auto bg-muted/5 mt-1">
-                                            {waPages.length === 0 ? (
-                                              <p className="text-xs text-muted-foreground col-span-full text-center">No WhatsApp sessions.</p>
-                                            ) : waPages.map(page => {
-                                              const pageKey = String(page.page_id);
-                                              const isSelected = allowedWASessions.includes(pageKey);
-                                              const toggleSelection = () => {
-                                                setAllowedWASessions(prev => 
-                                                  prev.includes(pageKey) 
-                                                    ? prev.filter(id => id !== pageKey) 
-                                                    : [...prev, pageKey]
-                                                );
-                                              };
-                                              return (
-                                                <div 
-                                                  key={`wa-${page.page_id}`} 
-                                                  className="flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors"
-                                                  onClick={(e) => {
-                                                    e.preventDefault();
-                                                    e.stopPropagation();
-                                                    toggleSelection();
-                                                  }}
-                                                >
-                                                  <Checkbox 
-                                                    id={`wa-page-${page.page_id}`}
-                                                    checked={isSelected}
-                                                    className="pointer-events-none"
-                                                  />
-                                                  <Label 
-                                                    className="text-sm font-normal cursor-pointer select-none flex-1 truncate"
-                                                  >
-                                                    {page.name}
-                                                  </Label>
-                                                </div>
+                                      <div>
+                                        <Label className="text-xs font-semibold text-muted-foreground">WhatsApp Sessions Access</Label>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border p-3 rounded-md max-h-32 overflow-y-auto bg-muted/5 mt-1">
+                                          {waPages.length === 0 ? (
+                                            <p className="text-xs text-muted-foreground col-span-full text-center">No WhatsApp sessions.</p>
+                                          ) : waPages.map(page => {
+                                            const pageKey = String(page.page_id);
+                                            const isSelected = allowedWASessions.includes(pageKey);
+                                            const toggleSelection = () => {
+                                              setAllowedWASessions(prev => 
+                                                prev.includes(pageKey) 
+                                                  ? prev.filter(id => id !== pageKey) 
+                                                  : [...prev, pageKey]
                                               );
-                                            })}
-                                          </div>
+                                            };
+                                            return (
+                                              <div 
+                                                key={`wa-${page.page_id}`} 
+                                                className="flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors"
+                                                onClick={(e) => {
+                                                  e.preventDefault();
+                                                  e.stopPropagation();
+                                                  toggleSelection();
+                                                }}
+                                              >
+                                                <Checkbox 
+                                                  id={`wa-page-${page.page_id}`}
+                                                  checked={isSelected}
+                                                  className="pointer-events-none"
+                                                />
+                                                <Label 
+                                                  className="text-sm font-normal cursor-pointer select-none flex-1 truncate"
+                                                >
+                                                  {page.name}
+                                                </Label>
+                                              </div>
+                                            );
+                                          })}
                                         </div>
-                                      )}
+                                      </div>
                                       
-                                      {showFb && (
-                                        <div>
-                                          <Label className="text-xs font-semibold text-muted-foreground">Facebook Pages Access</Label>
-                                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border p-3 rounded-md max-h-32 overflow-y-auto bg-muted/5 mt-1">
-                                            {fbPages.length === 0 ? (
-                                              <p className="text-xs text-muted-foreground col-span-full text-center">No Facebook pages.</p>
-                                            ) : fbPages.map(page => {
-                                              const pageKey = String(page.page_id);
-                                              const isSelected = allowedMessengerIds.includes(pageKey);
-                                              const toggleSelection = () => {
-                                                setAllowedMessengerIds(prev => 
-                                                  prev.includes(pageKey) 
-                                                    ? prev.filter(id => id !== pageKey) 
-                                                    : [...prev, pageKey]
-                                                );
-                                              };
-                                              return (
-                                                <div 
-                                                  key={`fb-${page.page_id}`} 
-                                                  className="flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors"
-                                                  onClick={(e) => {
-                                                    e.preventDefault();
-                                                    e.stopPropagation();
-                                                    toggleSelection();
-                                                  }}
-                                                >
-                                                  <Checkbox 
-                                                    id={`fb-page-${page.page_id}`}
-                                                    checked={isSelected}
-                                                    className="pointer-events-none"
-                                                  />
-                                                  <Label 
-                                                    className="text-sm font-normal cursor-pointer select-none flex-1 truncate"
-                                                  >
-                                                    {page.name}
-                                                  </Label>
-                                                </div>
+                                      <div>
+                                        <Label className="text-xs font-semibold text-muted-foreground">Facebook Pages Access</Label>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border p-3 rounded-md max-h-32 overflow-y-auto bg-muted/5 mt-1">
+                                          {fbPages.length === 0 ? (
+                                            <p className="text-xs text-muted-foreground col-span-full text-center">No Facebook pages.</p>
+                                          ) : fbPages.map(page => {
+                                            const pageKey = String(page.page_id);
+                                            const isSelected = allowedMessengerIds.includes(pageKey);
+                                            const toggleSelection = () => {
+                                              setAllowedMessengerIds(prev => 
+                                                prev.includes(pageKey) 
+                                                  ? prev.filter(id => id !== pageKey) 
+                                                  : [...prev, pageKey]
                                               );
-                                            })}
+                                            };
+                                            return (
+                                              <div 
+                                                key={`fb-${page.page_id}`} 
+                                                className="flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors"
+                                                onClick={(e) => {
+                                                  e.preventDefault();
+                                                  e.stopPropagation();
+                                                  toggleSelection();
+                                                }}
+                                              >
+                                                <Checkbox 
+                                                  id={`fb-page-${page.page_id}`}
+                                                  checked={isSelected}
+                                                  className="pointer-events-none"
+                                                />
+                                                <Label 
+                                                  className="text-sm font-normal cursor-pointer select-none flex-1 truncate"
+                                                >
+                                                  {page.name}
+                                                </Label>
+                                              </div>
+                                            );
+                                          })}
                                           </div>
                                         </div>
-                                      )}
                                     </div>
                                   );
                                 })()}

@@ -451,18 +451,6 @@ exports.createProduct = async (req, res) => {
             } catch (e) {}
         }
 
-        // --- MANDATORY ASSIGNMENT & AUTO-ASSIGNMENT ---
-        if (allowedMessengerIds.length === 0 && allowedWASessions.length === 0 && pageId) {
-            // Auto-assign based on context if no manual selection
-            const contextType = await dbService.resolvePageContextType(pageId);
-            if (contextType === 'whatsapp') {
-                allowedWASessions = [String(pageId)];
-            } else {
-                allowedMessengerIds = [String(pageId)];
-            }
-            console.log(`[ProductCreate] Auto-assigned to context: ${contextType} (${pageId})`);
-        }
-
         if (allowedMessengerIds.length === 0 && allowedWASessions.length === 0) {
             return res.status(400).json({ error: "At least one Facebook Page or WhatsApp Session must be selected." });
         }
