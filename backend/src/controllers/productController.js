@@ -789,11 +789,15 @@ exports.updateProduct = async (req, res) => {
         if (req.body.allow_description !== undefined) updates.allow_description = req.body.allow_description === 'true' || req.body.allow_description === true;
         if (req.body.combo_items !== undefined) updates.combo_items = req.body.combo_items;
 
-        if (req.body.variants) {
-            try {
-                updates.variants = JSON.parse(req.body.variants);
-            } catch (e) {
-                return res.status(400).json({ error: "Invalid variants JSON format" });
+        if (req.body.variants !== undefined) {
+            if (Array.isArray(req.body.variants)) {
+                updates.variants = req.body.variants;
+            } else {
+                try {
+                    updates.variants = JSON.parse(req.body.variants);
+                } catch (e) {
+                    return res.status(400).json({ error: "Invalid variants JSON format" });
+                }
             }
         }
 

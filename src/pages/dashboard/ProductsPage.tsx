@@ -710,6 +710,7 @@ export default function ProductsPage() {
             formData.append("description", metadata.description);
             formData.append("allowed_messenger_ids", JSON.stringify(finalMessengerIds));
             formData.append("allowed_wa_sessions", JSON.stringify(finalWASessions));
+            formData.append("variants", JSON.stringify(metadata.variants));
             formData.append("page_id", String(metadata.page_id || ""));
 
             // --- FILES LAST (Best practice for Multer) ---
