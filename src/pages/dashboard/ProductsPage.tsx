@@ -376,6 +376,41 @@ export default function ProductsPage() {
             .filter(k => k.length > 0);
     };
 
+    // Ensure they are arrays and handle possible JSON strings
+    const parseAssignment = (val: any) => {
+        if (!val) return [];
+        let arr = [];
+        
+        if (Array.isArray(val)) {
+            arr = val;
+        } else {
+            try {
+                const parsed = typeof val === 'string' ? JSON.parse(val) : val;
+                if (Array.isArray(parsed)) arr = parsed;
+                else if (typeof parsed === 'string') arr = [parsed];
+            } catch (e) {
+                if (typeof val === 'string' && val.includes(',')) {
+                    arr = val.split(',').map(s => s.trim());
+                } else if (typeof val === 'string') {
+                    arr = [val];
+                }
+            }
+        }
+
+        // CLEANUP: Ensure all elements are STRINGS and not objects/nulls
+        return arr
+            .map(id => {
+                if (!id) return null;
+                // If it's an object, try to find an ID or name property, or skip it
+                if (typeof id === 'object') {
+                    const obj = id as any;
+                    return String(obj.id || obj.page_id || obj.name || "");
+                }
+                return String(id);
+            })
+            .filter(id => id && id !== 'null' && id !== 'undefined' && id !== '[object Object]');
+    };
+
     const addKeywordFromInput = () => {
         const raw = keywordInput.replace(/\s+/g, " ").trim();
         if (!raw) {
@@ -453,23 +488,6 @@ export default function ProductsPage() {
         setImagePreview(product.image_url || null);
         setImagePreviews(product.image_url ? [product.image_url] : []);
         setProductImages([]);
-
-        // Ensure they are arrays and handle possible JSON strings
-        const parseAssignment = (val: any) => {
-            if (!val) return [];
-            if (Array.isArray(val)) return val.map(String).filter(id => id && id !== 'null' && id !== 'undefined');
-            try {
-                const parsed = typeof val === 'string' ? JSON.parse(val) : val;
-                if (Array.isArray(parsed)) return parsed.map(String).filter(id => id && id !== 'null' && id !== 'undefined');
-                if (typeof parsed === 'string') return [parsed].filter(id => id && id !== 'null' && id !== 'undefined');
-                return [];
-            } catch (e) {
-                if (typeof val === 'string' && val.includes(',')) {
-                    return val.split(',').map(s => s.trim()).filter(id => id && id !== 'null' && id !== 'undefined');
-                }
-                return typeof val === 'string' ? [val].filter(id => id && id !== 'null' && id !== 'undefined') : [];
-            }
-        };
 
         const messengerIds = parseAssignment(product.allowed_messenger_ids);
         const waSessions = parseAssignment(product.allowed_wa_sessions);
@@ -1164,7 +1182,11 @@ export default function ProductsPage() {
                                           ) : waPages.map(page => {
                                             const pageKey = String(page.page_id);
                                             const isSelected = allowedWASessions.includes(pageKey);
-                                            const toggleSelection = () => {
+                                            const toggleSelection = (e?: React.MouseEvent) => {
+                                              if (e) {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                              }
                                               setAllowedWASessions(prev => 
                                                 prev.includes(pageKey) 
                                                   ? prev.filter(id => id !== pageKey) 
@@ -1178,10 +1200,7 @@ export default function ProductsPage() {
                                                   "flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors border border-transparent",
                                                   isSelected && "bg-[#00ff88]/10 border-[#00ff88]/30 shadow-[0_0_10px_rgba(0,255,136,0.1)]"
                                                 )}
-                                                onClick={(e) => {
-                                                  // Row click toggle
-                                                  toggleSelection();
-                                                }}
+                                                onClick={(e) => toggleSelection(e)}
                                               >
                                                 <Checkbox 
                                                   id={`wa-page-${page.page_id}`}
@@ -1190,10 +1209,6 @@ export default function ProductsPage() {
                                                     "pointer-events-none data-[state=checked]:bg-[#00ff88] data-[state=checked]:border-[#00ff88]",
                                                     isSelected && "ring-1 ring-[#00ff88]/40"
                                                   )}
-                                                  onCheckedChange={(val) => {
-                                                      // Already handled by row click, but just in case
-                                                      toggleSelection();
-                                                  }}
                                                 />
                                                 <Label 
                                                   htmlFor={`wa-page-${page.page_id}`}
@@ -1201,7 +1216,7 @@ export default function ProductsPage() {
                                                     "text-sm font-normal cursor-pointer select-none flex-1 truncate",
                                                     isSelected && "text-[#00ff88] font-medium"
                                                   )}
-                                                  onClick={(e) => e.preventDefault()} // Prevent double toggle
+                                                  onClick={(e) => e.preventDefault()}
                                                 >
                                                   {page.name}
                                                 </Label>
@@ -1219,7 +1234,11 @@ export default function ProductsPage() {
                                           ) : fbPages.map(page => {
                                             const pageKey = String(page.page_id);
                                             const isSelected = allowedMessengerIds.includes(pageKey);
-                                            const toggleSelection = () => {
+                                            const toggleSelection = (e?: React.MouseEvent) => {
+                                              if (e) {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                              }
                                               setAllowedMessengerIds(prev => 
                                                 prev.includes(pageKey) 
                                                   ? prev.filter(id => id !== pageKey) 
@@ -1233,10 +1252,7 @@ export default function ProductsPage() {
                                                   "flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors border border-transparent",
                                                   isSelected && "bg-[#00ff88]/10 border-[#00ff88]/30 shadow-[0_0_10px_rgba(0,255,136,0.1)]"
                                                 )}
-                                                onClick={(e) => {
-                                                  // Row click toggle
-                                                  toggleSelection();
-                                                }}
+                                                onClick={(e) => toggleSelection(e)}
                                               >
                                                 <Checkbox 
                                                   id={`fb-page-${page.page_id}`}
@@ -1245,10 +1261,6 @@ export default function ProductsPage() {
                                                     "pointer-events-none data-[state=checked]:bg-[#00ff88] data-[state=checked]:border-[#00ff88]",
                                                     isSelected && "ring-1 ring-[#00ff88]/40"
                                                   )}
-                                                  onCheckedChange={(val) => {
-                                                      // Already handled by row click, but just in case
-                                                      toggleSelection();
-                                                  }}
                                                 />
                                                 <Label 
                                                   htmlFor={`fb-page-${page.page_id}`}
@@ -1256,7 +1268,7 @@ export default function ProductsPage() {
                                                     "text-sm font-normal cursor-pointer select-none flex-1 truncate",
                                                     isSelected && "text-[#00ff88] font-medium"
                                                   )}
-                                                  onClick={(e) => e.preventDefault()} // Prevent double toggle
+                                                  onClick={(e) => e.preventDefault()}
                                                 >
                                                   {page.name}
                                                 </Label>
@@ -1405,16 +1417,28 @@ export default function ProductsPage() {
                                         <div className="flex flex-col gap-1">
                                             <span>{product.name}</span>
                                             <div className="flex flex-wrap gap-1">
-                                                {product.allowed_messenger_ids && product.allowed_messenger_ids.length > 0 && (
-                                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
-                                                        FB
-                                                    </span>
-                                                )}
-                                                {product.allowed_wa_sessions && product.allowed_wa_sessions.length > 0 && (
-                                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
-                                                        WA
-                                                    </span>
-                                                )}
+                                                {(() => {
+                                                    const messengerIds = parseAssignment(product.allowed_messenger_ids);
+                                                    if (messengerIds.length > 0) {
+                                                        return (
+                                                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+                                                                FB
+                                                            </span>
+                                                        );
+                                                    }
+                                                    return null;
+                                                })()}
+                                                {(() => {
+                                                    const waSessions = parseAssignment(product.allowed_wa_sessions);
+                                                    if (waSessions.length > 0) {
+                                                        return (
+                                                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                                                                WA
+                                                            </span>
+                                                        );
+                                                    }
+                                                    return null;
+                                                })()}
                                             </div>
                                             {product.variants && product.variants.length > 0 && (
                                                 <span className="text-[10px] text-muted-foreground">

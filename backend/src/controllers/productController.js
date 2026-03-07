@@ -447,21 +447,32 @@ exports.createProduct = async (req, res) => {
 
         const parseIds = (val) => {
             if (!val) return [];
-            if (Array.isArray(val)) return val.map(String).filter(id => id && id !== 'null' && id !== 'undefined');
-            if (typeof val === 'string') {
+            let arr = [];
+            if (Array.isArray(val)) {
+                arr = val;
+            } else if (typeof val === 'string') {
                 try {
-                    // Try to parse as JSON array first
                     const parsed = JSON.parse(val);
-                    if (Array.isArray(parsed)) return parsed.map(String).filter(id => id && id !== 'null' && id !== 'undefined');
-                    // If it's a string but not a JSON array, it might be a single ID
-                    return [val].filter(id => id && id !== 'null' && id !== 'undefined');
+                    if (Array.isArray(parsed)) arr = parsed;
+                    else arr = [val];
                 } catch (e) {
-                    // Not JSON, treat as comma-separated or single ID
-                    if (val.includes(',')) return val.split(',').map(s => s.trim()).filter(id => id && id !== 'null' && id !== 'undefined');
-                    return [val].filter(id => id && id !== 'null' && id !== 'undefined');
+                    if (val.includes(',')) arr = val.split(',');
+                    else arr = [val];
                 }
+            } else {
+                arr = [val];
             }
-            return [];
+
+            return arr
+                .map(id => {
+                    if (!id) return null;
+                    if (typeof id === 'object') {
+                        // Handle legacy object storage
+                        return String(id.id || id.page_id || id.name || "");
+                    }
+                    return String(id);
+                })
+                .filter(id => id && id !== 'null' && id !== 'undefined' && id !== '[object Object]');
         };
 
         allowedMessengerIds = parseIds(req.body.allowed_messenger_ids);
@@ -771,42 +782,33 @@ exports.updateProduct = async (req, res) => {
             }
         }
 
-        let currentMessengerIds = undefined;
-        if (req.body.allowed_messenger_ids) {
-            try {
-                const val = req.body.allowed_messenger_ids;
-                const parsed = typeof val === 'string' ? JSON.parse(val) : val;
-                if (Array.isArray(parsed)) {
-                    currentMessengerIds = parsed.map(String).filter(id => id && id !== 'null' && id !== 'undefined');
-                    updates.allowed_messenger_ids = currentMessengerIds;
-                }
-            } catch (e) {
-                console.error("[ProductUpdate] Messenger IDs Parse Error:", e.message, "Value:", req.body.allowed_messenger_ids);
-            }
+        allowedMessengerIds = parseIds(req.body.allowed_messenger_ids);
+        allowedWASessions = parseIds(req.body.allowed_wa_sessions);
+
+        console.log("[ProductUpdateDebug] Parsed IDs:", { allowedMessengerIds, allowedWASessions });
+
+        if (allowedMessengerIds.length > 0) {
+            updates.allowed_messenger_ids = allowedMessengerIds;
+        } else if (req.body.allowed_messenger_ids !== undefined) {
+            // Explicitly sent empty array
+            updates.allowed_messenger_ids = [];
         }
 
-        let currentWASessions = undefined;
-        if (req.body.allowed_wa_sessions) {
-            try {
-                const val = req.body.allowed_wa_sessions;
-                const parsed = typeof val === 'string' ? JSON.parse(val) : val;
-                if (Array.isArray(parsed)) {
-                    currentWASessions = parsed.map(String).filter(id => id && id !== 'null' && id !== 'undefined');
-                    updates.allowed_wa_sessions = currentWASessions;
-                }
-            } catch (e) {
-                console.error("[ProductUpdate] WA Sessions Parse Error:", e.message, "Value:", req.body.allowed_wa_sessions);
-            }
+        if (allowedWASessions.length > 0) {
+            updates.allowed_wa_sessions = allowedWASessions;
+        } else if (req.body.allowed_wa_sessions !== undefined) {
+            // Explicitly sent empty array
+            updates.allowed_wa_sessions = [];
         }
 
         // --- VALIDATION FOR UPDATE ---
         // We only validate if the user is trying to update the assignments.
-        if (currentMessengerIds !== undefined || currentWASessions !== undefined) {
+        if (req.body.allowed_messenger_ids !== undefined || req.body.allowed_wa_sessions !== undefined) {
             // Fetch existing to check combined result
             const existing = await dbService.getProductById(id);
             if (existing) {
-                const finalMessenger = currentMessengerIds !== undefined ? currentMessengerIds : (existing.allowed_messenger_ids || []);
-                const finalWA = currentWASessions !== undefined ? currentWASessions : (existing.allowed_wa_sessions || []);
+                const finalMessenger = updates.allowed_messenger_ids !== undefined ? updates.allowed_messenger_ids : (existing.allowed_messenger_ids || []);
+                const finalWA = updates.allowed_wa_sessions !== undefined ? updates.allowed_wa_sessions : (existing.allowed_wa_sessions || []);
                 
                 if (finalMessenger.length === 0 && finalWA.length === 0) {
                     return res.status(400).json({ error: "Product must be assigned to at least one Facebook Page or WhatsApp Session." });
