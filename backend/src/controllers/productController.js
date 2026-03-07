@@ -435,37 +435,39 @@ exports.createProduct = async (req, res) => {
         let allowedMessengerIds = [];
         let allowedWASessions = [];
 
-        console.log("[ProductCreateDebug] Full Request Body Keys:", Object.keys(req.body));
+        console.log("[ProductCreateDebug] Full Request Body:", {
+            ...req.body,
+            image: req.files?.image ? 'present' : 'missing',
+            images: req.files?.images ? req.files.images.length : 0
+        });
 
-        if (req.body.allowed_messenger_ids) {
-            try {
-                const val = req.body.allowed_messenger_ids;
-                const parsed = typeof val === 'string' ? JSON.parse(val) : val;
-                if (Array.isArray(parsed)) {
-                    allowedMessengerIds = parsed.map(String).filter(id => id && id !== 'null' && id !== 'undefined');
+        const parseIds = (val) => {
+            if (!val) return [];
+            if (Array.isArray(val)) return val.map(String).filter(id => id && id !== 'null' && id !== 'undefined');
+            if (typeof val === 'string') {
+                try {
+                    // Try to parse as JSON array first
+                    const parsed = JSON.parse(val);
+                    if (Array.isArray(parsed)) return parsed.map(String).filter(id => id && id !== 'null' && id !== 'undefined');
+                    // If it's a string but not a JSON array, it might be a single ID
+                    return [val].filter(id => id && id !== 'null' && id !== 'undefined');
+                } catch (e) {
+                    // Not JSON, treat as comma-separated or single ID
+                    if (val.includes(',')) return val.split(',').map(s => s.trim()).filter(id => id && id !== 'null' && id !== 'undefined');
+                    return [val].filter(id => id && id !== 'null' && id !== 'undefined');
                 }
-            } catch (e) {
-                console.error("[ProductCreate] Messenger IDs Parse Error:", e.message, "Value:", req.body.allowed_messenger_ids);
             }
-        }
+            return [];
+        };
 
-        if (req.body.allowed_wa_sessions) {
-            try {
-                const val = req.body.allowed_wa_sessions;
-                const parsed = typeof val === 'string' ? JSON.parse(val) : val;
-                if (Array.isArray(parsed)) {
-                    allowedWASessions = parsed.map(String).filter(id => id && id !== 'null' && id !== 'undefined');
-                }
-            } catch (e) {
-                console.error("[ProductCreate] WA Sessions Parse Error:", e.message, "Value:", req.body.allowed_wa_sessions);
-            }
-        }
+        allowedMessengerIds = parseIds(req.body.allowed_messenger_ids);
+        allowedWASessions = parseIds(req.body.allowed_wa_sessions);
 
-        console.log("[ProductCreateDebug] Processed Messenger IDs:", allowedMessengerIds);
-        console.log("[ProductCreateDebug] Processed WA Sessions:", allowedWASessions);
+        console.log("[ProductCreateDebug] Final Parsed Messenger IDs:", allowedMessengerIds);
+        console.log("[ProductCreateDebug] Final Parsed WA Sessions:", allowedWASessions);
 
         if (allowedMessengerIds.length === 0 && allowedWASessions.length === 0) {
-            console.error("[ProductCreate] Validation Failed: No assignments found in body.");
+            console.error("[ProductCreate] Validation Failed: No valid assignments found.");
             return res.status(400).json({ 
                 error: "At least one Facebook Page or WhatsApp Session must be selected. Assignments cannot be empty. Please check your selections." 
             });
