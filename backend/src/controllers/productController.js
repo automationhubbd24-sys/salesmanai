@@ -432,6 +432,9 @@ exports.createProduct = async (req, res) => {
         
         const isActive = req.body.is_active === 'true' || req.body.is_active === true;
 
+        console.log(`[ProductCreate] Raw allowed_messenger_ids: ${req.body.allowed_messenger_ids}`);
+        console.log(`[ProductCreate] Raw allowed_wa_sessions: ${req.body.allowed_wa_sessions}`);
+
         let allowedMessengerIds = null;
         if (req.body.allowed_messenger_ids) {
             try {

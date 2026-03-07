@@ -28,7 +28,7 @@ async function getPageConfig(pageId) {
     } else if (data.user_id) {
       const creditResult = await query(
         'SELECT message_credit FROM user_configs WHERE user_id = $1::text::uuid LIMIT 1',
-        [data.user_id]
+        [String(data.user_id)]
       );
 
       if (creditResult.rows.length > 0) {
@@ -36,8 +36,8 @@ async function getPageConfig(pageId) {
         data.credit_source = 'shared_user_balance';
       } else {
         await query(
-          'INSERT INTO user_configs (user_id, email, message_credit, balance) VALUES ($1, $2, $3, $4) ON CONFLICT (user_id) DO NOTHING',
-          [data.user_id, data.email || null, 100, 0]
+          'INSERT INTO user_configs (user_id, email, message_credit, balance) VALUES ($1::text::uuid, $2, $3, $4) ON CONFLICT (user_id) DO NOTHING',
+          [String(data.user_id), data.email || null, 100, 0]
         );
         data.message_credit = 100;
         data.credit_source = 'shared_user_balance';
@@ -2410,8 +2410,8 @@ module.exports = {
 // 32. Check Product Feature Access (Unlock Check)
 async function checkProductFeatureAccess(userId) {
     const userConfigResult = await query(
-        'SELECT message_credit, balance FROM user_configs WHERE user_id = $1 LIMIT 1',
-        [userId]
+        'SELECT message_credit, balance FROM user_configs WHERE user_id = $1::text::uuid LIMIT 1',
+        [String(userId)]
     );
 
     if (userConfigResult.rows.length > 0) {
@@ -2425,9 +2425,9 @@ async function checkProductFeatureAccess(userId) {
     const waResult = await query(
         `SELECT COUNT(*)::int AS cnt
          FROM whatsapp_sessions
-         WHERE user_id = $1
+         WHERE user_id = $1::text::uuid
            AND expires_at > NOW()`,
-        [userId]
+        [String(userId)]
     );
 
     if (waResult.rows.length > 0 && waResult.rows[0].cnt > 0) {
@@ -2437,9 +2437,9 @@ async function checkProductFeatureAccess(userId) {
     const fbResult = await query(
         `SELECT COUNT(*)::int AS cnt
          FROM page_access_token_message
-         WHERE user_id = $1
+         WHERE user_id = $1::text::uuid
            AND subscription_status IN ('active','trial','active_trial','active_paid')`,
-        [userId]
+        [String(userId)]
     );
 
     if (fbResult.rows.length > 0 && fbResult.rows[0].cnt > 0) {

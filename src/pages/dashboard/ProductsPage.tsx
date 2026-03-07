@@ -1226,6 +1226,7 @@ export default function ProductsPage() {
                                             ) : waPages.map(page => {
                                               const isSelected = allowedWASessions.includes(String(page.page_id));
                                               const toggleSelection = () => {
+                                                console.log("[SelectionDebug] Toggling WA:", page.page_id, "Current:", allowedWASessions);
                                                 if (isSelected) {
                                                   setAllowedWASessions(allowedWASessions.filter(id => id !== String(page.page_id)));
                                                 } else {
@@ -1236,20 +1237,16 @@ export default function ProductsPage() {
                                                 <div 
                                                   key={`wa-${page.page_id}`} 
                                                   className="flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors"
-                                                  onClick={(e) => {
-                                                    if ((e.target as HTMLElement).closest('button')) return;
-                                                    toggleSelection();
-                                                  }}
+                                                  onClick={() => toggleSelection()}
                                                 >
                                                   <Checkbox 
                                                     id={`wa-page-${page.page_id}`}
                                                     checked={isSelected}
-                                                    onCheckedChange={() => toggleSelection()} 
+                                                    className="pointer-events-none"
                                                   />
                                                   <Label 
                                                     htmlFor={`wa-page-${page.page_id}`} 
                                                     className="text-sm font-normal cursor-pointer select-none flex-1 truncate"
-                                                    onClick={(e) => e.stopPropagation()}
                                                   >
                                                     {page.name}
                                                   </Label>
@@ -1269,6 +1266,7 @@ export default function ProductsPage() {
                                             ) : fbPages.map(page => {
                                               const isSelected = allowedMessengerIds.includes(String(page.page_id));
                                               const toggleSelection = () => {
+                                                console.log("[SelectionDebug] Toggling FB:", page.page_id, "Current:", allowedMessengerIds);
                                                 if (isSelected) {
                                                   setAllowedMessengerIds(allowedMessengerIds.filter(id => id !== String(page.page_id)));
                                                 } else {
@@ -1279,20 +1277,16 @@ export default function ProductsPage() {
                                                 <div 
                                                   key={`fb-${page.page_id}`} 
                                                   className="flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer transition-colors"
-                                                  onClick={(e) => {
-                                                    if ((e.target as HTMLElement).closest('button')) return;
-                                                    toggleSelection();
-                                                  }}
+                                                  onClick={() => toggleSelection()}
                                                 >
                                                   <Checkbox 
                                                     id={`fb-page-${page.page_id}`}
                                                     checked={isSelected}
-                                                    onCheckedChange={() => toggleSelection()} 
+                                                    className="pointer-events-none"
                                                   />
                                                   <Label 
                                                     htmlFor={`fb-page-${page.page_id}`} 
                                                     className="text-sm font-normal cursor-pointer select-none flex-1 truncate"
-                                                    onClick={(e) => e.stopPropagation()}
                                                   >
                                                     {page.name}
                                                   </Label>
