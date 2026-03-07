@@ -2500,11 +2500,24 @@ async function createProduct(productData) {
         let p = `$${index + 1}`;
         if (field === 'user_id') p += '::uuid';
         placeholders.push(p);
-        values.push(
-            field === 'variants' || field === 'allowed_messenger_ids' || field === 'allowed_wa_sessions' || field === 'combo_items' || field === 'additional_images'
-                ? (productData[field] || (field === 'additional_images' ? '[]' : '[]'))
-                : (field === 'platform' ? finalPlatform : (productData[field] ?? null))
-        );
+        
+        let val = productData[field];
+        
+        // --- CLEAN PLAN: Ensure JSON/Array fields are strings for DB safety ---
+        const jsonFields = ['variants', 'allowed_messenger_ids', 'allowed_wa_sessions', 'combo_items', 'additional_images'];
+        if (jsonFields.includes(field)) {
+            if (val && typeof val === 'object') {
+                val = JSON.stringify(val);
+            } else if (!val) {
+                val = (field === 'additional_images' ? '[]' : '[]');
+            }
+        } else if (field === 'platform') {
+            val = finalPlatform;
+        } else if (val === undefined) {
+            val = null;
+        }
+        
+        values.push(val);
     });
 
     const result = await query(
@@ -2780,7 +2793,14 @@ async function updateProduct(id, userId, updates) {
 
     for (const key of keys) {
         setFragments.push(`${key} = $${idx}`);
-        values.push(updates[key]);
+        
+        let val = updates[key];
+        const jsonFields = ['variants', 'allowed_messenger_ids', 'allowed_wa_sessions', 'combo_items', 'additional_images'];
+        if (jsonFields.includes(key) && val && typeof val === 'object') {
+            val = JSON.stringify(val);
+        }
+        
+        values.push(val);
         idx++;
     }
 

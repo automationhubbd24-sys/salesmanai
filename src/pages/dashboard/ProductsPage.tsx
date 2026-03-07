@@ -546,13 +546,13 @@ export default function ProductsPage() {
             }
 
             const formData = new FormData();
-            formData.append("user_id", userId);
-            formData.append("name", productName);
-            formData.append("description", productDesc);
-            formData.append("keywords", productKeywords.join(", "));
-            formData.append("price", productPrice);
-            formData.append("currency", productCurrency);
-            formData.append("stock", productStock);
+            formData.append("user_id", String(userId));
+            formData.append("name", String(productName));
+            formData.append("description", String(productDesc || ""));
+            formData.append("keywords", String(productKeywords.join(", ") || ""));
+            formData.append("price", String(productPrice || "0"));
+            formData.append("currency", String(productCurrency || "USD"));
+            formData.append("stock", String(productStock || "0"));
             formData.append("is_active", "true");
 
             const normalizedMessengerIds = Array.from(new Set(allowedMessengerIds.map(String))).filter(Boolean);
@@ -583,12 +583,12 @@ export default function ProductsPage() {
                 else formData.append("platform", "global");
             }
 
-            formData.append("is_combo", String(isCombo));
-            formData.append("combo_items", JSON.stringify(comboItems));
-            formData.append("allow_description", String(allowDescription));
+            formData.append("is_combo", String(!!isCombo));
+            formData.append("combo_items", JSON.stringify(comboItems || []));
+            formData.append("allow_description", String(!!allowDescription));
 
             if (currentContextId) {
-                formData.append("page_id", currentContextId);
+                formData.append("page_id", String(currentContextId));
             }
             
             // If variants are enabled, send them. Otherwise send default/empty.
@@ -599,7 +599,7 @@ export default function ProductsPage() {
                 currency: productCurrency,
                 available: parseInt(productStock) > 0
             }];
-            formData.append("variants", JSON.stringify(finalVariants));
+            formData.append("variants", JSON.stringify(finalVariants || []));
             
             if (productImage) {
                 formData.append("image", productImage);
@@ -610,6 +610,11 @@ export default function ProductsPage() {
                 productImages.forEach((file) => {
                     formData.append("images", file);
                 });
+            }
+
+            console.log("[ProductSubmitDebug] Payload Preview:");
+            for (let pair of (formData as any).entries()) {
+                console.log(`[ProductSubmitDebug] ${pair[0]}:`, pair[1]);
             }
 
             const teamOwner = getTeamOwnerForContext();
