@@ -761,26 +761,26 @@ exports.updateProduct = async (req, res) => {
             }
         }
 
-        let currentMessengerIds = [];
+        let currentMessengerIds = undefined;
         if (req.body.allowed_messenger_ids) {
             try {
                 const parsed = JSON.parse(req.body.allowed_messenger_ids);
                 if (Array.isArray(parsed)) {
                     currentMessengerIds = parsed.map(String);
-                    updates.allowed_messenger_ids = currentMessengerIds; // Directly store the array
+                    updates.allowed_messenger_ids = currentMessengerIds;
                 }
             } catch (e) {
                 return res.status(400).json({ error: "Invalid allowed_messenger_ids JSON format" });
             }
         }
 
-        let currentWASessions = [];
+        let currentWASessions = undefined;
         if (req.body.allowed_wa_sessions) {
             try {
                 const parsed = JSON.parse(req.body.allowed_wa_sessions);
                 if (Array.isArray(parsed)) {
                     currentWASessions = parsed.map(String);
-                    updates.allowed_wa_sessions = currentWASessions; // Directly store the array
+                    updates.allowed_wa_sessions = currentWASessions;
                 }
             } catch (e) {
                 return res.status(400).json({ error: "Invalid allowed_wa_sessions JSON format" });
@@ -789,12 +789,12 @@ exports.updateProduct = async (req, res) => {
 
         // --- VALIDATION FOR UPDATE ---
         // We only validate if the user is trying to update the assignments.
-        if (req.body.allowed_messenger_ids || req.body.allowed_wa_sessions) {
+        if (currentMessengerIds !== undefined || currentWASessions !== undefined) {
             // Fetch existing to check combined result
             const existing = await dbService.getProductById(id);
             if (existing) {
-                const finalMessenger = updates.allowed_messenger_ids !== undefined ? currentMessengerIds : (existing.allowed_messenger_ids || []);
-                const finalWA = updates.allowed_wa_sessions !== undefined ? currentWASessions : (existing.allowed_wa_sessions || []);
+                const finalMessenger = currentMessengerIds !== undefined ? currentMessengerIds : (existing.allowed_messenger_ids || []);
+                const finalWA = currentWASessions !== undefined ? currentWASessions : (existing.allowed_wa_sessions || []);
                 
                 if (finalMessenger.length === 0 && finalWA.length === 0) {
                     return res.status(400).json({ error: "Product must be assigned to at least one Facebook Page or WhatsApp Session." });
