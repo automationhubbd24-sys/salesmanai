@@ -764,26 +764,28 @@ exports.updateProduct = async (req, res) => {
         let currentMessengerIds = undefined;
         if (req.body.allowed_messenger_ids) {
             try {
-                const parsed = JSON.parse(req.body.allowed_messenger_ids);
+                const val = req.body.allowed_messenger_ids;
+                const parsed = typeof val === 'string' ? JSON.parse(val) : val;
                 if (Array.isArray(parsed)) {
                     currentMessengerIds = parsed.map(String);
                     updates.allowed_messenger_ids = currentMessengerIds;
                 }
             } catch (e) {
-                return res.status(400).json({ error: "Invalid allowed_messenger_ids JSON format" });
+                console.error("[ProductUpdate] Messenger IDs Parse Error:", e.message);
             }
         }
 
         let currentWASessions = undefined;
         if (req.body.allowed_wa_sessions) {
             try {
-                const parsed = JSON.parse(req.body.allowed_wa_sessions);
+                const val = req.body.allowed_wa_sessions;
+                const parsed = typeof val === 'string' ? JSON.parse(val) : val;
                 if (Array.isArray(parsed)) {
                     currentWASessions = parsed.map(String);
                     updates.allowed_wa_sessions = currentWASessions;
                 }
             } catch (e) {
-                return res.status(400).json({ error: "Invalid allowed_wa_sessions JSON format" });
+                console.error("[ProductUpdate] WA Sessions Parse Error:", e.message);
             }
         }
 
