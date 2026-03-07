@@ -569,6 +569,7 @@ router.put('/config/:id', async (req, res) => {
             'order_lock_minutes',
             'text_prompt',
             'wait',
+            'check_conversion',
             'block_emoji',
             'unblock_emoji',
             'emoji_check_count',
@@ -587,6 +588,7 @@ router.put('/config/:id', async (req, res) => {
 
         // Map frontend fields to DB columns
         if (req.body.wait_time !== undefined) updates.wait = req.body.wait_time;
+        if (req.body.history_limit !== undefined) updates.check_conversion = req.body.history_limit;
         if (req.body.provider !== undefined) updates.ai_provider = req.body.provider;
         if (req.body.chatmodel !== undefined) updates.chat_model = req.body.chatmodel;
 

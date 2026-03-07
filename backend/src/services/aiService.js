@@ -2072,7 +2072,7 @@ Rules:
                 }],
                 generationConfig: { maxOutputTokens: maxTokens }
             };
-            const useProxy = (provider === 'google' || provider === 'gemini');
+            const useProxy = (provider === 'google' || provider === 'gemini') && !(pageConfig && (pageConfig.cheap_engine === false || pageConfig.api_key));
             const geminiProxyAgent = getGeminiProxyAgent(url, useProxy);
             const visionResponse = await axios.post(url, payload, {
                     headers: { 'Content-Type': 'application/json' },
@@ -2469,7 +2469,7 @@ async function transcribeAudio(audioUrl, config) {
 
                 // NEW: Groq Proxy Support (Similar to Gemini Proxy)
                 // Use proxy if it's a system key (no user key provided in option)
-                const useProxy = !option.key;
+                const useProxy = !option.key && !(config && (config.cheap_engine === false || config.api_key));
                 const groqProxyAgent = getGroqProxyAgent(useProxy);
                 
                 // Force proxy for system keys as requested
