@@ -347,8 +347,10 @@ export default function ProductsPage() {
             }
 
             setAvailablePages(combinedPages);
+            return combinedPages;
         } catch (error) {
             console.error("Failed to fetch pages:", error);
+            return [];
         }
     };
 
@@ -474,7 +476,7 @@ export default function ProductsPage() {
         }
     };
 
-    const handleEdit = (product: Product) => {
+    const handleEdit = async (product: Product) => {
         setEditProductId(product.id || null);
         setProductName(product.name);
         setProductDesc(product.description || "");
@@ -501,9 +503,13 @@ export default function ProductsPage() {
         const waSessionsRaw = parseAssignment(product.allowed_wa_sessions);
         let messengerIds = messengerIdsRaw;
         let waSessions = waSessionsRaw;
-        if (availablePages && availablePages.length > 0) {
-            const messengerSet = new Set(availablePages.filter(p => p.type === 'messenger').map(p => String(p.page_id)));
-            const waSet = new Set(availablePages.filter(p => p.type === 'whatsapp').map(p => String(p.page_id)));
+        let pages = availablePages;
+        if (!pages || pages.length === 0) {
+            pages = await fetchPages() || [];
+        }
+        if (pages && pages.length > 0) {
+            const messengerSet = new Set(pages.filter(p => p.type === 'messenger').map(p => String(p.page_id).trim()));
+            const waSet = new Set(pages.filter(p => p.type === 'whatsapp').map(p => String(p.page_id).trim()));
             const waInMessenger = messengerIds.filter(id => waSet.has(id));
             const messengerInWA = waSessions.filter(id => messengerSet.has(id));
             messengerIds = Array.from(new Set(messengerIds.filter(id => messengerSet.has(id)).concat(messengerInWA)));
