@@ -568,40 +568,24 @@ async function queueMessage(event, entryPageId = null) {
     }).catch(err => console.error(`Error saving to fb_chats (Page: ${pageId}, Msg: ${messageId}):`, err.message));
     // -------------------------------------------------
 
-    const sessionId = `${pageId}_${senderId}`;
-
-    // --- EXTRACT MEDIA (Moved up for early cache check) ---
-    const thisMsgImages = event.message?.attachments?.filter(att => 
-        att.type === 'image' && !att.payload?.sticker_id
-    ).map(att => att.payload.url) || [];
-    
-    const thisMsgAudios = event.message?.attachments?.filter(att => 
-        att.type === 'audio' || 
-        (att.type === 'file' && att.payload?.url && /\.(mp3|wav|ogg|m4a|aac|mp4)(\?|$)/i.test(att.payload.url))
-    ).map(att => att.payload.url) || [];
-
-    // --- EARLY SEMANTIC CACHE CHECK (Instant Path) ---
-    // If this is the first message and not media, check cache immediately to bypass debounce.
-    const isFirstMessage = !debounceMap.has(sessionId);
-    const hasMediaInThisMsg = thisMsgImages.length > 0 || thisMsgAudios.length > 0;
-    
-    if (isFirstMessage && !hasMediaInThisMsg && messageText && messageText.trim()) {
-        const pageData = await getCachedPageData(pageId);
-        const pageConfig = pageData?.config;
-        if (pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1)) {
-            const threshold = pageConfig.semantic_cache_threshold ? Math.max(0.5, Math.min(0.99, Number(pageConfig.semantic_cache_threshold))) : 0.96;
-            const cacheQuery = messageText.trim().replace(/\s+/g, ' ');
-            
-            try {
-                const cached = await dbService.findSemanticCache({
-                    page_id: pageId,
-                    session_name: pageId,
-                    question: cacheQuery,
-                    threshold
-                });
-
-                if (cached) {
-                    console.log(`[FB] ⚡ EARLY CACHE HIT! (Bypassing Debounce)`);
+    // --- EARLY SEMANTIC CACHE CHECK (ULTRA-FAST PATH) ---
+    // User Requirement: Reply in <1s for cache hits.
+    // Check cache before ANY other logic (Gatekeeper, config cache update, etc)
+    if (messageText && messageText.trim() && !event.message?.attachments) {
+        // Use a lightweight check first
+        const cacheQuery = messageText.trim().replace(/\s+/g, ' ');
+        dbService.findSemanticCache({
+            page_id: pageId,
+            session_name: pageId,
+            question: cacheQuery,
+            threshold: 0.96 // Standard default
+        }).then(async (cached) => {
+            if (cached) {
+                // Now get config just for the token
+                const pageData = await getCachedPageData(pageId);
+                const pageConfig = pageData?.config;
+                if (pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1)) {
+                    console.log(`[FB] ⚡ ULTRA-FAST CACHE HIT!`);
                     trackBotReply(senderId, cached);
                     await facebookService.sendMessage(pageId, senderId, cached, pageConfig.page_access_token);
                     
@@ -616,15 +600,12 @@ async function queueMessage(event, entryPageId = null) {
                         reply_by: 'bot',
                         ai_model: 'semantic-cache'
                     }).catch(() => {});
-                    
-                    return; // EXIT EARLY
                 }
-            } catch (e) {
-                console.warn(`[FB] Early cache check failed:`, e.message);
             }
-        }
+        }).catch(e => console.warn(`[FB] Ultra-fast cache check failed:`, e.message));
     }
-    // --------------------------------------------------
+
+    const sessionId = `${pageId}_${senderId}`;
 
     // Initialize buffer if not exists
     if (!debounceMap.has(sessionId)) {
@@ -633,9 +614,17 @@ async function queueMessage(event, entryPageId = null) {
 
     const sessionData = debounceMap.get(sessionId);
     
-    // Extract URLs for this specific message (ALREADY EXTRACTED ABOVE)
+    // --- PUSH OBJECT ---
+    // Extract URLs for this specific message (STRICTLY EXCLUDING STICKERS)
+    const thisMsgImages = event.message?.attachments?.filter(att => 
+        att.type === 'image' && !att.payload?.sticker_id
+    ).map(att => att.payload.url) || [];
+    
+    const thisMsgAudios = event.message?.attachments?.filter(att => 
+        att.type === 'audio' || 
+        (att.type === 'file' && att.payload?.url && /\.(mp3|wav|ogg|m4a|aac|mp4)(\?|$)/i.test(att.payload.url))
+    ).map(att => att.payload.url) || [];
 
-    // Push Object
     sessionData.messages.push({
         id: messageId,
         text: messageText,

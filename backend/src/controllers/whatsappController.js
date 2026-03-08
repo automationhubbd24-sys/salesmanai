@@ -1226,86 +1226,45 @@ async function queueMessage(session, messagePayload) {
     console.log(logMsg);
     logToFile(logMsg);
 
-    // --- SAVE USER MESSAGE TO whatsapp_chats (Immediate - Raw) ---
-    // User Requirement: Save User Messages even if Locked
-    // FIX: Only save if text is not empty
+    // --- SAVE USER MESSAGE TO whatsapp_chats (Background - Non-Blocking) ---
+    // User Instructions: Fire and forget to reduce latency
     if (messageText && messageText.trim().length > 0) {
-        try {
-            await dbService.saveWhatsAppChat({
-                session_name: sessionName,
-                sender_id: senderId, // User is the sender (Phone Number)
-                recipient_id: messagePayload.to, // Page is the recipient (Page Number)
-                message_id: messageId,
-                text: messageText,
-                timestamp: Date.now(),
-                status: 'received',
-                reply_by: 'user',
-                is_group: isGroup,
-                group_id: groupId,
-                group_name: groupName
-            });
-            
-            // Save Contact/Lead
-            // Enhanced Name Extraction
-            let pushName = messagePayload.pushName || messagePayload._data?.notifyName || messagePayload.notifyName;
-            
-            // Deep search for name in various WAHA payload structures
-            if (!pushName && messagePayload.sender) {
-                 pushName = messagePayload.sender.pushname || messagePayload.sender.name || messagePayload.sender.shortName;
-            }
-            
-            if (!pushName) pushName = 'Unknown';
-
-            const lidValue = (senderId && senderId.includes('@lid'))
-                ? senderId
-                : (messagePayload._data?.key?.remoteJid && String(messagePayload._data.key.remoteJid).includes('@lid'))
-                    ? messagePayload._data.key.remoteJid
-                    : (messagePayload._data?.key?.remoteJidAlt && String(messagePayload._data.key.remoteJidAlt).includes('@lid'))
-                        ? messagePayload._data.key.remoteJidAlt
-                        : null;
-
-            await dbService.saveWhatsAppContact({
-                session_name: sessionName,
-                phone_number: lockSenderId,
-                name: pushName,
-                lid: lidValue
-            });
-
-        } catch (err) {
-            console.error("Error saving to whatsapp_chats:", err.message);
+        dbService.saveWhatsAppChat({
+            session_name: sessionName,
+            sender_id: senderId,
+            recipient_id: messagePayload.to,
+            message_id: messageId,
+            text: messageText,
+            timestamp: Date.now(),
+            status: 'received',
+            reply_by: 'user',
+            is_group: isGroup,
+            group_id: groupId,
+            group_name: groupName
+        }).catch(err => console.error("Error saving to whatsapp_chats:", err.message));
+        
+        // Save Contact/Lead (Fire and forget)
+        let pushName = messagePayload.pushName || messagePayload._data?.notifyName || messagePayload.notifyName;
+        if (!pushName && messagePayload.sender) {
+             pushName = messagePayload.sender.pushname || messagePayload.sender.name || messagePayload.sender.shortName;
         }
-    } else {
-        console.log(`[WA] Skipping save for empty/null message ID: ${messageId}`);
-    }
+        if (!pushName) pushName = 'Unknown';
 
-    // Handover guard: if admin takeover active for this chat, skip
-    const chatKey = `${sessionName}_${lockSenderId}`;
-    
-    // 1. Check Memory (Fast) - for temporary pauses after admin reply
-    // DISABLED: Defer to processBufferedMessages to allow Early Label Check to run (unlocking logic)
-    /*
-    const handoverUntil = handoverMap.get(chatKey);
-    if (handoverUntil && handoverUntil > Date.now()) {
-        console.log(`[WA] Handover active (Memory) for ${chatKey}. Skipping AI.`);
-        return;
-    } else if (handoverUntil && handoverUntil <= Date.now()) {
-        handoverMap.delete(chatKey);
-    }
-    */
+        const lidValue = (senderId && senderId.includes('@lid'))
+            ? senderId
+            : (messagePayload._data?.key?.remoteJid && String(messagePayload._data.key.remoteJid).includes('@lid'))
+                ? messagePayload._data.key.remoteJid
+                : (messagePayload._data?.key?.remoteJidAlt && String(messagePayload._data.key.remoteJidAlt).includes('@lid'))
+                    ? messagePayload._data.key.remoteJidAlt
+                    : null;
 
-    // 2. Check DB (Persistent Lock) - for manual Lock/Unlock
-    // DISABLED: Defer to processBufferedMessages to allow Early Label Check to run
-    /*
-    try {
-        const contact = await dbService.getWhatsAppContact(sessionName, senderId);
-        if (contact && contact.is_locked) {
-            console.log(`[WA] Handover active (DB Lock) for ${chatKey}. Skipping AI.`);
-            return;
-        }
-    } catch (err) {
-        console.warn(`[WA] Failed to check lock status: ${err.message}`);
+        dbService.saveWhatsAppContact({
+            session_name: sessionName,
+            phone_number: lockSenderId,
+            name: pushName,
+            lid: lidValue
+        }).catch(() => {});
     }
-    */
 
     const sessionId = `${sessionName}_${senderId}`;
 
@@ -1332,47 +1291,27 @@ async function queueMessage(session, messagePayload) {
         }
     }
 
-    // --- EARLY SEMANTIC CACHE CHECK (Instant Path) ---
-    // If this is the first message and not media, check cache immediately to bypass debounce.
-    const isFirstMessage = !debounceMap.has(sessionId);
-    const hasMediaInThisMsg = imageUrls.length > 0 || audioUrls.length > 0;
-    
-    if (isFirstMessage && !hasMediaInThisMsg && messageText && messageText.trim()) {
-        const pageData = await getCachedPageData(sessionName);
-        const pageConfig = pageData?.config;
-        if (pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1)) {
-            const threshold = pageConfig.semantic_cache_threshold ? Math.max(0.5, Math.min(0.99, Number(pageConfig.semantic_cache_threshold))) : 0.96;
-            const cacheQuery = messageText.trim().replace(/\s+/g, ' ');
-            
-            try {
-                const cached = await dbService.findSemanticCache({
-                    page_id: sessionName,
-                    session_name: sessionName,
-                    question: cacheQuery,
-                    threshold
-                });
-
-                if (cached) {
-                    console.log(`[WA] ⚡ EARLY CACHE HIT! (Bypassing Debounce)`);
-                    if (typeof trackBotReply === 'function') {
-                        trackBotReply(senderId, cached);
-                    }
+    // --- EARLY SEMANTIC CACHE CHECK (ULTRA-FAST PATH) ---
+    // User Requirement: Reply in <1s for cache hits.
+    if (messageText && messageText.trim() && !imageUrls.length && !audioUrls.length) {
+        const cacheQuery = messageText.trim().replace(/\s+/g, ' ');
+        dbService.findSemanticCache({
+            page_id: sessionName,
+            session_name: sessionName,
+            question: cacheQuery,
+            threshold: 0.96
+        }).then(async (cached) => {
+            if (cached) {
+                const pageData = await getCachedPageData(sessionName);
+                const pageConfig = pageData?.config;
+                if (pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1)) {
+                    console.log(`[WA] ⚡ ULTRA-FAST CACHE HIT!`);
+                    if (typeof trackBotReply === 'function') trackBotReply(senderId, cached);
                     
                     await whatsappService.sendSeen(sessionName, senderId);
                     await whatsappService.sendTyping(sessionName, senderId);
                     await whatsappService.sendMessage(sessionName, senderId, cached);
                     
-                    dbService.saveWhatsAppChat({
-                        session_name: sessionName,
-                        sender_id: senderId,
-                        recipient_id: sessionName,
-                        message_id: messageId,
-                        text: messageText.trim(),
-                        timestamp: Date.now(),
-                        status: 'received',
-                        reply_by: 'user'
-                    }).catch(() => {});
-
                     dbService.saveWhatsAppChat({
                         session_name: sessionName,
                         sender_id: sessionName,
@@ -1384,15 +1323,10 @@ async function queueMessage(session, messagePayload) {
                         reply_by: 'bot',
                         model_used: 'semantic-cache'
                     }).catch(() => {});
-                    
-                    return; // EXIT EARLY
                 }
-            } catch (e) {
-                console.warn(`[WA] Early cache check failed:`, e.message);
             }
-        }
+        }).catch(e => console.warn(`[WA] Ultra-fast cache check failed:`, e.message));
     }
-    // --------------------------------------------------
 
     // Initialize buffer if not exists
     if (!debounceMap.has(sessionId)) {
