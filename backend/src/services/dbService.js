@@ -546,6 +546,19 @@ async function initTables() {
         `);
         console.log("[DB] 'openrouter_engine_config' table/column checked.");
 
+        // Ensure 'embedding_model_config' table exists for Semantic Cache Admin
+        await query(`
+            CREATE TABLE IF NOT EXISTS embedding_model_config (
+                config_type TEXT PRIMARY KEY,
+                provider TEXT DEFAULT 'google',
+                base_url TEXT DEFAULT 'https://generativelanguage.googleapis.com/v1beta/openai/',
+                api_key TEXT,
+                model_name TEXT DEFAULT 'text-embedding-004',
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            );
+        `);
+        console.log("[DB] 'embedding_model_config' table checked/initialized.");
+
         // Ensure 'api_list' has unique constraint on 'api'
         await query(`
             DO $$ 

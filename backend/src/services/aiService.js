@@ -506,6 +506,19 @@ const normalizeVariantPrice = (variant) => {
     return null;
 };
 
+/**
+ * Gets global embedding configuration from DB.
+ */
+async function getEmbeddingModelConfig() {
+    try {
+        const result = await pgClient.query('SELECT * FROM embedding_model_config WHERE config_type = $1 LIMIT 1', ['global']);
+        return result.rows[0] || null;
+    } catch (e) {
+        console.warn("[AI] Failed to fetch embedding config from DB:", e.message);
+        return null;
+    }
+}
+
 // --- GEMINI CONTEXT CACHING MANAGER ---
 const geminiCacheMap = new Map(); // Key: Hash, Value: { name: string, expirationTime: string }
 

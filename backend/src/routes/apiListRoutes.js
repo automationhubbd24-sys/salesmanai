@@ -38,4 +38,8 @@ router.delete('/:id', authMiddleware, apiListController.remove);
 router.get('/config', authMiddleware, apiListController.getGlobalConfigs);
 router.post('/config', authMiddleware, apiListController.saveGlobalConfig);
 
+// Embedding Config Routes
+router.get('/embedding-config', authMiddleware, apiListController.getEmbeddingConfig);
+router.post('/embedding-config', authMiddleware, apiListController.saveEmbeddingConfig);
+
 module.exports = router;

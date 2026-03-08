@@ -198,6 +198,14 @@ export default function AdminPage() {
   const [editingRow, setEditingRow] = useState<any | null>(null);
   const [insertDialogOpen, setInsertDialogOpen] = useState(false);
   const [insertForm, setInsertForm] = useState<any>({});
+
+  // Embedding Config State
+  const [embeddingProvider, setEmbeddingProvider] = useState("google");
+  const [embeddingBaseUrl, setEmbeddingBaseUrl] = useState("https://generativelanguage.googleapis.com/v1beta/openai/");
+  const [embeddingApiKey, setEmbeddingApiKey] = useState("");
+  const [embeddingModelName, setEmbeddingModelName] = useState("text-embedding-004");
+  const [embeddingLoading, setEmbeddingLoading] = useState(false);
+
   const [sqlText, setSqlText] = useState("");
   const [sqlResult, setSqlResult] = useState<any | null>(null);
   const [sqlError, setSqlError] = useState<string | null>(null);
@@ -218,8 +226,57 @@ export default function AdminPage() {
       fetchCoupons();
       fetchDbTables();
       fetchEngineData();
+      fetchEmbeddingConfig();
     }
   }, [isAuthenticated]);
+
+  const fetchEmbeddingConfig = async () => {
+    try {
+      const token = localStorage.getItem("auth_token");
+      const res = await fetch(`${BACKEND_URL}/api/api-list/embedding-config`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (res.ok && data.success && data.config) {
+        setEmbeddingProvider(data.config.provider || "google");
+        setEmbeddingBaseUrl(data.config.base_url || "");
+        setEmbeddingApiKey(data.config.api_key || "");
+        setEmbeddingModelName(data.config.model_name || "");
+      }
+    } catch (error) {
+      console.error("Failed to fetch embedding config", error);
+    }
+  };
+
+  const saveEmbeddingConfig = async () => {
+    try {
+      setEmbeddingLoading(true);
+      const token = localStorage.getItem("auth_token");
+      const res = await fetch(`${BACKEND_URL}/api/api-list/embedding-config`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          provider: embeddingProvider,
+          base_url: embeddingBaseUrl,
+          api_key: embeddingApiKey,
+          model_name: embeddingModelName
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast.success("Embedding configuration saved");
+      } else {
+        throw new Error(data.error || "Failed to save config");
+      }
+    } catch (error: any) {
+      toast.error(error.message || "Failed to save embedding config");
+    } finally {
+      setEmbeddingLoading(false);
+    }
+  };
 
   const fetchEngineData = async (page = 1) => {
     try {
@@ -770,9 +827,15 @@ export default function AdminPage() {
         body: JSON.stringify({ username: usernameInput, password: passwordInput }),
       });
 
+      const data = await res.json();
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || "Invalid credentials");
+        throw new Error(data.error || "Invalid credentials");
+      }
+
+      if (data.token) {
+        localStorage.setItem("admin_auth_token", data.token);
+        localStorage.setItem("admin_username", usernameInput);
+        localStorage.setItem("admin_password", passwordInput);
       }
 
       setIsAuthenticated(true);
@@ -784,6 +847,17 @@ export default function AdminPage() {
       setLoginLoading(false);
     }
   };
+
+  useEffect(() => {
+    const savedToken = localStorage.getItem("admin_auth_token");
+    const savedUser = localStorage.getItem("admin_username");
+    const savedPass = localStorage.getItem("admin_password");
+    if (savedToken && savedUser && savedPass) {
+      setUsernameInput(savedUser);
+      setPasswordInput(savedPass);
+      setIsAuthenticated(true);
+    }
+  }, []);
 
   const fetchTransactions = async () => {
     try {
@@ -2081,6 +2155,74 @@ export default function AdminPage() {
         </TabsContent>
 
         <TabsContent value="gemini" className="space-y-4">
+          {/* Global Embedding Model Configuration Card */}
+          <Card className="border-white/10 bg-[#0f0f0f]/50">
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between text-[#00ff88]">
+                <div className="flex items-center gap-2">
+                  <Cpu className="h-5 w-5" />
+                  Global Embedding Model Configuration
+                </div>
+                <Button 
+                  onClick={saveEmbeddingConfig} 
+                  disabled={embeddingLoading}
+                  className="bg-[#00ff88] hover:bg-[#00cc77] text-black font-bold h-8"
+                >
+                  {embeddingLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Save Global Config
+                </Button>
+              </CardTitle>
+              <CardDescription>
+                Common configuration for all semantic lookups.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="space-y-2">
+                  <Label className="text-xs">PROVIDER</Label>
+                  <Select value={embeddingProvider} onValueChange={setEmbeddingProvider}>
+                    <SelectTrigger className="bg-black/40 border-white/10 h-9">
+                      <SelectValue placeholder="Select Provider" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="google">Google</SelectItem>
+                      <SelectItem value="openai">OpenAI</SelectItem>
+                      <SelectItem value="mistral">Mistral</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">BASE URL</Label>
+                  <Input 
+                    value={embeddingBaseUrl}
+                    onChange={(e) => setEmbeddingBaseUrl(e.target.value)}
+                    placeholder="https://generativelanguage.googleapis.com/v1beta/openai/"
+                    className="bg-black/40 border-white/10 h-9"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">API KEY</Label>
+                  <Input 
+                    type="password"
+                    value={embeddingApiKey}
+                    onChange={(e) => setEmbeddingApiKey(e.target.value)}
+                    placeholder="Enter API key"
+                    className="bg-black/40 border-white/10 h-9"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">MODEL NAME</Label>
+                  <Input 
+                    value={embeddingModelName}
+                    onChange={(e) => setEmbeddingModelName(e.target.value)}
+                    placeholder="gemini-embedding-001"
+                    className="bg-black/40 border-white/10 h-9"
+                  />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
           <Card className="bg-card border-border">
             <CardHeader>
               <CardTitle>API Pool Monitor</CardTitle>

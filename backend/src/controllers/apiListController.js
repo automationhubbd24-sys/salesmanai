@@ -113,3 +113,38 @@ exports.saveGlobalConfig = async (req, res) => {
     }
 };
 
+exports.getEmbeddingConfig = async (req, res) => {
+    try {
+        const result = await pgClient.query('SELECT * FROM embedding_model_config WHERE config_type = $1 LIMIT 1', ['global']);
+        res.json({ success: true, config: result.rows[0] || null });
+    } catch (error) {
+        console.error('getEmbeddingConfig error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+exports.saveEmbeddingConfig = async (req, res) => {
+    try {
+        const { provider, base_url, api_key, model_name } = req.body;
+        
+        const result = await pgClient.query(
+            `INSERT INTO embedding_model_config (config_type, provider, base_url, api_key, model_name, updated_at)
+             VALUES ($1, $2, $3, $4, $5, NOW())
+             ON CONFLICT (config_type) 
+             DO UPDATE SET 
+                provider = EXCLUDED.provider,
+                base_url = EXCLUDED.base_url,
+                api_key = EXCLUDED.api_key,
+                model_name = EXCLUDED.model_name,
+                updated_at = NOW()
+             RETURNING *`,
+            ['global', provider, base_url, api_key, model_name]
+        );
+
+        res.json({ success: true, config: result.rows[0] });
+    } catch (error) {
+        console.error('saveEmbeddingConfig error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
