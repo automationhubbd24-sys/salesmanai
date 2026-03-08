@@ -333,6 +333,29 @@ exports.saveEmbeddingGlobalConfig = async (req, res) => {
 
 exports.getSemanticCacheConfigs = async (req, res) => {
     try {
+        // Ensure columns exist first to avoid query errors
+        try {
+            await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS semantic_cache_enabled boolean DEFAULT false`);
+            await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS semantic_cache_threshold numeric DEFAULT 0.96`);
+            await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS embed_enabled boolean DEFAULT false`);
+            
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS semantic_cache_enabled boolean DEFAULT false`);
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS semantic_cache_threshold numeric DEFAULT 0.96`);
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS embed_enabled boolean DEFAULT false`);
+            
+            // Also ensure page_id has a unique constraint for ON CONFLICT in update
+            await pgClient.query(`
+                DO $$ 
+                BEGIN 
+                    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fb_message_database_page_id_unique') THEN
+                        ALTER TABLE fb_message_database ADD CONSTRAINT fb_message_database_page_id_unique UNIQUE (page_id);
+                    END IF;
+                END $$;
+            `);
+        } catch (migrationError) {
+            console.warn('Migration error in getSemanticCacheConfigs:', migrationError.message);
+        }
+
         const messengerSql = `
             SELECT 
                 'messenger' AS platform,
@@ -341,10 +364,9 @@ exports.getSemanticCacheConfigs = async (req, res) => {
                 COALESCE(fb.semantic_cache_enabled, false) AS semantic_cache_enabled,
                 COALESCE(fb.semantic_cache_threshold, 0.96) AS semantic_cache_threshold,
                 COALESCE(fb.embed_enabled, false) AS embed_enabled,
-                pam.created_at
+                COALESCE(pam.created_at, NOW()) AS created_at
             FROM page_access_token_message pam
             LEFT JOIN fb_message_database fb ON fb.page_id = pam.page_id
-            ORDER BY pam.created_at DESC
         `;
 
         const whatsappSql = `
@@ -355,18 +377,26 @@ exports.getSemanticCacheConfigs = async (req, res) => {
                 COALESCE(wmd.semantic_cache_enabled, false) AS semantic_cache_enabled,
                 COALESCE(wmd.semantic_cache_threshold, 0.96) AS semantic_cache_threshold,
                 COALESCE(wmd.embed_enabled, false) AS embed_enabled,
-                wmd.created_at
+                COALESCE(wmd.created_at, NOW()) AS created_at
             FROM whatsapp_message_database wmd
             WHERE (wmd.status IS NULL OR wmd.status <> 'expired')
-            ORDER BY wmd.created_at DESC
         `;
 
         const messengerRes = await pgClient.query(messengerSql);
         const whatsappRes = await pgClient.query(whatsappSql);
 
+        const allConfigs = [...messengerRes.rows, ...whatsappRes.rows];
+        
+        // Sort manually by created_at to be safer
+        allConfigs.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
         res.json({
             success: true,
-            configs: [...messengerRes.rows, ...whatsappRes.rows]
+            configs: allConfigs,
+            debug: {
+                messengerCount: messengerRes.rows.length,
+                whatsappCount: whatsappRes.rows.length
+            }
         });
     } catch (error) {
         console.error('DB Admin getSemanticCacheConfigs error:', error);

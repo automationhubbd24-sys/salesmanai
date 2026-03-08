@@ -335,10 +335,12 @@ export default function AdminPage() {
 
   const filteredCacheConfigs = cacheConfigs
     .filter(c => (cachePlatform === 'all' ? true : c.platform === cachePlatform))
-    .filter(c => 
-      c.name?.toLowerCase().includes(cacheSearch.toLowerCase()) || 
-      c.id?.toLowerCase().includes(cacheSearch.toLowerCase())
-    );
+    .filter(c => {
+      const search = cacheSearch.toLowerCase();
+      const nameMatch = c.name?.toLowerCase().includes(search);
+      const idMatch = c.id?.toString().toLowerCase().includes(search);
+      return nameMatch || idMatch;
+    });
 
   const paginatedCacheConfigs = filteredCacheConfigs.slice(
     (cachePage - 1) * cacheLimit,
