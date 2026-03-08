@@ -5,6 +5,60 @@ const fs = require('fs');
 const path = require('path');
 const WAHA_BASE_URL = process.env.WAHA_BASE_URL || 'https://wahubbd.salesmanchatbot.online';
 
+// --- CONFIG & ECHO CACHE (In-Memory Optimization) ---
+const configCache = new Map(); // sessionName -> { config, timestamp }
+const recentBotReplies = new Map(); // recipientId -> [{ text, timestamp }]
+const CONFIG_CACHE_TTL = 60 * 1000; // 1 Minute
+
+// Helper to normalize text for comparison (Unicode safe)
+const normalizeText = (text) => {
+    return (text || '').toLowerCase().replace(/[\s\p{P}]/gu, '');
+};
+
+async function getCachedWAData(sessionName) {
+    const now = Date.now();
+    const cached = configCache.get(sessionName);
+    if (cached && (now - cached.timestamp < CONFIG_CACHE_TTL)) {
+        return cached.config;
+    }
+
+    const config = await dbService.getWhatsAppConfig(sessionName);
+    configCache.set(sessionName, { config, timestamp: now });
+    return config;
+}
+
+function trackBotReply(recipientId, text) {
+    const now = Date.now();
+    if (!recentBotReplies.has(recipientId)) {
+        recentBotReplies.set(recipientId, []);
+    }
+    const replies = recentBotReplies.get(recipientId);
+    // Store NORMALIZED text for robust matching
+    replies.push({ text: normalizeText(text), timestamp: now });
+    
+    const filtered = replies.filter(r => now - r.timestamp < 120000);
+    recentBotReplies.set(recipientId, filtered);
+}
+
+function isRecentBotReply(recipientId, incomingText) {
+    const replies = recentBotReplies.get(recipientId);
+    if (!replies || replies.length === 0) return false;
+    
+    const incomingNorm = normalizeText(incomingText);
+    if (!incomingNorm) return false;
+
+    return replies.some(r => {
+        const timeDiff = Date.now() - r.timestamp;
+        if (timeDiff > 120000) return false;
+        
+        const stored = r.text;
+        return incomingNorm === stored || 
+               (incomingNorm.length > 10 && incomingNorm.includes(stored)) || 
+               (stored.length > 10 && stored.includes(incomingNorm));
+    });
+}
+// ----------------------------------------------------
+
 function logDebug(msg) {
     try {
         const logDir = path.join(__dirname, '../../logs');
@@ -218,12 +272,8 @@ setInterval(() => {
 }, 5 * 60 * 1000); // 5 Minutes Interval
 
 // Helper to normalize text for comparison
-const normalizeText = (text) => {
-    // Remove all whitespace and special characters to ensure robust matching
-    // Update: Support Unicode (Bengali) by using unicode property escapes
-    // Removes whitespace and punctuation, BUT KEEPS SYMBOLS/EMOJIS to prevent "🌸" becoming ""
-    return (text || '').toLowerCase().replace(/[\s\p{P}]/gu, '');
-};
+// MOVED TO TOP FOR CONSISTENCY
+// const normalizeText = (text) => { ... };
 
 const extractImageUrlsFromText = (text) => {
     const urls = [];
@@ -2001,6 +2051,9 @@ STRICT RULES:
                 
                 if (cached) {
                     console.log(`[WA] ⚡ INSTANT CACHE HIT! Replying to ${senderId}...`);
+                    
+                    // Track bot reply BEFORE sending to prevent echo double-save
+                    trackBotReply(senderId, cached);
                     
                     // Instant WhatsApp Send
                     await whatsappService.sendSeen(sessionName, senderId);
