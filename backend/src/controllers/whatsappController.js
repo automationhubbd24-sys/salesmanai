@@ -229,9 +229,7 @@ const sessionStartTimeMap = new Map();
 const recentMessageIds = new Set();
 // Bot Message IDs (to distinguish Bot vs Admin replies)
 const botMessageIds = new Set();
-// Recent Bot Replies (Text-based Echo Guard)
-// Key: recipientId, Value: Array of { text, timestamp }
-const recentBotReplies = new Map();
+// -----------------------------
 
 // --- MEMORY GARBAGE COLLECTOR (Safety for 100+ Users) ---
 // Runs every 5 minutes to clean stale data and prevent memory leaks.
