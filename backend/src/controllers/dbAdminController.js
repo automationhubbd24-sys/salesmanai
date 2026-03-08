@@ -359,25 +359,32 @@ exports.getSemanticCacheConfigs = async (req, res) => {
         const messengerSql = `
             SELECT 
                 'messenger' AS platform,
-                pam.page_id AS id,
-                COALESCE(pam.name, pam.page_id) AS name,
-                COALESCE(fb.semantic_cache_enabled, false) AS semantic_cache_enabled,
-                COALESCE(fb.semantic_cache_threshold, 0.96) AS semantic_cache_threshold,
-                COALESCE(fb.embed_enabled, false) AS embed_enabled,
-                COALESCE(pam.created_at, NOW()) AS created_at
-            FROM page_access_token_message pam
-            LEFT JOIN fb_message_database fb ON fb.page_id = pam.page_id
-            UNION
-            SELECT 
-                'messenger' AS platform,
-                fb.page_id AS id,
-                fb.page_id AS name,
-                COALESCE(fb.semantic_cache_enabled, false) AS semantic_cache_enabled,
-                COALESCE(fb.semantic_cache_threshold, 0.96) AS semantic_cache_threshold,
-                COALESCE(fb.embed_enabled, false) AS embed_enabled,
-                COALESCE(fb.created_at, NOW()) AS created_at
-            FROM fb_message_database fb
-            WHERE NOT EXISTS (SELECT 1 FROM page_access_token_message pam WHERE pam.page_id = fb.page_id)
+                page_id AS id,
+                COALESCE(name, page_id) AS name,
+                COALESCE(semantic_cache_enabled, false) AS semantic_cache_enabled,
+                COALESCE(semantic_cache_threshold, 0.96) AS semantic_cache_threshold,
+                COALESCE(embed_enabled, false) AS embed_enabled,
+                COALESCE(created_at, NOW()) AS created_at
+            FROM (
+                SELECT 
+                    pam.page_id, 
+                    pam.name, 
+                    fb.semantic_cache_enabled, 
+                    fb.semantic_cache_threshold, 
+                    fb.embed_enabled, 
+                    pam.created_at
+                FROM page_access_token_message pam
+                LEFT JOIN fb_message_database fb ON fb.page_id = pam.page_id
+                UNION
+                SELECT 
+                    fb.page_id, 
+                    NULL as name, 
+                    fb.semantic_cache_enabled, 
+                    fb.semantic_cache_threshold, 
+                    fb.embed_enabled, 
+                    fb.created_at
+                FROM fb_message_database fb
+            ) AS combined_messenger
         `;
 
         const whatsappSql = `
