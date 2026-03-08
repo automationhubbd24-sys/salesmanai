@@ -182,7 +182,7 @@ export default function WhatsAppSettingsPage() {
       });
 
       // Behavior
-      setWait(dbRow.wait ?? 8);
+      setWait(dbRow.wait !== undefined && dbRow.wait !== null ? Number(dbRow.wait) : 8);
       setHistoryLimit(dbRow.check_conversion ?? 10);
       setSemanticCacheEnabled(Boolean(dbRow.semantic_cache_enabled));
       setEmbedEnabled(Boolean(dbRow.embed_enabled));

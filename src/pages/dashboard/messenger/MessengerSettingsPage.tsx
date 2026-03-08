@@ -231,7 +231,7 @@ export default function MessengerSettingsPage() {
             base_url: pageRow.custom_base_url || "",
           });
 
-          setWait(dbRow.wait || 8);
+          setWait(dbRow.wait !== undefined && dbRow.wait !== null ? Number(dbRow.wait) : 8);
           setMemoryLimit(dbRow.check_conversion || 20);
           setSemanticCacheEnabled(Boolean(dbRow.semantic_cache_enabled));
           setEmbedEnabled(Boolean(dbRow.embed_enabled));
