@@ -337,7 +337,7 @@ exports.getSemanticCacheConfigs = async (req, res) => {
             SELECT 
                 'messenger' AS platform,
                 pam.page_id AS id,
-                COALESCE(pam.page_name, pam.page_id) AS name,
+                COALESCE(pam.name, pam.page_id) AS name,
                 COALESCE(fb.semantic_cache_enabled, false) AS semantic_cache_enabled,
                 COALESCE(fb.semantic_cache_threshold, 0.96) AS semantic_cache_threshold,
                 COALESCE(fb.embed_enabled, false) AS embed_enabled,
