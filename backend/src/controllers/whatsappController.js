@@ -5,60 +5,6 @@ const fs = require('fs');
 const path = require('path');
 const WAHA_BASE_URL = process.env.WAHA_BASE_URL || 'https://wahubbd.salesmanchatbot.online';
 
-// --- CONFIG & ECHO CACHE (In-Memory Optimization) ---
-const configCache = new Map(); // sessionName -> { config, timestamp }
-const recentBotReplies = new Map(); // recipientId -> [{ text, timestamp }]
-const CONFIG_CACHE_TTL = 60 * 1000; // 1 Minute
-
-// Helper to normalize text for comparison (Unicode safe)
-const normalizeText = (text) => {
-    return (text || '').toLowerCase().replace(/[\s\p{P}]/gu, '');
-};
-
-async function getCachedWAData(sessionName) {
-    const now = Date.now();
-    const cached = configCache.get(sessionName);
-    if (cached && (now - cached.timestamp < CONFIG_CACHE_TTL)) {
-        return cached.config;
-    }
-
-    const config = await dbService.getWhatsAppConfig(sessionName);
-    configCache.set(sessionName, { config, timestamp: now });
-    return config;
-}
-
-function trackBotReply(recipientId, text) {
-    const now = Date.now();
-    if (!recentBotReplies.has(recipientId)) {
-        recentBotReplies.set(recipientId, []);
-    }
-    const replies = recentBotReplies.get(recipientId);
-    // Store NORMALIZED text for robust matching
-    replies.push({ text: normalizeText(text), timestamp: now });
-    
-    const filtered = replies.filter(r => now - r.timestamp < 120000);
-    recentBotReplies.set(recipientId, filtered);
-}
-
-function isRecentBotReply(recipientId, incomingText) {
-    const replies = recentBotReplies.get(recipientId);
-    if (!replies || replies.length === 0) return false;
-    
-    const incomingNorm = normalizeText(incomingText);
-    if (!incomingNorm) return false;
-
-    return replies.some(r => {
-        const timeDiff = Date.now() - r.timestamp;
-        if (timeDiff > 120000) return false;
-        
-        const stored = r.text;
-        return incomingNorm === stored || 
-               (incomingNorm.length > 10 && incomingNorm.includes(stored)) || 
-               (stored.length > 10 && stored.includes(incomingNorm));
-    });
-}
-// ----------------------------------------------------
-
 function logDebug(msg) {
     try {
         const logDir = path.join(__dirname, '../../logs');
@@ -229,7 +175,9 @@ const sessionStartTimeMap = new Map();
 const recentMessageIds = new Set();
 // Bot Message IDs (to distinguish Bot vs Admin replies)
 const botMessageIds = new Set();
-// -----------------------------
+// Recent Bot Replies (Text-based Echo Guard)
+// Key: recipientId, Value: Array of { text, timestamp }
+const recentBotReplies = new Map();
 
 // --- MEMORY GARBAGE COLLECTOR (Safety for 100+ Users) ---
 // Runs every 5 minutes to clean stale data and prevent memory leaks.
@@ -270,8 +218,12 @@ setInterval(() => {
 }, 5 * 60 * 1000); // 5 Minutes Interval
 
 // Helper to normalize text for comparison
-// MOVED TO TOP FOR CONSISTENCY
-// const normalizeText = (text) => { ... };
+const normalizeText = (text) => {
+    // Remove all whitespace and special characters to ensure robust matching
+    // Update: Support Unicode (Bengali) by using unicode property escapes
+    // Removes whitespace and punctuation, BUT KEEPS SYMBOLS/EMOJIS to prevent "🌸" becoming ""
+    return (text || '').toLowerCase().replace(/[\s\p{P}]/gu, '');
+};
 
 const extractImageUrlsFromText = (text) => {
     const urls = [];
@@ -391,19 +343,6 @@ const handleWebhook = async (req, res) => {
         return res.sendStatus(400);
     }
 
-    // --- QUICK FILTER: Ignore Invalid/Empty WAHA Events ---
-    // User Requirement: "whatsapp er khali ba invalid event gulo filter koro"
-    // Solution: If payload has no 'from' and no 'body' (or media), it's likely a QR/Status update.
-    const isMessageEvent = (event === 'message' || event === 'message.any' || event === 'message.received');
-    const hasSender = !!(payload.from || payload.sender || payload._data?.from);
-    const hasContent = !!(payload.body || payload.caption || payload.media || payload.type === 'chat' || payload.type === 'image' || payload.type === 'video' || payload.type === 'audio' || payload.type === 'document' || payload.type === 'location' || payload.type === 'vcard' || payload.type === 'multi_vcard');
-
-    if (!isMessageEvent || !hasSender || !hasContent) {
-        // console.log(`[WA Webhook] Ignoring non-message/invalid event: ${event} for session: ${session}`);
-        return res.sendStatus(200); // Acknowledge QR/Status/Other events but don't process as AI message
-    }
-    // ------------------------------------------------------
-
     // --- AUTO-REGISTER SESSION (If Missing) ---
     // Fix for "Unknown Session" causing bot failure.
     // If a session connects via WAHA but isn't in our DB, auto-create it.
@@ -449,147 +388,153 @@ const handleWebhook = async (req, res) => {
 
     if (event === 'message' || event === 'message.any') {
         // --- CHECK FOR ADMIN MESSAGES (Echo from WAHA) ---
-        // If the message is fromME (sent by bot/admin from phone), we need to check if it contains lock emojis
-        if (payload.fromMe) {
-            const messageText = payload.body || '';
-            const sessionName = session;
-            console.log(`[WA] Detected Admin/Bot Message: ${messageText}`);
+    // If the message is fromME (sent by bot/admin from phone), we need to check if it contains lock emojis
+    if (payload.fromMe) {
+        const messageText = payload.body || '';
+        const sessionName = session;
+        console.log(`[WA] Detected Admin/Bot Message: ${messageText}`);
 
-            if (botMessageIds.has(messageIdRaw)) {
-                console.log(`[WA] Ignoring fromMe message (BotID Match): ${messageIdRaw}`);
-                botMessageIds.delete(messageIdRaw);
-                return;
-            }
-
-            const existingChat = await dbService.getWhatsAppChatById(messageIdRaw);
-            if (existingChat && (existingChat.reply_by === 'bot' || existingChat.reply_by === 'system')) {
-                console.log(`[WA] Skipping Admin save (Bot/System Echo): ${messageIdRaw}`);
-                return;
-            }
-
-            let recipientId = payload.to;
-            if (!recipientId && payload._data && payload._data.to) {
-                recipientId = payload._data.to.remote || payload._data.to;
-            }
-            if (!recipientId) {
-                recipientId = payload.from;
-            }
-
-            const normalizedIncoming = normalizeText(messageText);
-            if (recipientId && normalizedIncoming) {
-                const keysToCheck = [recipientId];
-                if (recipientId.includes('@')) keysToCheck.push(recipientId.split('@')[0]);
-                let recentReplies = [];
-                for (const key of keysToCheck) {
-                    const found = recentBotReplies.get(key);
-                    if (found && Array.isArray(found)) {
-                        recentReplies = found;
-                        break;
-                    }
-                }
-                const matchedRecent = recentReplies.find(reply => {
-                    const timeDiff = Date.now() - reply.timestamp;
-                    if (timeDiff >= 20000) return false;
-                    const stored = reply.text;
-                    return normalizedIncoming === stored || 
-                           (normalizedIncoming.length > 5 && normalizedIncoming.includes(stored)) || 
-                           (stored.length > 5 && stored.includes(normalizedIncoming));
-                });
-                if (matchedRecent) {
-                    console.log(`[WA] Ignoring fromMe message (Text Match): "${messageText.substring(0,30)}..."`);
-                    return;
-                }
-
-                await new Promise(resolve => setTimeout(resolve, 1000));
-                try {
-                    const lastMessages = await dbService.getLastNWhatsAppMessages(sessionName, recipientId, 20);
-                    const isEcho = lastMessages.some(msg => {
-                        if (msg.reply_by !== 'bot') return false;
-                        const dbBody = normalizeText(msg.text);
-                        return dbBody === normalizedIncoming;
-                    });
-                    if (isEcho) {
-                        console.log(`[WA] Ignoring fromMe message (DB Echo Match): "${messageText.substring(0,30)}..."`);
-                        return;
-                    }
-                } catch (err) {
-                    console.warn(`[WA] DB Echo check failed: ${err.message}`);
-                }
-            }
-
-            try {
-                const config = await dbService.getWhatsAppConfig(sessionName);
-                if (config) {
-                    const prompts = config.page_prompts || {};
-                    const normalizeEmojiText = (str) => (str || '').replace(/\uFE0F/g, '').normalize('NFC');
-                    
-                    const lockList = [
-                        prompts.block_emoji, 
-                        prompts.lock_emojis, 
-                        config.lock_emojis, 
-                        config.block_emoji
-                    ].filter(Boolean).join(' ').split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
-
-                    const unlockList = [
-                        prompts.unblock_emoji, 
-                        prompts.unlock_emojis, 
-                        config.unlock_emojis, 
-                        config.unblock_emoji
-                    ].filter(Boolean).join(' ').split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
-
-                    const cleanContent = normalizeEmojiText(messageText);
-                    
-                    let targetUserId = recipientId;
-                    
-                    if (targetUserId) {
-                        if (lockList.some(e => cleanContent.includes(e))) {
-                            console.log(`[WA] Admin sent LOCK emoji to ${targetUserId}`);
-                            await dbService.toggleWhatsAppLock(sessionName, targetUserId, true);
-                            const chatKey = `${sessionName}_${targetUserId}`;
-                            handoverMap.set(chatKey, Date.now() + 24 * 60 * 60 * 1000);
-                        } else if (unlockList.some(e => cleanContent.includes(e))) {
-                            console.log(`[WA] Admin sent UNLOCK emoji to ${targetUserId}`);
-                            await dbService.toggleWhatsAppLock(sessionName, targetUserId, false);
-                            const chatKey = `${sessionName}_${targetUserId}`;
-                            handoverMap.delete(chatKey);
-                        }
-                    }
-                }
-            } catch (e) {
-                console.error(`[WA] Failed to process Admin Emoji: ${e.message}`);
-            }
-            
-            if (messageText && messageText.trim().length > 0) {
-                const isGroup = (payload.from || '').includes('-');
-                await dbService.saveWhatsAppChat({
-                    session_name: sessionName,
-                    sender_id: sessionName,
-                    recipient_id: recipientId || payload.to || payload.from || null,
-                    message_id: messageIdRaw,
-                    text: messageText,
-                    timestamp: Date.now(),
-                    status: 'sent',
-                    reply_by: 'admin',
-                    is_group: isGroup,
-                    group_id: isGroup ? payload.from : null,
-                    group_name: isGroup ? (payload.notifyName || 'Group') : null
-                });
-            }
+        if (botMessageIds.has(messageIdRaw)) {
+            console.log(`[WA] Ignoring fromMe message (BotID Match): ${messageIdRaw}`);
+            botMessageIds.delete(messageIdRaw);
             return;
         }
 
-        // --- FAILSAFE ECHO GUARD (Even if fromMe is false) ---
-        const sender = payload.from;
-        const recentReplies = recentBotReplies.get(sender);
+        const existingChat = await dbService.getWhatsAppChatById(messageIdRaw);
+        if (existingChat && (existingChat.reply_by === 'bot' || existingChat.reply_by === 'system')) {
+            console.log(`[WA] Skipping Admin save (Bot/System Echo): ${messageIdRaw}`);
+            return;
+        }
+
+        let recipientId = payload.to;
+        if (!recipientId && payload._data && payload._data.to) {
+            recipientId = payload._data.to.remote || payload._data.to;
+        }
+        if (!recipientId) {
+            recipientId = payload.from;
+        }
+
+        const normalizedIncoming = normalizeText(messageText);
+        if (recipientId && normalizedIncoming) {
+            const keysToCheck = [recipientId];
+            if (recipientId.includes('@')) keysToCheck.push(recipientId.split('@')[0]);
+            let recentReplies = [];
+            for (const key of keysToCheck) {
+                const found = recentBotReplies.get(key);
+                if (found && Array.isArray(found)) {
+                    recentReplies = found;
+                    break;
+                }
+            }
+            const matchedRecent = recentReplies.find(reply => {
+                const timeDiff = Date.now() - reply.timestamp;
+                if (timeDiff >= 20000) return false;
+                const stored = reply.text;
+                return normalizedIncoming === stored || 
+                       (normalizedIncoming.length > 5 && normalizedIncoming.includes(stored)) || 
+                       (stored.length > 5 && stored.includes(normalizedIncoming));
+            });
+            if (matchedRecent) {
+                console.log(`[WA] Ignoring fromMe message (Text Match): "${messageText.substring(0,30)}..."`);
+                return;
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            try {
+                const lastMessages = await dbService.getLastNWhatsAppMessages(sessionName, recipientId, 20);
+                const isEcho = lastMessages.some(msg => {
+                    if (msg.reply_by !== 'bot') return false;
+                    const dbBody = normalizeText(msg.text);
+                    return dbBody === normalizedIncoming;
+                });
+                if (isEcho) {
+                    console.log(`[WA] Ignoring fromMe message (DB Echo Match): "${messageText.substring(0,30)}..."`);
+                    return;
+                }
+            } catch (err) {
+                console.warn(`[WA] DB Echo check failed: ${err.message}`);
+            }
+        }
+
+        try {
+            const config = await dbService.getWhatsAppConfig(sessionName);
+            if (config) {
+                const prompts = config.page_prompts || {};
+                const normalizeEmojiText = (str) => (str || '').replace(/\uFE0F/g, '').normalize('NFC');
+                
+                const lockList = [
+                    prompts.block_emoji, 
+                    prompts.lock_emojis, 
+                    config.lock_emojis, 
+                    config.block_emoji
+                ].filter(Boolean).join(' ').split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
+
+                const unlockList = [
+                    prompts.unblock_emoji, 
+                    prompts.unlock_emojis, 
+                    config.unlock_emojis, 
+                    config.unblock_emoji
+                ].filter(Boolean).join(' ').split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
+
+                const cleanContent = normalizeEmojiText(messageText);
+                
+                let targetUserId = recipientId;
+                
+                if (targetUserId) {
+                    if (lockList.some(e => cleanContent.includes(e))) {
+                        console.log(`[WA] Admin sent LOCK emoji to ${targetUserId}`);
+                        await dbService.toggleWhatsAppLock(sessionName, targetUserId, true);
+                        const chatKey = `${sessionName}_${targetUserId}`;
+                        handoverMap.set(chatKey, Date.now() + 24 * 60 * 60 * 1000);
+                    } else if (unlockList.some(e => cleanContent.includes(e))) {
+                        console.log(`[WA] Admin sent UNLOCK emoji to ${targetUserId}`);
+                        await dbService.toggleWhatsAppLock(sessionName, targetUserId, false);
+                        const chatKey = `${sessionName}_${targetUserId}`;
+                        handoverMap.delete(chatKey);
+                    }
+                }
+            }
+        } catch (e) {
+            console.error(`[WA] Failed to process Admin Emoji: ${e.message}`);
+        }
         
-        if (recentReplies && Array.isArray(recentReplies)) {
+        if (messageText && messageText.trim().length > 0) {
+            const isGroup = (payload.from || '').includes('-');
+            await dbService.saveWhatsAppChat({
+                session_name: sessionName,
+                sender_id: sessionName,
+                recipient_id: recipientId || payload.to || payload.from || null,
+                message_id: messageIdRaw,
+                text: messageText,
+                timestamp: Date.now(),
+                status: 'sent',
+                reply_by: 'admin',
+                is_group: isGroup,
+                group_id: isGroup ? payload.from : null,
+                group_name: isGroup ? (payload.notifyName || 'Group') : null
+            });
+        }
+        return;
+    }
+
+    // --- FAILSAFE ECHO GUARD (Even if fromMe is false) ---
+    // Checks if we just sent this exact text to this user.
+    // Solves "Infinite Loop" if WAHA echoes bot messages as incoming user messages.
+    const sender = payload.from;
+    const recentReplies = recentBotReplies.get(sender);
+    
+    if (recentReplies && Array.isArray(recentReplies)) {
             const incomingText = normalizeText(payload.body || '');
+            
+            // Check against ALL recent replies
             const match = recentReplies.find(reply => {
                 const timeDiff = Date.now() - reply.timestamp;
                 if (timeDiff >= 20000) return false;
+                
                 const sentText = reply.text;
                 return incomingText && sentText && (incomingText === sentText || incomingText.includes(sentText) || sentText.includes(incomingText));
             });
+
             if (match) {
                 console.log(`[WA] Ignoring INCOMING message (Failsafe Echo Match): "${(payload.body || '').substring(0,30)}..." from ${sender}`);
                 return;
@@ -598,13 +543,379 @@ const handleWebhook = async (req, res) => {
 
         await queueMessage(session, payload);
     } else if (event === 'state.change') {
+        // 1. Establish Baseline (Processing Start Time) for this session
+        if (!sessionStartTimeMap.has(session)) {
+            // Check for x-webhook-timestamp header (if available from WAHA/Reverse Proxy)
+            // Otherwise default to current server time
+            const headerTime = req.headers['x-webhook-timestamp'];
+            const startTime = headerTime ? Math.floor(Number(headerTime) / 1000) : Math.floor(Date.now() / 1000);
+            sessionStartTimeMap.set(session, startTime);
+            console.log(`[WA] Session ${session} connected. Baseline Time: ${startTime}`);
+        }
+
+        const msgTimestamp = payload.timestamp || Math.floor(Date.now() / 1000);
+        const baselineTime = sessionStartTimeMap.get(session);
+
+        // 2. Filter Backlog Messages (Sent BEFORE we started processing)
+        // User Instruction: "sender realtime message korle setar ans jak"
+        // Allow 2 minutes (120s) tolerance for "realtime" definition
+        if (msgTimestamp < (baselineTime - 120)) {
+            console.log(`[WA] Ignoring BACKLOG message from ${payload.from}. MsgTime: ${msgTimestamp}, Baseline: ${baselineTime}`);
+            return;
+        }
+        // -----------------------------------
+
+    // --- IGNORE @lid (Linked Devices / Internal) ---
+    // User Update: Removed per user instruction "eta wpp r number system".
+    // Previously blocked 124532744531973@lid, but user says this blocks legitimate replies.
+    // if (payload.from && payload.from.includes('@lid')) {
+    //    console.log(`[WA] Ignoring @lid message (Internal/Linked Device): ${payload.from}`);
+    //    return;
+    // }
+    // -----------------------------------------------
+
+    // --- HANDLE ADMIN/BOT MESSAGES (fromMe) ---
+        if (payload.fromMe) {
+            // Check if this is a BOT message we just sent (ID Match)
+            // Uses Normalized ID
+            // [DEBUG] Log IDs to debug the mismatch issue
+            console.log(`[WA Debug] Checking fromMe ID: ${messageIdRaw}. BotIDs count: ${botMessageIds.size}`);
+
+            // 1. Strict ID Match (Fastest)
+            if (botMessageIds.has(messageIdRaw)) {
+                console.log(`[WA] Ignoring fromMe message (BotID Match): ${messageIdRaw}`);
+                botMessageIds.delete(messageIdRaw);
+                return;
+            }
+
+            // 2. Text-Based Echo Guard (In-Memory)
+            const recipient = payload.to || payload.from;
+            
+            if (!recipient) {
+                 console.log('[WA] Skipping Echo Guard: No recipient/sender info found.');
+                 return;
+            }
+            
+            // Check keys with and without suffix to handle WAHA format variations
+            const keysToCheck = [recipient];
+            if (recipient.includes('@')) keysToCheck.push(recipient.split('@')[0]);
+            
+            let recentReplies = [];
+            for (const k of keysToCheck) {
+                const found = recentBotReplies.get(k);
+                if (found && Array.isArray(found)) {
+                    recentReplies = found;
+                    break;
+                }
+            }
+
+            if (recentReplies && recentReplies.length > 0) {
+                const incomingText = (payload.body || '').trim();
+                const normalizedIncoming = normalizeText(incomingText);
+                
+                // Check against ALL recent replies in the window
+                const match = recentReplies.find(reply => {
+                    const timeDiff = Date.now() - reply.timestamp;
+                    if (timeDiff >= 20000) return false; // 20s Window (Increased)
+                    
+                    const normalizedStored = reply.text;
+                    // Robust Check: Exact, Includes, or 80% Similarity
+                    // If normalized text is empty (e.g. all symbols), fall back to raw length check or loose match
+                    if (!normalizedIncoming && !normalizedStored) return true; // Both empty -> Match
+                    
+                    return normalizedIncoming === normalizedStored || 
+                           (normalizedIncoming.length > 5 && normalizedIncoming.includes(normalizedStored)) || 
+                           (normalizedStored.length > 5 && normalizedStored.includes(normalizedIncoming));
+                });
+
+                if (match) {
+                    console.log(`[WA] Ignoring fromMe message (Text Match): "${incomingText.substring(0,30)}..."`);
+                    return;
+                }
+            }
+
+                // 4. TERTIARY CHECK: DB-Based Echo Guard (1.5s Wait + 20 Msg Check)
+                // User Instruction: Wait 1.5s (Reduced from 3s), then check last 20 messages in DB
+                const targetRecipient = payload.to;
+                const targetBody = normalizeText(payload.body);
+                
+                // Wait 1.5 seconds to ensure any concurrent bot reply is saved to DB via its own flow
+                await new Promise(resolve => setTimeout(resolve, 1500));
+
+                try {
+                    // Fetch last 20 messages from DB
+                    const lastMessages = await dbService.getLastNWhatsAppMessages(session, targetRecipient, 20);
+                    
+                    // Check if ANY of them match our current message AND were sent by 'bot'
+                    const isEcho = lastMessages.some(msg => {
+                        if (msg.reply_by !== 'bot') return false;
+                        const dbBody = normalizeText(msg.text);
+                        // Debug log for potential mismatches
+                        // console.log(`[WA Echo Debug] DB: ${dbBody} vs Incoming: ${targetBody}`);
+                        return dbBody === targetBody;
+                    });
+
+                    if (isEcho) {
+                        console.log(`[WA] Ignoring fromMe message (DB Echo Match): "${targetBody.substring(0, 30)}..."`);
+                        return;
+                    } else {
+                        console.log(`[WA Debug] Echo Check Failed. Incoming: "${targetBody}". Last 5 DB: ${lastMessages.slice(0, 5).map(m => m.reply_by + ':' + normalizeText(m.text)).join(' | ')}`);
+                    }
+                } catch (err) {
+                    console.warn(`[WA] DB Echo check failed: ${err.message}`);
+                }
+
+                // 5. Fallback: If still not identified as bot, assume Admin
+                
+                const messageText = payload.body || '';
+                const sessionName = session;
+                
+                // In-memory duplicate check
+                if (recentMessageIds.has(messageIdRaw)) return;
+                recentMessageIds.add(messageIdRaw);
+                setTimeout(() => recentMessageIds.delete(messageIdRaw), 10 * 60 * 1000); // Clear after 10 mins
+
+                const isDuplicate = await dbService.checkWhatsAppDuplicate(messageIdRaw);
+                if (!isDuplicate) {
+                    // Prevent saving empty messages (avoids blank rows in UI)
+                    // Check for Reactions, Protocol messages, etc.
+                    const msgType = payload.type || payload.subtype || 'chat';
+                    if (['reaction', 'e2e_notification', 'protocol', 'ciphertext', 'revoked'].includes(msgType)) {
+                        console.log(`[WA] Ignoring Admin message of type: ${msgType}`);
+                        return;
+                    }
+
+                    const hasText = messageText && messageText.trim().length > 0;
+                    const hasMedia = payload.hasMedia || (payload.media && Object.keys(payload.media).length > 0) || (payload._data && (payload._data.jpegThumbnail || payload._data.thumbnail));
+
+                    if (!hasText && !hasMedia) {
+                        console.log('[WA] Ignoring empty Admin message (no text/media).');
+                        return;
+                    }
+                    
+                    const textToSave = messageText.trim() || '[Media Sent]';
+
+                    // --- NOTE TO SELF CHECK (Testing Mode) ---
+                    // Improved extraction for robustness
+                    const senderNum = (payload.from || '').split('@')[0];
+                    let recipientNum = (payload.to || '').split('@')[0];
+                    
+                    // Fallback for recipient if payload.to is missing (happens in some WAHA versions)
+                    if (!recipientNum && payload._data && payload._data.to) {
+                         recipientNum = (payload._data.to.remote || payload._data.to || '').split('@')[0];
+                    }
+
+                    const isNoteToSelf = senderNum && recipientNum && senderNum === recipientNum;
+
+                    // [DEBUG] Log Note-to-Self Check details
+                    if (payload.fromMe) {
+                        console.log(`[WA Debug] Note-to-Self Check: Sender=${senderNum}, Recipient=${recipientNum}, Match=${isNoteToSelf}`);
+                    }
+
+                    if (isNoteToSelf) {
+                         console.log(`[WA] Note-to-Self Detected (${senderNum}). Treating as User Message.`);
+                         console.log(`[WA Debug] Note-to-Self: Skipping Admin Logic. Proceeding to Queue.`);
+                    } else {
+                    
+                    // --- ECHO GUARD START (Prevent Bot Replies from being saved as Admin) ---
+                    // Check if this "Admin" message is actually a Bot Echo
+                    // Uses 'recentBotReplies' populated in processAI
+                    const recentReplies = recentBotReplies.get(payload.to);
+                    if (recentReplies && Array.isArray(recentReplies)) {
+                         const incomingText = normalizeText(textToSave); // Uses Global normalizeText
+                         
+                         const match = recentReplies.find(reply => {
+                             const timeDiff = Date.now() - reply.timestamp;
+                             if (timeDiff >= 10000) return false; // Check last 10s
+                             
+                             const sentText = reply.text; // already normalized
+                             return incomingText === sentText;
+                         });
+
+                         if (match) {
+                             console.log(`[WA] Ignoring Bot Echo (fromMe=true): "${(textToSave || '').substring(0,30)}..."`);
+                             return; // SKIP SAVING & HANDOVER
+                         }
+                    }
+                    // --- ECHO GUARD END ---
+
+                    const existingChat = await dbService.getWhatsAppChatById(messageIdRaw);
+                    if (existingChat && (existingChat.reply_by === 'bot' || existingChat.reply_by === 'system')) {
+                        console.log(`[WA] Skipping Admin save (Bot/System Echo): ${messageIdRaw}`);
+                        return;
+                    }
+
+                    console.log(`[WA] Admin Message Detected: "${textToSave}"`);
+                    
+                    // RE-ENABLED PER USER INSTRUCTION (Duplicate Fix: Check DB first?)
+                    // For now, we enable it because the lock logic and history depend on it.
+                    // To avoid duplicates, we rely on the fact that this is 'fromMe' handling
+                    // and 'bot' messages are handled separately or filtered by ID.
+                    
+                    try {
+                        await dbService.saveWhatsAppChat({
+                            session_name: sessionName,
+                            sender_id: sessionName, // Admin is the sender (Session Name/Page Number)
+                            recipient_id: payload.to, // User is the recipient
+                            message_id: messageIdRaw,
+                            text: textToSave,
+                            timestamp: Date.now(),
+                            status: 'sent',
+                            reply_by: 'admin' // Trigger stop logic
+                        });
+                        console.log(`[WA] Saved Admin Message: ${messageIdRaw}`);
+                    } catch (e) {
+                        console.error(`[WA] Failed to save Admin Message: ${e.message}`);
+                    }
+
+                    // --- EMOJI HANDOVER LOGIC (Admin) ---
+                    // Fetch Config for Dynamic Emojis
+                    let LOCK_EMOJIS = ['🛑', '🔒', '⛔'];
+                    let UNLOCK_EMOJIS = ['🟢', '🔓', '✅'];
+                    
+                    try {
+                        const config = await dbService.getWhatsAppConfig(sessionName);
+                        if (config) {
+                            const prompts = config.page_prompts || {};
+                            // Support both Messenger-style (single emoji) and List-style (comma separated)
+                            const locks = [];
+                            const unlocks = [];
+
+                            // 1. Messenger Style (block_emoji / unblock_emoji)
+                            if (prompts.block_emoji) locks.push(prompts.block_emoji);
+                            if (prompts.unblock_emoji) unlocks.push(prompts.unblock_emoji);
+                            if (config.block_emoji) locks.push(config.block_emoji);
+                            if (config.unblock_emoji) unlocks.push(config.unblock_emoji);
+
+                            // 2. List Style (lock_emojis / unlock_emojis)
+                            const lockCandidates = [
+                                prompts.lock_emojis,
+                                config.lock_emojis
+                            ].filter(Boolean).join(' ');
+                            const unlockCandidates = [
+                                prompts.unlock_emojis,
+                                config.unlock_emojis
+                            ].filter(Boolean).join(' ');
+
+                            if (lockCandidates.trim()) {
+                                locks.push(...lockCandidates.split(/[, ]+/).map(e => e.trim()).filter(e => e));
+                            }
+                            if (unlockCandidates.trim()) {
+                                unlocks.push(...unlockCandidates.split(/[, ]+/).map(e => e.trim()).filter(e => e));
+                            }
+
+                            // Update if we found any
+                            if (locks.length > 0) LOCK_EMOJIS = locks;
+                            if (unlocks.length > 0) UNLOCK_EMOJIS = unlocks;
+                        }
+                        console.log(`[WA Handover] Config Loaded. Lock: ${LOCK_EMOJIS.join('|')}, Unlock: ${UNLOCK_EMOJIS.join('|')}`);
+                    } catch (e) {
+                        console.warn(`[WA] Failed to fetch config for emoji check: ${e.message}`);
+                    }
+                    
+                    // Helper to strip variation selectors (VS16) and normalize
+                    // Renamed to avoid shadowing Global normalizeText
+                    const normalizeEmojiText = (str) => (str || '').replace(/\uFE0F/g, '').normalize('NFC');
+
+                    let command = null;
+                    // Check if textToSave contains any of the emojis
+                    // Use standard includes, but debug what we are checking
+                    console.log(`[WA Handover] Checking text: "${textToSave}"`);
+                    
+                    const cleanText = normalizeEmojiText(textToSave);
+
+                    for (const e of LOCK_EMOJIS) {
+                        if (cleanText.includes(normalizeEmojiText(e))) {
+                            command = 'LOCK';
+                            console.log(`[WA Handover] Matched Lock Emoji: ${e}`);
+                            break;
+                        }
+                    }
+                    if (!command) {
+                        for (const e of UNLOCK_EMOJIS) {
+                            if (cleanText.includes(normalizeEmojiText(e))) {
+                                command = 'UNLOCK';
+                                console.log(`[WA Handover] Matched Unlock Emoji: ${e}`);
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (command) {
+                        const isLocked = command === 'LOCK';
+                        console.log(`[WA] Emoji Command Detected (${command}) from Admin. Updating Lock Status...`);
+                        
+                        const targetUser = payload.to || payload._data?.key?.remoteJidAlt || payload._data?.key?.remoteJid;
+                        if (targetUser && !String(targetUser).includes('@lid') && targetUser !== sessionName) {
+                            await dbService.toggleWhatsAppLock(sessionName, targetUser, isLocked);
+                        
+                            // Update Memory Map
+                            const chatKey = `${sessionName}_${targetUser}`;
+                            if (isLocked) {
+                                handoverMap.set(chatKey, Date.now() + 24 * 60 * 60 * 1000);
+                            } else {
+                                handoverMap.delete(chatKey);
+                            }
+                        }
+                        
+                    } else {
+                        // Default Handover (5 mins) if no command
+                        const chatKey = `${sessionName}_${payload.to || payload.chatId || 'unknown'}`;
+                        handoverMap.set(chatKey, Date.now() + 5 * 60 * 1000);
+                    }
+                }
+                return; // STOP Processing
+            } // End else
+        }
+
+        // Ignore Status Updates (broadcasts)
+        if (payload.from === 'status@broadcast') return;
+
+        // --- TIMESTAMP CHECK (Ignore Old Messages > 2 Mins) ---
+        // Keeps the "Realtime" sanity check even if baseline was set long ago
+        const nowSeconds = Math.floor(Date.now() / 1000);
+        const ageSeconds = nowSeconds - msgTimestamp;
+        
+        if (ageSeconds > 120) { // 2 Minutes Tolerance
+            console.log(`[WA] Ignoring old message from ${payload.from}. Age: ${ageSeconds}s`);
+            return;
+        }
+        // -----------------------------------------------------
+
+        // --- FAILSAFE ECHO GUARD (Even if fromMe is false) ---
+        // Checks if we just sent this exact text to this user.
+        // Solves "Infinite Loop" if WAHA echoes bot messages as incoming user messages.
+        const sender = payload.from;
+        const recentReplies = recentBotReplies.get(sender);
+        
+        if (recentReplies && Array.isArray(recentReplies)) {
+             const incomingText = normalizeText(payload.body || '');
+             
+             // Check against ALL recent replies
+             const match = recentReplies.find(reply => {
+                 const timeDiff = Date.now() - reply.timestamp;
+                 if (timeDiff >= 20000) return false;
+                 
+                 const sentText = reply.text;
+                 return incomingText && sentText && (incomingText === sentText || incomingText.includes(sentText) || sentText.includes(incomingText));
+             });
+
+             if (match) {
+                 console.log(`[WA] Ignoring INCOMING message (Failsafe Echo Match): "${(payload.body || '').substring(0,30)}..." from ${sender}`);
+                 return;
+             }
+        }
+
+        await queueMessage(session, payload);
+    } else if (event === 'state.change') {
         // Handle State Changes (WORKING, STOPPED, SCAN_QR_CODE, etc.)
-        const status = payload.body || payload.status; 
+        const status = payload.body || payload.status; // WAHA payload format varies
         console.log(`[WA Webhook] State Change for ${session}: ${status}`);
         
         let dbStatus = 'unknown';
         let isActive = false;
 
+        // Map WAHA statuses to DB statuses (Consistency with IntegrationPage.tsx)
         if (status === 'WORKING' || status === 'CONNECTED') {
             dbStatus = 'WORKING';
             isActive = true;
@@ -612,7 +923,7 @@ const handleWebhook = async (req, res) => {
             dbStatus = 'STOPPED';
             isActive = false;
         } else if (status === 'SCAN_QR_CODE' || status === 'SCAN_QR') {
-            dbStatus = 'scanned';
+            dbStatus = 'scanned'; // Use 'scanned' to indicate QR is ready/needed
             isActive = false;
         } else if (status === 'STARTING') {
             dbStatus = 'STARTING';
@@ -1157,7 +1468,7 @@ async function queueMessage(session, messagePayload) {
 
 // Core Logic Function (Debounced)
 async function processBufferedMessages(sessionId, sessionName, senderId, messages, pageId = null, preLoadedConfig = null, lockSenderId = null) {
-    let finalReplyText = null; // Hoisted to avoid TDZ errors
+    let finalReplyText = null; 
     const effectiveSenderId = lockSenderId || senderId;
 
     // 1. Resolve Config EARLY (Optimization)
@@ -1170,13 +1481,14 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
         }
     }
 
+    if (!pageConfig) {
+        console.log(`[WA] Session ${sessionName} not configured. Stopping.`);
+        return;
+    }
+
     // --- EARLY LABEL CHECK (Zero Cost Strategy) ---
-    // User Requirement: Check labels at the very beginning to stop workflow immediately if blocked.
-    // "workflow r surutei dila check korbe 3 ta lebel e..."
     try {
         const latestLabels = await whatsappService.getLabels(sessionName, senderId);
-        // console.log(`[WA] Early Label Check for ${senderId}:`, JSON.stringify(latestLabels)); // Debug Log
-
         if (latestLabels && Array.isArray(latestLabels)) {
             const hardcodedStops = ['adminhandle', 'admincall', 'ordertrack'];
             const shouldStop = latestLabels.some(l => {
@@ -1187,55 +1499,99 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
             const chatKey = `${sessionName}_${effectiveSenderId}`;
 
             if (shouldStop) {
-                const blockingLabels = latestLabels
-                    .filter(l => {
-                        const name = (typeof l === 'string' ? l : l.name || '').toLowerCase();
-                        return hardcodedStops.includes(name);
-                    })
-                    .map(l => (typeof l === 'string' ? l : l.name));
-
-                console.log(`[WA] Blocking Label Found at Start (${senderId}): [${blockingLabels.join(', ')}]. Stopping Workflow.`);
-                handoverMap.set(chatKey, Date.now() + 60 * 60 * 1000); // Ensure Memory Lock
-                // Optional: Ensure DB Lock too? 
-                // await dbService.toggleWhatsAppLock(sessionName, senderId, true); 
-                return; // <--- STOP HERE
+                console.log(`[WA] Blocking Label Found at Start (${senderId}). Stopping Workflow.`);
+                handoverMap.set(chatKey, Date.now() + 60 * 60 * 1000); 
+                return; 
             } else {
-                // Label Removed -> Unlock MEMORY ONLY
-                // User Requirement: "admin remove korle kaj korbe"
-                // We clear memory lock so AI can resume.
-                // CRITICAL FIX: Do NOT clear DB lock here. DB lock is for Emoji/Manual locks.
-                // If we clear DB lock here, it overrides the Emoji Lock system.
-                
                 if (handoverMap.has(chatKey)) {
-                    console.log(`[WA] Blocking label removed (Early Check). Clearing Memory Lock for ${chatKey}.`);
+                    console.log(`[WA] Blocking label removed (Early Check). Clearing Memory Lock.`);
                     handoverMap.delete(chatKey);
-                    // We don't track if memory lock was from Label or Emoji, but usually Emoji sets DB lock too.
-                    // So if DB lock is active (checked later), it will still block.
                 }
-
-                // REMOVED: Automatic DB Unlock. 
-                // Reason: This was disabling Emoji Lock because every message without a label triggered an unlock.
-                /*
-                const contact = await dbService.getWhatsAppContact(sessionName, senderId);
-                if (contact && contact.is_locked) {
-                     console.log(`[WA] Blocking label removed (Early Check). Clearing DB Lock for ${senderId}.`);
-                     await dbService.toggleWhatsAppLock(sessionName, senderId, false);
-                }
-                */
             }
         }
     } catch (e) {
         console.warn(`[WA] Early Label Check Failed: ${e.message}`);
     }
-    // ----------------------------------------------
 
-    let replyToTextFallback = null;
+    // --- PRE-PROCESS COMBINED TEXT FOR CACHE ---
     let combinedText = "";
-    let replyToId = null;
     let allImages = [];
     let allAudios = [];
+    for (const msg of messages) {
+        if (msg.text) combinedText += msg.text + "\n";
+        if (msg.images) allImages.push(...msg.images);
+        if (msg.audios) allAudios.push(...msg.audios);
+    }
+
+    // --- QUICK SEMANTIC CACHE CHECK (ULTRA-FAST PATH) ---
+    const semEnabled = pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1;
+    const threshold = pageConfig.semantic_cache_threshold ? Math.max(0.5, Math.min(0.99, Number(pageConfig.semantic_cache_threshold))) : 0.96;
+    const isMediaTurn = allImages.length > 0 || allAudios.length > 0;
+    
+    if (semEnabled && !isMediaTurn && combinedText.trim()) {
+        try {
+            // Normalize combined text for better cache matching (Merged messages fix)
+            const cacheQuery = combinedText.trim().replace(/\s+/g, ' ');
+            
+            const cached = await dbService.findSemanticCache({
+                page_id: sessionName,
+                session_name: sessionName,
+                question: cacheQuery,
+                threshold
+            });
+
+            if (cached) {
+                console.log(`[WA] ⚡ INSTANT CACHE HIT! Replying to ${senderId}...`);
+                
+                if (typeof trackBotReply === 'function') {
+                    trackBotReply(senderId, cached);
+                }
+                
+                await whatsappService.sendSeen(sessionName, senderId);
+                await whatsappService.sendTyping(sessionName, senderId);
+                await whatsappService.sendMessage(sessionName, senderId, cached);
+                
+                // Fire and forget logging
+                const primaryMsgId = messages.length > 0 ? messages[0].id : `usr_${Date.now()}`;
+                dbService.saveWhatsAppChat({
+                    session_name: sessionName,
+                    sender_id: senderId,
+                    recipient_id: sessionName,
+                    message_id: primaryMsgId,
+                    text: combinedText.trim(),
+                    timestamp: Date.now(),
+                    status: 'received',
+                    reply_by: 'user'
+                }).catch(() => {});
+
+                dbService.saveWhatsAppChat({
+                    session_name: sessionName,
+                    sender_id: sessionName,
+                    recipient_id: senderId,
+                    message_id: `cache_${Date.now()}`,
+                    text: cached,
+                    timestamp: Date.now(),
+                    status: 'sent',
+                    reply_by: 'bot',
+                    model_used: 'semantic-cache'
+                }).catch(() => {});
+                
+                return; 
+            }
+        } catch (cacheErr) {
+            console.warn(`[WA] Early cache check failed: ${cacheErr.message}`);
+        }
+    }
+    // ----------------------------------------------------
+
+    let replyToTextFallback = null;
+    let replyToId = null;
     let senderName = null;
     const isGroup = typeof senderId === 'string' && senderId.includes('@g.us');
+    
+    // Reset combinedText to re-process with reply context if needed below, 
+    // or just keep it and add reply context. Let's reset for consistency with existing logic.
+    combinedText = ""; 
 
     // Handover guard (Memory) - Late Check (Race Condition Fix)
     // User Scenario: Admin replies during the buffer delay. We must catch it here.
@@ -1322,11 +1678,9 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
             hasReplyTo = true;
         }
         if (msg.images && msg.images.length > 0) {
-            allImages.push(...msg.images);
             hasImages = true;
         }
         if (msg.audios && msg.audios.length > 0) {
-            allAudios.push(...msg.audios);
             hasAudios = true;
         }
         if (msg.sender_name && msg.sender_name !== 'Unknown') senderName = msg.sender_name;
@@ -1591,25 +1945,6 @@ STRICT RULES:
     }
 
     try {
-        // 1. Fetch Config (WhatsApp Specific) - Already done at top
-        // let pageConfig = preLoadedConfig; ...
-        
-        if (!pageConfig) {
-            console.log(`[WA] Session ${sessionName} not configured.`);
-            // Log System Error
-            await dbService.saveWhatsAppChat({
-                session_name: sessionName,
-                sender_id: sessionName,
-                recipient_id: senderId,
-                message_id: `sys_${Date.now()}`,
-                text: `[SYSTEM ERROR] Session not configured.`,
-                timestamp: Date.now(),
-                status: 'system_error',
-                reply_by: 'system'
-            });
-            return;
-        }
-
         if (isGroup && pageConfig && pageConfig.group_reply === false) {
             console.log(`[WA] Group reply disabled for ${sessionName}. Skipping group message from ${senderId}.`);
             return;
@@ -1660,75 +1995,6 @@ STRICT RULES:
                  return;
              }
         }
-
-        // --- QUICK SEMANTIC CACHE CHECK (ULTRA-FAST PATH) ---
-        const semEnabled = pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1);
-        const threshold = pageConfig && pageConfig.semantic_cache_threshold ? Math.max(0.5, Math.min(0.99, Number(pageConfig.semantic_cache_threshold))) : 0.96;
-        const isMediaTurn = (messages.some(m => (m.images && m.images.length > 0) || (m.audios && m.audios.length > 0)));
-        
-        // Use combinedText (user's raw messages) for Semantic Cache to avoid noise from image analysis/system notes
-        if (semEnabled && !isMediaTurn && combinedText.trim()) {
-            try {
-                // Normalize combined text for better cache matching (Merged messages fix)
-                // Remove newlines and extra spaces to treat "ami\nkinte\ncaii" as "ami kinte caii"
-                const cacheQuery = combinedText.trim().replace(/\s+/g, ' ');
-                
-                const cached = await dbService.findSemanticCache({
-                    page_id: sessionName, // sessionName is the pageId/sessionName for WhatsApp
-                    session_name: sessionName,
-                    question: cacheQuery,
-                    threshold
-                });
-                
-                if (cached) {
-                    console.log(`[WA] ⚡ INSTANT CACHE HIT! Replying to ${senderId}...`);
-                    
-                    // Track bot reply BEFORE sending to prevent echo double-save
-                    trackBotReply(senderId, cached);
-                    
-                    // Instant WhatsApp Send
-                    await whatsappService.sendSeen(sessionName, senderId);
-                    await whatsappService.sendTyping(sessionName, senderId);
-                    await whatsappService.sendMessage(sessionName, senderId, cached);
-                    
-                    // Fire and forget logging (User message already saved below, or we save it here)
-                    const primaryMsgId = messages.length > 0 ? messages[0].id : `usr_${Date.now()}`;
-                    
-                    // Save User Message first if not already saved (Persistence)
-                    await dbService.saveWhatsAppChat({
-                        session_name: sessionName,
-                        sender_id: senderId,
-                        recipient_id: sessionName,
-                        message_id: primaryMsgId,
-                        text: finalOutput, // Still save the full finalOutput (with analysis) to chat log
-                        timestamp: Date.now(),
-                        status: 'received',
-                        reply_by: 'user',
-                        is_group: isGroup,
-                        group_id: isGroup ? senderId : null
-                    }).catch(() => {});
-
-                    // Save Bot Reply
-                    await dbService.saveWhatsAppChat({
-                        session_name: sessionName,
-                        sender_id: sessionName,
-                        recipient_id: senderId,
-                        message_id: `cache_${Date.now()}`,
-                        text: cached,
-                        timestamp: Date.now(),
-                        status: 'sent',
-                        reply_by: 'bot',
-                        model_used: 'semantic-cache',
-                        token_usage: 0
-                    }).catch(() => {});
-                    
-                    return; // EXIT EARLY - SUCCESS!
-                }
-            } catch (cacheErr) {
-                console.warn(`[WA] Early cache check failed: ${cacheErr.message}`);
-            }
-        }
-        // ----------------------------------------------------
 
         // --- FAILURE LOCK CHECK ---
         
