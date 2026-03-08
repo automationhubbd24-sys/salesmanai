@@ -491,6 +491,31 @@ async function initTables() {
         `);
         console.log("[DB] 'api_usage_stats' table checked/initialized.");
 
+        // Ensure 'openrouter_engine_config' table exists with 'config_type'
+        await query(`
+            CREATE TABLE IF NOT EXISTS openrouter_engine_config (
+                config_type TEXT PRIMARY KEY,
+                text_model TEXT,
+                voice_model TEXT,
+                image_model TEXT,
+                text_model_details JSONB,
+                voice_model_details JSONB,
+                image_model_details JSONB,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            );
+        `);
+
+        // Check for missing columns in 'openrouter_engine_config'
+        await query(`
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='openrouter_engine_config' AND column_name='config_type') THEN
+                    ALTER TABLE openrouter_engine_config ADD COLUMN config_type TEXT PRIMARY KEY;
+                END IF;
+            END $$;
+        `);
+        console.log("[DB] 'openrouter_engine_config' table/column checked.");
+
         // Ensure 'api_list' has unique constraint on 'api'
         await query(`
             DO $$ 
