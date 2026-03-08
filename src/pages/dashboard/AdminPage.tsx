@@ -2383,6 +2383,59 @@ export default function AdminPage() {
 
         {/* Semantic Cache Tab */}
         <TabsContent value="cache">
+          <Card className="mb-4 border-white/10 bg-black/20">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
+              <div>
+                <CardTitle className="text-base">Global Embedding Model</CardTitle>
+                <CardDescription>Used only by Semantic Cache lookups</CardDescription>
+              </div>
+              <Button size="sm" onClick={saveEmbeddingConfig}>
+                Save
+              </Button>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="space-y-2">
+                <Label>Provider</Label>
+                <Select value={embeddingConfig.provider} onValueChange={(val) => setEmbeddingConfig({ ...embeddingConfig, provider: val })}>
+                  <SelectTrigger className="h-8">
+                    <SelectValue placeholder="Select Provider" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="openai">OpenAI</SelectItem>
+                    <SelectItem value="google">Google</SelectItem>
+                    <SelectItem value="openrouter">OpenRouter</SelectItem>
+                    <SelectItem value="groq">Groq</SelectItem>
+                    <SelectItem value="mistral">Mistral</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Base URL</Label>
+                <Input 
+                  placeholder="https://api.openai.com/v1"
+                  value={embeddingConfig.base_url}
+                  onChange={(e) => setEmbeddingConfig({ ...embeddingConfig, base_url: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>API Key</Label>
+                <Input 
+                  type="password"
+                  placeholder="sk-..."
+                  value={embeddingConfig.api_key}
+                  onChange={(e) => setEmbeddingConfig({ ...embeddingConfig, api_key: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Model Name</Label>
+                <Input 
+                  placeholder="text-embedding-3-small"
+                  value={embeddingConfig.model}
+                  onChange={(e) => setEmbeddingConfig({ ...embeddingConfig, model: e.target.value })}
+                />
+              </div>
+            </CardContent>
+          </Card>
           <Card className="border-blue-500/20 bg-card/50">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
               <div>
@@ -2532,44 +2585,7 @@ export default function AdminPage() {
             </CardContent>
           </Card>
 
-          <Card className="mt-4 border-white/10 bg-black/20">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
-              <div>
-                <CardTitle className="text-base">Global Embedding Model</CardTitle>
-                <CardDescription>Used only by Semantic Cache lookups</CardDescription>
-              </div>
-              <Button size="sm" onClick={saveEmbeddingConfig}>
-                Save
-              </Button>
-            </CardHeader>
-            <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="space-y-2">
-                <Label>Base URL</Label>
-                <Input 
-                  placeholder="https://api.openai.com/v1"
-                  value={embeddingConfig.base_url}
-                  onChange={(e) => setEmbeddingConfig({ ...embeddingConfig, base_url: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>API Key</Label>
-                <Input 
-                  type="password"
-                  placeholder="sk-..."
-                  value={embeddingConfig.api_key}
-                  onChange={(e) => setEmbeddingConfig({ ...embeddingConfig, api_key: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Model Name</Label>
-                <Input 
-                  placeholder="text-embedding-3-small"
-                  value={embeddingConfig.model}
-                  onChange={(e) => setEmbeddingConfig({ ...embeddingConfig, model: e.target.value })}
-                />
-              </div>
-            </CardContent>
-          </Card>
+          
         </TabsContent>
 
         <TabsContent value="db">

@@ -288,7 +288,8 @@ exports.getEmbeddingGlobalConfig = async (req, res) => {
         const payload = {
             model: (row && row.text_model) || '',
             base_url: details.base_url || '',
-            api_key: details.api_key || ''
+            api_key: details.api_key || '',
+            provider: details.provider || 'openai'
         };
 
         res.json({ success: true, config: payload });
@@ -300,12 +301,13 @@ exports.getEmbeddingGlobalConfig = async (req, res) => {
 
 exports.saveEmbeddingGlobalConfig = async (req, res) => {
     try {
-        const { model, base_url, api_key } = req.body || {};
+        const { model, base_url, api_key, provider } = req.body || {};
         const pgClient = require('../services/pgClient');
 
         const details = {
             base_url: base_url || '',
-            api_key: api_key || ''
+            api_key: api_key || '',
+            provider: provider || ''
         };
 
         const result = await pgClient.query(
@@ -333,28 +335,33 @@ exports.getSemanticCacheConfigs = async (req, res) => {
     try {
         const messengerSql = `
             SELECT 
-                'messenger' as platform,
-                page_id as id,
-                page_name as name,
-                semantic_cache_enabled,
-                semantic_cache_threshold,
-                embed_enabled,
-                created_at
-            FROM page_access_token_message
-            ORDER BY created_at DESC
+                'messenger' AS platform,
+                pam.page_id AS id,
+                COALESCE(pam.page_name, pam.page_id) AS name,
+                COALESCE(fb.semantic_cache_enabled, false) AS semantic_cache_enabled,
+                COALESCE(fb.semantic_cache_threshold, 0.96) AS semantic_cache_threshold,
+                COALESCE(fb.embed_enabled, false) AS embed_enabled,
+                pam.created_at
+            FROM page_access_token_message pam
+            LEFT JOIN fb_message_database fb
+              ON fb.page_id = pam.page_id
+            ORDER BY pam.created_at DESC
         `;
 
         const whatsappSql = `
             SELECT 
-                'whatsapp' as platform,
-                session_name as id,
-                COALESCE(push_name, session_name) as name,
-                semantic_cache_enabled,
-                semantic_cache_threshold,
-                embed_enabled,
-                created_at
-            FROM whatsapp_message_database
-            ORDER BY created_at DESC
+                'whatsapp' AS platform,
+                ws.session_name AS id,
+                COALESCE(ws.push_name, ws.session_name) AS name,
+                COALESCE(wmd.semantic_cache_enabled, false) AS semantic_cache_enabled,
+                COALESCE(wmd.semantic_cache_threshold, 0.96) AS semantic_cache_threshold,
+                COALESCE(wmd.embed_enabled, false) AS embed_enabled,
+                ws.created_at
+            FROM whatsapp_sessions ws
+            LEFT JOIN whatsapp_message_database wmd
+              ON wmd.session_name = ws.session_name
+            WHERE ws.expires_at IS NULL OR ws.expires_at > NOW()
+            ORDER BY ws.created_at DESC
         `;
 
         const messengerRes = await pgClient.query(messengerSql);
