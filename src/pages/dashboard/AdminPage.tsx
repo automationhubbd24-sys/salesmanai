@@ -6,9 +6,10 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Shield, Database as DatabaseIcon, Trash2, Edit, CheckCircle, CreditCard, DollarSign, Loader2, XCircle, Cpu, Plus, RefreshCw, Server, Activity, AlertTriangle, ChevronLeft, ChevronRight } from "lucide-react";
+import { Shield, Database as DatabaseIcon, Trash2, Edit, CheckCircle, CreditCard, DollarSign, Loader2, XCircle, Cpu, Plus, RefreshCw, Server, Activity, AlertTriangle, ChevronLeft, ChevronRight, Settings, Facebook, Smartphone } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
@@ -106,7 +107,7 @@ interface CacheConfig {
   semantic_cache_enabled: boolean;
   semantic_cache_threshold: number;
   embed_enabled: boolean;
-  created_at: string;
+  created_at?: string;
 }
 
 type EngineTestResult = {
@@ -228,6 +229,8 @@ export default function AdminPage() {
   const [cachePage, setCachePage] = useState(1);
   const cacheLimit = 20;
   const [cachePlatform, setCachePlatform] = useState<'all' | 'messenger' | 'whatsapp'>('all');
+  const [editingCacheConfig, setEditingCacheConfig] = useState<CacheConfig | null>(null);
+  const [isCacheDialogOpen, setIsCacheDialogOpen] = useState(false);
   const [embeddingConfig, setEmbeddingConfig] = useState<{ provider: string; model: string; base_url: string; api_key: string }>({
     provider: "openai",
     model: "",
@@ -2383,22 +2386,28 @@ export default function AdminPage() {
         </TabsContent>
 
         {/* Semantic Cache Tab */}
-        <TabsContent value="cache">
-          <Card className="mb-4 border-white/10 bg-black/20">
+        <TabsContent value="cache" className="space-y-4">
+          <Card className="border-white/10 bg-black/40 backdrop-blur-md">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
               <div>
-                <CardTitle className="text-base">Global Embedding Model</CardTitle>
-                <CardDescription>Used only by Semantic Cache lookups</CardDescription>
+                <CardTitle className="text-lg font-bold flex items-center gap-2">
+                   <Cpu className="h-5 w-5 text-[#00ff88]" />
+                   Global Embedding Model
+                </CardTitle>
+                <CardDescription>Common configuration for all semantic lookups</CardDescription>
               </div>
-              <Button size="sm" onClick={saveEmbeddingConfig}>
-                Save
+              <Button 
+                onClick={saveEmbeddingConfig}
+                className="bg-[#00ff88] hover:bg-[#00ff88]/90 text-black font-bold h-8 px-6"
+              >
+                Save Global Config
               </Button>
             </CardHeader>
             <CardContent className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="space-y-2">
-                <Label>Provider</Label>
+                <Label className="text-xs uppercase text-muted-foreground">Provider</Label>
                 <Select value={embeddingConfig.provider} onValueChange={(val) => setEmbeddingConfig({ ...embeddingConfig, provider: val })}>
-                  <SelectTrigger className="h-8">
+                  <SelectTrigger className="h-9 bg-black/40 border-white/10">
                     <SelectValue placeholder="Select Provider" />
                   </SelectTrigger>
                   <SelectContent>
@@ -2411,49 +2420,56 @@ export default function AdminPage() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Base URL</Label>
+                <Label className="text-xs uppercase text-muted-foreground">Base URL</Label>
                 <Input 
                   placeholder="https://api.openai.com/v1"
                   value={embeddingConfig.base_url}
                   onChange={(e) => setEmbeddingConfig({ ...embeddingConfig, base_url: e.target.value })}
+                  className="h-9 bg-black/40 border-white/10 font-mono text-xs"
                 />
               </div>
               <div className="space-y-2">
-                <Label>API Key</Label>
+                <Label className="text-xs uppercase text-muted-foreground">API Key</Label>
                 <Input 
                   type="password"
                   placeholder="sk-..."
                   value={embeddingConfig.api_key}
                   onChange={(e) => setEmbeddingConfig({ ...embeddingConfig, api_key: e.target.value })}
+                  className="h-9 bg-black/40 border-white/10 font-mono text-xs"
                 />
               </div>
               <div className="space-y-2">
-                <Label>Model Name</Label>
+                <Label className="text-xs uppercase text-muted-foreground">Model Name</Label>
                 <Input 
                   placeholder="text-embedding-3-small"
                   value={embeddingConfig.model}
                   onChange={(e) => setEmbeddingConfig({ ...embeddingConfig, model: e.target.value })}
+                  className="h-9 bg-black/40 border-white/10 font-mono text-xs"
                 />
               </div>
             </CardContent>
           </Card>
-          <Card className="border-blue-500/20 bg-card/50">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
+
+          <Card className="border-white/10 bg-black/20 backdrop-blur-md">
+            <CardHeader className="flex flex-col md:flex-row md:items-center justify-between space-y-4 md:space-y-0 pb-6">
               <div>
-                <CardTitle className="text-xl font-bold text-blue-400">Semantic Cache Control</CardTitle>
-                <CardDescription>Manage caching settings for all IDs (Admin Only)</CardDescription>
+                <CardTitle className="text-xl font-bold text-white flex items-center gap-2">
+                  <DatabaseIcon className="h-6 w-6 text-blue-400" />
+                  Semantic Cache Control
+                </CardTitle>
+                <CardDescription>Manage automation settings for all connected accounts</CardDescription>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-3">
                 <div className="w-36">
                   <Select value={cachePlatform} onValueChange={(val) => {
                     setCachePlatform(val as any);
                     setCachePage(1);
                   }}>
-                    <SelectTrigger className="h-8">
+                    <SelectTrigger className="h-9 bg-black/40 border-white/10">
                       <SelectValue placeholder="Platform" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">All</SelectItem>
+                      <SelectItem value="all">All Platforms</SelectItem>
                       <SelectItem value="messenger">Facebook</SelectItem>
                       <SelectItem value="whatsapp">WhatsApp</SelectItem>
                     </SelectContent>
@@ -2461,91 +2477,112 @@ export default function AdminPage() {
                 </div>
                 <div className="relative w-64">
                   <Input
-                    placeholder="Search ID or Name..."
+                    placeholder="Search by ID or Name..."
                     value={cacheSearch}
                     onChange={(e) => {
                       setCacheSearch(e.target.value);
                       setCachePage(1);
                     }}
-                    className="h-8 bg-black/20 text-xs"
+                    className="h-9 bg-black/40 border-white/10 pl-9"
                   />
+                  <div className="absolute left-3 top-2.5 text-muted-foreground">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                  </div>
                 </div>
                 <Button 
-                  size="sm" 
+                  size="icon"
                   variant="outline" 
                   onClick={fetchCacheConfigs}
                   disabled={cacheLoading}
-                  className="h-8"
+                  className="h-9 w-9 border-white/10 bg-black/20"
                 >
                   <RefreshCw className={`h-4 w-4 ${cacheLoading ? 'animate-spin' : ''}`} />
                 </Button>
               </div>
             </CardHeader>
             <CardContent>
-              <div className="rounded-md border border-white/5 overflow-hidden">
+              <div className="rounded-xl border border-white/5 bg-black/30 overflow-hidden shadow-2xl">
                 <Table>
                   <TableHeader className="bg-white/5">
                     <TableRow className="hover:bg-transparent border-white/10">
-                      <TableHead className="py-2 text-xs h-8">Platform</TableHead>
-                      <TableHead className="py-2 text-xs h-8">Account / ID</TableHead>
-                      <TableHead className="py-2 text-xs h-8 text-center">Cache</TableHead>
-                      <TableHead className="py-2 text-xs h-8 text-center">Embedding</TableHead>
-                      <TableHead className="py-2 text-xs h-8 w-[140px]">Threshold</TableHead>
-                      <TableHead className="py-2 text-xs h-8 text-right">Created</TableHead>
+                      <TableHead className="py-3 text-xs uppercase tracking-wider font-semibold text-white/50">Platform</TableHead>
+                      <TableHead className="py-3 text-xs uppercase tracking-wider font-semibold text-white/50">Account Name / ID</TableHead>
+                      <TableHead className="py-3 text-xs uppercase tracking-wider font-semibold text-white/50 text-center">Cache Status</TableHead>
+                      <TableHead className="py-3 text-xs uppercase tracking-wider font-semibold text-white/50 text-right">Added On</TableHead>
+                      <TableHead className="py-3 text-xs uppercase tracking-wider font-semibold text-white/50 text-right">Action</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {cacheLoading && paginatedCacheConfigs.length === 0 ? (
-                      <TableRow><TableCell colSpan={6} className="text-center py-10"><Loader2 className="h-6 w-6 animate-spin mx-auto" /></TableCell></TableRow>
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center py-20">
+                          <div className="flex flex-col items-center gap-3">
+                            <Loader2 className="h-10 w-10 animate-spin text-blue-500" />
+                            <p className="text-muted-foreground animate-pulse">Syncing accounts...</p>
+                          </div>
+                        </TableCell>
+                      </TableRow>
                     ) : paginatedCacheConfigs.length === 0 ? (
-                      <TableRow><TableCell colSpan={6} className="text-center py-10 text-muted-foreground">No accounts found.</TableCell></TableRow>
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center py-20">
+                          <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                            <AlertTriangle className="h-10 w-10 opacity-20" />
+                            <p>No connected accounts found matching your filters.</p>
+                          </div>
+                        </TableCell>
+                      </TableRow>
                     ) : (
                       paginatedCacheConfigs.map((config) => (
-                        <TableRow key={`${config.platform}-${config.id}`} className="hover:bg-white/5 border-white/5">
-                          <TableCell className="py-1">
-                            <Badge variant="outline" className={`text-[10px] px-1 h-5 capitalize ${config.platform === 'whatsapp' ? 'border-green-500/50 text-green-500' : 'border-blue-500/50 text-blue-500'}`}>
-                              {config.platform}
+                        <TableRow key={`${config.platform}-${config.id}`} className="hover:bg-white/5 border-white/5 group transition-colors">
+                          <TableCell className="py-4">
+                            <div className="flex items-center gap-3">
+                              {config.platform === 'messenger' ? (
+                                <div className="p-2 rounded-lg bg-blue-500/10">
+                                  <Facebook className="h-4 w-4 text-blue-500" />
+                                </div>
+                              ) : (
+                                <div className="p-2 rounded-lg bg-green-500/10">
+                                  <Smartphone className="h-4 w-4 text-green-500" />
+                                </div>
+                              )}
+                              <Badge variant="outline" className={`text-[10px] px-1.5 h-5 capitalize ${config.platform === 'whatsapp' ? 'border-green-500/30 text-green-500 bg-green-500/5' : 'border-blue-500/30 text-blue-500 bg-blue-500/5'}`}>
+                                {config.platform}
+                              </Badge>
+                            </div>
+                          </TableCell>
+                          <TableCell className="py-4">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-sm font-semibold text-white group-hover:text-blue-400 transition-colors truncate max-w-[280px]">
+                                {config.name}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground font-mono opacity-60">
+                                ID: {config.id}
+                              </span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="py-4 text-center">
+                            <Badge variant={config.semantic_cache_enabled ? "default" : "secondary"} className={`text-[10px] px-2 h-5 font-bold ${config.semantic_cache_enabled ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-red-500/10 text-red-400 border-red-500/20'}`}>
+                              {config.semantic_cache_enabled ? 'ENABLED' : 'DISABLED'}
                             </Badge>
                           </TableCell>
-                          <TableCell className="py-1">
-                            <div className="flex flex-col">
-                              <span className="text-sm font-medium truncate max-w-[180px]">{config.name}</span>
-                              <span className="text-[10px] text-muted-foreground font-mono">{config.id}</span>
-                            </div>
+                          <TableCell className="py-4 text-right">
+                            <span className="text-xs text-muted-foreground opacity-80">
+                              {config.created_at ? new Date(config.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '-'}
+                            </span>
                           </TableCell>
-                          <TableCell className="py-1 text-center">
-                            <Switch 
-                              checked={config.semantic_cache_enabled}
-                              onCheckedChange={(checked) => updateCacheConfig(config, { semantic_cache_enabled: checked })}
-                              className="scale-75"
-                            />
-                          </TableCell>
-                          <TableCell className="py-1 text-center">
-                            <Switch 
-                              checked={config.embed_enabled}
-                              onCheckedChange={(checked) => updateCacheConfig(config, { embed_enabled: checked })}
-                              className="scale-75"
-                            />
-                          </TableCell>
-                          <TableCell className="py-1">
-                            <div className="flex items-center gap-2">
-                              <Input 
-                                type="number"
-                                step="0.01"
-                                min="0.5"
-                                max="0.99"
-                                value={config.semantic_cache_threshold}
-                                onChange={(e) => {
-                                  const val = parseFloat(e.target.value);
-                                  if (!isNaN(val)) updateCacheConfig(config, { semantic_cache_threshold: val });
-                                }}
-                                className="h-7 w-16 text-[11px] bg-black/20 text-center px-1"
-                              />
-                              <span className="text-[10px] text-muted-foreground">0.5-0.99</span>
-                            </div>
-                          </TableCell>
-                          <TableCell className="py-1 text-right text-[10px] text-muted-foreground">
-                            {new Date(config.created_at).toLocaleDateString()}
+                          <TableCell className="py-4 text-right">
+                            <Button 
+                              size="sm" 
+                              variant="secondary" 
+                              className="h-8 text-xs gap-2 font-bold px-4 bg-white/5 hover:bg-blue-500 hover:text-white border border-white/10 transition-all"
+                              onClick={() => {
+                                setEditingCacheConfig({ ...config });
+                                setIsCacheDialogOpen(true);
+                              }}
+                            >
+                              <Settings className="h-3.5 w-3.5" />
+                              Manage
+                            </Button>
                           </TableCell>
                         </TableRow>
                       ))
@@ -2554,39 +2591,56 @@ export default function AdminPage() {
                 </Table>
               </div>
 
-              {/* Pagination */}
+              {/* Enhanced Pagination */}
               {totalCachePages > 1 && (
-                <div className="flex items-center justify-between mt-4">
-                  <p className="text-[10px] text-muted-foreground">
-                    Showing {(cachePage - 1) * cacheLimit + 1} to {Math.min(cachePage * cacheLimit, filteredCacheConfigs.length)} of {filteredCacheConfigs.length} entries
-                  </p>
-                  <div className="flex items-center gap-1">
+                <div className="flex items-center justify-between mt-6 px-2">
+                  <div className="text-xs text-muted-foreground flex items-center gap-2">
+                    <span className="p-1.5 rounded-md bg-white/5 border border-white/10">
+                      {filteredCacheConfigs.length} total accounts
+                    </span>
+                    <span>Page {cachePage} of {totalCachePages}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
                     <Button
                       variant="outline"
-                      size="icon"
-                      className="h-7 w-7"
+                      size="sm"
+                      className="h-8 px-3 border-white/10 bg-black/20 hover:bg-white/5"
                       onClick={() => setCachePage(p => Math.max(1, p - 1))}
                       disabled={cachePage === 1}
                     >
-                      <ChevronLeft className="h-4 w-4" />
+                      <ChevronLeft className="h-4 w-4 mr-1" /> Previous
                     </Button>
-                    <span className="text-xs px-2">{cachePage} / {totalCachePages}</span>
+                    <div className="flex items-center gap-1">
+                      {Array.from({ length: Math.min(5, totalCachePages) }).map((_, i) => {
+                         let pageNum = cachePage <= 3 ? i + 1 : cachePage >= totalCachePages - 2 ? totalCachePages - 4 + i : cachePage - 2 + i;
+                         if (pageNum < 1 || pageNum > totalCachePages) return null;
+                         return (
+                          <Button
+                            key={pageNum}
+                            variant={cachePage === pageNum ? "default" : "outline"}
+                            size="sm"
+                            className={`h-8 w-8 p-0 ${cachePage === pageNum ? 'bg-blue-600 border-blue-500' : 'border-white/10 bg-black/20 hover:bg-white/5'}`}
+                            onClick={() => setCachePage(pageNum)}
+                          >
+                            {pageNum}
+                          </Button>
+                        );
+                      })}
+                    </div>
                     <Button
                       variant="outline"
-                      size="icon"
-                      className="h-7 w-7"
+                      size="sm"
+                      className="h-8 px-3 border-white/10 bg-black/20 hover:bg-white/5"
                       onClick={() => setCachePage(p => Math.min(totalCachePages, p + 1))}
                       disabled={cachePage === totalCachePages}
                     >
-                      <ChevronRight className="h-4 w-4" />
+                      Next <ChevronRight className="h-4 w-4 ml-1" />
                     </Button>
                   </div>
                 </div>
               )}
             </CardContent>
           </Card>
-
-          
         </TabsContent>
 
         <TabsContent value="db">
@@ -3034,6 +3088,86 @@ export default function AdminPage() {
         </TabsContent>
 
       </Tabs>
+
+      <Dialog open={isCacheDialogOpen} onOpenChange={setIsCacheDialogOpen}>
+        <DialogContent className="max-w-md bg-[#0f0f0f] border-white/10 text-white">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Settings className="h-5 w-5 text-blue-400" />
+              Manage Semantic Cache
+            </DialogTitle>
+            <DialogDescription className="text-white/60">
+              Configure settings for {editingCacheConfig?.name} ({editingCacheConfig?.platform})
+            </DialogDescription>
+          </DialogHeader>
+          
+          {editingCacheConfig && (
+            <div className="space-y-6 py-4">
+              <div className="flex items-center justify-between p-3 rounded-lg border border-white/5 bg-white/5">
+                <div className="space-y-0.5">
+                  <Label className="text-sm font-medium">Enable Semantic Cache</Label>
+                  <p className="text-[11px] text-muted-foreground">Automatically reply to repeated questions.</p>
+                </div>
+                <Switch 
+                  checked={editingCacheConfig.semantic_cache_enabled}
+                  onCheckedChange={(val) => setEditingCacheConfig({ ...editingCacheConfig, semantic_cache_enabled: val })}
+                />
+              </div>
+
+              <div className="flex items-center justify-between p-3 rounded-lg border border-white/5 bg-white/5">
+                <div className="space-y-0.5">
+                  <Label className="text-sm font-medium">Use Embedding (Beta)</Label>
+                  <p className="text-[11px] text-muted-foreground">Vector-based lookups for higher precision.</p>
+                </div>
+                <Switch 
+                  checked={editingCacheConfig.embed_enabled}
+                  onCheckedChange={(val) => setEditingCacheConfig({ ...editingCacheConfig, embed_enabled: val })}
+                />
+              </div>
+
+              <div className="space-y-3 p-3 rounded-lg border border-white/5 bg-white/5">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-medium">Similarity Threshold</Label>
+                  <Badge variant="outline" className="font-mono text-blue-400 h-5">{editingCacheConfig.semantic_cache_threshold}</Badge>
+                </div>
+                <Slider 
+                  value={[editingCacheConfig.semantic_cache_threshold]} 
+                  min={0.50} 
+                  max={0.99} 
+                  step={0.01} 
+                  onValueChange={(val) => setEditingCacheConfig({ ...editingCacheConfig, semantic_cache_threshold: val[0] })}
+                  className="py-2"
+                />
+                <div className="flex justify-between text-[10px] text-muted-foreground uppercase tracking-widest">
+                  <span>Loose (0.50)</span>
+                  <span>Strict (0.99)</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsCacheDialogOpen(false)} className="h-9">
+              Cancel
+            </Button>
+            <Button 
+              onClick={() => {
+                if (editingCacheConfig) {
+                  updateCacheConfig(editingCacheConfig, {
+                    semantic_cache_enabled: editingCacheConfig.semantic_cache_enabled,
+                    semantic_cache_threshold: editingCacheConfig.semantic_cache_threshold,
+                    embed_enabled: editingCacheConfig.embed_enabled
+                  });
+                  setIsCacheDialogOpen(false);
+                }
+              }} 
+              className="bg-blue-600 hover:bg-blue-700 h-9"
+            >
+              Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

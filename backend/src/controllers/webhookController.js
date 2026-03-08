@@ -604,7 +604,7 @@ async function queueMessage(event, entryPageId = null) {
     }
     
     // Safety check
-    if (debounceTime < 1000) debounceTime = 1000; // Minimum 1s
+    if (debounceTime < 0) debounceTime = 0; // Allow 0ms for instant reply
 
     console.log(`[Debounce] Using wait time: ${debounceTime}ms for ${sessionId}`);
 
