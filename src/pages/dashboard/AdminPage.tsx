@@ -279,7 +279,7 @@ export default function AdminPage() {
         platform: "messenger",
         account_name: p.account_name || "Unknown Page",
         account_id: p.account_id,
-        cache_status: ["active", "active_paid", "trial", "active_trial"].includes(String(p.subscription_status || "").toLowerCase()),
+        cache_status: !!p.reply_message,
         added_on: p.added_on || null,
         db_id: p.db_id || null
       })) : [];
@@ -288,7 +288,7 @@ export default function AdminPage() {
         platform: "whatsapp",
         account_name: s.account_name || "Unknown Session",
         account_id: s.account_id,
-        cache_status: String(s.status || "").toLowerCase() !== "stopped" && String(s.subscription_status || "").toLowerCase() !== "expired",
+        cache_status: !!s.reply_message && !!s.active && String(s.status || "").toLowerCase() !== "stopped",
         added_on: s.added_on || null,
         db_id: s.db_id || null
       })) : [];
@@ -943,11 +943,7 @@ export default function AdminPage() {
 
   useEffect(() => {
     const savedToken = localStorage.getItem("admin_auth_token");
-    const savedUser = localStorage.getItem("admin_username");
-    const savedPass = localStorage.getItem("admin_password");
-    if (savedToken && savedUser && savedPass) {
-      setUsernameInput(savedUser);
-      setPasswordInput(savedPass);
+    if (savedToken) {
       setIsAuthenticated(true);
     }
   }, []);

@@ -111,6 +111,10 @@ export default function MessengerSettingsPage() {
   
   const isMountedRef = useRef(true);
 
+  const getAdminToken = () => {
+    return localStorage.getItem("admin_auth_token") || localStorage.getItem("auth_token");
+  };
+
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
@@ -141,7 +145,7 @@ export default function MessengerSettingsPage() {
 
   const fetchConfig = useCallback(async (id: string, pId: string) => {
     try {
-      const token = localStorage.getItem("auth_token");
+      const token = getAdminToken();
       if (!token) {
         if (isMountedRef.current) setLoading(false);
         toast.error("Please login again");

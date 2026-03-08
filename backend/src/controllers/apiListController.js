@@ -153,13 +153,15 @@ exports.getAllAccounts = async (req, res) => {
         const fbResult = await pgClient.query(`
             SELECT 
                 'messenger' as platform,
-                name as account_name,
-                page_id as account_id,
-                subscription_status,
-                created_at as added_on,
-                page_id as db_id
-            FROM page_access_token_message
-            ORDER BY created_at DESC
+                p.name as account_name,
+                p.page_id as account_id,
+                COALESCE(f.reply_message, false) as reply_message,
+                p.subscription_status,
+                p.created_at as added_on,
+                p.page_id as db_id
+            FROM page_access_token_message p
+            LEFT JOIN fb_message_database f ON f.page_id = p.page_id
+            ORDER BY p.created_at DESC
         `);
 
         const waResult = await pgClient.query(`
@@ -167,6 +169,8 @@ exports.getAllAccounts = async (req, res) => {
                 'whatsapp' as platform,
                 session_name as account_name,
                 session_name as account_id,
+                COALESCE(reply_message, false) as reply_message,
+                active,
                 status as status,
                 subscription_status,
                 expires_at as added_on,

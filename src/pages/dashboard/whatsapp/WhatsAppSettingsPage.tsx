@@ -104,6 +104,10 @@ export default function WhatsAppSettingsPage() {
   const textPromptRef = useRef<HTMLTextAreaElement | null>(null);
   const imagePromptRef = useRef<HTMLTextAreaElement | null>(null);
 
+  const getAdminToken = () => {
+    return localStorage.getItem("admin_auth_token") || localStorage.getItem("auth_token");
+  };
+
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -132,7 +136,7 @@ export default function WhatsAppSettingsPage() {
 
   const fetchConfig = useCallback(async (configId: string) => {
     try {
-      const token = localStorage.getItem("auth_token");
+      const token = getAdminToken();
       if (!token) {
         setLoading(false);
         toast.error("Please login again");
@@ -220,7 +224,7 @@ export default function WhatsAppSettingsPage() {
     }
     setProductLoading(true);
     try {
-      const token = localStorage.getItem("auth_token");
+      const token = getAdminToken();
       if (!token) {
         toast.error("Please login again");
         return;
@@ -240,7 +244,7 @@ export default function WhatsAppSettingsPage() {
       const url = `${BACKEND_URL}/api/products?${params.toString()}`;
       
       const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("auth_token")}` },
+        headers: { Authorization: `Bearer ${token}` },
       });
 
       // Handle non-ok but also empty/null gracefully
@@ -300,7 +304,7 @@ export default function WhatsAppSettingsPage() {
     if (!dbId) return;
     setPromptSaving(true);
     try {
-      const token = localStorage.getItem("auth_token");
+      const token = getAdminToken();
       if (!token) throw new Error("Please login again");
 
       let body: any = {};
@@ -351,7 +355,7 @@ export default function WhatsAppSettingsPage() {
     if (!dbId) return;
     setBehaviorSaving(true);
     try {
-      const token = localStorage.getItem("auth_token");
+      const token = getAdminToken();
       if (!token) throw new Error("Please login again");
 
       const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${dbId}`, {
@@ -399,7 +403,7 @@ export default function WhatsAppSettingsPage() {
     }
 
     try {
-      const token = localStorage.getItem("auth_token");
+      const token = getAdminToken();
       if (!token) throw new Error("Please login again");
 
       const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${dbId}`, {
