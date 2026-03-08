@@ -300,6 +300,21 @@ async function logError(error, context = 'Unknown', metadata = {}) {
 // 9. Initialize Tables (Run on Startup)
 async function initTables() {
     try {
+        // --- SEQUENCE REPAIR (Duplicate Key Fix) ---
+        // Fix for "duplicate key value violates unique constraint backend_chat_histories_pkey"
+        try {
+            await query(`
+                SELECT setval(
+                    pg_get_serial_sequence('backend_chat_histories', 'id'),
+                    COALESCE(MAX(id), 0) + 1,
+                    false
+                ) FROM backend_chat_histories;
+            `);
+            console.log("[DB] 'backend_chat_histories' sequence repaired.");
+        } catch (seqErr) {
+            console.warn("[DB] Sequence repair warning:", seqErr.message);
+        }
+
         // FB Contacts Table (For Handover/Lock)
         await query(`
             CREATE TABLE IF NOT EXISTS fb_contacts (

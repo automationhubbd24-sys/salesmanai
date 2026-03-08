@@ -343,6 +343,19 @@ const handleWebhook = async (req, res) => {
         return res.sendStatus(400);
     }
 
+    // --- QUICK FILTER: Ignore Invalid/Empty WAHA Events ---
+    // User Requirement: "whatsapp er khali ba invalid event gulo filter koro"
+    // Solution: If payload has no 'from' and no 'body' (or media), it's likely a QR/Status update.
+    const isMessageEvent = (event === 'message' || event === 'message.any' || event === 'message.received');
+    const hasSender = !!(payload.from || payload.sender || payload._data?.from);
+    const hasContent = !!(payload.body || payload.caption || payload.media || payload.type === 'chat' || payload.type === 'image' || payload.type === 'video' || payload.type === 'audio' || payload.type === 'document' || payload.type === 'location' || payload.type === 'vcard' || payload.type === 'multi_vcard');
+
+    if (!isMessageEvent || !hasSender || !hasContent) {
+        // console.log(`[WA Webhook] Ignoring non-message/invalid event: ${event} for session: ${session}`);
+        return res.sendStatus(200); // Acknowledge QR/Status/Other events but don't process as AI message
+    }
+    // ------------------------------------------------------
+
     // --- AUTO-REGISTER SESSION (If Missing) ---
     // Fix for "Unknown Session" causing bot failure.
     // If a session connects via WAHA but isn't in our DB, auto-create it.
