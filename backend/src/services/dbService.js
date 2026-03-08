@@ -2333,6 +2333,83 @@ function calculateRequestCost(model, requests = 1) {
     return req * costPerRequest;
 }
 
+// --- Semantic Cache Utilities ---
+async function ensureSemanticCacheTables() {
+    const { query } = require('./pgClient');
+    try {
+        await query('CREATE EXTENSION IF NOT EXISTS pg_trgm');
+        await query(`
+            CREATE TABLE IF NOT EXISTS semantic_cache (
+                id BIGSERIAL PRIMARY KEY,
+                page_id TEXT,
+                session_name TEXT,
+                question_norm TEXT NOT NULL,
+                response_text TEXT NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT now()
+            )
+        `);
+        await query(`CREATE INDEX IF NOT EXISTS idx_semcache_question_trgm ON semantic_cache USING gin (question_norm gin_trgm_ops)`);
+        await query(`CREATE INDEX IF NOT EXISTS idx_semcache_page ON semantic_cache (page_id)`);
+        await query(`CREATE INDEX IF NOT EXISTS idx_semcache_session ON semantic_cache (session_name)`);
+    } catch (e) {
+        console.warn(`[DB] Failed to ensure semantic_cache tables: ${e.message}`);
+    }
+}
+
+async function saveSemanticCacheEntry({ page_id = null, session_name = null, question, response }) {
+    const { query } = require('./pgClient');
+    try {
+        await ensureSemanticCacheTables();
+        const norm = (question || '').toString().toLowerCase().replace(/[^\w\s\u0980-\u09FF]/g, '').trim();
+        if (!norm || !response) return;
+        await query(
+            `INSERT INTO semantic_cache (page_id, session_name, question_norm, response_text)
+             VALUES ($1, $2, $3, $4)`,
+            [page_id, session_name, norm, response]
+        );
+    } catch (e) {
+        console.warn(`[DB] saveSemanticCacheEntry failed: ${e.message}`);
+    }
+}
+
+async function findSemanticCache({ page_id = null, session_name = null, question, threshold = 0.96 }) {
+    const { query } = require('./pgClient');
+    try {
+        await ensureSemanticCacheTables();
+        const norm = (question || '').toString().toLowerCase().replace(/[^\w\s\u0980-\u09FF]/g, '').trim();
+        if (!norm) return null;
+
+        const conditions = [];
+        const params = [norm, threshold];
+        if (page_id) {
+            conditions.push(`page_id = $3`);
+            params.push(page_id);
+        }
+        if (session_name) {
+            conditions.push(`session_name = $${params.length + 1}`);
+            params.push(session_name);
+        }
+        const scopeWhere = conditions.length > 0 ? `AND (${conditions.join(' OR ')})` : '';
+
+        const sql = `
+            SELECT response_text
+            FROM semantic_cache
+            WHERE similarity(question_norm, $1) >= $2
+            ${scopeWhere}
+            ORDER BY similarity(question_norm, $1) DESC, created_at DESC
+            LIMIT 1
+        `;
+        const res = await query(sql, params);
+        if (res.rows.length > 0) {
+            return res.rows[0].response_text;
+        }
+        return null;
+    } catch (e) {
+        console.warn(`[DB] findSemanticCache failed: ${e.message}`);
+        return null;
+    }
+}
+
 module.exports = {
     getAllKeys,
     addApiKey,
@@ -2398,7 +2475,6 @@ module.exports = {
     // --- Semantic Cache ---
     findSemanticCache,
     saveSemanticCacheEntry,
-    getProducts,
     getProducts,
     getProductById,
     updateProduct,
@@ -3012,83 +3088,4 @@ async function searchProducts(userId, queryText, pageId = null) {
         console.error("[DB] searchProducts Error:", error.message);
         return [];
     }
-    
-// --- Semantic Cache Utilities ---
-async function ensureSemanticCacheTables() {
-    const { query } = require('./pgClient');
-    try {
-        await query('CREATE EXTENSION IF NOT EXISTS pg_trgm');
-        await query(`
-            CREATE TABLE IF NOT EXISTS semantic_cache (
-                id BIGSERIAL PRIMARY KEY,
-                page_id TEXT,
-                session_name TEXT,
-                question_norm TEXT NOT NULL,
-                response_text TEXT NOT NULL,
-                created_at TIMESTAMPTZ DEFAULT now()
-            )
-        `);
-        await query(`CREATE INDEX IF NOT EXISTS idx_semcache_question_trgm ON semantic_cache USING gin (question_norm gin_trgm_ops)`);
-        await query(`CREATE INDEX IF NOT EXISTS idx_semcache_page ON semantic_cache (page_id)`);
-        await query(`CREATE INDEX IF NOT EXISTS idx_semcache_session ON semantic_cache (session_name)`);
-    } catch (e) {
-        console.warn(`[DB] Failed to ensure semantic_cache tables: ${e.message}`);
-    }
-}
-
-async function saveSemanticCacheEntry({ page_id = null, session_name = null, question, response }) {
-    const { query } = require('./pgClient');
-    try {
-        await ensureSemanticCacheTables();
-        const norm = (question || '').toString().toLowerCase().replace(/[^\w\s\u0980-\u09FF]/g, '').trim();
-        if (!norm || !response) return;
-        await query(
-            `INSERT INTO semantic_cache (page_id, session_name, question_norm, response_text)
-             VALUES ($1, $2, $3, $4)`,
-            [page_id, session_name, norm, response]
-        );
-    } catch (e) {
-        console.warn(`[DB] saveSemanticCacheEntry failed: ${e.message}`);
-    }
-}
-
-async function findSemanticCache({ page_id = null, session_name = null, question, threshold = 0.96 }) {
-    const { query } = require('./pgClient');
-    try {
-        await ensureSemanticCacheTables();
-        const norm = (question || '').toString().toLowerCase().replace(/[^\w\s\u0980-\u09FF]/g, '').trim();
-        if (!norm) return null;
-
-        const conditions = [];
-        const params = [norm, threshold];
-        if (page_id) {
-            conditions.push(`page_id = $3`);
-            params.push(page_id);
-        }
-        if (session_name) {
-            conditions.push(`session_name = $${params.length + 1}`);
-            params.push(session_name);
-        }
-        const scopeWhere = conditions.length > 0 ? `AND (${conditions.join(' OR ')})` : '';
-
-        const sql = `
-            SELECT response_text
-            FROM semantic_cache
-            WHERE similarity(question_norm, $1) >= $2
-            ${scopeWhere}
-            ORDER BY similarity(question_norm, $1) DESC, created_at DESC
-            LIMIT 1
-        `;
-        const res = await query(sql, params);
-        if (res.rows.length > 0) {
-            return res.rows[0].response_text;
-        }
-        return null;
-    } catch (e) {
-        console.warn(`[DB] findSemanticCache failed: ${e.message}`);
-        return null;
-    }
-}
-
-    return [];
 }
