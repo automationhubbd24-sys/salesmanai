@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { BACKEND_URL } from "@/config";
+import { useNavigate } from "react-router-dom";
 import OpenRouterConfigPage from "./OpenRouterConfigPage";
 
 interface ApiKey {
@@ -227,6 +228,7 @@ export default function AdminPage() {
       fetchDbTables();
       fetchEngineData();
       fetchEmbeddingConfig();
+      fetchSemanticAccounts();
     }
   }, [isAuthenticated]);
 
@@ -234,6 +236,8 @@ export default function AdminPage() {
   const [semanticResults, setSemanticResults] = useState<any[]>([]);
   const [semanticLoading, setSemanticLoading] = useState(false);
   const [semanticError, setSemanticError] = useState<string | null>(null);
+  const [semanticPlatformFilter, setSemanticPlatformFilter] = useState<"all" | "messenger" | "whatsapp">("all");
+  const navigate = useNavigate();
 
   const fetchEmbeddingConfig = async () => {
     try {
@@ -253,48 +257,64 @@ export default function AdminPage() {
     }
   };
 
-  const handleSemanticSearch = async () => {
-    if (!semanticSearch.trim()) return;
+  const fetchSemanticAccounts = async () => {
     setSemanticLoading(true);
     setSemanticError(null);
     try {
       const token = localStorage.getItem("auth_token");
-      const res = await fetch(`${BACKEND_URL}/api/db-admin/semantic-search`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ query: semanticSearch })
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setSemanticResults(data.results || []);
-      } else {
-        throw new Error(data.error || "Search failed");
-      }
+      const teamOwner = localStorage.getItem("active_team_owner");
+      const qs = teamOwner ? `?team_owner=${encodeURIComponent(teamOwner)}` : "";
+      const headers = { Authorization: `Bearer ${token}` };
+      const [fbRes, waRes] = await Promise.all([
+        fetch(`${BACKEND_URL}/api/messenger/pages${qs}`, { headers }),
+        fetch(`${BACKEND_URL}/api/whatsapp/sessions${qs}`, { headers })
+      ]);
+      const fbData = fbRes.ok ? await fbRes.json() : [];
+      const waData = waRes.ok ? await waRes.json() : [];
+      const messengerItems = Array.isArray(fbData) ? fbData.map((p: any) => ({
+        platform: "messenger",
+        account_name: p.name,
+        account_id: p.page_id,
+        cache_status: ["active", "active_paid", "trial", "active_trial"].includes(String(p.subscription_status || "").toLowerCase()),
+        added_on: p.created_at || null,
+        db_id: p.id || p.db_id || null
+      })) : [];
+      const whatsappItems = Array.isArray(waData) ? waData.map((s: any) => ({
+        platform: "whatsapp",
+        account_name: s.name,
+        account_id: s.name,
+        cache_status: String(s.status || s.db_status || "").toLowerCase() !== "stopped" && String(s.subscription_status || "").toLowerCase() !== "expired",
+        added_on: s.expires_at || null,
+        db_id: s.wp_db_id || s.wp_id || null
+      })) : [];
+      setSemanticResults([...messengerItems, ...whatsappItems]);
     } catch (error: any) {
-      setSemanticError(error.message);
+      setSemanticError(error.message || "Failed to load accounts");
     } finally {
       setSemanticLoading(false);
     }
   };
 
-  const clearSemanticCache = async () => {
-    if (!confirm("Are you sure you want to clear the semantic cache?")) return;
-    try {
-      const token = localStorage.getItem("auth_token");
-      const res = await fetch(`${BACKEND_URL}/api/db-admin/clear-semantic-cache`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (res.ok) {
-        toast.success("Semantic cache cleared");
-        setSemanticResults([]);
-      }
-    } catch (error) {
-      toast.error("Failed to clear cache");
+  const handleSemanticSearch = async () => {
+    await fetchSemanticAccounts();
+  };
+
+  const handleManageAccount = (item: any) => {
+    if (item.platform === "messenger") {
+      if (item.account_id) localStorage.setItem("active_fb_page_id", String(item.account_id));
+      if (item.db_id) localStorage.setItem("active_fb_db_id", String(item.db_id));
+      navigate("/dashboard/messenger/settings");
+    } else {
+      if (item.account_id) localStorage.setItem("active_wa_session_id", String(item.account_id));
+      if (item.db_id) localStorage.setItem("active_wp_db_id", String(item.db_id));
+      navigate("/dashboard/whatsapp/settings");
     }
+  };
+
+  const clearSemanticCache = async () => {
+    if (!confirm("Are you sure you want to clear the semantic cache list?")) return;
+    setSemanticResults([]);
+    toast.success("Cleared current list");
   };
 
   const saveEmbeddingConfig = async () => {
@@ -2914,16 +2934,31 @@ export default function AdminPage() {
               </Button>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="flex gap-2">
-                <Input 
-                  placeholder="Test semantic lookup (e.g. 'price of iphone 13')" 
-                  value={semanticSearch}
-                  onChange={(e) => setSemanticSearch(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSemanticSearch()}
-                />
-                <Button onClick={handleSemanticSearch} disabled={semanticLoading}>
-                  {semanticLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                </Button>
+              <div className="grid gap-2 md:grid-cols-3">
+                <div className="flex gap-2">
+                  <Input 
+                    placeholder="Search by ID or Name..." 
+                    value={semanticSearch}
+                    onChange={(e) => setSemanticSearch(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && fetchSemanticAccounts()}
+                  />
+                  <Button onClick={fetchSemanticAccounts} disabled={semanticLoading}>
+                    {semanticLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                  </Button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Label>Platform</Label>
+                  <Select value={semanticPlatformFilter} onValueChange={(v: any) => setSemanticPlatformFilter(v)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="All Platforms" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Platforms</SelectItem>
+                      <SelectItem value="messenger">Messenger</SelectItem>
+                      <SelectItem value="whatsapp">WhatsApp</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
               {semanticError && <p className="text-xs text-red-500">{semanticError}</p>}
@@ -2940,14 +2975,28 @@ export default function AdminPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {semanticResults.length === 0 ? (
+                    {(semanticResults
+                      .filter((r) => semanticPlatformFilter === "all" ? true : r.platform === semanticPlatformFilter)
+                      .filter((r) => {
+                        const q = semanticSearch.trim().toLowerCase();
+                        if (!q) return true;
+                        return String(r.account_name || "").toLowerCase().includes(q) || String(r.account_id || "").toLowerCase().includes(q);
+                      })
+                    ).length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
                           No active semantic cache records found.
                         </TableCell>
                       </TableRow>
                     ) : (
-                      semanticResults.map((r, idx) => (
+                      semanticResults
+                        .filter((r) => semanticPlatformFilter === "all" ? true : r.platform === semanticPlatformFilter)
+                        .filter((r) => {
+                          const q = semanticSearch.trim().toLowerCase();
+                          if (!q) return true;
+                          return String(r.account_name || "").toLowerCase().includes(q) || String(r.account_id || "").toLowerCase().includes(q);
+                        })
+                        .map((r, idx) => (
                         <TableRow key={idx}>
                           <TableCell>
                              <Badge variant="outline" className="text-[10px] uppercase">
@@ -2959,15 +3008,15 @@ export default function AdminPage() {
                             <div className="text-[10px] text-muted-foreground">ID: {r.account_id}</div>
                           </TableCell>
                           <TableCell>
-                            <Badge variant={r.is_active ? "default" : "secondary"} className={r.is_active ? "bg-green-500/20 text-green-400" : ""}>
-                              {r.is_active ? "ACTIVE" : "DISABLED"}
+                            <Badge variant={r.cache_status ? "default" : "secondary"} className={r.cache_status ? "bg-green-500/20 text-green-400" : ""}>
+                              {r.cache_status ? "ACTIVE" : "DISABLED"}
                             </Badge>
                           </TableCell>
                           <TableCell className="text-xs text-muted-foreground">
-                            {r.created_at ? new Date(r.created_at).toLocaleDateString() : "-"}
+                            {r.added_on ? new Date(r.added_on).toLocaleDateString() : "-"}
                           </TableCell>
                           <TableCell className="text-right">
-                             <Button variant="outline" size="sm" className="h-8 text-xs">
+                             <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => handleManageAccount(r)}>
                                Manage
                              </Button>
                           </TableCell>
