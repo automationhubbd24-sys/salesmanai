@@ -1309,6 +1309,29 @@ async function queueMessage(session, messagePayload) {
 
     const sessionId = `${sessionName}_${senderId}`;
 
+    // --- EXTRACT MEDIA (Moved up for early cache check) ---
+    const imageUrls = [];
+    const audioUrls = [];
+
+    // Robust Media Extraction
+    let mediaUrl = normalizeMediaUrl(messagePayload.mediaUrl || messagePayload.media?.url);
+    if (!mediaUrl && messagePayload.hasMedia && messagePayload.body) {
+        const bodyUrl = normalizeMediaUrl(messagePayload.body);
+        if (bodyUrl && bodyUrl.startsWith('http')) {
+            mediaUrl = bodyUrl;
+        }
+    }
+
+    if (mediaUrl) {
+        const mime = messagePayload.mimetype || messagePayload.media?.mimetype || '';
+        if (mime.startsWith('image/') || messagePayload.type === 'image') {
+            imageUrls.push(mediaUrl);
+        }
+        else if (mime.startsWith('audio/') || mime.includes('audio') || messagePayload.type === 'ptt' || messagePayload.type === 'audio') {
+            audioUrls.push(mediaUrl);
+        }
+    }
+
     // --- EARLY SEMANTIC CACHE CHECK (Instant Path) ---
     // If this is the first message and not media, check cache immediately to bypass debounce.
     const isFirstMessage = !debounceMap.has(sessionId);
@@ -1382,38 +1405,9 @@ async function queueMessage(session, messagePayload) {
     }
 
     const sessionData = debounceMap.get(sessionId);
-    
-    // --- EXTRACT MEDIA (Fix for ReferenceError & Missing URL) ---
-    const imageUrls = [];
-    const audioUrls = [];
 
-    // Robust Media Extraction
-    let mediaUrl = normalizeMediaUrl(messagePayload.mediaUrl || messagePayload.media?.url);
-    // If mediaUrl is relative (from WAHA local storage), ensure it's absolute if needed, 
-    // but usually WAHA sends full URL or filename. 
-    // If it's just filename, we might need to construct URL, but let's assume URL for now.
-    
-    // Fallback: Check body if it's a URL and hasMedia is true (WAHA behavior sometimes)
-    if (!mediaUrl && messagePayload.hasMedia && messagePayload.body) {
-        const bodyUrl = normalizeMediaUrl(messagePayload.body);
-        if (bodyUrl && bodyUrl.startsWith('http')) {
-            mediaUrl = bodyUrl;
-        }
-    }
-
-    if (mediaUrl) {
-        const mime = messagePayload.mimetype || messagePayload.media?.mimetype || '';
-        if (mime.startsWith('image/') || messagePayload.type === 'image') {
-            imageUrls.push(mediaUrl);
-        }
-        else if (mime.startsWith('audio/') || mime.includes('audio') || messagePayload.type === 'ptt' || messagePayload.type === 'audio') {
-            audioUrls.push(mediaUrl);
-        }
-    }
-    // ---------------------------------------------
-    
-    // Push Object
-    // Extract Quoted Message Data (Lightweight System - Webhook Data)
+    // --- PUSH OBJECT ---
+    // Extract Quoted Message Data
     let quotedContent = null;
     try {
         // Search in multiple possible locations
