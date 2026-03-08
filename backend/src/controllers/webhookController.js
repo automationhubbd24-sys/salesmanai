@@ -570,6 +570,16 @@ async function queueMessage(event, entryPageId = null) {
 
     const sessionId = `${pageId}_${senderId}`;
 
+    // --- EXTRACT MEDIA (Moved up for early cache check) ---
+    const thisMsgImages = event.message?.attachments?.filter(att => 
+        att.type === 'image' && !att.payload?.sticker_id
+    ).map(att => att.payload.url) || [];
+    
+    const thisMsgAudios = event.message?.attachments?.filter(att => 
+        att.type === 'audio' || 
+        (att.type === 'file' && att.payload?.url && /\.(mp3|wav|ogg|m4a|aac|mp4)(\?|$)/i.test(att.payload.url))
+    ).map(att => att.payload.url) || [];
+
     // --- EARLY SEMANTIC CACHE CHECK (Instant Path) ---
     // If this is the first message and not media, check cache immediately to bypass debounce.
     const isFirstMessage = !debounceMap.has(sessionId);
@@ -623,15 +633,7 @@ async function queueMessage(event, entryPageId = null) {
 
     const sessionData = debounceMap.get(sessionId);
     
-    // Extract URLs for this specific message (STRICTLY EXCLUDING STICKERS)
-    const thisMsgImages = event.message?.attachments?.filter(att => 
-        att.type === 'image' && !att.payload?.sticker_id
-    ).map(att => att.payload.url) || [];
-    
-    const thisMsgAudios = event.message?.attachments?.filter(att => 
-        att.type === 'audio' || 
-        (att.type === 'file' && att.payload?.url && /\.(mp3|wav|ogg|m4a|aac|mp4)(\?|$)/i.test(att.payload.url))
-    ).map(att => att.payload.url) || [];
+    // Extract URLs for this specific message (ALREADY EXTRACTED ABOVE)
 
     // Push Object
     sessionData.messages.push({
