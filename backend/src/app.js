@@ -46,6 +46,7 @@ app.use('/api/external', externalApiRoutes);
 app.use('/api/lite', liteEngineRoutes);
 app.use('/api/openrouter', openrouterEngineRoutes);
 app.use('/api/db-admin', dbAdminRoutes);
+app.use('/db-admin', dbAdminRoutes); // Alias for both
 app.use('/api/api-list', apiListRoutes);
 app.use('/api/api-engine', apiEngineRoutes);
 

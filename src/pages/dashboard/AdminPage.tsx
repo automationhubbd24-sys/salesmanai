@@ -253,8 +253,7 @@ export default function AdminPage() {
     try {
       setCacheLoading(true);
       const token = localStorage.getItem("auth_token");
-      // Trying both with and without /api to be safe, but usually /api is for proxied requests
-      const res = await fetch(`${BACKEND_URL}/db-admin/cache-configs`, {
+      const res = await fetch(`${BACKEND_URL}/api/db-admin/cache-configs`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -271,7 +270,7 @@ export default function AdminPage() {
   const updateCacheConfig = async (config: CacheConfig, updates: Partial<CacheConfig>) => {
     try {
       const token = localStorage.getItem("auth_token");
-      const res = await fetch(`${BACKEND_URL}/db-admin/cache-configs/update`, {
+      const res = await fetch(`${BACKEND_URL}/api/db-admin/cache-configs/update`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -300,7 +299,7 @@ export default function AdminPage() {
   const fetchEmbeddingConfig = async () => {
     try {
       const token = localStorage.getItem("auth_token");
-      const res = await fetch(`${BACKEND_URL}/db-admin/embedding-config`, {
+      const res = await fetch(`${BACKEND_URL}/api/db-admin/embedding-config`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -315,7 +314,7 @@ export default function AdminPage() {
   const saveEmbeddingConfig = async () => {
     try {
       const token = localStorage.getItem("auth_token");
-      const res = await fetch(`${BACKEND_URL}/db-admin/embedding-config`, {
+      const res = await fetch(`${BACKEND_URL}/api/db-admin/embedding-config`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
