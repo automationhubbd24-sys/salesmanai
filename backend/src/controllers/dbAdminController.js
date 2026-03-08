@@ -379,11 +379,22 @@ exports.getSemanticCacheConfigs = async (req, res) => {
                 COALESCE(wmd.embed_enabled, false) AS embed_enabled,
                 COALESCE(wmd.created_at, NOW()) AS created_at
             FROM whatsapp_message_database wmd
-            WHERE (wmd.status IS NULL OR wmd.status <> 'expired')
         `;
 
         const messengerRes = await pgClient.query(messengerSql);
         const whatsappRes = await pgClient.query(whatsappSql);
+
+        // Debug: check if tables have any data at all
+        let pamCount = 0;
+        let wmdCount = 0;
+        try {
+            const pamCheck = await pgClient.query('SELECT COUNT(*) FROM page_access_token_message');
+            pamCount = parseInt(pamCheck.rows[0].count);
+            const wmdCheck = await pgClient.query('SELECT COUNT(*) FROM whatsapp_message_database');
+            wmdCount = parseInt(wmdCheck.rows[0].count);
+        } catch (e) {
+            console.warn('Debug count check failed:', e.message);
+        }
 
         const allConfigs = [...messengerRes.rows, ...whatsappRes.rows];
         
@@ -394,8 +405,10 @@ exports.getSemanticCacheConfigs = async (req, res) => {
             success: true,
             configs: allConfigs,
             debug: {
-                messengerCount: messengerRes.rows.length,
-                whatsappCount: whatsappRes.rows.length
+                messengerRows: messengerRes.rows.length,
+                whatsappRows: whatsappRes.rows.length,
+                totalPam: pamCount,
+                totalWmd: wmdCount
             }
         });
     } catch (error) {
