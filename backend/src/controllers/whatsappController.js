@@ -178,6 +178,28 @@ const botMessageIds = new Set();
 // Recent Bot Replies (Text-based Echo Guard)
 // Key: recipientId, Value: Array of { text, timestamp }
 const recentBotReplies = new Map();
+// Config Cache (In-Memory Optimization)
+const configCache = new Map(); // Key: sessionName, Value: { config, prompts, timestamp }
+
+// Helper to get cached page data (Fast Path)
+async function getCachedPageData(sessionName) {
+    const now = Date.now();
+    const cached = configCache.get(sessionName);
+    
+    // Refresh cache if not exists or older than 2 minutes
+    if (!cached || (now - cached.timestamp > 2 * 60 * 1000)) {
+        try {
+            const config = await dbService.getWhatsAppConfig(sessionName);
+            if (config) {
+                configCache.set(sessionName, { config, prompts: config.page_prompts || {}, timestamp: now });
+                return { config, prompts: config.page_prompts || {} };
+            }
+        } catch (e) {
+            console.warn(`[Cache] Failed to refresh WA config for ${sessionName}:`, e.message);
+        }
+    }
+    return cached || { config: null, prompts: null };
+}
 
 // --- MEMORY GARBAGE COLLECTOR (Safety for 100+ Users) ---
 // Runs every 5 minutes to clean stale data and prevent memory leaks.
@@ -343,28 +365,17 @@ const handleWebhook = async (req, res) => {
         return res.sendStatus(400);
     }
 
-    // --- AUTO-REGISTER SESSION (If Missing) ---
-    // Fix for "Unknown Session" causing bot failure.
-    // If a session connects via WAHA but isn't in our DB, auto-create it.
-    try {
-        // We use a lightweight check first to avoid heavy DB hits on every message?
-        // Actually, getWhatsAppConfig is cached or fast enough.
-        // But to be safe, we can check if it's in our local sessionStartTimeMap (implies we know it?)
-        // No, sessionStartTimeMap is just runtime.
-        
-        // We will check DB. If this adds too much latency, we can optimize later (e.g. cache known sessions).
-        // For now, robustness is priority.
-        const existingConfig = await dbService.getWhatsAppConfig(session);
-        if (!existingConfig) {
-            console.log(`[WA] Session '${session}' detected but missing in DB. Auto-registering...`);
-            // Create with NULL user_id (Orphaned). Admin must claim it or we assign to default.
-            // Status: 'connected' (since we are receiving webhooks)
-            await dbService.createWhatsAppEntry(session, null, 30, 'connected');
-            console.log(`[WA] Session '${session}' auto-registered successfully.`);
-        }
-    } catch (e) {
-        console.error(`[WA] Session Auto-Registration Failed: ${e.message}`);
-        // We continue processing, but AI might fail later due to missing config.
+// --- AUTO-REGISTER SESSION (Non-Blocking) ---
+    // User Instructions: Use in-memory check to avoid blocking the webhook.
+    const knownSession = configCache.get(session);
+    if (!knownSession) {
+        // Fire and forget registration
+        dbService.getWhatsAppConfig(session).then(existingConfig => {
+            if (!existingConfig) {
+                console.log(`[WA] Session '${session}' detected but missing in DB. Auto-registering...`);
+                return dbService.createWhatsAppEntry(session, null, 30, 'connected');
+            }
+        }).catch(e => console.error(`[WA] Session Check/Registration Failed: ${e.message}`));
     }
 
     // NORMALIZE MESSAGE ID (Critical for Upsert & Duplicate Check)
@@ -457,9 +468,10 @@ const handleWebhook = async (req, res) => {
         }
 
         try {
-            const config = await dbService.getWhatsAppConfig(sessionName);
+            const pageData = await getCachedPageData(sessionName);
+            const config = pageData?.config;
             if (config) {
-                const prompts = config.page_prompts || {};
+                const prompts = pageData.prompts || {};
                 const normalizeEmojiText = (str) => (str || '').replace(/\uFE0F/g, '').normalize('NFC');
                 
                 const lockList = [
@@ -483,12 +495,12 @@ const handleWebhook = async (req, res) => {
                 if (targetUserId) {
                     if (lockList.some(e => cleanContent.includes(e))) {
                         console.log(`[WA] Admin sent LOCK emoji to ${targetUserId}`);
-                        await dbService.toggleWhatsAppLock(sessionName, targetUserId, true);
+                        dbService.toggleWhatsAppLock(sessionName, targetUserId, true).catch(() => {});
                         const chatKey = `${sessionName}_${targetUserId}`;
                         handoverMap.set(chatKey, Date.now() + 24 * 60 * 60 * 1000);
                     } else if (unlockList.some(e => cleanContent.includes(e))) {
                         console.log(`[WA] Admin sent UNLOCK emoji to ${targetUserId}`);
-                        await dbService.toggleWhatsAppLock(sessionName, targetUserId, false);
+                        dbService.toggleWhatsAppLock(sessionName, targetUserId, false).catch(() => {});
                         const chatKey = `${sessionName}_${targetUserId}`;
                         handoverMap.delete(chatKey);
                     }
@@ -500,7 +512,7 @@ const handleWebhook = async (req, res) => {
         
         if (messageText && messageText.trim().length > 0) {
             const isGroup = (payload.from || '').includes('-');
-            await dbService.saveWhatsAppChat({
+            dbService.saveWhatsAppChat({
                 session_name: sessionName,
                 sender_id: sessionName,
                 recipient_id: recipientId || payload.to || payload.from || null,
@@ -512,7 +524,7 @@ const handleWebhook = async (req, res) => {
                 is_group: isGroup,
                 group_id: isGroup ? payload.from : null,
                 group_name: isGroup ? (payload.notifyName || 'Group') : null
-            });
+            }).catch(() => {});
         }
         return;
     }
@@ -1297,6 +1309,68 @@ async function queueMessage(session, messagePayload) {
 
     const sessionId = `${sessionName}_${senderId}`;
 
+    // --- EARLY SEMANTIC CACHE CHECK (Instant Path) ---
+    // If this is the first message and not media, check cache immediately to bypass debounce.
+    const isFirstMessage = !debounceMap.has(sessionId);
+    const hasMediaInThisMsg = imageUrls.length > 0 || audioUrls.length > 0;
+    
+    if (isFirstMessage && !hasMediaInThisMsg && messageText && messageText.trim()) {
+        const pageData = await getCachedPageData(sessionName);
+        const pageConfig = pageData?.config;
+        if (pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1)) {
+            const threshold = pageConfig.semantic_cache_threshold ? Math.max(0.5, Math.min(0.99, Number(pageConfig.semantic_cache_threshold))) : 0.96;
+            const cacheQuery = messageText.trim().replace(/\s+/g, ' ');
+            
+            try {
+                const cached = await dbService.findSemanticCache({
+                    page_id: sessionName,
+                    session_name: sessionName,
+                    question: cacheQuery,
+                    threshold
+                });
+
+                if (cached) {
+                    console.log(`[WA] ⚡ EARLY CACHE HIT! (Bypassing Debounce)`);
+                    if (typeof trackBotReply === 'function') {
+                        trackBotReply(senderId, cached);
+                    }
+                    
+                    await whatsappService.sendSeen(sessionName, senderId);
+                    await whatsappService.sendTyping(sessionName, senderId);
+                    await whatsappService.sendMessage(sessionName, senderId, cached);
+                    
+                    dbService.saveWhatsAppChat({
+                        session_name: sessionName,
+                        sender_id: senderId,
+                        recipient_id: sessionName,
+                        message_id: messageId,
+                        text: messageText.trim(),
+                        timestamp: Date.now(),
+                        status: 'received',
+                        reply_by: 'user'
+                    }).catch(() => {});
+
+                    dbService.saveWhatsAppChat({
+                        session_name: sessionName,
+                        sender_id: sessionName,
+                        recipient_id: senderId,
+                        message_id: `cache_${Date.now()}`,
+                        text: cached,
+                        timestamp: Date.now(),
+                        status: 'sent',
+                        reply_by: 'bot',
+                        model_used: 'semantic-cache'
+                    }).catch(() => {});
+                    
+                    return; // EXIT EARLY
+                }
+            } catch (e) {
+                console.warn(`[WA] Early cache check failed:`, e.message);
+            }
+        }
+    }
+    // --------------------------------------------------
+
     // Initialize buffer if not exists
     if (!debounceMap.has(sessionId)) {
         debounceMap.set(sessionId, { messages: [], timer: null, pageId: messagePayload.to, lockSenderId, isProcessing: false });
@@ -1413,15 +1487,17 @@ async function queueMessage(session, messagePayload) {
         clearTimeout(sessionData.timer); // Reset timer on new message (Bundling: Text + Image + Swipe)
     }
 
-    // Dynamic Debounce from Config
-    const config = await dbService.getWhatsAppConfig(sessionName);
+    // Dynamic Debounce from Config (Fast Path)
+    const pageData = await getCachedPageData(sessionName);
+    const config = pageData?.config;
     let debounceTime = 2000; // Default 2s (Optimized for speed)
     
     if (config) {
-        if (config.wait_time) {
+        const prompts = pageData.prompts || {};
+        if (prompts.wait !== undefined) {
+             debounceTime = Number(prompts.wait) * 1000;
+        } else if (config.wait_time) {
              debounceTime = Number(config.wait_time) * 1000;
-        } else if (config.wait) {
-             debounceTime = Number(config.wait) * 1000;
         }
     }
     

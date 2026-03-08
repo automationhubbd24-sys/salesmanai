@@ -393,17 +393,16 @@ async function queueMessage(event, entryPageId = null) {
     } 
     // Check 4 (Fallback DB Check) - Only if not already identified
     else if (event.message && senderIdRaw && recipientIdRaw) {
-        try {
-             // Optimization: If senderIdRaw matches the page_id passed from webhook entry, avoid DB call
-             if (entryPageId && senderIdRaw === entryPageId) {
-                 isAdminSender = true;
-             } else {
-                 const senderPageConfig = await dbService.getPageConfig(senderIdRaw);
-                 if (senderPageConfig) {
-                     isAdminSender = true;
-                 }
-             }
-        } catch (e) {}
+        // Optimization: Use in-memory cache check for known pages
+        if (allowedPagesCache.has(senderIdRaw)) {
+            isAdminSender = true;
+        } else {
+            // Fallback: Check configCache (faster than DB)
+            const cached = configCache.get(senderIdRaw);
+            if (cached && cached.config) {
+                isAdminSender = true;
+            }
+        }
     }
 
     if (event.message && isAdminSender) {
@@ -554,25 +553,68 @@ async function queueMessage(event, entryPageId = null) {
     const replyToId = event.message?.reply_to?.mid || null;
     const isSwipeReply = !!replyToId;
 
-    // --- SAVE USER MESSAGE TO fb_chats (Immediate - Raw) ---
-    try {
-        let rawLogText = messageText || (hasSticker ? '[Sticker]' : '[Media Message]');
-        await dbService.saveFbChat({
-            page_id: pageId,
-            sender_id: senderId,
-            recipient_id: pageId,
-            message_id: messageId,
-            text: rawLogText, 
-            timestamp: Date.now(),
-            status: 'received',
-            reply_by: 'user'
-        });
-    } catch (err) {
-        console.error(`Error saving to fb_chats (Page: ${pageId}, Msg: ${messageId}):`, err.message);
-    }
+    // --- SAVE USER MESSAGE TO fb_chats (Background - Non-Blocking) ---
+    // User Instructions: Fire and forget to reduce latency
+    let rawLogText = messageText || (hasSticker ? '[Sticker]' : '[Media Message]');
+    dbService.saveFbChat({
+        page_id: pageId,
+        sender_id: senderId,
+        recipient_id: pageId,
+        message_id: messageId,
+        text: rawLogText, 
+        timestamp: Date.now(),
+        status: 'received',
+        reply_by: 'user'
+    }).catch(err => console.error(`Error saving to fb_chats (Page: ${pageId}, Msg: ${messageId}):`, err.message));
     // -------------------------------------------------
 
     const sessionId = `${pageId}_${senderId}`;
+
+    // --- EARLY SEMANTIC CACHE CHECK (Instant Path) ---
+    // If this is the first message and not media, check cache immediately to bypass debounce.
+    const isFirstMessage = !debounceMap.has(sessionId);
+    const hasMediaInThisMsg = thisMsgImages.length > 0 || thisMsgAudios.length > 0;
+    
+    if (isFirstMessage && !hasMediaInThisMsg && messageText && messageText.trim()) {
+        const pageData = await getCachedPageData(pageId);
+        const pageConfig = pageData?.config;
+        if (pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1)) {
+            const threshold = pageConfig.semantic_cache_threshold ? Math.max(0.5, Math.min(0.99, Number(pageConfig.semantic_cache_threshold))) : 0.96;
+            const cacheQuery = messageText.trim().replace(/\s+/g, ' ');
+            
+            try {
+                const cached = await dbService.findSemanticCache({
+                    page_id: pageId,
+                    session_name: pageId,
+                    question: cacheQuery,
+                    threshold
+                });
+
+                if (cached) {
+                    console.log(`[FB] ⚡ EARLY CACHE HIT! (Bypassing Debounce)`);
+                    trackBotReply(senderId, cached);
+                    await facebookService.sendMessage(pageId, senderId, cached, pageConfig.page_access_token);
+                    
+                    dbService.saveFbChat({
+                        page_id: pageId,
+                        sender_id: pageId,
+                        recipient_id: senderId,
+                        message_id: `cache_${Date.now()}`,
+                        text: cached,
+                        timestamp: Date.now(),
+                        status: 'sent',
+                        reply_by: 'bot',
+                        ai_model: 'semantic-cache'
+                    }).catch(() => {});
+                    
+                    return; // EXIT EARLY
+                }
+            } catch (e) {
+                console.warn(`[FB] Early cache check failed:`, e.message);
+            }
+        }
+    }
+    // --------------------------------------------------
 
     // Initialize buffer if not exists
     if (!debounceMap.has(sessionId)) {
