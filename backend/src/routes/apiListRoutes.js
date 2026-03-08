@@ -42,4 +42,7 @@ router.post('/config', authMiddleware, apiListController.saveGlobalConfig);
 router.get('/embedding-config', authMiddleware, apiListController.getEmbeddingConfig);
 router.post('/embedding-config', authMiddleware, apiListController.saveEmbeddingConfig);
 
+// Admin Global Accounts Route
+router.get('/all-accounts', authMiddleware, apiListController.getAllAccounts);
+
 module.exports = router;

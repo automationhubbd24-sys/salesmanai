@@ -86,7 +86,12 @@ exports.adminLogin = async (req, res) => {
         const envPass = process.env.ADMIN_PASSWORD || 'admin123';
 
         if (username === envUser && password === envPass) {
-            return res.json({ success: true });
+            const adminUser = { 
+                id: '00000000-0000-4000-a000-000000000000', 
+                email: 'admin@system.local' 
+            };
+            const token = authService.signToken(adminUser);
+            return res.json({ success: true, token });
         }
 
         return res.status(401).json({ error: 'Invalid credentials' });

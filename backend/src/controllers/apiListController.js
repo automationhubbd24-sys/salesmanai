@@ -148,3 +148,41 @@ exports.saveEmbeddingConfig = async (req, res) => {
     }
 };
 
+exports.getAllAccounts = async (req, res) => {
+    try {
+        const fbResult = await pgClient.query(`
+            SELECT 
+                'messenger' as platform,
+                name as account_name,
+                page_id as account_id,
+                subscription_status,
+                created_at as added_on,
+                page_id as db_id
+            FROM page_access_token_message
+            ORDER BY created_at DESC
+        `);
+
+        const waResult = await pgClient.query(`
+            SELECT 
+                'whatsapp' as platform,
+                session_name as account_name,
+                session_name as account_id,
+                status as status,
+                subscription_status,
+                expires_at as added_on,
+                id as db_id
+            FROM whatsapp_message_database
+            ORDER BY created_at DESC
+        `);
+
+        res.json({ 
+            success: true, 
+            messenger: fbResult.rows,
+            whatsapp: waResult.rows 
+        });
+    } catch (error) {
+        console.error('getAllAccounts error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
