@@ -4,7 +4,13 @@ const { query } = require('./pgClient');
 async function getPageConfig(pageId) {
   try {
     const result = await query(
-      'SELECT * FROM page_access_token_message WHERE page_id = $1 LIMIT 1',
+      `SELECT pam.*, 
+              fb.semantic_cache_enabled, 
+              fb.semantic_cache_threshold, 
+              fb.embed_enabled
+       FROM page_access_token_message pam
+       LEFT JOIN fb_message_database fb ON fb.page_id = pam.page_id
+       WHERE pam.page_id = $1 LIMIT 1`,
       [pageId]
     );
 
