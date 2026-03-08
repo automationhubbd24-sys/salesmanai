@@ -831,7 +831,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 
                 if (cached) {
                     console.log(`[Webhook] ⚡ INSTANT CACHE HIT! Replying to ${senderId}...`);
-                    await facebookService.sendTextMessage(pageId, senderId, cached, pageConfig.page_access_token, replyToId);
+                    await facebookService.sendMessage(pageId, senderId, cached, pageConfig.page_access_token);
                     
                     // Fire and forget logging
                     dbService.saveFbChat({

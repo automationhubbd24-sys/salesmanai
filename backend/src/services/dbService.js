@@ -301,7 +301,7 @@ async function logError(error, context = 'Unknown', metadata = {}) {
 async function initTables() {
     try {
         // --- SEQUENCE REPAIR (Duplicate Key Fix) ---
-        // Fix for "duplicate key value violates unique constraint backend_chat_histories_pkey"
+        // Fix for "duplicate key value violates unique constraint"
         try {
             await query(`
                 SELECT setval(
@@ -310,7 +310,14 @@ async function initTables() {
                     false
                 ) FROM backend_chat_histories;
             `);
-            console.log("[DB] 'backend_chat_histories' sequence repaired.");
+            await query(`
+                SELECT setval(
+                    pg_get_serial_sequence('ai_usage_logs', 'id'),
+                    COALESCE(MAX(id), 0) + 1,
+                    false
+                ) FROM ai_usage_logs;
+            `);
+            console.log("[DB] Table sequences repaired.");
         } catch (seqErr) {
             console.warn("[DB] Sequence repair warning:", seqErr.message);
         }

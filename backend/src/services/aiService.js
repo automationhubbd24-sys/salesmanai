@@ -1126,6 +1126,91 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     if (!ownerName || ownerName === 'null') ownerName = 'Automation Hub BD';
 
     let cleanUserMessage = (userMessage || '').trim();
+
+    // 0. Unified Logger Helper (Defined at top to avoid Hoisting/Initialization errors)
+    const finalize = async (result) => {
+        // Release slot before finishing
+        releaseAiSlot();
+
+        if (!result) return null;
+        
+        // --- 1. Log to AI Usage Logs (ai_usage_logs table) ---
+        // This is the main log table for the dashboard.
+        // User request: "ai usagees logs null hoye ase"
+        try {
+            // Debug: Log incoming data to console to see what we're sending to DB
+            console.log(`[AI Logger] Finalizing response for User: ${pageConfig.user_id}, Page: ${pageConfig.page_id}`);
+            
+            const isRequestBilling = pageConfig.billing_mode === 'request' || pageConfig.is_external_api === true;
+            const displayModel = pageConfig.display_model || pageConfig.chat_model || result.model || 'unknown';
+            const usageTokens = isRequestBilling ? 1 : (result.token_usage || 0);
+            const cost = isRequestBilling
+                ? dbService.calculateRequestCost(displayModel, 1)
+                : dbService.calculateCost(displayModel, usageTokens);
+            
+            const logData = {
+                user_id: pageConfig.user_id,
+                page_id: pageConfig.page_id,
+                model: displayModel,
+                prompt_tokens: 0, // We usually have total_tokens in token_usage
+                completion_tokens: 0,
+                total_tokens: usageTokens,
+                cost: cost,
+                status: result.error ? 'error' : 'success',
+                error_message: result.error || null,
+                sender_name: senderName || 'Customer',
+                user_message: userMessage || '',
+                ai_reply: result.reply || (result.error ? `Error: ${result.error}` : null)
+            };
+            
+            // Call dbService to log this. (Fire and forget, but with internal catch)
+            if (dbService.logAiUsage) {
+                dbService.logAiUsage(logData).catch(err => {
+                    console.error("[AI Logger] dbService.logAiUsage error:", err.message);
+                });
+            } else {
+                console.warn("[AI Logger] dbService.logAiUsage is not defined!");
+            }
+        } catch (err) {
+            console.warn("[AI Logger] Error preparing logData:", err.message);
+        }
+
+        // Save to Semantic Cache if enabled and not served from cache
+        try {
+            const semEnabled = pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1);
+            if (semEnabled && !usedSemanticCache && result && result.reply && cleanUserMessage) {
+                const dbService = require('./dbService');
+                // Non-blocking save (Fire and forget) to reduce latency
+                dbService.saveSemanticCacheEntry({
+                    page_id: pageConfig.page_id || null,
+                    session_name: pageConfig.page_id || null,
+                    question: cleanUserMessage,
+                    response: result.reply
+                }).catch(e => console.warn(`[AI] Background cache save failed: ${e.message}`));
+            }
+        } catch (e) {
+            console.warn(`[AI] Failed to trigger semantic cache save: ${e.message}`);
+        }
+
+        // --- 2. Log to API Usage Stats (api_usage_stats table) ---
+        if (pageConfig.user_id && (result.token_usage > 0 || pageConfig.is_external_api === true || pageConfig.billing_mode === 'request')) {
+            const isRequestBilling = pageConfig.billing_mode === 'request' || pageConfig.is_external_api === true;
+            const displayModel = pageConfig.display_model || pageConfig.chat_model || result.model || 'unknown';
+            const usageTokens = isRequestBilling ? 1 : (result.token_usage || 0);
+            const cost = isRequestBilling
+                ? dbService.calculateRequestCost(displayModel, 1)
+                : dbService.calculateCost(displayModel, usageTokens);
+            // Fire and forget (don't await to keep response fast)
+            dbService.logApiUsage(pageConfig.user_id, displayModel, usageTokens, cost);
+        }
+
+        // --- 3. Force Flush Key Stats to DB ---
+        if (keyService.flushUsageStats) {
+            keyService.flushUsageStats(); 
+        }
+        
+        return result;
+    };
     
     // --- 1. QUICK SEMANTIC CACHE CHECK (No AI Slot needed) ---
     let usedSemanticCache = false;
@@ -1198,91 +1283,6 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             processedHistory.push(msg);
         }
     }
-
-    // 0. Unified Logger Helper (Defined at top to avoid Hoisting/Initialization errors)
-    const finalize = async (result) => {
-        // Release slot before finishing
-        releaseAiSlot();
-
-        if (!result) return null;
-        
-        // --- 1. Log to AI Usage Logs (ai_usage_logs table) ---
-        // This is the main log table for the dashboard.
-        // User request: "ai usagees logs null hoye ase"
-        try {
-            // Debug: Log incoming data to console to see what we're sending to DB
-            console.log(`[AI Logger] Finalizing response for User: ${pageConfig.user_id}, Page: ${pageConfig.page_id}`);
-            
-            const isRequestBilling = pageConfig.billing_mode === 'request' || pageConfig.is_external_api === true;
-            const displayModel = pageConfig.display_model || pageConfig.chat_model || result.model || finalModel || 'unknown';
-            const usageTokens = isRequestBilling ? 1 : (result.token_usage || 0);
-            const cost = isRequestBilling
-                ? dbService.calculateRequestCost(displayModel, 1)
-                : dbService.calculateCost(displayModel, usageTokens);
-            
-            const logData = {
-                user_id: pageConfig.user_id,
-                page_id: pageConfig.page_id,
-                model: displayModel,
-                prompt_tokens: 0, // We usually have total_tokens in token_usage
-                completion_tokens: 0,
-                total_tokens: usageTokens,
-                cost: cost,
-                status: result.error ? 'error' : 'success',
-                error_message: result.error || null,
-                sender_name: senderName || 'Customer',
-                user_message: userMessage || '',
-                ai_reply: result.reply || (result.error ? `Error: ${result.error}` : null)
-            };
-            
-            // Call dbService to log this. (Fire and forget, but with internal catch)
-            if (dbService.logAiUsage) {
-                dbService.logAiUsage(logData).catch(err => {
-                    console.error("[AI Logger] dbService.logAiUsage error:", err.message);
-                });
-            } else {
-                console.warn("[AI Logger] dbService.logAiUsage is not defined!");
-            }
-        } catch (err) {
-            console.warn("[AI Logger] Error preparing logData:", err.message);
-        }
-
-        // Save to Semantic Cache if enabled and not served from cache
-        try {
-            const semEnabled = pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1);
-            if (semEnabled && !usedSemanticCache && result && result.reply && cleanUserMessage) {
-                const dbService = require('./dbService');
-                // Non-blocking save (Fire and forget) to reduce latency
-                dbService.saveSemanticCacheEntry({
-                    page_id: pageConfig.page_id || null,
-                    session_name: pageConfig.page_id || null,
-                    question: cleanUserMessage,
-                    response: result.reply
-                }).catch(e => console.warn(`[AI] Background cache save failed: ${e.message}`));
-            }
-        } catch (e) {
-            console.warn(`[AI] Failed to trigger semantic cache save: ${e.message}`);
-        }
-
-        // --- 2. Log to API Usage Stats (api_usage_stats table) ---
-        if (pageConfig.user_id && (result.token_usage > 0 || pageConfig.is_external_api === true || pageConfig.billing_mode === 'request')) {
-            const isRequestBilling = pageConfig.billing_mode === 'request' || pageConfig.is_external_api === true;
-            const displayModel = pageConfig.display_model || pageConfig.chat_model || result.model || finalModel || 'unknown';
-            const usageTokens = isRequestBilling ? 1 : (result.token_usage || 0);
-            const cost = isRequestBilling
-                ? dbService.calculateRequestCost(displayModel, 1)
-                : dbService.calculateCost(displayModel, usageTokens);
-            // Fire and forget (don't await to keep response fast)
-            dbService.logApiUsage(pageConfig.user_id, displayModel, usageTokens, cost);
-        }
-
-        // --- 3. Force Flush Key Stats to DB ---
-        if (keyService.flushUsageStats) {
-            keyService.flushUsageStats(); 
-        }
-        
-        return result;
-    };
 
     // --- MULTI-TENANCY SAFETY CHECK ---
     const pageId = pageConfig.page_id;
