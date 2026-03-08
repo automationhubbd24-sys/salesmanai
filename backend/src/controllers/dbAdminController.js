@@ -363,14 +363,33 @@ exports.getSemanticCacheConfigs = async (req, res) => {
         const messengerSql = `
             SELECT 
                 'messenger' AS platform,
-                COALESCE(pam.page_id, fb.page_id) AS id,
-                COALESCE(pam.name, fb.page_id) AS name,
-                COALESCE(fb.semantic_cache_enabled, false) AS semantic_cache_enabled,
-                COALESCE(fb.semantic_cache_threshold, 0.96) AS semantic_cache_threshold,
-                COALESCE(fb.embed_enabled, false) AS embed_enabled,
-                COALESCE(pam.created_at, fb.created_at, NOW()) AS created_at
-            FROM page_access_token_message pam
-            FULL OUTER JOIN fb_message_database fb ON fb.page_id = pam.page_id
+                page_id AS id,
+                name,
+                semantic_cache_enabled,
+                semantic_cache_threshold,
+                embed_enabled,
+                created_at
+            FROM (
+                SELECT 
+                    pam.page_id, 
+                    COALESCE(pam.name, pam.page_id) as name, 
+                    COALESCE(fb.semantic_cache_enabled, false) as semantic_cache_enabled, 
+                    COALESCE(fb.semantic_cache_threshold, 0.96) as semantic_cache_threshold, 
+                    COALESCE(fb.embed_enabled, false) as embed_enabled, 
+                    COALESCE(pam.created_at, NOW()) as created_at
+                FROM page_access_token_message pam
+                LEFT JOIN fb_message_database fb ON fb.page_id = pam.page_id
+                UNION
+                SELECT 
+                    fb.page_id, 
+                    fb.page_id as name, 
+                    COALESCE(fb.semantic_cache_enabled, false) as semantic_cache_enabled, 
+                    COALESCE(fb.semantic_cache_threshold, 0.96) as semantic_cache_threshold, 
+                    COALESCE(fb.embed_enabled, false) as embed_enabled, 
+                    COALESCE(fb.created_at, NOW()) as created_at
+                FROM fb_message_database fb
+                WHERE NOT EXISTS (SELECT 1 FROM page_access_token_message pam2 WHERE pam2.page_id = fb.page_id)
+            ) AS combined_messenger
         `;
 
         const whatsappSql = `

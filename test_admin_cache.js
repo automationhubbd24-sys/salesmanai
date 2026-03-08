@@ -1,8 +1,34 @@
 const pgClient = require('./backend/src/services/pgClient');
 
-async function testQuery() {
+async function repairAndTest() {
     try {
-        console.log('--- Testing Messenger Query ---');
+        console.log('--- Step 1: Repairing Database Schema (Adding Columns) ---');
+        
+        const tables = ['fb_message_database', 'whatsapp_message_database'];
+        for (const table of tables) {
+            console.log(`Checking table: ${table}`);
+            await pgClient.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS semantic_cache_enabled boolean DEFAULT false`);
+            await pgClient.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS semantic_cache_threshold numeric DEFAULT 0.96`);
+            await pgClient.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS embed_enabled boolean DEFAULT false`);
+            console.log(`Columns verified/added for ${table}`);
+        }
+
+        // Ensure UNIQUE constraint for Messenger upsert
+        try {
+            await pgClient.query(`
+                DO $$ 
+                BEGIN 
+                    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fb_message_database_page_id_unique') THEN
+                        ALTER TABLE fb_message_database ADD CONSTRAINT fb_message_database_page_id_unique UNIQUE (page_id);
+                        RAISE NOTICE 'Unique constraint added to fb_message_database(page_id)';
+                    END IF;
+                END $$;
+            `);
+        } catch (e) {
+            console.log('Constraint notice:', e.message);
+        }
+
+        console.log('\n--- Step 2: Testing Messenger Query ---');
         const messengerSql = `
             SELECT 
                 'messenger' AS platform,
@@ -18,10 +44,10 @@ async function testQuery() {
         const messengerRes = await pgClient.query(messengerSql);
         console.log(`Messenger Rows Found: ${messengerRes.rows.length}`);
         if (messengerRes.rows.length > 0) {
-            console.log('First 3 rows:', JSON.stringify(messengerRes.rows.slice(0, 3), null, 2));
+            console.log('Sample Row:', JSON.stringify(messengerRes.rows[0], null, 2));
         }
 
-        console.log('\n--- Testing WhatsApp Query ---');
+        console.log('\n--- Step 3: Testing WhatsApp Query ---');
         const whatsappSql = `
             SELECT 
                 'whatsapp' AS platform,
@@ -36,22 +62,20 @@ async function testQuery() {
         const whatsappRes = await pgClient.query(whatsappSql);
         console.log(`WhatsApp Rows Found: ${whatsappRes.rows.length}`);
         if (whatsappRes.rows.length > 0) {
-            console.log('First 3 rows:', JSON.stringify(whatsappRes.rows.slice(0, 3), null, 2));
+            console.log('Sample Row:', JSON.stringify(whatsappRes.rows[0], null, 2));
         }
 
-        console.log('\n--- Table Count Summary ---');
-        const pamCount = await pgClient.query('SELECT COUNT(*) FROM page_access_token_message');
-        const fbCount = await pgClient.query('SELECT COUNT(*) FROM fb_message_database');
-        const wmdCount = await pgClient.query('SELECT COUNT(*) FROM whatsapp_message_database');
-        console.log(`page_access_token_message: ${pamCount.rows[0].count}`);
-        console.log(`fb_message_database: ${fbCount.rows[0].count}`);
-        console.log(`whatsapp_message_database: ${wmdCount.rows[0].count}`);
+        console.log('\n--- Final Summary ---');
+        console.log(`Total Records for Admin List: ${messengerRes.rows.length + whatsappRes.rows.length}`);
 
     } catch (err) {
-        console.error('Test Failed:', err.message);
+        console.error('\n!!! TEST FAILED !!!');
+        console.error('Error Name:', err.name);
+        console.error('Error Message:', err.message);
+        console.error('Stack:', err.stack);
     } finally {
         process.exit();
     }
 }
 
-testQuery();
+repairAndTest();
