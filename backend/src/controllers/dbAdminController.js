@@ -359,14 +359,25 @@ exports.getSemanticCacheConfigs = async (req, res) => {
         const messengerSql = `
             SELECT 
                 'messenger' AS platform,
-                COALESCE(pam.page_id, fb.page_id) AS id,
-                COALESCE(pam.name, COALESCE(fb.page_id, pam.page_id)) AS name,
+                pam.page_id AS id,
+                COALESCE(pam.name, pam.page_id) AS name,
                 COALESCE(fb.semantic_cache_enabled, false) AS semantic_cache_enabled,
                 COALESCE(fb.semantic_cache_threshold, 0.96) AS semantic_cache_threshold,
                 COALESCE(fb.embed_enabled, false) AS embed_enabled,
-                COALESCE(pam.created_at, fb.created_at, NOW()) AS created_at
+                COALESCE(pam.created_at, NOW()) AS created_at
             FROM page_access_token_message pam
-            FULL OUTER JOIN fb_message_database fb ON fb.page_id = pam.page_id
+            LEFT JOIN fb_message_database fb ON fb.page_id = pam.page_id
+            UNION
+            SELECT 
+                'messenger' AS platform,
+                fb.page_id AS id,
+                fb.page_id AS name,
+                COALESCE(fb.semantic_cache_enabled, false) AS semantic_cache_enabled,
+                COALESCE(fb.semantic_cache_threshold, 0.96) AS semantic_cache_threshold,
+                COALESCE(fb.embed_enabled, false) AS embed_enabled,
+                COALESCE(fb.created_at, NOW()) AS created_at
+            FROM fb_message_database fb
+            WHERE NOT EXISTS (SELECT 1 FROM page_access_token_message pam WHERE pam.page_id = fb.page_id)
         `;
 
         const whatsappSql = `
