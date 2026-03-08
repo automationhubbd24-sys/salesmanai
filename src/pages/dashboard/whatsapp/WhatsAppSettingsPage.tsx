@@ -863,6 +863,8 @@ export default function WhatsAppSettingsPage() {
                         {behaviorSaving ? "Saving..." : "Update Behavior"}
                     </Button>
                     
+                    {/* Semantic Cache Controls - Removed from User View (Admin Only) */}
+                    {/*
                     <div className="pt-4 border-t border-white/10 grid gap-4">
                       <h3 className="text-lg font-semibold">Semantic Caching</h3>
                       <div className="flex items-center justify-between">
@@ -898,6 +900,7 @@ export default function WhatsAppSettingsPage() {
                         <span className="text-sm text-muted-foreground">0.50 - 0.99 (Default: 0.96)</span>
                       </div>
                     </div>
+                    */}
                 </div>
             </CardContent>
         </Card>

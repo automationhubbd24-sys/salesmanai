@@ -1099,6 +1099,82 @@ export default function MessengerSettingsPage() {
           </CardContent>
         </Card>
 
+        {/* Semantic Cache Controls - Removed from User View (Admin Only) */}
+        {/*
+        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
+          <CardHeader>
+            <CardTitle>Semantic Caching (Enterprise)</CardTitle>
+            <CardDescription>
+              Speed up responses and save costs by reusing previous AI answers.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-6">
+              <div className="flex items-center justify-between p-4 rounded-xl border border-white/5 bg-white/5">
+                <div className="space-y-1">
+                  <Label className="text-base">Enable Semantic Cache</Label>
+                  <p className="text-xs text-muted-foreground">Automatically reply to repeated questions from the database.</p>
+                </div>
+                <Switch 
+                  checked={semanticCacheEnabled}
+                  onCheckedChange={setSemanticCacheEnabled}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-4 p-4 rounded-xl border border-white/5 bg-white/5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-semibold">Similarity Threshold</Label>
+                    <Badge variant="outline" className="font-mono text-[#00ff88]">{semanticThreshold}</Badge>
+                  </div>
+                  <Slider 
+                    value={[semanticThreshold]} 
+                    min={0.50} 
+                    max={0.99} 
+                    step={0.01} 
+                    onValueChange={(val) => setSemanticThreshold(val[0])}
+                    className="py-4"
+                  />
+                  <div className="flex justify-between text-[10px] text-muted-foreground uppercase tracking-widest">
+                    <span>Loose (0.50)</span>
+                    <span>Strict (0.99)</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed mt-2">
+                    <span className="text-amber-500 font-bold">Note:</span> Higher values are safer but trigger less often. Recommended: 0.96.
+                  </p>
+                </div>
+
+                <div className="space-y-4 p-4 rounded-xl border border-white/5 bg-white/5 flex flex-col justify-between">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-1">
+                      <Label className="text-sm font-semibold">Use Embedding (Beta)</Label>
+                      <p className="text-xs text-muted-foreground">Use vector embeddings for higher precision.</p>
+                    </div>
+                    <Switch 
+                      checked={embedEnabled}
+                      onCheckedChange={setEmbedEnabled}
+                    />
+                  </div>
+                  <div className="mt-4 p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-[11px] text-blue-400">
+                    Embeddings provide better semantic understanding but may slightly increase latency on first lookup.
+                  </div>
+                </div>
+              </div>
+
+              <Button 
+                onClick={handleSaveBehavior} 
+                disabled={behaviorSaving}
+                className="w-full md:w-auto"
+                variant="secondary"
+              >
+                {behaviorSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="mr-2 h-4 w-4" />}
+                Update Cache Settings
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+        */}
+
         <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
             <CardHeader>
                 <CardTitle>Response Behavior</CardTitle>

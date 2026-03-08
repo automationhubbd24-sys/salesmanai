@@ -3,6 +3,8 @@ const router = express.Router();
 const dbAdminController = require('../controllers/dbAdminController');
 
 router.get('/tables', dbAdminController.listTables);
+router.get('/cache-configs', dbAdminController.getSemanticCacheConfigs);
+router.post('/cache-configs/update', dbAdminController.updateSemanticCacheConfig);
 router.get('/table/:table', dbAdminController.getTableData);
 router.post('/table', dbAdminController.createTable);
 router.post('/table/:table/insert', dbAdminController.insertRow);

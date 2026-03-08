@@ -99,6 +99,16 @@ type GeminiKeyTestResult = {
   error: string | null;
 };
 
+interface CacheConfig {
+  platform: 'messenger' | 'whatsapp';
+  id: string;
+  name: string;
+  semantic_cache_enabled: boolean;
+  semantic_cache_threshold: number;
+  embed_enabled: boolean;
+  created_at: string;
+}
+
 type EngineTestResult = {
   model: string;
   success: boolean;
@@ -212,14 +222,80 @@ export default function AdminPage() {
   const [newColumnType, setNewColumnType] = useState("");
   const [newColumnNullable, setNewColumnNullable] = useState(true);
 
+  const [cacheConfigs, setCacheConfigs] = useState<CacheConfig[]>([]);
+  const [cacheLoading, setCacheLoading] = useState(false);
+  const [cacheSearch, setCacheSearch] = useState("");
+  const [cachePage, setCachePage] = useState(1);
+  const cacheLimit = 20;
+
   useEffect(() => {
     if (isAuthenticated) {
       fetchTransactions();
       fetchCoupons();
       fetchDbTables();
       fetchEngineData();
+      fetchCacheConfigs();
     }
   }, [isAuthenticated]);
+
+  const fetchCacheConfigs = async () => {
+    try {
+      setCacheLoading(true);
+      const token = localStorage.getItem("auth_token");
+      const res = await fetch(`${BACKEND_URL}/api/db-admin/cache-configs`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.success) {
+        setCacheConfigs(data.configs || []);
+      }
+    } catch (error) {
+      console.error("Failed to fetch cache configs", error);
+    } finally {
+      setCacheLoading(false);
+    }
+  };
+
+  const updateCacheConfig = async (config: CacheConfig, updates: Partial<CacheConfig>) => {
+    try {
+      const token = localStorage.getItem("auth_token");
+      const res = await fetch(`${BACKEND_URL}/api/db-admin/cache-configs/update`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          platform: config.platform,
+          id: config.id,
+          ...updates
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast.success("Config updated");
+        setCacheConfigs(prev => prev.map(c => 
+          (c.id === config.id && c.platform === config.platform) ? { ...c, ...updates } : c
+        ));
+      } else {
+        toast.error(data.error || "Update failed");
+      }
+    } catch (error) {
+      toast.error("Update failed");
+    }
+  };
+
+  const filteredCacheConfigs = cacheConfigs.filter(c => 
+    c.name?.toLowerCase().includes(cacheSearch.toLowerCase()) || 
+    c.id?.toLowerCase().includes(cacheSearch.toLowerCase())
+  );
+
+  const paginatedCacheConfigs = filteredCacheConfigs.slice(
+    (cachePage - 1) * cacheLimit,
+    cachePage * cacheLimit
+  );
+
+  const totalCachePages = Math.ceil(filteredCacheConfigs.length / cacheLimit);
 
   const fetchEngineData = async (page = 1) => {
     try {
@@ -1197,6 +1273,7 @@ export default function AdminPage() {
           <TabsTrigger value="engine">Engine Test</TabsTrigger>
           <TabsTrigger value="api-engine">API Engine</TabsTrigger>
           <TabsTrigger value="gemini">Gemini Monitor</TabsTrigger>
+          <TabsTrigger value="cache" className="text-blue-400 font-bold">Semantic Cache</TabsTrigger>
           <TabsTrigger value="db">Database Admin</TabsTrigger>
           <TabsTrigger value="openrouter">OpenRouter Config</TabsTrigger>
         </TabsList>
@@ -2254,6 +2331,143 @@ export default function AdminPage() {
                   ))
                 )}
               </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Semantic Cache Tab */}
+        <TabsContent value="cache">
+          <Card className="border-blue-500/20 bg-card/50">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
+              <div>
+                <CardTitle className="text-xl font-bold text-blue-400">Semantic Cache Control</CardTitle>
+                <CardDescription>Manage caching settings for all IDs (Admin Only)</CardDescription>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="relative w-64">
+                  <Input
+                    placeholder="Search ID or Name..."
+                    value={cacheSearch}
+                    onChange={(e) => {
+                      setCacheSearch(e.target.value);
+                      setCachePage(1);
+                    }}
+                    className="h-8 bg-black/20 text-xs"
+                  />
+                </div>
+                <Button 
+                  size="sm" 
+                  variant="outline" 
+                  onClick={fetchCacheConfigs}
+                  disabled={cacheLoading}
+                  className="h-8"
+                >
+                  <RefreshCw className={`h-4 w-4 ${cacheLoading ? 'animate-spin' : ''}`} />
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="rounded-md border border-white/5 overflow-hidden">
+                <Table>
+                  <TableHeader className="bg-white/5">
+                    <TableRow className="hover:bg-transparent border-white/10">
+                      <TableHead className="py-2 text-xs h-8">Platform</TableHead>
+                      <TableHead className="py-2 text-xs h-8">Account / ID</TableHead>
+                      <TableHead className="py-2 text-xs h-8 text-center">Cache</TableHead>
+                      <TableHead className="py-2 text-xs h-8 text-center">Embedding</TableHead>
+                      <TableHead className="py-2 text-xs h-8 w-[140px]">Threshold</TableHead>
+                      <TableHead className="py-2 text-xs h-8 text-right">Created</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {cacheLoading && paginatedCacheConfigs.length === 0 ? (
+                      <TableRow><TableCell colSpan={6} className="text-center py-10"><Loader2 className="h-6 w-6 animate-spin mx-auto" /></TableCell></TableRow>
+                    ) : paginatedCacheConfigs.length === 0 ? (
+                      <TableRow><TableCell colSpan={6} className="text-center py-10 text-muted-foreground">No accounts found.</TableCell></TableRow>
+                    ) : (
+                      paginatedCacheConfigs.map((config) => (
+                        <TableRow key={`${config.platform}-${config.id}`} className="hover:bg-white/5 border-white/5">
+                          <TableCell className="py-1">
+                            <Badge variant="outline" className={`text-[10px] px-1 h-5 capitalize ${config.platform === 'whatsapp' ? 'border-green-500/50 text-green-500' : 'border-blue-500/50 text-blue-500'}`}>
+                              {config.platform}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="py-1">
+                            <div className="flex flex-col">
+                              <span className="text-sm font-medium truncate max-w-[180px]">{config.name}</span>
+                              <span className="text-[10px] text-muted-foreground font-mono">{config.id}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="py-1 text-center">
+                            <Switch 
+                              checked={config.semantic_cache_enabled}
+                              onCheckedChange={(checked) => updateCacheConfig(config, { semantic_cache_enabled: checked })}
+                              className="scale-75"
+                            />
+                          </TableCell>
+                          <TableCell className="py-1 text-center">
+                            <Switch 
+                              checked={config.embed_enabled}
+                              onCheckedChange={(checked) => updateCacheConfig(config, { embed_enabled: checked })}
+                              className="scale-75"
+                            />
+                          </TableCell>
+                          <TableCell className="py-1">
+                            <div className="flex items-center gap-2">
+                              <Input 
+                                type="number"
+                                step="0.01"
+                                min="0.5"
+                                max="0.99"
+                                value={config.semantic_cache_threshold}
+                                onChange={(e) => {
+                                  const val = parseFloat(e.target.value);
+                                  if (!isNaN(val)) updateCacheConfig(config, { semantic_cache_threshold: val });
+                                }}
+                                className="h-7 w-16 text-[11px] bg-black/20 text-center px-1"
+                              />
+                              <span className="text-[10px] text-muted-foreground">0.5-0.99</span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="py-1 text-right text-[10px] text-muted-foreground">
+                            {new Date(config.created_at).toLocaleDateString()}
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Pagination */}
+              {totalCachePages > 1 && (
+                <div className="flex items-center justify-between mt-4">
+                  <p className="text-[10px] text-muted-foreground">
+                    Showing {(cachePage - 1) * cacheLimit + 1} to {Math.min(cachePage * cacheLimit, filteredCacheConfigs.length)} of {filteredCacheConfigs.length} entries
+                  </p>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => setCachePage(p => Math.max(1, p - 1))}
+                      disabled={cachePage === 1}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <span className="text-xs px-2">{cachePage} / {totalCachePages}</span>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => setCachePage(p => Math.min(totalCachePages, p + 1))}
+                      disabled={cachePage === totalCachePages}
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

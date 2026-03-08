@@ -269,3 +269,79 @@ exports.addColumn = async (req, res) => {
         res.status(500).json({ success: false, error: error.message });
     }
 };
+
+exports.getSemanticCacheConfigs = async (req, res) => {
+    try {
+        const messengerSql = `
+            SELECT 
+                'messenger' as platform,
+                page_id as id,
+                page_name as name,
+                semantic_cache_enabled,
+                semantic_cache_threshold,
+                embed_enabled,
+                created_at
+            FROM page_access_token_message
+            ORDER BY created_at DESC
+        `;
+
+        const whatsappSql = `
+            SELECT 
+                'whatsapp' as platform,
+                session_name as id,
+                COALESCE(push_name, session_name) as name,
+                semantic_cache_enabled,
+                semantic_cache_threshold,
+                embed_enabled,
+                created_at
+            FROM whatsapp_message_database
+            ORDER BY created_at DESC
+        `;
+
+        const messengerRes = await pgClient.query(messengerSql);
+        const whatsappRes = await pgClient.query(whatsappSql);
+
+        res.json({
+            success: true,
+            configs: [...messengerRes.rows, ...whatsappRes.rows]
+        });
+    } catch (error) {
+        console.error('DB Admin getSemanticCacheConfigs error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+exports.updateSemanticCacheConfig = async (req, res) => {
+    try {
+        const { platform, id, semantic_cache_enabled, semantic_cache_threshold, embed_enabled } = req.body;
+
+        if (!platform || !id) {
+            return res.status(400).json({ success: false, error: 'Platform and ID are required' });
+        }
+
+        let sql = '';
+        const params = [semantic_cache_enabled, semantic_cache_threshold, embed_enabled, id];
+
+        if (platform === 'messenger') {
+            sql = `
+                UPDATE page_access_token_message 
+                SET semantic_cache_enabled = $1, semantic_cache_threshold = $2, embed_enabled = $3
+                WHERE page_id = $4
+            `;
+        } else if (platform === 'whatsapp') {
+            sql = `
+                UPDATE whatsapp_message_database 
+                SET semantic_cache_enabled = $1, semantic_cache_threshold = $2, embed_enabled = $3
+                WHERE session_name = $4
+            `;
+        } else {
+            return res.status(400).json({ success: false, error: 'Invalid platform' });
+        }
+
+        await pgClient.query(sql, params);
+        res.json({ success: true });
+    } catch (error) {
+        console.error('DB Admin updateSemanticCacheConfig error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
