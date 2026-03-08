@@ -230,6 +230,11 @@ export default function AdminPage() {
     }
   }, [isAuthenticated]);
 
+  const [semanticSearch, setSemanticSearch] = useState("");
+  const [semanticResults, setSemanticResults] = useState<any[]>([]);
+  const [semanticLoading, setSemanticLoading] = useState(false);
+  const [semanticError, setSemanticError] = useState<string | null>(null);
+
   const fetchEmbeddingConfig = async () => {
     try {
       const token = localStorage.getItem("auth_token");
@@ -245,6 +250,50 @@ export default function AdminPage() {
       }
     } catch (error) {
       console.error("Failed to fetch embedding config", error);
+    }
+  };
+
+  const handleSemanticSearch = async () => {
+    if (!semanticSearch.trim()) return;
+    setSemanticLoading(true);
+    setSemanticError(null);
+    try {
+      const token = localStorage.getItem("auth_token");
+      const res = await fetch(`${BACKEND_URL}/api/db-admin/semantic-search`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ query: semanticSearch })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setSemanticResults(data.results || []);
+      } else {
+        throw new Error(data.error || "Search failed");
+      }
+    } catch (error: any) {
+      setSemanticError(error.message);
+    } finally {
+      setSemanticLoading(false);
+    }
+  };
+
+  const clearSemanticCache = async () => {
+    if (!confirm("Are you sure you want to clear the semantic cache?")) return;
+    try {
+      const token = localStorage.getItem("auth_token");
+      const res = await fetch(`${BACKEND_URL}/api/db-admin/clear-semantic-cache`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        toast.success("Semantic cache cleared");
+        setSemanticResults([]);
+      }
+    } catch (error) {
+      toast.error("Failed to clear cache");
     }
   };
 
@@ -1271,6 +1320,7 @@ export default function AdminPage() {
           <TabsTrigger value="engine">Engine Test</TabsTrigger>
           <TabsTrigger value="api-engine">API Engine</TabsTrigger>
           <TabsTrigger value="gemini">Gemini Monitor</TabsTrigger>
+          <TabsTrigger value="semantic-cache">Semantic Cache</TabsTrigger>
           <TabsTrigger value="db">Database Admin</TabsTrigger>
           <TabsTrigger value="openrouter">OpenRouter Config</TabsTrigger>
         </TabsList>
@@ -2842,6 +2892,160 @@ export default function AdminPage() {
         {/* OpenRouter Config Tab (Embedded) */}
         <TabsContent value="openrouter">
            <OpenRouterConfigPage />
+        </TabsContent>
+
+        <TabsContent value="semantic-cache" className="space-y-6">
+          {/* Global Embedding Model Configuration Card */}
+          <Card className="border-white/10 bg-[#0f0f0f]/50">
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between text-[#00ff88]">
+                <div className="flex items-center gap-2">
+                  <Cpu className="h-5 w-5" />
+                  Global Embedding Model Configuration
+                </div>
+                <Button 
+                  onClick={saveEmbeddingConfig} 
+                  disabled={embeddingLoading}
+                  className="bg-[#00ff88] hover:bg-[#00cc77] text-black font-bold h-8"
+                >
+                  {embeddingLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Save Global Config
+                </Button>
+              </CardTitle>
+              <CardDescription>
+                Common configuration for all semantic lookups.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="space-y-2">
+                  <Label className="text-xs">PROVIDER</Label>
+                  <Select value={embeddingProvider} onValueChange={setEmbeddingProvider}>
+                    <SelectTrigger className="bg-black/40 border-white/10 h-9">
+                      <SelectValue placeholder="Select Provider" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="google">Google</SelectItem>
+                      <SelectItem value="openai">OpenAI</SelectItem>
+                      <SelectItem value="mistral">Mistral</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">BASE URL</Label>
+                  <Input 
+                    value={embeddingBaseUrl}
+                    onChange={(e) => setEmbeddingBaseUrl(e.target.value)}
+                    placeholder="https://generativelanguage.googleapis.com/v1beta/openai/"
+                    className="bg-black/40 border-white/10 h-9"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">API KEY</Label>
+                  <Input 
+                    type="password"
+                    value={embeddingApiKey}
+                    onChange={(e) => setEmbeddingApiKey(e.target.value)}
+                    placeholder="Enter API key"
+                    className="bg-black/40 border-white/10 h-9"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">MODEL NAME</Label>
+                  <Input 
+                    value={embeddingModelName}
+                    onChange={(e) => setEmbeddingModelName(e.target.value)}
+                    placeholder="gemini-embedding-001"
+                    className="bg-black/40 border-white/10 h-9"
+                  />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Semantic Cache Management Card */}
+          <Card className="border-white/10">
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <Database className="h-5 w-5" /> Semantic Cache Control
+                </CardTitle>
+                <CardDescription>Manage automation settings for all connected accounts</CardDescription>
+              </div>
+              <Button 
+                variant="destructive" 
+                size="sm" 
+                onClick={clearSemanticCache}
+              >
+                Clear All Cache
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="flex gap-2">
+                <Input 
+                  placeholder="Test semantic lookup (e.g. 'price of iphone 13')" 
+                  value={semanticSearch}
+                  onChange={(e) => setSemanticSearch(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSemanticSearch()}
+                />
+                <Button onClick={handleSemanticSearch} disabled={semanticLoading}>
+                  {semanticLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                </Button>
+              </div>
+
+              {semanticError && <p className="text-xs text-red-500">{semanticError}</p>}
+
+              <div className="rounded-md border border-white/10 overflow-hidden">
+                <Table>
+                  <TableHeader className="bg-muted/50">
+                    <TableRow>
+                      <TableHead>Platform</TableHead>
+                      <TableHead>Account Name / ID</TableHead>
+                      <TableHead>Cache Status</TableHead>
+                      <TableHead>Added On</TableHead>
+                      <TableHead className="text-right">Action</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {semanticResults.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                          No active semantic cache records found.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      semanticResults.map((r, idx) => (
+                        <TableRow key={idx}>
+                          <TableCell>
+                             <Badge variant="outline" className="text-[10px] uppercase">
+                               {r.platform || "Messenger"}
+                             </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <div className="font-medium">{r.account_name || "Unknown"}</div>
+                            <div className="text-[10px] text-muted-foreground">ID: {r.account_id}</div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={r.is_active ? "default" : "secondary"} className={r.is_active ? "bg-green-500/20 text-green-400" : ""}>
+                              {r.is_active ? "ACTIVE" : "DISABLED"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {r.created_at ? new Date(r.created_at).toLocaleDateString() : "-"}
+                          </TableCell>
+                          <TableCell className="text-right">
+                             <Button variant="outline" size="sm" className="h-8 text-xs">
+                               Manage
+                             </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
 
       </Tabs>
