@@ -227,6 +227,12 @@ export default function AdminPage() {
   const [cacheSearch, setCacheSearch] = useState("");
   const [cachePage, setCachePage] = useState(1);
   const cacheLimit = 20;
+  const [cachePlatform, setCachePlatform] = useState<'all' | 'messenger' | 'whatsapp'>('all');
+  const [embeddingConfig, setEmbeddingConfig] = useState<{ model: string; base_url: string; api_key: string }>({
+    model: "",
+    base_url: "",
+    api_key: ""
+  });
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -235,6 +241,7 @@ export default function AdminPage() {
       fetchDbTables();
       fetchEngineData();
       fetchCacheConfigs();
+      fetchEmbeddingConfig();
     }
   }, [isAuthenticated]);
 
@@ -285,10 +292,49 @@ export default function AdminPage() {
     }
   };
 
-  const filteredCacheConfigs = cacheConfigs.filter(c => 
-    c.name?.toLowerCase().includes(cacheSearch.toLowerCase()) || 
-    c.id?.toLowerCase().includes(cacheSearch.toLowerCase())
-  );
+  const fetchEmbeddingConfig = async () => {
+    try {
+      const token = localStorage.getItem("auth_token");
+      const res = await fetch(`${BACKEND_URL}/api/db-admin/embedding-config`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.success && data.config) {
+        setEmbeddingConfig(data.config);
+      }
+    } catch (error) {
+      console.error("Failed to load embedding config", error);
+    }
+  };
+
+  const saveEmbeddingConfig = async () => {
+    try {
+      const token = localStorage.getItem("auth_token");
+      const res = await fetch(`${BACKEND_URL}/api/db-admin/embedding-config`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(embeddingConfig)
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast.success("Embedding config saved");
+      } else {
+        toast.error(data.error || "Failed to save embedding config");
+      }
+    } catch (error) {
+      toast.error("Failed to save embedding config");
+    }
+  };
+
+  const filteredCacheConfigs = cacheConfigs
+    .filter(c => (cachePlatform === 'all' ? true : c.platform === cachePlatform))
+    .filter(c => 
+      c.name?.toLowerCase().includes(cacheSearch.toLowerCase()) || 
+      c.id?.toLowerCase().includes(cacheSearch.toLowerCase())
+    );
 
   const paginatedCacheConfigs = filteredCacheConfigs.slice(
     (cachePage - 1) * cacheLimit,
@@ -2344,6 +2390,21 @@ export default function AdminPage() {
                 <CardDescription>Manage caching settings for all IDs (Admin Only)</CardDescription>
               </div>
               <div className="flex items-center gap-2">
+                <div className="w-36">
+                  <Select value={cachePlatform} onValueChange={(val) => {
+                    setCachePlatform(val as any);
+                    setCachePage(1);
+                  }}>
+                    <SelectTrigger className="h-8">
+                      <SelectValue placeholder="Platform" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      <SelectItem value="messenger">Facebook</SelectItem>
+                      <SelectItem value="whatsapp">WhatsApp</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 <div className="relative w-64">
                   <Input
                     placeholder="Search ID or Name..."
@@ -2468,6 +2529,45 @@ export default function AdminPage() {
                   </div>
                 </div>
               )}
+            </CardContent>
+          </Card>
+
+          <Card className="mt-4 border-white/10 bg-black/20">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
+              <div>
+                <CardTitle className="text-base">Global Embedding Model</CardTitle>
+                <CardDescription>Used only by Semantic Cache lookups</CardDescription>
+              </div>
+              <Button size="sm" onClick={saveEmbeddingConfig}>
+                Save
+              </Button>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label>Base URL</Label>
+                <Input 
+                  placeholder="https://api.openai.com/v1"
+                  value={embeddingConfig.base_url}
+                  onChange={(e) => setEmbeddingConfig({ ...embeddingConfig, base_url: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>API Key</Label>
+                <Input 
+                  type="password"
+                  placeholder="sk-..."
+                  value={embeddingConfig.api_key}
+                  onChange={(e) => setEmbeddingConfig({ ...embeddingConfig, api_key: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Model Name</Label>
+                <Input 
+                  placeholder="text-embedding-3-small"
+                  value={embeddingConfig.model}
+                  onChange={(e) => setEmbeddingConfig({ ...embeddingConfig, model: e.target.value })}
+                />
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

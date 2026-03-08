@@ -6,6 +6,8 @@ router.get('/tables', dbAdminController.listTables);
 router.get('/cache-configs', dbAdminController.getSemanticCacheConfigs);
 router.post('/cache-configs/update', dbAdminController.updateSemanticCacheConfig);
 router.get('/table/:table', dbAdminController.getTableData);
+router.get('/embedding-config', dbAdminController.getEmbeddingGlobalConfig);
+router.post('/embedding-config', dbAdminController.saveEmbeddingGlobalConfig);
 router.post('/table', dbAdminController.createTable);
 router.post('/table/:table/insert', dbAdminController.insertRow);
 router.post('/table/:table/update', dbAdminController.updateRow);

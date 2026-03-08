@@ -270,6 +270,65 @@ exports.addColumn = async (req, res) => {
     }
 };
 
+// --- Semantic Cache: Global Embedding Config (Admin Only) ---
+exports.getEmbeddingGlobalConfig = async (req, res) => {
+    try {
+        const pgClient = require('../services/pgClient');
+        const result = await pgClient.query(
+            `SELECT text_model, text_model_details
+             FROM openrouter_engine_config
+             WHERE config_type = $1
+             LIMIT 1`,
+            ['embedding_global']
+        );
+
+        const row = result.rows[0] || null;
+        const details = (row && row.text_model_details) || {};
+
+        const payload = {
+            model: (row && row.text_model) || '',
+            base_url: details.base_url || '',
+            api_key: details.api_key || ''
+        };
+
+        res.json({ success: true, config: payload });
+    } catch (error) {
+        console.error('DB Admin getEmbeddingGlobalConfig error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+exports.saveEmbeddingGlobalConfig = async (req, res) => {
+    try {
+        const { model, base_url, api_key } = req.body || {};
+        const pgClient = require('../services/pgClient');
+
+        const details = {
+            base_url: base_url || '',
+            api_key: api_key || ''
+        };
+
+        const result = await pgClient.query(
+            `INSERT INTO openrouter_engine_config 
+                (config_type, text_model, text_model_details, updated_at)
+             VALUES ($1, $2, $3, NOW())
+             ON CONFLICT (config_type)
+             DO UPDATE SET
+                text_model = EXCLUDED.text_model,
+                text_model_details = EXCLUDED.text_model_details,
+                updated_at = NOW()
+             RETURNING *`,
+            ['embedding_global', model || '', details]
+        );
+
+        const row = result.rows[0] || null;
+        res.json({ success: true, config: row });
+    } catch (error) {
+        console.error('DB Admin saveEmbeddingGlobalConfig error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
 exports.getSemanticCacheConfigs = async (req, res) => {
     try {
         const messengerSql = `
