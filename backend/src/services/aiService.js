@@ -1125,7 +1125,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     if (!senderName || senderName === 'null') senderName = 'Customer';
     if (!ownerName || ownerName === 'null') ownerName = 'Automation Hub BD';
 
-    const cleanUserMessage = (userMessage || '').trim();
+    let cleanUserMessage = (userMessage || '').trim();
     
     // --- 1. QUICK SEMANTIC CACHE CHECK (No AI Slot needed) ---
     let usedSemanticCache = false;
@@ -1294,7 +1294,6 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     // ----------------------------------
 
     let totalTokenUsage = extraTokenUsage || 0;
-    let cleanUserMessage = userMessage;
 
     // 0. Pre-process Media (Images/Audio) -> Text
     
