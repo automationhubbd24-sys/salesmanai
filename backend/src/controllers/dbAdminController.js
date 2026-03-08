@@ -338,13 +338,11 @@ exports.getSemanticCacheConfigs = async (req, res) => {
                 'messenger' AS platform,
                 pam.page_id AS id,
                 COALESCE(pam.name, pam.page_id) AS name,
-                COALESCE(fb.semantic_cache_enabled, false) AS semantic_cache_enabled,
-                COALESCE(fb.semantic_cache_threshold, 0.96) AS semantic_cache_threshold,
-                COALESCE(fb.embed_enabled, false) AS embed_enabled,
+                COALESCE(pam.semantic_cache_enabled, false) AS semantic_cache_enabled,
+                COALESCE(pam.semantic_cache_threshold, 0.96) AS semantic_cache_threshold,
+                COALESCE(pam.embed_enabled, false) AS embed_enabled,
                 pam.created_at
             FROM page_access_token_message pam
-            LEFT JOIN fb_message_database fb
-              ON fb.page_id = pam.page_id
             ORDER BY pam.created_at DESC
         `;
 

@@ -228,7 +228,8 @@ export default function AdminPage() {
   const [cachePage, setCachePage] = useState(1);
   const cacheLimit = 20;
   const [cachePlatform, setCachePlatform] = useState<'all' | 'messenger' | 'whatsapp'>('all');
-  const [embeddingConfig, setEmbeddingConfig] = useState<{ model: string; base_url: string; api_key: string }>({
+  const [embeddingConfig, setEmbeddingConfig] = useState<{ provider: string; model: string; base_url: string; api_key: string }>({
+    provider: "openai",
     model: "",
     base_url: "",
     api_key: ""
