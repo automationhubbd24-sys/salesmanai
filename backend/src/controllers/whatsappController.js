@@ -1972,6 +1972,67 @@ STRICT RULES:
              }
         }
 
+        // --- QUICK SEMANTIC CACHE CHECK (ULTRA-FAST PATH) ---
+        const semEnabled = pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1);
+        const threshold = pageConfig && pageConfig.semantic_cache_threshold ? Math.max(0.5, Math.min(0.99, Number(pageConfig.semantic_cache_threshold))) : 0.96;
+        const isMediaTurn = (messages.some(m => (m.images && m.images.length > 0) || (m.audios && m.audios.length > 0)));
+        
+        if (semEnabled && !isMediaTurn && finalOutput.trim()) {
+            try {
+                const cached = await dbService.findSemanticCache({
+                    page_id: sessionName, // sessionName is the pageId/sessionName for WhatsApp
+                    session_name: sessionName,
+                    question: finalOutput.trim(),
+                    threshold
+                });
+                
+                if (cached) {
+                    console.log(`[WA] ⚡ INSTANT CACHE HIT! Replying to ${senderId}...`);
+                    
+                    // Instant WhatsApp Send
+                    await whatsappService.sendSeen(sessionName, senderId);
+                    await whatsappService.sendTyping(sessionName, senderId);
+                    await whatsappService.sendMessage(sessionName, senderId, cached);
+                    
+                    // Fire and forget logging (User message already saved below, or we save it here)
+                    const primaryMsgId = messages.length > 0 ? messages[0].id : `usr_${Date.now()}`;
+                    
+                    // Save User Message first if not already saved (Persistence)
+                    await dbService.saveWhatsAppChat({
+                        session_name: sessionName,
+                        sender_id: senderId,
+                        recipient_id: sessionName,
+                        message_id: primaryMsgId,
+                        text: finalOutput,
+                        timestamp: Date.now(),
+                        status: 'received',
+                        reply_by: 'user',
+                        is_group: isGroup,
+                        group_id: isGroup ? senderId : null
+                    }).catch(() => {});
+
+                    // Save Bot Reply
+                    await dbService.saveWhatsAppChat({
+                        session_name: sessionName,
+                        sender_id: sessionName,
+                        recipient_id: senderId,
+                        message_id: `cache_${Date.now()}`,
+                        text: cached,
+                        timestamp: Date.now(),
+                        status: 'sent',
+                        reply_by: 'bot',
+                        model_used: 'semantic-cache',
+                        token_usage: 0
+                    }).catch(() => {});
+                    
+                    return; // EXIT EARLY - SUCCESS!
+                }
+            } catch (cacheErr) {
+                console.warn(`[WA] Early cache check failed: ${cacheErr.message}`);
+            }
+        }
+        // ----------------------------------------------------
+
         // --- FAILURE LOCK CHECK ---
         
         // SAVE USER MESSAGE (Persistence Guarantee)
