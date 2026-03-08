@@ -1252,15 +1252,16 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             const semEnabled = pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1);
             if (semEnabled && !usedSemanticCache && result && result.reply && cleanUserMessage) {
                 const dbService = require('./dbService');
-                await dbService.saveSemanticCacheEntry({
+                // Non-blocking save (Fire and forget) to reduce latency
+                dbService.saveSemanticCacheEntry({
                     page_id: pageConfig.page_id || null,
                     session_name: pageConfig.page_id || null,
                     question: cleanUserMessage,
                     response: result.reply
-                });
+                }).catch(e => console.warn(`[AI] Background cache save failed: ${e.message}`));
             }
         } catch (e) {
-            console.warn(`[AI] Failed to save semantic cache: ${e.message}`);
+            console.warn(`[AI] Failed to trigger semantic cache save: ${e.message}`);
         }
 
         // --- 2. Log to API Usage Stats (api_usage_stats table) ---

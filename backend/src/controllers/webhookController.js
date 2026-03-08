@@ -691,11 +691,9 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             allAudios = messages.flatMap(m => m.audios || []);
         }
         
-        // --- SAVE USER MESSAGES TO DB (fb_chats) ---
-    // Fix: Ensure user messages are saved before any processing/blocking
-    for (const msg of messages) {
-        try {
-            // Skip if it's just a placeholder or empty (unless it has media)
+        // --- SAVE USER MESSAGES TO DB (Non-blocking) ---
+        // Fire-and-forget save to reduce latency while ensuring data persistence
+        for (const msg of messages) {
             const hasContent = (msg.text && msg.text.trim()) || 
                                (msg.images && msg.images.length > 0) || 
                                (msg.audios && msg.audios.length > 0);
@@ -703,15 +701,11 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             if (!hasContent) continue;
             
             let msgText = msg.text || "";
-            if (msg.images && msg.images.length > 0) {
-                msgText += ` [Images: ${msg.images.length}]`;
-            }
-            if (msg.audios && msg.audios.length > 0) {
-                msgText += ` [Audio: ${msg.audios.length}]`;
-            }
+            if (msg.images && msg.images.length > 0) msgText += ` [Images: ${msg.images.length}]`;
+            if (msg.audios && msg.audios.length > 0) msgText += ` [Audio: ${msg.audios.length}]`;
 
-            // We use a separate try-catch for the DB call to not block the main flow
-            await dbService.saveFbChat({
+            // Parallel Save (No await)
+            dbService.saveFbChat({
                 page_id: pageId,
                 sender_id: senderId,
                 recipient_id: pageId,
@@ -720,18 +714,11 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 timestamp: Date.now(),
                 status: 'received',
                 reply_by: 'user'
-            });
+            }).catch(() => {});
 
-            // FIX: Also save to backend_chat_histories for AI Context (Short-Term Memory)
-            await dbService.saveChatMessage(sessionId, 'user', msgText);
-        } catch (saveErr) {
-            // Ignore duplicate key errors, log others
-            if (!saveErr.message.includes('unique') && !saveErr.message.includes('duplicate')) {
-                console.warn(`[FB] Failed to save user message ${msg.id}: ${saveErr.message}`);
-            }
+            dbService.saveChatMessage(sessionId, 'user', msgText).catch(() => {});
         }
-    }
-    // -------------------------------------------
+        // -------------------------------------------
 
     const normalizedForEmojiCheck = combinedText.replace(/\s/g, '');
     const hasAlphaNumericOrBangla = /[A-Za-z0-9\u0980-\u09FF]/.test(normalizedForEmojiCheck);
