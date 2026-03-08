@@ -238,6 +238,15 @@ export default function AdminPage() {
     api_key: ""
   });
 
+  const getAdminToken = () => {
+    return localStorage.getItem("admin_token") || localStorage.getItem("auth_token") || "";
+  };
+
+  useEffect(() => {
+    const t = localStorage.getItem("admin_token");
+    if (t) setIsAuthenticated(true);
+  }, []);
+
   useEffect(() => {
     if (isAuthenticated) {
       fetchTransactions();
@@ -252,7 +261,7 @@ export default function AdminPage() {
   const fetchCacheConfigs = async () => {
     try {
       setCacheLoading(true);
-      const token = localStorage.getItem("auth_token");
+      const token = getAdminToken();
       const res = await fetch(`${BACKEND_URL}/api/db-admin/cache-configs`, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -269,7 +278,7 @@ export default function AdminPage() {
 
   const updateCacheConfig = async (config: CacheConfig, updates: Partial<CacheConfig>) => {
     try {
-      const token = localStorage.getItem("auth_token");
+      const token = getAdminToken();
       const res = await fetch(`${BACKEND_URL}/api/db-admin/cache-configs/update`, {
         method: "POST",
         headers: {
@@ -298,7 +307,7 @@ export default function AdminPage() {
 
   const fetchEmbeddingConfig = async () => {
     try {
-      const token = localStorage.getItem("auth_token");
+      const token = getAdminToken();
       const res = await fetch(`${BACKEND_URL}/api/db-admin/embedding-config`, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -313,7 +322,7 @@ export default function AdminPage() {
 
   const saveEmbeddingConfig = async () => {
     try {
-      const token = localStorage.getItem("auth_token");
+      const token = getAdminToken();
       const res = await fetch(`${BACKEND_URL}/api/db-admin/embedding-config`, {
         method: "POST",
         headers: {
@@ -352,7 +361,7 @@ export default function AdminPage() {
   const fetchEngineData = async (page = 1) => {
     try {
       setEngineStatsLoading(true);
-      const token = localStorage.getItem("auth_token");
+      const token = getAdminToken();
       if (!token) return;
 
       // Fetch Stats with Provider Filter and Pagination
@@ -416,7 +425,7 @@ export default function AdminPage() {
 
   const fetchEngineKeyValue = async (id: number) => {
     try {
-      const token = localStorage.getItem("auth_token");
+      const token = getAdminToken();
       if (!token) return null;
       const res = await fetch(`${BACKEND_URL}/api/api-engine/keys/${id}`, {
         headers: { Authorization: `Bearer ${token}` }
@@ -483,7 +492,7 @@ export default function AdminPage() {
 
   const updateEngineConfig = async (name: string, config: Partial<EngineConfig>) => {
     try {
-      const token = localStorage.getItem("auth_token");
+      const token = getAdminToken();
       const res = await fetch(`${BACKEND_URL}/api/api-engine/config`, {
         method: "POST",
         headers: {
@@ -503,7 +512,7 @@ export default function AdminPage() {
 
   const fetchGlobalConfigs = async () => {
     try {
-      const token = localStorage.getItem("auth_token");
+      const token = getAdminToken();
       const res = await fetch(`${BACKEND_URL}/api/api-list/config`, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -520,7 +529,7 @@ export default function AdminPage() {
 
   const saveGlobalConfig = async () => {
     try {
-      const token = localStorage.getItem("auth_token");
+      const token = getAdminToken();
       const res = await fetch(`${BACKEND_URL}/api/api-list/config`, {
         method: "POST",
         headers: {
@@ -543,7 +552,7 @@ export default function AdminPage() {
 
   const refreshGlobalConfigCache = async () => {
     try {
-      const token = localStorage.getItem("auth_token");
+      const token = getAdminToken();
       const res = await fetch(`${BACKEND_URL}/api/api-list/refresh-global-config-cache`, {
         method: "POST",
         headers: {
@@ -568,7 +577,7 @@ export default function AdminPage() {
     if (!newApi) return toast.error("API Key is required");
     
     try {
-      const token = localStorage.getItem("auth_token");
+      const token = getAdminToken();
       const res = await fetch(`${BACKEND_URL}/api/api-engine/keys`, {
         method: "POST",
         headers: {
@@ -594,7 +603,7 @@ export default function AdminPage() {
   const deleteEngineKey = async (id: number) => {
     if (!confirm("Are you sure?")) return;
     try {
-      const token = localStorage.getItem("auth_token");
+      const token = getAdminToken();
       await fetch(`${BACKEND_URL}/api/api-engine/keys/${id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` }
@@ -633,7 +642,10 @@ export default function AdminPage() {
   const fetchDbTables = async () => {
     try {
       setDbTablesLoading(true);
-      const res = await fetch(`${BACKEND_URL}/api/db-admin/tables`);
+      const token = getAdminToken();
+      const res = await fetch(`${BACKEND_URL}/api/db-admin/tables`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(data.error || "Failed to load tables");
@@ -650,7 +662,10 @@ export default function AdminPage() {
     try {
       setDbLoading(true);
       setDbError(null);
-      const res = await fetch(`${BACKEND_URL}/api/db-admin/table/${encodeURIComponent(tableName)}?limit=${dbLimit}&offset=${offset}`);
+      const token = getAdminToken();
+      const res = await fetch(`${BACKEND_URL}/api/db-admin/table/${encodeURIComponent(tableName)}?limit=${dbLimit}&offset=${offset}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(data.error || "Failed to load table data");
@@ -684,10 +699,12 @@ export default function AdminPage() {
     const keyValue = editingRow[keyColumn];
     try {
       const parsed = JSON.parse(editJson);
+      const token = getAdminToken();
       const res = await fetch(`${BACKEND_URL}/api/db-admin/table/${encodeURIComponent(selectedTable)}/update`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({
           keyColumn,
@@ -722,10 +739,12 @@ export default function AdminPage() {
     const confirmed = window.confirm("Are you sure you want to delete this row?");
     if (!confirmed) return;
     try {
+      const token = getAdminToken();
       const res = await fetch(`${BACKEND_URL}/api/db-admin/table/${encodeURIComponent(selectedTable)}/delete`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({
           keyColumn,
@@ -754,10 +773,12 @@ export default function AdminPage() {
         }
       }
 
+      const token = getAdminToken();
       const res = await fetch(`${BACKEND_URL}/api/db-admin/table/${encodeURIComponent(selectedTable)}/insert`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({
           row: rowToInsert,
@@ -792,10 +813,12 @@ export default function AdminPage() {
       return;
     }
     try {
+      const token = getAdminToken();
       const res = await fetch(`${BACKEND_URL}/api/db-admin/table`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({
           table: newTableName.trim(),
@@ -824,10 +847,12 @@ export default function AdminPage() {
       return;
     }
     try {
+      const token = getAdminToken();
       const res = await fetch(`${BACKEND_URL}/api/db-admin/table/${encodeURIComponent(selectedTable)}/column`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({
           column: {
@@ -861,10 +886,12 @@ export default function AdminPage() {
     setSqlError(null);
     setSqlResult(null);
     try {
+      const token = getAdminToken();
       const res = await fetch(`${BACKEND_URL}/api/db-admin/sql`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({ sql: sqlText }),
       });
@@ -903,6 +930,10 @@ export default function AdminPage() {
         throw new Error(body.error || "Invalid credentials");
       }
 
+      const body = await res.json().catch(() => ({} as any));
+      if (body && body.token) {
+        localStorage.setItem("admin_token", String(body.token));
+      }
       setIsAuthenticated(true);
       toast.success("Login successful");
     } catch (error: any) {
@@ -916,7 +947,10 @@ export default function AdminPage() {
   const fetchTransactions = async () => {
     try {
       setLoadingTxns(true);
-      const res = await fetch(`${BACKEND_URL}/api/auth/admin/transactions`);
+      const token = getAdminToken();
+      const res = await fetch(`${BACKEND_URL}/api/auth/admin/transactions`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       const data = await res.json();
       if (res.ok && Array.isArray(data.transactions)) {
         setTransactions(data.transactions as Transaction[]);
@@ -929,7 +963,10 @@ export default function AdminPage() {
   const fetchCoupons = async () => {
     try {
       setLoadingCoupons(true);
-      const res = await fetch(`${BACKEND_URL}/api/auth/admin/coupons`);
+      const token = getAdminToken();
+      const res = await fetch(`${BACKEND_URL}/api/auth/admin/coupons`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       const data = await res.json();
       if (res.ok && Array.isArray(data.coupons)) {
         setCoupons(data.coupons as Coupon[]);
@@ -942,9 +979,10 @@ export default function AdminPage() {
   const handleApproveTxn = async (txn: any) => {
     try {
       setProcessingId(txn.id);
+      const token = getAdminToken();
       const res = await fetch(`${BACKEND_URL}/api/auth/admin/transactions/${txn.id}/approve`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       });
 
       if (!res.ok) {
@@ -967,9 +1005,10 @@ export default function AdminPage() {
   const handleRejectTxn = async (txn: Transaction) => {
     try {
       setProcessingId(txn.id);
+      const token = getAdminToken();
       const res = await fetch(`${BACKEND_URL}/api/auth/admin/transactions/${txn.id}/reject`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       });
       if (!res.ok) {
         throw new Error("Failed to reject");
@@ -992,9 +1031,10 @@ export default function AdminPage() {
     }
 
     try {
+      const token = getAdminToken();
       const res = await fetch(`${BACKEND_URL}/api/auth/admin/coupons`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           code: couponCode,
           value: Number(couponValue),
@@ -1019,9 +1059,10 @@ export default function AdminPage() {
   const toggleCouponStatus = async (coupon: Coupon) => {
     const newStatus = coupon.status === 'active' ? 'inactive' : 'active';
     try {
+      const token = getAdminToken();
       const res = await fetch(`${BACKEND_URL}/api/auth/admin/coupons/${coupon.id}/status`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ status: newStatus }),
       });
       if (!res.ok) {
@@ -1041,10 +1082,12 @@ export default function AdminPage() {
 
     setTopupLoading(true);
     try {
+      const token = getAdminToken();
       const res = await fetch(`${BACKEND_URL}/api/auth/admin/topup`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({
           email: topupEmail,

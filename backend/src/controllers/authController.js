@@ -86,7 +86,16 @@ exports.adminLogin = async (req, res) => {
         const envPass = process.env.ADMIN_PASSWORD || 'admin123';
 
         if (username === envUser && password === envPass) {
-            return res.json({ success: true });
+            const jwtSecret = process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET || envPass;
+            if (!jwtSecret) {
+                return res.status(500).json({ error: 'Admin auth secret is not configured' });
+            }
+            const token = require('jsonwebtoken').sign(
+                { role: 'admin' },
+                jwtSecret,
+                { expiresIn: '7d' }
+            );
+            return res.json({ success: true, token });
         }
 
         return res.status(401).json({ error: 'Invalid credentials' });

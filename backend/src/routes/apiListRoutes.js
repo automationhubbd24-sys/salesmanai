@@ -4,10 +4,10 @@ const apiListController = require('../controllers/apiListController');
 const dbService = require('../services/dbService');
 const keyService = require('../services/keyService');
 const aiService = require('../services/aiService');
-const authMiddleware = require('../middleware/authMiddleware');
+const adminAuthMiddleware = require('../middleware/adminAuthMiddleware');
 
 // Force Refresh API Cache
-router.post('/refresh-cache', authMiddleware, async (req, res) => {
+router.post('/refresh-cache', adminAuthMiddleware, async (req, res) => {
     try {
         if (keyService.forceUpdateKeyCache) {
             await keyService.forceUpdateKeyCache();
@@ -20,7 +20,7 @@ router.post('/refresh-cache', authMiddleware, async (req, res) => {
     }
 });
 
-router.post('/refresh-global-config-cache', authMiddleware, async (req, res) => {
+router.post('/refresh-global-config-cache', adminAuthMiddleware, async (req, res) => {
     try {
         const provider = req.body?.provider || null;
         await aiService.refreshGlobalEngineConfigCache(provider);
@@ -30,12 +30,12 @@ router.post('/refresh-global-config-cache', authMiddleware, async (req, res) => 
     }
 });
 
-router.get('/', authMiddleware, apiListController.list);
-router.post('/', authMiddleware, apiListController.create);
-router.delete('/:id', authMiddleware, apiListController.remove);
+router.get('/', adminAuthMiddleware, apiListController.list);
+router.post('/', adminAuthMiddleware, apiListController.create);
+router.delete('/:id', adminAuthMiddleware, apiListController.remove);
 
 // Global Engine Config Routes
-router.get('/config', authMiddleware, apiListController.getGlobalConfigs);
-router.post('/config', authMiddleware, apiListController.saveGlobalConfig);
+router.get('/config', adminAuthMiddleware, apiListController.getGlobalConfigs);
+router.post('/config', adminAuthMiddleware, apiListController.saveGlobalConfig);
 
 module.exports = router;

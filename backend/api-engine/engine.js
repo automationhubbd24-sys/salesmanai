@@ -2,7 +2,8 @@ const express = require('express');
 const router = express.Router();
 const keyService = require('../src/services/keyService');
 const dbService = require('../src/services/dbService');
-const authMiddleware = require('../src/middleware/authMiddleware');
+const pgClient = require('../src/services/pgClient');
+const adminAuthMiddleware = require('../src/middleware/adminAuthMiddleware');
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 
@@ -65,7 +66,7 @@ function readFirstChunk(stream, timeoutMs = 5000) {
 }
 
 // --- 1. ENGINE STATS & DASHBOARD ---
-router.get('/stats', authMiddleware, async (req, res) => {
+router.get('/stats', adminAuthMiddleware, async (req, res) => {
     try {
         const { provider, page, limit, q } = req.query; // Get filter and pagination
         
@@ -97,6 +98,53 @@ router.get('/stats', authMiddleware, async (req, res) => {
     }
 });
 
+router.get('/config', adminAuthMiddleware, async (req, res) => {
+    try {
+        const result = await pgClient.query(`SELECT * FROM engine_configs ORDER BY name ASC`);
+        res.json(result.rows || []);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.post('/config', adminAuthMiddleware, async (req, res) => {
+    try {
+        const { name, provider, text_model, voice_model, image_model, voice_provider_override, image_provider_override } = req.body || {};
+        if (!name) {
+            return res.status(400).json({ error: 'name is required' });
+        }
+
+        await pgClient.query(
+            `
+            INSERT INTO engine_configs 
+                (name, provider, text_model, voice_model, image_model, voice_provider_override, image_provider_override, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+            ON CONFLICT (name)
+            DO UPDATE SET
+                provider = COALESCE(EXCLUDED.provider, engine_configs.provider),
+                text_model = COALESCE(EXCLUDED.text_model, engine_configs.text_model),
+                voice_model = COALESCE(EXCLUDED.voice_model, engine_configs.voice_model),
+                image_model = COALESCE(EXCLUDED.image_model, engine_configs.image_model),
+                voice_provider_override = EXCLUDED.voice_provider_override,
+                image_provider_override = EXCLUDED.image_provider_override,
+                updated_at = NOW()
+            `,
+            [
+                String(name),
+                provider !== undefined ? provider : null,
+                text_model !== undefined ? text_model : null,
+                voice_model !== undefined ? voice_model : null,
+                image_model !== undefined ? image_model : null,
+                voice_provider_override !== undefined ? voice_provider_override : null,
+                image_provider_override !== undefined ? image_provider_override : null
+            ]
+        );
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // --- 2. KEY MANAGEMENT (CRUD) ---
 router.post('/keys', async (req, res) => {
     try {
@@ -111,7 +159,7 @@ router.post('/keys', async (req, res) => {
     }
 });
 
-router.get('/keys/:id', authMiddleware, async (req, res) => {
+router.get('/keys/:id', adminAuthMiddleware, async (req, res) => {
     try {
         const id = parseInt(req.params.id, 10);
         if (!id || Number.isNaN(id)) {
@@ -129,7 +177,7 @@ router.get('/keys/:id', authMiddleware, async (req, res) => {
     }
 });
 
-router.patch('/keys/:id/limits', authMiddleware, async (req, res) => {
+router.patch('/keys/:id/limits', adminAuthMiddleware, async (req, res) => {
     try {
         const id = parseInt(req.params.id, 10);
         if (!id || Number.isNaN(id)) {

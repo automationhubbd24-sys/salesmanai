@@ -2,17 +2,18 @@ const express = require('express');
 const router = express.Router();
 const authController = require('../controllers/authController');
 const authMiddleware = require('../middleware/authMiddleware');
+const adminAuthMiddleware = require('../middleware/adminAuthMiddleware');
 
 router.post('/facebook/exchange-token', authController.exchangeToken);
-router.post('/admin/topup', authController.adminTopup);
 
 router.post('/admin/login', authController.adminLogin);
-router.get('/admin/transactions', authController.listTransactions);
-router.post('/admin/transactions/:id/approve', authController.approveTransaction);
-router.post('/admin/transactions/:id/reject', authController.rejectTransaction);
-router.get('/admin/coupons', authController.listCoupons);
-router.post('/admin/coupons', authController.createCoupon);
-router.post('/admin/coupons/:id/status', authController.updateCouponStatus);
+router.post('/admin/topup', adminAuthMiddleware, authController.adminTopup);
+router.get('/admin/transactions', adminAuthMiddleware, authController.listTransactions);
+router.post('/admin/transactions/:id/approve', adminAuthMiddleware, authController.approveTransaction);
+router.post('/admin/transactions/:id/reject', adminAuthMiddleware, authController.rejectTransaction);
+router.get('/admin/coupons', adminAuthMiddleware, authController.listCoupons);
+router.post('/admin/coupons', adminAuthMiddleware, authController.createCoupon);
+router.post('/admin/coupons/:id/status', adminAuthMiddleware, authController.updateCouponStatus);
 
 router.post('/request-otp', authController.requestOtp);
 router.post('/verify-otp', authController.verifyOtp);

@@ -365,6 +365,93 @@ async function initTables() {
             END $$;
         `);
 
+        await query(`
+            ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS push_name TEXT;
+            ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS ai_provider TEXT;
+            ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS chat_model TEXT;
+            ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS voice_model TEXT;
+            ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS cheap_engine BOOLEAN DEFAULT TRUE;
+        `);
+
+        await query(`
+            ALTER TABLE backend_chat_histories ADD COLUMN IF NOT EXISTS role TEXT;
+        `);
+
+        await query(`
+            ALTER TABLE ai_usage_logs ADD COLUMN IF NOT EXISTS page_id TEXT;
+            ALTER TABLE ai_usage_logs ADD COLUMN IF NOT EXISTS prompt_tokens INTEGER DEFAULT 0;
+            ALTER TABLE ai_usage_logs ADD COLUMN IF NOT EXISTS completion_tokens INTEGER DEFAULT 0;
+            ALTER TABLE ai_usage_logs ADD COLUMN IF NOT EXISTS total_tokens INTEGER DEFAULT 0;
+            ALTER TABLE ai_usage_logs ADD COLUMN IF NOT EXISTS cost NUMERIC DEFAULT 0;
+            ALTER TABLE ai_usage_logs ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'success';
+            ALTER TABLE ai_usage_logs ADD COLUMN IF NOT EXISTS error_message TEXT;
+            ALTER TABLE ai_usage_logs ADD COLUMN IF NOT EXISTS sender_name TEXT;
+            ALTER TABLE ai_usage_logs ADD COLUMN IF NOT EXISTS user_message TEXT;
+            ALTER TABLE ai_usage_logs ADD COLUMN IF NOT EXISTS ai_reply TEXT;
+        `);
+
+        await query(`
+            CREATE TABLE IF NOT EXISTS public.api_engine_configs (
+                id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                provider text UNIQUE NOT NULL,
+                text_model text DEFAULT 'gemini-1.5-flash',
+                vision_model text DEFAULT 'gemini-1.5-flash',
+                voice_model text DEFAULT 'gemini-1.5-flash-lite',
+                text_rpm int DEFAULT 0,
+                text_rpd int DEFAULT 0,
+                text_rph int DEFAULT 0,
+                vision_rpm int DEFAULT 0,
+                vision_rpd int DEFAULT 0,
+                vision_rph int DEFAULT 0,
+                voice_rpm int DEFAULT 0,
+                voice_rpd int DEFAULT 0,
+                voice_rph int DEFAULT 0,
+                updated_at timestamp with time zone DEFAULT now()
+            );
+            INSERT INTO public.api_engine_configs (provider, text_model, vision_model, voice_model)
+            VALUES ('google', 'gemini-1.5-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-lite')
+            ON CONFLICT (provider) DO NOTHING;
+            INSERT INTO public.api_engine_configs (provider, text_model, vision_model, voice_model)
+            VALUES ('mistral', 'mistral-small-latest', 'mistral-small-latest', 'mistral-small-latest')
+            ON CONFLICT (provider) DO NOTHING;
+        `);
+
+        await query(`
+            CREATE TABLE IF NOT EXISTS public.engine_configs (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(255) UNIQUE NOT NULL,
+                provider VARCHAR(50) NOT NULL,
+                text_model VARCHAR(255),
+                voice_model VARCHAR(255),
+                image_model VARCHAR(255),
+                voice_provider_override VARCHAR(50),
+                image_provider_override VARCHAR(50),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            );
+            INSERT INTO engine_configs (name, provider, text_model, voice_model, image_model)
+            VALUES 
+                ('salesmanchatbot-pro', 'google', 'gemini-2.5-flash', 'gemini-2.5-flash', 'gemini-2.5-flash'),
+                ('salesmanchatbot-flash', 'openrouter', 'arcee-ai/trinity-large-preview', 'arcee-ai/trinity-large-preview', 'arcee-ai/trinity-large-preview'),
+                ('salesmanchatbot-lite', 'groq', 'llama-3.3-70b-versatile', 'whisper-large-v3', 'llama-3.2-11b-vision-preview')
+            ON CONFLICT (name) DO NOTHING;
+        `);
+
+        await query(`
+            DO $$ 
+            DECLARE seq_name text;
+            BEGIN
+                seq_name := pg_get_serial_sequence('fb_chats', 'id');
+                IF seq_name IS NOT NULL THEN
+                    EXECUTE 'SELECT setval(''' || seq_name || ''', (SELECT COALESCE(MAX(id),0)+1 FROM fb_chats), false)';
+                END IF;
+
+                seq_name := pg_get_serial_sequence('wp_chats', 'id');
+                IF seq_name IS NOT NULL THEN
+                    EXECUTE 'SELECT setval(''' || seq_name || ''', (SELECT COALESCE(MAX(id),0)+1 FROM wp_chats), false)';
+                END IF;
+            END $$;
+        `);
+
         // Conversation State Table (Agentic AI Follow-up context)
         await query(`
             CREATE TABLE IF NOT EXISTS conversation_state (

@@ -68,8 +68,12 @@ class OpenRouterEngineService {
                 if (data.text_model_details && keyService.setManualLimit) {
                     keyService.setManualLimit(data.text_model, data.text_model_details);
                 }
-                
-                console.log('[OpenRouterEngine] 📂 Loaded Config from DB:', this.configCache);
+                console.log('[OpenRouterEngine] 📂 Loaded Config from DB:', {
+                    text: this.configCache.text,
+                    voice: this.configCache.voice,
+                    image: this.configCache.image,
+                    keys_count: Array.isArray(this.configCache.keys) ? this.configCache.keys.length : 0
+                });
             }
         } catch (error) {
             console.warn('[OpenRouterEngine] Could not load config from DB:', error.message);
