@@ -1188,8 +1188,11 @@ export default function MessengerSettingsPage() {
                             <Input 
                                 type="number" 
                                 value={wait} 
-                                onChange={(e) => setWait(Number(e.target.value) || 1)} 
-                                min={1} 
+                                onChange={(e) => {
+                                    const val = Number(e.target.value);
+                                    setWait(Number.isNaN(val) ? 0 : Math.max(0, Math.min(60, val)));
+                                }} 
+                                min={0} 
                                 max={60}
                                 className="w-24 font-mono"
                             />

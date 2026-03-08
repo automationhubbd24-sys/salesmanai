@@ -351,17 +351,15 @@ exports.getSemanticCacheConfigs = async (req, res) => {
         const whatsappSql = `
             SELECT 
                 'whatsapp' AS platform,
-                ws.session_name AS id,
-                COALESCE(ws.push_name, ws.session_name) AS name,
+                wmd.session_name AS id,
+                COALESCE(wmd.push_name, wmd.session_name) AS name,
                 COALESCE(wmd.semantic_cache_enabled, false) AS semantic_cache_enabled,
                 COALESCE(wmd.semantic_cache_threshold, 0.96) AS semantic_cache_threshold,
                 COALESCE(wmd.embed_enabled, false) AS embed_enabled,
-                ws.created_at
-            FROM whatsapp_sessions ws
-            LEFT JOIN whatsapp_message_database wmd
-              ON wmd.session_name = ws.session_name
-            WHERE ws.expires_at IS NULL OR ws.expires_at > NOW()
-            ORDER BY ws.created_at DESC
+                wmd.created_at
+            FROM whatsapp_message_database wmd
+            WHERE (wmd.status IS NULL OR wmd.status <> 'expired')
+            ORDER BY wmd.created_at DESC
         `;
 
         const messengerRes = await pgClient.query(messengerSql);
