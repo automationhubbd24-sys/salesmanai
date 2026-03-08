@@ -258,57 +258,12 @@ export default function AdminPage() {
       });
       const data = await res.json();
       if (data.success && Array.isArray(data.configs) && data.configs.length > 0) {
-        setCacheConfigs(data.configs || []);
+        setCacheConfigs(data.configs);
       } else {
-        // Fallback: Use Integration endpoints to build list like Messenger/WhatsApp pages
-        const configs: CacheConfig[] = [];
-        try {
-          const mRes = await fetch(`${BACKEND_URL}/api/messenger/pages`, {
-            headers: { Authorization: `Bearer ${token}` }
-          });
-          if (mRes.ok) {
-            const mPages = await mRes.json();
-            if (Array.isArray(mPages)) {
-              for (const p of mPages) {
-                configs.push({
-                  platform: 'messenger',
-                  id: String(p.page_id || p.id),
-                  name: String(p.name || p.page_name || p.page_id || 'Unknown'),
-                  semantic_cache_enabled: Boolean(p.semantic_cache_enabled ?? false),
-                  semantic_cache_threshold: Number(p.semantic_cache_threshold ?? 0.96),
-                  embed_enabled: Boolean(p.embed_enabled ?? false),
-                  created_at: p.created_at || undefined
-                });
-              }
-            }
-          }
-        } catch (e) {
-          console.warn('Fallback messenger pages fetch failed:', (e as Error).message);
+        // Only set empty if the request actually succeeded but returned nothing
+        if (data.success) {
+          setCacheConfigs([]);
         }
-        try {
-          const wRes = await fetch(`${BACKEND_URL}/api/whatsapp/sessions`, {
-            headers: { Authorization: `Bearer ${token}` }
-          });
-          if (wRes.ok) {
-            const wSessions = await wRes.json();
-            if (Array.isArray(wSessions)) {
-              for (const s of wSessions) {
-                configs.push({
-                  platform: 'whatsapp',
-                  id: String(s.name || s.session_name || s.wp_id || s.id),
-                  name: String(s.name || s.session_name || 'Unknown'),
-                  semantic_cache_enabled: Boolean(s.semantic_cache_enabled ?? false),
-                  semantic_cache_threshold: Number(s.semantic_cache_threshold ?? 0.96),
-                  embed_enabled: Boolean(s.embed_enabled ?? false),
-                  created_at: s.expires_at || undefined
-                });
-              }
-            }
-          }
-        } catch (e) {
-          console.warn('Fallback whatsapp sessions fetch failed:', (e as Error).message);
-        }
-        setCacheConfigs(configs);
       }
     } catch (error) {
       console.error("Failed to fetch cache configs", error);
