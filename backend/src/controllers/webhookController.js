@@ -30,6 +30,46 @@ refreshAllowedPages();
 setInterval(refreshAllowedPages, CACHE_TTL);
 // ------------------------------------
 
+// --- CONFIG & ECHO CACHE (In-Memory Optimization) ---
+const configCache = new Map(); // Key: pageId, Value: { config, prompts, timestamp }
+const recentBotReplies = new Map(); // Key: senderId, Value: Array of { text, timestamp }
+
+// Helper to get cached page data (Fast Path)
+async function getCachedPageData(pageId) {
+    const now = Date.now();
+    const cached = configCache.get(pageId);
+    
+    // Refresh cache if not exists or older than 2 minutes
+    if (!cached || (now - cached.timestamp > 2 * 60 * 1000)) {
+        try {
+            const [config, prompts] = await Promise.all([
+                dbService.getPageConfig(pageId),
+                dbService.getPagePrompts(pageId)
+            ]);
+            if (config) {
+                configCache.set(pageId, { config, prompts, timestamp: now });
+                return { config, prompts };
+            }
+        } catch (e) {
+            console.warn(`[Cache] Failed to refresh for ${pageId}:`, e.message);
+        }
+    }
+    return cached || { config: null, prompts: null };
+}
+
+// Helper to track bot replies for echo filtering
+function trackBotReply(senderId, text) {
+    const normalized = normalizeText(text);
+    if (!normalized) return;
+    
+    const now = Date.now();
+    let history = recentBotReplies.get(senderId) || [];
+    // Keep only last 20 seconds of replies
+    history = history.filter(r => now - r.timestamp < 20000);
+    history.push({ text: normalized, timestamp: now });
+    recentBotReplies.set(senderId, history);
+}
+
 // Helper to log to file (Async)
 function logToFile(message) {
     const logPath = path.join(__dirname, '../../debug.log');
@@ -38,6 +78,13 @@ function logToFile(message) {
         if (err) console.error('Log Error:', err);
     });
 }
+
+// Helper to normalize text for comparison
+const normalizeText = (text) => {
+    // Remove all whitespace and special characters to ensure robust matching
+    // Support Unicode (Bengali) by using unicode property escapes
+    return (text || '').toLowerCase().replace(/[\s\p{P}]/gu, '');
+};
 
 function escapeRegExp(str) {
     return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -364,90 +411,69 @@ async function queueMessage(event, entryPageId = null) {
         const pageId = senderIdRaw; 
         const messageRecipientId = recipientIdRaw; 
         const messageId = event.message.mid;
-        const text = event.message.text || '';
+        const text = (event.message.text || '').trim();
 
-        // --- SMART ECHO FILTER (Race Condition Proof) ---
-        // We check DB first. If it's NOT in DB or NOT marked as 'bot', it's ADMIN.
+        // --- SMART ECHO FILTER (Memory + DB) ---
+        // 1. Check Memory first (Instant)
+        const recentReplies = recentBotReplies.get(messageRecipientId);
+        if (recentReplies && text) {
+            const normalizedIncoming = normalizeText(text);
+            const isEcho = recentReplies.some(reply => {
+                const timeDiff = Date.now() - reply.timestamp;
+                return timeDiff < 20000 && reply.text === normalizedIncoming;
+            });
+            if (isEcho) {
+                console.log(`[Echo] Blocked (Memory Match): ${text.substring(0, 20)}...`);
+                return;
+            }
+        }
+
+        // 2. Check DB (Fallback)
         try {
             const existingChat = await dbService.getFbChatById(messageId);
             if (existingChat && (existingChat.reply_by === 'bot' || existingChat.reply_by === 'system')) {
-                // Already handled by our system flow, skip echo
                 return; 
             }
 
             console.log(`[Echo] ADMIN ACTION DETECTED: Page ${pageId} -> User ${messageRecipientId}. Text: ${text.substring(0, 20)}...`);
 
-            // Save Admin Reply to DB
-            await dbService.saveFbChat({
+            // Save Admin Reply to DB (Async - Fire and Forget)
+            dbService.saveFbChat({
                 page_id: pageId,
-                sender_id: pageId, // Page is sender
-                recipient_id: messageRecipientId, // User is recipient
+                sender_id: pageId, 
+                recipient_id: messageRecipientId, 
                 message_id: messageId,
                 text: text,
                 timestamp: Date.now(),
                 status: 'sent',
                 reply_by: 'admin'
-            });
+            }).catch(() => {});
 
-            // Save to AI Context Memory
-            const sessionId = `${pageId}_${messageRecipientId}`;
-            await dbService.saveChatMessage(sessionId, 'assistant', text, messageId);
+            // Save to AI Context Memory (Async)
+            dbService.saveChatMessage(sessionId, 'assistant', text, messageId).catch(() => {});
 
             // --- INSTANT EMOJI LOCK CHECK ---
-            const pagePrompts = await dbService.getPagePrompts(pageId);
+            const pageData = await getCachedPageData(pageId);
+            const pagePrompts = pageData?.prompts;
             if (pagePrompts && text) {
-                // Normalize Emoji: remove Variation Selector-16 (\uFE0F) and Normalize to NFC
-                const normalizeEmojiText = (str) => (str || '').replace(/\uFE0F/g, '').normalize('NFC');
-                const cleanText = normalizeEmojiText(text);
+                const cleanText = normalizeText(text);
+                const lockList = [pagePrompts.block_emoji, pagePrompts.lock_emojis, pagePrompts.block_emojis].filter(Boolean).join(',').split(/[, ]+/).map(e => normalizeText(e.trim())).filter(e => e);
+                const unlockList = [pagePrompts.unblock_emoji, pagePrompts.unlock_emojis, pagePrompts.unblock_emojis].filter(Boolean).join(',').split(/[, ]+/).map(e => normalizeText(e.trim())).filter(e => e);
 
-                // Build Lock List
-                const lockList = [
-                    pagePrompts.block_emoji,
-                    pagePrompts.lock_emojis,
-                    pagePrompts.block_emojis
-                ].filter(Boolean).join(',').split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
-
-                // Build Unlock List
-                const unlockList = [
-                    pagePrompts.unblock_emoji,
-                    pagePrompts.unlock_emojis,
-                    pagePrompts.unblock_emojis
-                ].filter(Boolean).join(',').split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
-
-                let isLocked = false;
-                let isUnlocked = false;
-
-                // Check Lock (Iterate through list)
-                for (const e of lockList) {
-                    if (cleanText.includes(e)) {
-                        isLocked = true;
-                        break;
-                    }
-                }
-
-                // Check Unlock (Only if not locking)
-                if (!isLocked) {
-                    for (const e of unlockList) {
-                        if (cleanText.includes(e)) {
-                            isUnlocked = true;
-                            break;
-                        }
-                    }
-                }
+                let isLocked = lockList.some(e => cleanText.includes(e));
+                let isUnlocked = !isLocked && unlockList.some(e => cleanText.includes(e));
 
                 if (isLocked) {
                     await dbService.toggleFbLock(pageId, messageRecipientId, true);
-                    console.log(`[Handover] 🔒 ADMIN LOCK: ${messageRecipientId} via Emoji`);
                 } else if (isUnlocked) {
                     await dbService.toggleFbLock(pageId, messageRecipientId, false);
-                    console.log(`[Handover] 🔓 ADMIN UNLOCK: ${messageRecipientId} via Emoji`);
                 }
             }
         } catch (err) {
             console.error(`[Echo Error] Failed to process admin reply:`, err.message);
         }
 
-        return; // STOP Processing
+        return; 
     }
     // ---------------------------------------------------------
 
@@ -587,24 +613,18 @@ async function queueMessage(event, entryPageId = null) {
     }
 
     if (sessionData.timer) {
-        clearTimeout(sessionData.timer); // Reset timer on new message (Bundling: Text + Image + Swipe)
+        clearTimeout(sessionData.timer); 
     }
 
-    // Dynamic Debounce from DB
-    // We need to fetch the wait time. Since we can't await in top level easily without refactoring,
-    // we'll fetch it inside the timeout or pre-fetch?
-    // Better: Fetch it now, async.
-    // NOTE: This adds a small DB read overhead per message.
-    // Optimization: Cache this in memory or just accept the slight delay.
-    
-    const pagePrompts = await dbService.getPagePrompts(pageId);
+    // Dynamic Debounce from Cache/DB
+    const pageData = await getCachedPageData(pageId);
+    const pagePrompts = pageData?.prompts;
     let debounceTime = 8000; // Default 8s
-    if (pagePrompts && pagePrompts.wait) {
-        debounceTime = Number(pagePrompts.wait) * 1000; // Convert sec to ms
+    if (pagePrompts && pagePrompts.wait !== undefined) {
+        debounceTime = Number(pagePrompts.wait) * 1000; 
     }
     
-    // Safety check
-    if (debounceTime < 0) debounceTime = 0; // Allow 0ms for instant reply
+    if (debounceTime < 0) debounceTime = 0; 
 
     console.log(`[Debounce] Using wait time: ${debounceTime}ms for ${sessionId}`);
 
@@ -651,8 +671,10 @@ async function queueMessage(event, entryPageId = null) {
 // Core Logic Function (Debounced)
 async function processBufferedMessages(sessionId, pageId, senderId, messages) {
     try {
-        // 1. Fetch Config (MOVE TO TOP for early access)
-        const pageConfig = await dbService.getPageConfig(pageId);
+        // 1. Fetch Config (Fast Path)
+        const pageData = await getCachedPageData(pageId);
+        const pageConfig = pageData?.config;
+        const pagePrompts = pageData?.prompts;
         
         if (!pageConfig) {
             console.log(`Page ${pageId} not configured. Stopping.`);
@@ -685,13 +707,9 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             
             // --- STICKER GATEKEEPER ---
             if (hasOnlyStickers) {
-                const logMsg = `[Sticker Gatekeeper] Blocked sticker-only message for ${sessionId}.`;
-                console.log(logMsg);
-                logToFile(logMsg);
                 return;
             }
         } catch (wfError) {
-            console.error(`[Workflow Error] Failed to run messenger workflow: ${wfError.message}`);
             combinedText = messages.map(m => m.text).filter(Boolean).join("\n");
             allImages = messages.flatMap(m => m.images || []);
             allAudios = messages.flatMap(m => m.audios || []);
@@ -702,9 +720,10 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         const threshold = pageConfig.semantic_cache_threshold ? Math.max(0.5, Math.min(0.99, Number(pageConfig.semantic_cache_threshold))) : 0.96;
         const isMediaTurn = allImages.length > 0 || allAudios.length > 0;
         
+        // IMPORTANT: Use workflow combinedText (raw user text) for cache check, EXCLUDING adContext
         if (semEnabled && !isMediaTurn && combinedText.trim()) {
             try {
-                // Normalize combined text for better cache matching (Merged messages fix)
+                // Normalize for better cache matching
                 const cacheQuery = combinedText.trim().replace(/\s+/g, ' ');
                 
                 const cached = await dbService.findSemanticCache({
@@ -715,17 +734,15 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 });
 
                 if (cached) {
-                    console.log(`[FB] ⚡ INSTANT CACHE HIT! Replying to ${senderId}...`);
+                    console.log(`[FB] ⚡ INSTANT CACHE HIT!`);
                     
-                    // Track bot reply BEFORE sending to prevent echo double-save
-                    if (typeof trackBotReply === 'function') {
-                        trackBotReply(senderId, cached);
-                    }
+                    // Register bot reply in memory BEFORE sending to block the echo
+                    trackBotReply(senderId, cached);
                     
                     // Instant FB Send
                     await facebookService.sendMessage(pageId, senderId, cached, pageConfig.page_access_token);
                     
-                    // Fire and forget logging
+                    // Background logging
                     dbService.saveFbChat({
                         page_id: pageId,
                         sender_id: pageId,
@@ -738,7 +755,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                         ai_model: 'semantic-cache'
                     }).catch(() => {});
                     
-                    return; // EXIT EARLY - SUCCESS!
+                    return; 
                 }
             } catch (cacheErr) {
                 console.warn(`[FB] Early cache check failed: ${cacheErr.message}`);
@@ -746,27 +763,16 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         }
         // ----------------------------------------------------
         
-        // --- SAVE USER MESSAGES TO DB (fb_chats) ---
-    // Fix: Ensure user messages are saved before any processing/blocking
-    for (const msg of messages) {
-        try {
-            // Skip if it's just a placeholder or empty (unless it has media)
-            const hasContent = (msg.text && msg.text.trim()) || 
-                               (msg.images && msg.images.length > 0) || 
-                               (msg.audios && msg.audios.length > 0);
-            
+        // --- SAVE USER MESSAGES TO DB (Background) ---
+        for (const msg of messages) {
+            const hasContent = (msg.text && msg.text.trim()) || (msg.images && msg.images.length > 0) || (msg.audios && msg.audios.length > 0);
             if (!hasContent) continue;
             
             let msgText = msg.text || "";
-            if (msg.images && msg.images.length > 0) {
-                msgText += ` [Images: ${msg.images.length}]`;
-            }
-            if (msg.audios && msg.audios.length > 0) {
-                msgText += ` [Audio: ${msg.audios.length}]`;
-            }
+            if (msg.images && msg.images.length > 0) msgText += ` [Images: ${msg.images.length}]`;
+            if (msg.audios && msg.audios.length > 0) msgText += ` [Audio: ${msg.audios.length}]`;
 
-            // We use a separate try-catch for the DB call to not block the main flow
-            await dbService.saveFbChat({
+            dbService.saveFbChat({
                 page_id: pageId,
                 sender_id: senderId,
                 recipient_id: pageId,
@@ -775,18 +781,11 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 timestamp: Date.now(),
                 status: 'received',
                 reply_by: 'user'
-            });
+            }).catch(() => {});
 
-            // FIX: Also save to backend_chat_histories for AI Context (Short-Term Memory)
-            await dbService.saveChatMessage(sessionId, 'user', msgText);
-        } catch (saveErr) {
-            // Ignore duplicate key errors, log others
-            if (!saveErr.message.includes('unique') && !saveErr.message.includes('duplicate')) {
-                console.warn(`[FB] Failed to save user message ${msg.id}: ${saveErr.message}`);
-            }
+            dbService.saveChatMessage(sessionId, 'user', msgText).catch(() => {});
         }
-    }
-    // -------------------------------------------
+        // -------------------------------------------
 
     const normalizedForEmojiCheck = combinedText.replace(/\s/g, '');
     const hasAlphaNumericOrBangla = /[A-Za-z0-9\u0980-\u09FF]/.test(normalizedForEmojiCheck);
@@ -870,20 +869,14 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         }
         // --------------------------
 
-    // --- OPTIMIZATION: PARALLEL DATA FETCHING (Modified for Dynamic History) ---
+        // --- OPTIMIZATION: PARALLEL DATA FETCHING (Modified for Dynamic History) ---
         // 1. Fetch Page Prompts FIRST to get the 'check_conversion' (History Limit)
         // This ensures we only fetch exactly what the user configured (Token Saving)
-        let pagePrompts = null;
-        try {
-            pagePrompts = await dbService.getPagePrompts(pageId);
-            if (pagePrompts) {
-                const promptSnippet = pagePrompts.text_prompt ? pagePrompts.text_prompt.substring(0, 100).replace(/\n/g, ' ') : "EMPTY";
-                console.log(`[AI Context Check] Page: ${pageId} | Prompt Snippet: "${promptSnippet}..."`);
-            } else {
-                console.warn(`[AI Context Check] Page: ${pageId} | NO PROMPT FOUND IN DB!`);
-            }
-        } catch (e) {
-            console.warn(`[Webhook] Failed to fetch prompts for ${pageId}:`, e.message);
+        if (pagePrompts) {
+            const promptSnippet = pagePrompts.text_prompt ? pagePrompts.text_prompt.substring(0, 100).replace(/\n/g, ' ') : "EMPTY";
+            console.log(`[AI Context Check] Page: ${pageId} | Prompt Snippet: "${promptSnippet}..."`);
+        } else {
+            console.warn(`[AI Context Check] Page: ${pageId} | NO PROMPT FOUND IN DB!`);
         }
 
         // Determine History Limit (User Setting or Default 10)
@@ -1957,6 +1950,9 @@ STRICT RULES:
             const isNoReply = replyText.toLowerCase().trim() === 'no reply';
             
             if (!isNoReply) {
+                // Track bot reply in memory BEFORE sending to block the echo
+                trackBotReply(senderId, replyText);
+                
                 const sendResult = await facebookService.sendMessage(pageId, senderId, replyText, pageConfig.page_access_token);
                 botMessageId = sendResult?.message_id || botMessageId;
             } else {
@@ -1979,11 +1975,11 @@ STRICT RULES:
                 message_id: botMessageId,
                 text: replyText,
                 timestamp: Date.now(),
-                status: 'bot_reply',
+                status: 'sent', // Set status to 'sent'
                 reply_by: 'bot',
                 token: aiResponse.token_usage || 0,
                 ai_model: aiModelLabel
-            });
+            }).catch(err => console.error("[FB Save Error]", err));
 
             // --- PERSISTENCE: Save Last Resolved Product ID to Context ---
             if (aiResponse.foundProducts && aiResponse.foundProducts.length > 0) {
