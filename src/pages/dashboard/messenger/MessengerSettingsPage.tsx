@@ -97,6 +97,9 @@ export default function MessengerSettingsPage() {
   const [wait, setWait] = useState<number>(8);
   const [behaviorSaving, setBehaviorSaving] = useState(false);
   const [memoryLimit, setMemoryLimit] = useState<number>(20);
+  const [semanticCacheEnabled, setSemanticCacheEnabled] = useState<boolean>(false);
+  const [embedEnabled, setEmbedEnabled] = useState<boolean>(false);
+  const [semanticThreshold, setSemanticThreshold] = useState<number>(0.96);
   
   // New State for Optimization
   const [optimizing, setOptimizing] = useState(false);
@@ -230,6 +233,9 @@ export default function MessengerSettingsPage() {
 
           setWait(dbRow.wait || 8);
           setMemoryLimit(dbRow.check_conversion || 20);
+          setSemanticCacheEnabled(Boolean(dbRow.semantic_cache_enabled));
+          setEmbedEnabled(Boolean(dbRow.embed_enabled));
+          setSemanticThreshold(dbRow.semantic_cache_threshold ? Number(dbRow.semantic_cache_threshold) : 0.96);
       }
     } catch (error) {
       console.error("Error fetching config:", error);
@@ -435,7 +441,10 @@ export default function MessengerSettingsPage() {
         },
         body: JSON.stringify({
           wait: wait,
-          check_conversion: memoryLimit
+          check_conversion: memoryLimit,
+          semantic_cache_enabled: semanticCacheEnabled,
+          semantic_cache_threshold: semanticThreshold,
+          embed_enabled: embedEnabled
         })
       });
 
@@ -1151,6 +1160,42 @@ export default function MessengerSettingsPage() {
                                 </>
                             )}
                         </Button>
+                    </div>
+                    
+                    <div className="pt-4 border-t border-white/10 grid gap-4">
+                      <h3 className="text-lg font-semibold">Semantic Caching</h3>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm">Enable Semantic Cache</p>
+                          <p className="text-xs text-muted-foreground">Fast reply for repeated questions</p>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={semanticCacheEnabled}
+                          onChange={(e) => setSemanticCacheEnabled(e.target.checked)}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm">Use Embedding (Advanced)</p>
+                          <p className="text-xs text-muted-foreground">Turn off to use fuzzy matching</p>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={embedEnabled}
+                          onChange={(e) => setEmbedEnabled(e.target.checked)}
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm">Threshold</span>
+                        <Input 
+                          type="number" 
+                          value={semanticThreshold} 
+                          onChange={(e) => setSemanticThreshold(Math.max(0.5, Math.min(0.99, Number(e.target.value) || 0.96)))} 
+                          className="w-24 font-mono"
+                        />
+                        <span className="text-sm text-muted-foreground">0.50 - 0.99 (Default: 0.96)</span>
+                      </div>
                     </div>
                 </div>
             </CardContent>

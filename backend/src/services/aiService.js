@@ -1216,6 +1216,22 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             console.warn("[AI Logger] Error preparing logData:", err.message);
         }
 
+        // Save to Semantic Cache if enabled and not served from cache
+        try {
+            const semEnabled = pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1);
+            if (semEnabled && !usedSemanticCache && result && result.reply && cleanUserMessage) {
+                const dbService = require('./dbService');
+                await dbService.saveSemanticCacheEntry({
+                    page_id: pageConfig.page_id || null,
+                    session_name: pageConfig.page_id || null,
+                    question: cleanUserMessage,
+                    response: result.reply
+                });
+            }
+        } catch (e) {
+            console.warn(`[AI] Failed to save semantic cache: ${e.message}`);
+        }
+
         // --- 2. Log to API Usage Stats (api_usage_stats table) ---
         if (pageConfig.user_id && (result.token_usage > 0 || pageConfig.is_external_api === true || pageConfig.billing_mode === 'request')) {
             const isRequestBilling = pageConfig.billing_mode === 'request' || pageConfig.is_external_api === true;
@@ -1472,6 +1488,35 @@ ${productContext || "No specific product context provided yet."}
         if (!isDuplicate) {
             messages.push({ role: 'user', content: cleanUserMessage });
         }
+    }
+
+    // --- Semantic Cache (Admin Controlled) ---
+    let usedSemanticCache = false;
+    try {
+        const semEnabled = pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1);
+        const threshold = pageConfig && pageConfig.semantic_cache_threshold ? Math.max(0.5, Math.min(0.99, Number(pageConfig.semantic_cache_threshold))) : 0.96;
+        const isMediaTurn = (imageUrls && imageUrls.length > 0) || (audioUrls && audioUrls.length > 0);
+        if (semEnabled && !isMediaTurn) {
+            const dbService = require('./dbService');
+            const question = (cleanUserMessage || '').toString();
+            const cached = await dbService.findSemanticCache({
+                page_id: pageConfig.page_id || null,
+                session_name: pageConfig.page_id || null,
+                question,
+                threshold
+            });
+            if (cached) {
+                usedSemanticCache = true;
+                return finalize({ 
+                    reply: cached, 
+                    sentiment: 'neutral', 
+                    token_usage: 0, 
+                    model: 'semantic-cache' 
+                });
+            }
+        }
+    } catch (e) {
+        console.warn(`[AI] Semantic Cache check failed: ${e.message}`);
     }
 
     // --- UNIFIED AI REQUEST LOGIC ---

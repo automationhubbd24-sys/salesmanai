@@ -414,8 +414,18 @@ router.put('/config/:id', async (req, res) => {
         const allowedKeys = [
             'reply_message', 'swipe_reply', 'image_detection', 'image_send', 'template', 'order_tracking',
             'block_emoji', 'unblock_emoji', 'check_conversion', 'text_prompt', 'image_prompt', 'wait',
-            'memory_context_name', 'order_lock_minutes', 'audio_detection'
+            'memory_context_name', 'order_lock_minutes', 'audio_detection',
+            'semantic_cache_enabled', 'semantic_cache_threshold', 'embed_enabled'
         ];
+
+        // Ensure new columns exist
+        try {
+            await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS semantic_cache_enabled boolean DEFAULT false`);
+            await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS semantic_cache_threshold numeric DEFAULT 0.96`);
+            await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS embed_enabled boolean DEFAULT false`);
+        } catch (e) {
+            console.warn("[Messenger] Failed to add semantic cache columns:", e.message);
+        }
 
         const updates = [];
         const values = [];

@@ -576,8 +576,20 @@ router.put('/config/:id', async (req, res) => {
             'ai_provider',
             'api_key',
             'chat_model',
-            'cheap_engine'
+            'cheap_engine',
+            'semantic_cache_enabled',
+            'semantic_cache_threshold',
+            'embed_enabled'
         ];
+
+        // Ensure new columns exist
+        try {
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS semantic_cache_enabled boolean DEFAULT false`);
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS semantic_cache_threshold numeric DEFAULT 0.96`);
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS embed_enabled boolean DEFAULT false`);
+        } catch (e) {
+            console.warn("[WhatsApp] Failed to add semantic cache columns:", e.message);
+        }
 
         const updates = {};
         for (const key of allowedKeys) {

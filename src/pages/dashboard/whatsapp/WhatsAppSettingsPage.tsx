@@ -87,6 +87,9 @@ export default function WhatsAppSettingsPage() {
   const [wait, setWait] = useState<number>(8);
   const [historyLimit, setHistoryLimit] = useState<number>(10);
   const [behaviorSaving, setBehaviorSaving] = useState(false);
+  const [semanticCacheEnabled, setSemanticCacheEnabled] = useState<boolean>(false);
+  const [embedEnabled, setEmbedEnabled] = useState<boolean>(false);
+  const [semanticThreshold, setSemanticThreshold] = useState<number>(0.96);
   
   // Optimization
   const [optimizing, setOptimizing] = useState(false);
@@ -181,6 +184,9 @@ export default function WhatsAppSettingsPage() {
       // Behavior
       setWait(dbRow.wait ?? 8);
       setHistoryLimit(dbRow.check_conversion ?? 10);
+      setSemanticCacheEnabled(Boolean(dbRow.semantic_cache_enabled));
+      setEmbedEnabled(Boolean(dbRow.embed_enabled));
+      setSemanticThreshold(dbRow.semantic_cache_threshold ? Number(dbRow.semantic_cache_threshold) : 0.96);
 
       // Credits (Joined from user_configs)
       const credits = Number(dbRow.message_credit || 0);
@@ -362,7 +368,10 @@ export default function WhatsAppSettingsPage() {
         },
         body: JSON.stringify({
           wait: wait,
-          check_conversion: historyLimit
+          check_conversion: historyLimit,
+          semantic_cache_enabled: semanticCacheEnabled,
+          semantic_cache_threshold: semanticThreshold,
+          embed_enabled: embedEnabled
         })
       });
 
@@ -853,6 +862,42 @@ export default function WhatsAppSettingsPage() {
                     >
                         {behaviorSaving ? "Saving..." : "Update Behavior"}
                     </Button>
+                    
+                    <div className="pt-4 border-t border-white/10 grid gap-4">
+                      <h3 className="text-lg font-semibold">Semantic Caching</h3>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm">Enable Semantic Cache</p>
+                          <p className="text-xs text-muted-foreground">Fast reply for repeated questions</p>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={semanticCacheEnabled}
+                          onChange={(e) => setSemanticCacheEnabled(e.target.checked)}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm">Use Embedding (Advanced)</p>
+                          <p className="text-xs text-muted-foreground">Turn off to use fuzzy matching</p>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={embedEnabled}
+                          onChange={(e) => setEmbedEnabled(e.target.checked)}
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm">Threshold</span>
+                        <Input 
+                          type="number" 
+                          value={semanticThreshold} 
+                          onChange={(e) => setSemanticThreshold(Math.max(0.5, Math.min(0.99, Number(e.target.value) || 0.96)))} 
+                          className="w-24 font-mono"
+                        />
+                        <span className="text-sm text-muted-foreground">0.50 - 0.99 (Default: 0.96)</span>
+                      </div>
+                    </div>
                 </div>
             </CardContent>
         </Card>
