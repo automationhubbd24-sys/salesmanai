@@ -1238,41 +1238,7 @@ export default function MessengerSettingsPage() {
                         </Button>
                     </div>
                     
-                    <div className="pt-4 border-t border-white/10 grid gap-4">
-                      <h3 className="text-lg font-semibold">Semantic Caching</h3>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm">Enable Semantic Cache</p>
-                          <p className="text-xs text-muted-foreground">Fast reply for repeated questions</p>
-                        </div>
-                        <input
-                          type="checkbox"
-                          checked={semanticCacheEnabled}
-                          onChange={(e) => setSemanticCacheEnabled(e.target.checked)}
-                        />
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm">Use Embedding (Advanced)</p>
-                          <p className="text-xs text-muted-foreground">Turn off to use fuzzy matching</p>
-                        </div>
-                        <input
-                          type="checkbox"
-                          checked={embedEnabled}
-                          onChange={(e) => setEmbedEnabled(e.target.checked)}
-                        />
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm">Threshold</span>
-                        <Input 
-                          type="number" 
-                          value={semanticThreshold} 
-                          onChange={(e) => setSemanticThreshold(Math.max(0.5, Math.min(0.99, Number(e.target.value) || 0.96)))} 
-                          className="w-24 font-mono"
-                        />
-                        <span className="text-sm text-muted-foreground">0.50 - 0.99 (Default: 0.96)</span>
-                      </div>
-                    </div>
+                    
                 </div>
             </CardContent>
         </Card>
