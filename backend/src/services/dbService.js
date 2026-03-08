@@ -505,12 +505,42 @@ async function initTables() {
             );
         `);
 
-        // Check for missing columns in 'openrouter_engine_config'
+        // Check for missing columns in 'openrouter_engine_config' and fix schema if needed
         await query(`
             DO $$ 
             BEGIN 
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='openrouter_engine_config' AND column_name='config_type') THEN
-                    ALTER TABLE openrouter_engine_config ADD COLUMN config_type TEXT PRIMARY KEY;
+                -- If table exists but doesn't have config_type, it's likely the old schema.
+                -- We'll add the new columns.
+                IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='openrouter_engine_config') THEN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='openrouter_engine_config' AND column_name='config_type') THEN
+                        ALTER TABLE openrouter_engine_config ADD COLUMN config_type TEXT;
+                        -- If it was previously using 'id' as PK, we might want to keep it or switch.
+                        -- For simplicity, we just ensure config_type is there for the controller.
+                    END IF;
+
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='openrouter_engine_config' AND column_name='text_model') THEN
+                        ALTER TABLE openrouter_engine_config ADD COLUMN text_model TEXT;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='openrouter_engine_config' AND column_name='voice_model') THEN
+                        ALTER TABLE openrouter_engine_config ADD COLUMN voice_model TEXT;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='openrouter_engine_config' AND column_name='image_model') THEN
+                        ALTER TABLE openrouter_engine_config ADD COLUMN image_model TEXT;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='openrouter_engine_config' AND column_name='text_model_details') THEN
+                        ALTER TABLE openrouter_engine_config ADD COLUMN text_model_details JSONB;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='openrouter_engine_config' AND column_name='voice_model_details') THEN
+                        ALTER TABLE openrouter_engine_config ADD COLUMN voice_model_details JSONB;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='openrouter_engine_config' AND column_name='image_model_details') THEN
+                        ALTER TABLE openrouter_engine_config ADD COLUMN image_model_details JSONB;
+                    END IF;
+                    
+                    -- Ensure unique constraint on config_type for ON CONFLICT to work
+                    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'openrouter_engine_config_config_type_key') THEN
+                        ALTER TABLE openrouter_engine_config ADD CONSTRAINT openrouter_engine_config_config_type_key UNIQUE (config_type);
+                    END IF;
                 END IF;
             END $$;
         `);
