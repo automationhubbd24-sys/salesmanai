@@ -1121,12 +1121,43 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
 
 // Step 2: Business Logic / AI Brain
 async function generateReply(userMessage, pageConfig, pagePrompts, history = [], senderName = 'Customer', ownerName = 'Automation Hub BD', senderGender = null, imageUrls = [], audioUrls = [], extraTokenUsage = 0, userId = null) {
-    // Acquire Slot to prevent CPU Spikes
-    await acquireAiSlot();
-
     // --- SAFETY FIX: Ensure names are not null ---
     if (!senderName || senderName === 'null') senderName = 'Customer';
     if (!ownerName || ownerName === 'null') ownerName = 'Automation Hub BD';
+
+    const cleanUserMessage = (userMessage || '').trim();
+    
+    // --- 1. QUICK SEMANTIC CACHE CHECK (No AI Slot needed) ---
+    let usedSemanticCache = false;
+    try {
+        const semEnabled = pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1);
+        const threshold = pageConfig && pageConfig.semantic_cache_threshold ? Math.max(0.5, Math.min(0.99, Number(pageConfig.semantic_cache_threshold))) : 0.96;
+        const isMediaTurn = (imageUrls && imageUrls.length > 0) || (audioUrls && audioUrls.length > 0);
+        
+        if (semEnabled && !isMediaTurn && cleanUserMessage) {
+            const dbService = require('./dbService');
+            const cached = await dbService.findSemanticCache({
+                page_id: pageConfig.page_id || null,
+                session_name: pageConfig.page_id || null,
+                question: cleanUserMessage,
+                threshold
+            });
+            if (cached) {
+                console.log(`[AI] Semantic Cache HIT! (Threshold: ${threshold})`);
+                return finalize({ 
+                    reply: cached, 
+                    sentiment: 'neutral', 
+                    token_usage: 0, 
+                    model: 'semantic-cache' 
+                });
+            }
+        }
+    } catch (e) {
+        console.warn(`[AI] Semantic Cache check failed: ${e.message}`);
+    }
+
+    // --- 2. ACQUIRE AI SLOT (Only for actual LLM calls) ---
+    await acquireAiSlot();
 
     // --- CONVERSATION STATE: Fetch Last Product Context ---
     let lastProductContext = null;
@@ -1488,35 +1519,6 @@ ${productContext || "No specific product context provided yet."}
         if (!isDuplicate) {
             messages.push({ role: 'user', content: cleanUserMessage });
         }
-    }
-
-    // --- Semantic Cache (Admin Controlled) ---
-    let usedSemanticCache = false;
-    try {
-        const semEnabled = pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1);
-        const threshold = pageConfig && pageConfig.semantic_cache_threshold ? Math.max(0.5, Math.min(0.99, Number(pageConfig.semantic_cache_threshold))) : 0.96;
-        const isMediaTurn = (imageUrls && imageUrls.length > 0) || (audioUrls && audioUrls.length > 0);
-        if (semEnabled && !isMediaTurn) {
-            const dbService = require('./dbService');
-            const question = (cleanUserMessage || '').toString();
-            const cached = await dbService.findSemanticCache({
-                page_id: pageConfig.page_id || null,
-                session_name: pageConfig.page_id || null,
-                question,
-                threshold
-            });
-            if (cached) {
-                usedSemanticCache = true;
-                return finalize({ 
-                    reply: cached, 
-                    sentiment: 'neutral', 
-                    token_usage: 0, 
-                    model: 'semantic-cache' 
-                });
-            }
-        }
-    } catch (e) {
-        console.warn(`[AI] Semantic Cache check failed: ${e.message}`);
     }
 
     // --- UNIFIED AI REQUEST LOGIC ---

@@ -828,6 +828,44 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         }
         // -----------------------------------------------------------------
 
+        // --- QUICK SEMANTIC CACHE CHECK (ULTRA-FAST PATH) ---
+        const semEnabled = pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1);
+        const threshold = pageConfig && pageConfig.semantic_cache_threshold ? Math.max(0.5, Math.min(0.99, Number(pageConfig.semantic_cache_threshold))) : 0.96;
+        const isMediaTurn = (allImages && allImages.length > 0) || (allAudios && allAudios.length > 0);
+        
+        if (semEnabled && !isMediaTurn && combinedText.trim()) {
+            try {
+                const cached = await dbService.findSemanticCache({
+                    page_id: pageId,
+                    session_name: pageId,
+                    question: combinedText.trim(),
+                    threshold
+                });
+                
+                if (cached) {
+                    console.log(`[Webhook] ⚡ INSTANT CACHE HIT! Replying to ${senderId}...`);
+                    await facebookService.sendTextMessage(pageId, senderId, cached, pageConfig.page_access_token, replyToId);
+                    
+                    // Fire and forget logging
+                    dbService.saveFbChat({
+                        page_id: pageId,
+                        sender_id: pageId,
+                        recipient_id: senderId,
+                        message_id: `cache_${Date.now()}`,
+                        text: cached,
+                        timestamp: Date.now(),
+                        status: 'sent',
+                        reply_by: 'bot'
+                    }).catch(() => {});
+                    
+                    return; // EXIT EARLY - SUCCESS!
+                }
+            } catch (cacheErr) {
+                console.warn(`[Webhook] Early cache check failed: ${cacheErr.message}`);
+            }
+        }
+        // ----------------------------------------------------
+
         // --- FAILURE LOCK CHECK ---
         const isLocked = await dbService.checkFbLockStatus(pageId, senderId);
         if (isLocked) {
