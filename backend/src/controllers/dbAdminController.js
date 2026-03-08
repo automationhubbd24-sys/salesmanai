@@ -274,6 +274,24 @@ exports.addColumn = async (req, res) => {
 exports.getEmbeddingGlobalConfig = async (req, res) => {
     try {
         const pgClient = require('../services/pgClient');
+        
+        // Quick Repair for openrouter_engine_config
+        try {
+            await pgClient.query(`
+                CREATE TABLE IF NOT EXISTS public.openrouter_engine_config (
+                    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+                    config_type TEXT UNIQUE DEFAULT 'best_models',
+                    text_model TEXT,
+                    text_model_details JSONB,
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                )
+            `);
+            await pgClient.query(`ALTER TABLE openrouter_engine_config ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`);
+            await pgClient.query(`ALTER TABLE openrouter_engine_config ADD COLUMN IF NOT EXISTS text_model_details JSONB`);
+        } catch (e) {
+            console.warn('Embedding config table repair warning:', e.message);
+        }
+
         const result = await pgClient.query(
             `SELECT text_model, text_model_details
              FROM openrouter_engine_config
@@ -303,6 +321,14 @@ exports.saveEmbeddingGlobalConfig = async (req, res) => {
     try {
         const { model, base_url, api_key, provider } = req.body || {};
         const pgClient = require('../services/pgClient');
+
+        // Quick Repair
+        try {
+            await pgClient.query(`ALTER TABLE openrouter_engine_config ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`);
+            await pgClient.query(`ALTER TABLE openrouter_engine_config ADD COLUMN IF NOT EXISTS text_model_details JSONB`);
+        } catch (e) {
+            console.warn('Embedding save config table repair warning:', e.message);
+        }
 
         const details = {
             base_url: base_url || '',
@@ -339,16 +365,21 @@ exports.getSemanticCacheConfigs = async (req, res) => {
             await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS semantic_cache_enabled boolean DEFAULT false`);
             await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS semantic_cache_threshold numeric DEFAULT 0.96`);
             await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS embed_enabled boolean DEFAULT false`);
+            await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`);
             
             // WhatsApp table
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS semantic_cache_enabled boolean DEFAULT false`);
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS semantic_cache_threshold numeric DEFAULT 0.96`);
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS embed_enabled boolean DEFAULT false`);
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`);
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS push_name text`);
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS ai_provider text`);
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS chat_model text`);
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS voice_model text`);
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS cheap_engine boolean DEFAULT true`);
+            
+            // pam table (page_access_token_message)
+            await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`);
             
             // UNIQUE constraint for upsert
             await pgClient.query(`
@@ -441,6 +472,29 @@ exports.updateSemanticCacheConfig = async (req, res) => {
 
         if (!platform || !id) {
             return res.status(400).json({ success: false, error: 'Platform and ID are required' });
+        }
+
+        // Quick Repair
+        try {
+            if (platform === 'messenger') {
+                await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS semantic_cache_enabled boolean DEFAULT false`);
+                await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS semantic_cache_threshold numeric DEFAULT 0.96`);
+                await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS embed_enabled boolean DEFAULT false`);
+                await pgClient.query(`
+                    DO $$ 
+                    BEGIN 
+                        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fb_message_database_page_id_unique') THEN
+                            ALTER TABLE fb_message_database ADD CONSTRAINT fb_message_database_page_id_unique UNIQUE (page_id);
+                        END IF;
+                    END $$;
+                `);
+            } else {
+                await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS semantic_cache_enabled boolean DEFAULT false`);
+                await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS semantic_cache_threshold numeric DEFAULT 0.96`);
+                await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS embed_enabled boolean DEFAULT false`);
+            }
+        } catch (e) {
+            console.warn('Semantic cache update repair warning:', e.message);
         }
 
         let sql = '';

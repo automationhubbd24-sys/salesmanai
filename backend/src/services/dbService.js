@@ -591,6 +591,74 @@ async function initTables() {
         `);
         console.log("[DB] 'api_list' unique constraint checked.");
 
+        // OpenRouter Engine Tables Repair
+        await query(`
+            CREATE TABLE IF NOT EXISTS public.openrouter_engine_config (
+                id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+                config_type TEXT UNIQUE DEFAULT 'best_models',
+                text_model TEXT,
+                voice_model TEXT,
+                image_model TEXT,
+                text_model_details JSONB,
+                voice_model_details JSONB,
+                image_model_details JSONB,
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            );
+        `);
+
+        await query(`
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='openrouter_engine_config' AND column_name='updated_at') THEN
+                    ALTER TABLE openrouter_engine_config ADD COLUMN updated_at TIMESTAMPTZ DEFAULT NOW();
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='openrouter_engine_config' AND column_name='text_model_details') THEN
+                    ALTER TABLE openrouter_engine_config ADD COLUMN text_model_details JSONB;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='openrouter_engine_config' AND column_name='voice_model_details') THEN
+                    ALTER TABLE openrouter_engine_config ADD COLUMN voice_model_details JSONB;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='openrouter_engine_config' AND column_name='image_model_details') THEN
+                    ALTER TABLE openrouter_engine_config ADD COLUMN image_model_details JSONB;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='openrouter_engine_config' AND column_name='config_type') THEN
+                    ALTER TABLE openrouter_engine_config ADD COLUMN config_type TEXT UNIQUE DEFAULT 'best_models';
+                END IF;
+            END $$;
+        `);
+
+        await query(`
+            CREATE TABLE IF NOT EXISTS public.openrouter_engine_keys (
+                id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+                api_key TEXT NOT NULL UNIQUE,
+                label TEXT DEFAULT 'default',
+                usage_limit NUMERIC DEFAULT 0,
+                usage_used NUMERIC DEFAULT 0,
+                is_active BOOLEAN DEFAULT true,
+                last_checked_at TIMESTAMPTZ DEFAULT NOW(),
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+        `);
+
+        await query(`
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='openrouter_engine_keys' AND column_name='last_checked_at') THEN
+                    ALTER TABLE openrouter_engine_keys ADD COLUMN last_checked_at TIMESTAMPTZ DEFAULT NOW();
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='openrouter_engine_keys' AND column_name='created_at') THEN
+                    ALTER TABLE openrouter_engine_keys ADD COLUMN created_at TIMESTAMPTZ DEFAULT NOW();
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='openrouter_engine_keys' AND column_name='usage_limit') THEN
+                    ALTER TABLE openrouter_engine_keys ADD COLUMN usage_limit NUMERIC DEFAULT 0;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='openrouter_engine_keys' AND column_name='usage_used') THEN
+                    ALTER TABLE openrouter_engine_keys ADD COLUMN usage_used NUMERIC DEFAULT 0;
+                END IF;
+            END $$;
+        `);
+        console.log("[DB] 'openrouter_engine' tables checked/initialized.");
+
     } catch (error) {
         console.error("[DB] Failed to init tables:", error);
     }
