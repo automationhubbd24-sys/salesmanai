@@ -1917,7 +1917,7 @@ async function getAllActivePages() {
             const configsResult = await query(
                 `SELECT user_id, message_credit
                  FROM user_configs
-                 WHERE user_id = ANY($1::text[])`,
+                 WHERE user_id::text = ANY($1::text[])`,
                 [userIds]
             );
             configsResult.rows.forEach(c => {
