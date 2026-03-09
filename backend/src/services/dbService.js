@@ -2564,12 +2564,8 @@ async function ensureSemanticCacheTables() {
                 created_at TIMESTAMPTZ DEFAULT now()
             )
         `);
-        await query(`CREATE INDEX IF NOT EXISTS idx_semcache_question_trgm ON semantic_cache USING gin (question_norm gin_trgm_ops)`);
-        await query(`CREATE INDEX IF NOT EXISTS idx_semcache_page ON semantic_cache (page_id)`);
-        await query(`CREATE INDEX IF NOT EXISTS idx_semcache_session ON semantic_cache (session_name)`);
-        await query(`CREATE INDEX IF NOT EXISTS idx_semcache_context ON semantic_cache (context_id)`);
         
-        // Migration: Add context_id if it doesn't exist
+        // Ensure column exists individually for extra safety
         await query(`
             DO $$ 
             BEGIN 
@@ -2578,6 +2574,11 @@ async function ensureSemanticCacheTables() {
                 END IF;
             END $$;
         `);
+
+        await query(`CREATE INDEX IF NOT EXISTS idx_semcache_question_trgm ON semantic_cache USING gin (question_norm gin_trgm_ops)`);
+        await query(`CREATE INDEX IF NOT EXISTS idx_semcache_page ON semantic_cache (page_id)`);
+        await query(`CREATE INDEX IF NOT EXISTS idx_semcache_session ON semantic_cache (session_name)`);
+        await query(`CREATE INDEX IF NOT EXISTS idx_semcache_context ON semantic_cache (context_id)`);
     } catch (e) {
         console.warn(`[DB] Failed to ensure semantic_cache tables: ${e.message}`);
     }
