@@ -3328,6 +3328,17 @@ export default function AdminPage() {
                 />
               </div>
 
+              <div className="flex items-center justify-between p-3 rounded-lg border border-white/5 bg-white/5">
+                <div className="space-y-0.5">
+                  <Label className="text-sm font-medium">Auto-Learning (AI Auto-Save)</Label>
+                  <p className="text-[11px] text-muted-foreground">Automatically save new AI responses to the cache.</p>
+                </div>
+                <Switch 
+                  checked={editingCacheConfig.semantic_cache_autosave ?? true}
+                  onCheckedChange={(val) => setEditingCacheConfig({ ...editingCacheConfig, semantic_cache_autosave: val })}
+                />
+              </div>
+
               <div className="space-y-3 p-3 rounded-lg border border-white/5 bg-white/5">
                 <div className="flex items-center justify-between">
                   <Label className="text-sm font-medium">Similarity Threshold</Label>
@@ -3359,7 +3370,8 @@ export default function AdminPage() {
                   updateCacheConfig(editingCacheConfig, {
                     semantic_cache_enabled: editingCacheConfig.semantic_cache_enabled,
                     semantic_cache_threshold: editingCacheConfig.semantic_cache_threshold,
-                    embed_enabled: editingCacheConfig.embed_enabled
+                    embed_enabled: editingCacheConfig.embed_enabled,
+                    semantic_cache_autosave: editingCacheConfig.semantic_cache_autosave ?? true
                   });
                   setIsCacheDialogOpen(false);
                 }

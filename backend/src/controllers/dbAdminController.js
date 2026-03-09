@@ -449,9 +449,10 @@ exports.getSemanticCacheConfigs = async (req, res) => {
                     pam.page_id, 
                     COALESCE(pam.name, pam.page_id) as name, 
                     COALESCE(fb.semantic_cache_enabled, false) as semantic_cache_enabled, 
-                    COALESCE(fb.semantic_cache_threshold, 0.96) as semantic_cache_threshold, 
-                    COALESCE(fb.embed_enabled, false) as embed_enabled, 
-                    COALESCE(pam.created_at, NOW()) as created_at
+                     COALESCE(fb.semantic_cache_threshold, 0.96) as semantic_cache_threshold, 
+                     COALESCE(fb.embed_enabled, false) as embed_enabled, 
+                     COALESCE(fb.semantic_cache_autosave, true) as semantic_cache_autosave,
+                     COALESCE(pam.created_at, NOW()) as created_at
                 FROM page_access_token_message pam
                 LEFT JOIN fb_message_database fb ON fb.page_id = pam.page_id
                 UNION
@@ -461,6 +462,7 @@ exports.getSemanticCacheConfigs = async (req, res) => {
                     COALESCE(fb.semantic_cache_enabled, false) as semantic_cache_enabled, 
                     COALESCE(fb.semantic_cache_threshold, 0.96) as semantic_cache_threshold, 
                     COALESCE(fb.embed_enabled, false) as embed_enabled, 
+                    COALESCE(fb.semantic_cache_autosave, true) as semantic_cache_autosave,
                     COALESCE(fb.created_at, NOW()) as created_at
                 FROM fb_message_database fb
                 WHERE NOT EXISTS (SELECT 1 FROM page_access_token_message pam2 WHERE pam2.page_id = fb.page_id)
@@ -475,6 +477,7 @@ exports.getSemanticCacheConfigs = async (req, res) => {
                 COALESCE(semantic_cache_enabled, false) AS semantic_cache_enabled,
                 COALESCE(semantic_cache_threshold, 0.96) AS semantic_cache_threshold,
                 COALESCE(embed_enabled, false) AS embed_enabled,
+                COALESCE(semantic_cache_autosave, true) AS semantic_cache_autosave,
                 COALESCE(created_at, NOW()) AS created_at
             FROM whatsapp_message_database
         `;
@@ -507,7 +510,7 @@ exports.getSemanticCacheConfigs = async (req, res) => {
 
 exports.updateSemanticCacheConfig = async (req, res) => {
     try {
-        const { platform, id, semantic_cache_enabled, semantic_cache_threshold, embed_enabled } = req.body;
+        const { platform, id, semantic_cache_enabled, semantic_cache_threshold, embed_enabled, semantic_cache_autosave = true } = req.body;
 
         if (!platform || !id) {
             return res.status(400).json({ success: false, error: 'Platform and ID are required' });
@@ -519,6 +522,7 @@ exports.updateSemanticCacheConfig = async (req, res) => {
                 await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS semantic_cache_enabled boolean DEFAULT false`);
                 await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS semantic_cache_threshold numeric DEFAULT 0.96`);
                 await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS embed_enabled boolean DEFAULT false`);
+                await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS semantic_cache_autosave boolean DEFAULT true`);
                 await pgClient.query(`
                     DO $$ 
                     BEGIN 
@@ -531,29 +535,31 @@ exports.updateSemanticCacheConfig = async (req, res) => {
                 await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS semantic_cache_enabled boolean DEFAULT false`);
                 await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS semantic_cache_threshold numeric DEFAULT 0.96`);
                 await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS embed_enabled boolean DEFAULT false`);
+                await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS semantic_cache_autosave boolean DEFAULT true`);
             }
         } catch (e) {
             console.warn('Semantic cache update repair warning:', e.message);
         }
 
         let sql = '';
-        const params = [semantic_cache_enabled, semantic_cache_threshold, embed_enabled, id];
+        const params = [semantic_cache_enabled, semantic_cache_threshold, embed_enabled, semantic_cache_autosave, id];
 
         if (platform === 'messenger') {
             sql = `
-                INSERT INTO fb_message_database (page_id, semantic_cache_enabled, semantic_cache_threshold, embed_enabled)
-                VALUES ($4, $1, $2, $3)
+                INSERT INTO fb_message_database (page_id, semantic_cache_enabled, semantic_cache_threshold, embed_enabled, semantic_cache_autosave)
+                VALUES ($5, $1, $2, $3, $4)
                 ON CONFLICT (page_id) 
                 DO UPDATE SET 
                     semantic_cache_enabled = EXCLUDED.semantic_cache_enabled, 
                     semantic_cache_threshold = EXCLUDED.semantic_cache_threshold, 
-                    embed_enabled = EXCLUDED.embed_enabled
+                    embed_enabled = EXCLUDED.embed_enabled,
+                    semantic_cache_autosave = EXCLUDED.semantic_cache_autosave
             `;
         } else if (platform === 'whatsapp') {
             sql = `
                 UPDATE whatsapp_message_database 
-                SET semantic_cache_enabled = $1, semantic_cache_threshold = $2, embed_enabled = $3
-                WHERE session_name = $4
+                SET semantic_cache_enabled = $1, semantic_cache_threshold = $2, embed_enabled = $3, semantic_cache_autosave = $4
+                WHERE session_name = $5
             `;
         } else {
             return res.status(400).json({ success: false, error: 'Invalid platform' });
