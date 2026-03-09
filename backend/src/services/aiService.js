@@ -1256,15 +1256,28 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         
         if (semEnabled && !isMediaTurn && cleanUserMessage) {
             const dbService = require('./dbService');
+            
+            // --- SMART HISTORY CONTEXT FOR CACHE ---
+            // If the user says something short like "price?" or "it's price", 
+            // we prepend the last user message to make it more specific for the cache.
+            let cacheQuery = cleanUserMessage;
+            if (cleanUserMessage.length < 15 && history.length > 0) {
+                const lastUserMsg = [...history].reverse().find(m => m.role === 'user');
+                if (lastUserMsg && lastUserMsg.content) {
+                    cacheQuery = `${lastUserMsg.content} ${cleanUserMessage}`;
+                }
+            }
+
             const cached = await dbService.findSemanticCache({
                 page_id: pageConfig.page_id || null,
                 session_name: pageConfig.page_id || null,
                 context_id: currentContextId,
-                question: cleanUserMessage,
+                question: cacheQuery,
                 threshold
             });
             if (cached) {
                 console.log(`[AI] Semantic Cache HIT! (Context: ${currentContextId || 'None'}, Threshold: ${threshold})`);
+                usedSemanticCache = true;
                 return finalize({ 
                     reply: cached, 
                     sentiment: 'neutral', 

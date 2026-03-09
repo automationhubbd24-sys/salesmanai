@@ -14,6 +14,7 @@ const apiEngineRoutes = require('../api-engine/engine'); // Added for API Engine
 const teamRoutes = require('./routes/teamRoutes');
 const statsRoutes = require('./routes/statsRoutes');
 const aiRoutes = require('./routes/aiRoutes');
+const adminSemanticRoutes = require('./routes/adminSemanticRoutes');
 
 const path = require('path');
 const app = express();
@@ -56,6 +57,7 @@ app.use('/api/teams', teamRoutes); // Alias for /api prefix
 app.use('/stats', statsRoutes);
 app.use('/api/stats', statsRoutes); // Alias for /api prefix
 app.use('/api/ai', aiRoutes);
+app.use('/api/admin/semantic', adminSemanticRoutes);
 
 // Basic health check
 

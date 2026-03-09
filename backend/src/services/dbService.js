@@ -2599,6 +2599,68 @@ async function saveSemanticCacheEntry({ page_id = null, session_name = null, con
     }
 }
 
+async function getSemanticCacheEntries({ page_id = null, session_name = null, limit = 50, offset = 0 }) {
+    const { query } = require('./pgClient');
+    try {
+        const conditions = [];
+        const params = [];
+        
+        if (page_id) {
+            params.push(page_id);
+            conditions.push(`page_id = $${params.length}`);
+        }
+        if (session_name) {
+            params.push(session_name);
+            conditions.push(`session_name = $${params.length}`);
+        }
+        
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' OR ')}` : '';
+        params.push(limit, offset);
+        
+        const sql = `
+            SELECT id, page_id, session_name, context_id, question_norm, response_text, created_at
+            FROM semantic_cache
+            ${whereClause}
+            ORDER BY created_at DESC
+            LIMIT $${params.length - 1} OFFSET $${params.length}
+        `;
+        
+        const res = await query(sql, params);
+        return res.rows;
+    } catch (e) {
+        console.warn(`[DB] getSemanticCacheEntries failed: ${e.message}`);
+        return [];
+    }
+}
+
+async function deleteSemanticCacheEntry(id) {
+    const { query } = require('./pgClient');
+    try {
+        await query('DELETE FROM semantic_cache WHERE id = $1', [id]);
+        return true;
+    } catch (e) {
+        console.warn(`[DB] deleteSemanticCacheEntry failed: ${e.message}`);
+        return false;
+    }
+}
+
+async function updateSemanticCacheEntry(id, { question, response }) {
+    const { query } = require('./pgClient');
+    try {
+        const norm = (question || '').toString().toLowerCase().replace(/[^\w\s\u0980-\u09FF]/g, '').trim();
+        await query(
+            `UPDATE semantic_cache 
+             SET question_norm = $1, response_text = $2 
+             WHERE id = $3`,
+            [norm, response, id]
+        );
+        return true;
+    } catch (e) {
+        console.warn(`[DB] updateSemanticCacheEntry failed: ${e.message}`);
+        return false;
+    }
+}
+
 async function findSemanticCache({ page_id = null, session_name = null, context_id = null, question, threshold = 0.96 }) {
     const { query } = require('./pgClient');
     try {
@@ -2718,6 +2780,9 @@ module.exports = {
     // --- Semantic Cache ---
     findSemanticCache,
     saveSemanticCacheEntry,
+    getSemanticCacheEntries,
+    deleteSemanticCacheEntry,
+    updateSemanticCacheEntry,
     getProducts,
     getProductById,
     updateProduct,
