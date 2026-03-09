@@ -2728,11 +2728,12 @@ async function findSemanticCache({ page_id = null, session_name = null, context_
         // Context Logic: Prefer entry with matching context_id if provided.
         // If context_id is provided, we search for entries with that ID or NULL (Independent).
         let contextWhere = '';
-        let contextSort = '1'; // Default sort value if no context_id
+        let contextSortClause = '1'; // Default sort (no specific preference)
+        
         if (context_id) {
             contextWhere = `AND (context_id = $${params.length + 1} OR context_id IS NULL)`;
-            contextSort = `$${params.length + 1}`;
-            params.push(context_id);
+            contextSortClause = `(CASE WHEN context_id = $${params.length + 1} THEN 1 ELSE 2 END)`;
+            params.push(String(context_id).trim());
         } else {
             contextWhere = `AND context_id IS NULL`;
         }
@@ -2744,7 +2745,7 @@ async function findSemanticCache({ page_id = null, session_name = null, context_
             ${scopeWhere}
             ${contextWhere}
             ORDER BY 
-                (CASE WHEN context_id = ${contextSort} THEN 1 ELSE 2 END) ASC,
+                ${contextSortClause} ASC,
                 similarity(question_norm, $1) DESC, 
                 created_at DESC
             LIMIT 1
