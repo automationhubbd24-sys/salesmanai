@@ -1,33 +1,39 @@
 const { Pool } = require('pg');
+const DATABASE_URL = 'postgres://postgres:KNCyFJA3h3NJdfQJ4QgDGJ76bSX0ApnjTbXB5aPFiSEeUeYMB2XVecXbrQXxi4bA@72.62.196.104:5433/postgres';
+const pool = new Pool({ connectionString: DATABASE_URL });
 
-const DATABASE_URL = 'postgres://postgres:GoKeD0hpf7UIekl9Rs7K613WZlpdS9BH4I2QuJRaMEYeXahDgEwB9zGPKQUX8niz@72.62.196.104:5432/postgres';
-const PAGE_ID = '1018705751321580';
-
-async function checkCacheSettings() {
-    const pool = new Pool({
-        connectionString: DATABASE_URL,
-        ssl: { rejectUnauthorized: false },
-        connectionTimeoutMillis: 10000, // Wait up to 10s
-    });
-
+async function checkCosmeticHub() {
     try {
-        console.log(`--- Checking Cache Settings for Cosmetic Hub (${PAGE_ID}) ---`);
-        const res = await pool.query(
-            'SELECT page_id, semantic_cache_enabled, semantic_cache_threshold, embed_enabled FROM fb_message_database WHERE page_id = $1',
-            [PAGE_ID]
-        );
+        console.log('Connecting to NEW database...');
+        
+        // 1. Find page_id for Cosmetic Hub
+        const pages = await pool.query("SELECT page_id, name FROM page_access_token_message WHERE name ILIKE '%Cosmetic%'");
+        console.log('FB Pages matching Cosmetic:', JSON.stringify(pages.rows, null, 2));
+        
+        // 2. Find session_name for Cosmetic Hub
+        const waSessions = await pool.query("SELECT session_name, push_name FROM whatsapp_message_database WHERE push_name ILIKE '%Cosmetic%' OR session_name ILIKE '%Cosmetic%'");
+        console.log('WA Sessions matching Cosmetic:', JSON.stringify(waSessions.rows, null, 2));
 
-        if (res.rows.length === 0) {
-            console.log(`[NOT FOUND] No settings found for page_id: ${PAGE_ID}`);
-        } else {
-            console.log('[FOUND] Settings:', JSON.stringify(res.rows[0], null, 2));
-        }
+        // 3. Check for ANY entries in semantic_cache to see how they are stored
+        const anyCache = await pool.query("SELECT page_id, session_name, COUNT(*) as cnt FROM semantic_cache GROUP BY page_id, session_name");
+        console.log('Semantic Cache identifiers in DB:', JSON.stringify(anyCache.rows, null, 2));
 
-    } catch (err) {
-        console.error('[ERROR]', err.message);
+        const checkEntries = async (id, type, name) => {
+            const res = await pool.query("SELECT id, question_norm FROM semantic_cache WHERE page_id = $1 OR session_name = $1", [id]);
+            console.log(`Cache entries for ${type} ${name} (${id}):`, res.rowCount);
+            if (res.rowCount > 0) {
+                console.log('Sample entry:', JSON.stringify(res.rows[0], null, 2));
+            }
+        };
+
+        for (const page of pages.rows) await checkEntries(page.page_id, 'FB Page', page.name);
+        for (const wa of waSessions.rows) await checkEntries(wa.session_name, 'WA Session', wa.push_name);
+
+    } catch (e) {
+        console.error('Check failed:', e.message);
     } finally {
         await pool.end();
     }
 }
 
-checkCacheSettings();
+checkCosmeticHub();

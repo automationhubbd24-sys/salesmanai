@@ -2607,11 +2607,10 @@ async function getSemanticCacheEntries({ page_id = null, session_name = null, li
         
         if (page_id) {
             params.push(page_id);
-            conditions.push(`page_id = $${params.length}`);
-        }
-        if (session_name) {
+            conditions.push(`(page_id = $${params.length} OR session_name = $${params.length})`);
+        } else if (session_name) {
             params.push(session_name);
-            conditions.push(`session_name = $${params.length}`);
+            conditions.push(`(page_id = $${params.length} OR session_name = $${params.length})`);
         }
         
         const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' OR ')}` : '';
