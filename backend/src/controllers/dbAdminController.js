@@ -566,3 +566,78 @@ exports.updateSemanticCacheConfig = async (req, res) => {
         res.status(500).json({ success: false, error: error.message });
     }
 };
+
+// --- Semantic Cache: Entries Management (Superadmin Only) ---
+exports.getSemanticCacheEntries = async (req, res) => {
+    try {
+        const dbService = require('../services/dbService');
+        const { page_id, session_name, limit, offset } = req.query;
+        const entries = await dbService.getSemanticCacheEntries({
+            page_id: page_id || null,
+            session_name: session_name || null,
+            limit: parseInt(limit) || 50,
+            offset: parseInt(offset) || 0
+        });
+        res.json({ success: true, entries });
+    } catch (error) {
+        console.error('[DBAdmin] getSemanticCacheEntries error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+exports.addSemanticCacheEntry = async (req, res) => {
+    try {
+        const dbService = require('../services/dbService');
+        const { page_id, session_name, context_id, question, response } = req.body;
+        if (!question || !response) {
+            return res.status(400).json({ success: false, error: 'Question and response are required' });
+        }
+        
+        await dbService.saveSemanticCacheEntry({
+            page_id: page_id || null,
+            session_name: session_name || null,
+            context_id: context_id || null,
+            question,
+            response
+        });
+        
+        res.json({ success: true, message: 'Manual cache entry added successfully' });
+    } catch (error) {
+        console.error('[DBAdmin] addSemanticCacheEntry error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+exports.updateSemanticCacheEntry = async (req, res) => {
+    try {
+        const dbService = require('../services/dbService');
+        const { id } = req.params;
+        const { question, response } = req.body;
+        
+        const success = await dbService.updateSemanticCacheEntry(id, { question, response });
+        if (success) {
+            res.json({ success: true, message: 'Cache entry updated' });
+        } else {
+            res.status(404).json({ success: false, error: 'Entry not found or update failed' });
+        }
+    } catch (error) {
+        console.error('[DBAdmin] updateSemanticCacheEntry error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+exports.deleteSemanticCacheEntry = async (req, res) => {
+    try {
+        const dbService = require('../services/dbService');
+        const { id } = req.params;
+        const success = await dbService.deleteSemanticCacheEntry(id);
+        if (success) {
+            res.json({ success: true, message: 'Cache entry deleted' });
+        } else {
+            res.status(404).json({ success: false, error: 'Entry not found' });
+        }
+    } catch (error) {
+        console.error('[DBAdmin] deleteSemanticCacheEntry error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};

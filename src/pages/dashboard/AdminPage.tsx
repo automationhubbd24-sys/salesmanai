@@ -231,6 +231,14 @@ export default function AdminPage() {
   const [cachePlatform, setCachePlatform] = useState<'all' | 'messenger' | 'whatsapp'>('all');
   const [editingCacheConfig, setEditingCacheConfig] = useState<CacheConfig | null>(null);
   const [isCacheDialogOpen, setIsCacheDialogOpen] = useState(false);
+  const [isEntriesDialogOpen, setIsEntriesDialogOpen] = useState(false);
+  const [cacheEntries, setCacheEntries] = useState<any[]>([]);
+  const [entriesLoading, setEntriesLoading] = useState(false);
+  const [selectedConfigForEntries, setSelectedConfigForEntries] = useState<any>(null);
+  const [newEntryQuestion, setNewEntryQuestion] = useState("");
+  const [newEntryResponse, setNewEntryResponse] = useState("");
+  const [editingEntryId, setEditingEntryId] = useState<number | null>(null);
+  const [entriesSearch, setEntriesSearch] = useState("");
   const [embeddingConfig, setEmbeddingConfig] = useState<{ provider: string; model: string; base_url: string; api_key: string }>({
     provider: "openai",
     model: "",
@@ -273,6 +281,99 @@ export default function AdminPage() {
       console.error("Failed to fetch cache configs", error);
     } finally {
       setCacheLoading(false);
+    }
+  };
+
+  const fetchCacheEntries = async (platform: string, id: string) => {
+    setEntriesLoading(true);
+    try {
+      const token = getAdminToken();
+      const queryParams = new URLSearchParams();
+      if (platform === 'messenger') queryParams.append('page_id', id);
+      else queryParams.append('session_name', id);
+      
+      const response = await fetch(`${BACKEND_URL}/api/db-admin/semantic-cache/entries?${queryParams.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await response.json();
+      if (data.success) {
+        setCacheEntries(data.entries || []);
+      }
+    } catch (error) {
+      console.error('Fetch entries error:', error);
+    } finally {
+      setEntriesLoading(false);
+    }
+  };
+
+  const handleSaveCacheEntry = async () => {
+    if (!newEntryQuestion || !newEntryResponse) {
+      toast.error("Question and response are required");
+      return;
+    }
+    
+    const payload = {
+      page_id: selectedConfigForEntries.platform === 'messenger' ? selectedConfigForEntries.id : null,
+      session_name: selectedConfigForEntries.platform === 'whatsapp' ? selectedConfigForEntries.id : null,
+      question: newEntryQuestion,
+      response: newEntryResponse
+    };
+
+    try {
+      const token = getAdminToken();
+      let response;
+      if (editingEntryId) {
+        response = await fetch(`${BACKEND_URL}/api/db-admin/semantic-cache/update/${editingEntryId}`, {
+          method: 'PUT',
+          headers: { 
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ question: newEntryQuestion, response: newEntryResponse })
+        });
+      } else {
+        response = await fetch(`${BACKEND_URL}/api/db-admin/semantic-cache/add`, {
+          method: 'POST',
+          headers: { 
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+      }
+
+      const data = await response.json();
+      if (data.success) {
+        toast.success(editingEntryId ? 'Entry updated' : 'Entry added');
+        setNewEntryQuestion("");
+        setNewEntryResponse("");
+        setEditingEntryId(null);
+        fetchCacheEntries(selectedConfigForEntries.platform, selectedConfigForEntries.id);
+      } else {
+        toast.error(data.error || "Failed to save entry");
+      }
+    } catch (error) {
+      toast.error('Failed to save entry');
+    }
+  };
+
+  const handleDeleteCacheEntry = async (id: number) => {
+    if (!confirm('Are you sure you want to delete this cache entry?')) return;
+    try {
+      const token = getAdminToken();
+      const response = await fetch(`${BACKEND_URL}/api/db-admin/semantic-cache/delete/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await response.json();
+      if (data.success) {
+        toast.success('Entry deleted');
+        fetchCacheEntries(selectedConfigForEntries.platform, selectedConfigForEntries.id);
+      } else {
+        toast.error(data.error || "Delete failed");
+      }
+    } catch (error) {
+      toast.error('Failed to delete entry');
     }
   };
 
@@ -2616,18 +2717,33 @@ export default function AdminPage() {
                             </span>
                           </TableCell>
                           <TableCell className="py-4 text-right">
-                            <Button 
-                              size="sm" 
-                              variant="secondary" 
-                              className="h-8 text-xs gap-2 font-bold px-4 bg-white/5 hover:bg-blue-500 hover:text-white border border-white/10 transition-all"
-                              onClick={() => {
-                                setEditingCacheConfig({ ...config });
-                                setIsCacheDialogOpen(true);
-                              }}
-                            >
-                              <Settings className="h-3.5 w-3.5" />
-                              Manage
-                            </Button>
+                            <div className="flex items-center justify-end gap-2">
+                              <Button 
+                                size="sm" 
+                                variant="outline" 
+                                className="h-8 text-xs gap-2 font-medium px-3 border-white/10 hover:bg-blue-500/10 hover:text-blue-400"
+                                onClick={() => {
+                                  setSelectedConfigForEntries(config);
+                                  fetchCacheEntries(config.platform, config.id);
+                                  setIsEntriesDialogOpen(true);
+                                }}
+                              >
+                                <DatabaseIcon className="h-3.5 w-3.5" />
+                                Manage Cache
+                              </Button>
+                              <Button 
+                                size="sm" 
+                                variant="secondary" 
+                                className="h-8 text-xs gap-2 font-bold px-4 bg-white/5 hover:bg-blue-500 hover:text-white border border-white/10 transition-all"
+                                onClick={() => {
+                                  setEditingCacheConfig({ ...config });
+                                  setIsCacheDialogOpen(true);
+                                }}
+                              >
+                                <Settings className="h-3.5 w-3.5" />
+                                Config
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))
@@ -3209,6 +3325,170 @@ export default function AdminPage() {
               className="bg-blue-600 hover:bg-blue-700 h-9"
             >
               Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isEntriesDialogOpen} onOpenChange={setIsEntriesDialogOpen}>
+        <DialogContent className="max-w-4xl bg-[#0f0f0f] border-white/10 text-white h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl">
+              <DatabaseIcon className="h-5 w-5 text-blue-400" />
+              Manage Semantic Cache Entries
+            </DialogTitle>
+            <DialogDescription className="text-white/60">
+              Add, edit or delete cache entries for {selectedConfigForEntries?.name}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-hidden flex flex-col gap-6 py-4">
+            {/* Add New Entry Form */}
+            <Card className="bg-white/5 border-white/10 shrink-0">
+              <CardHeader className="py-3 px-4">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                  <Plus className="h-4 w-4 text-green-400" />
+                  {editingEntryId ? 'Edit Entry' : 'Add Manual Cache (Golden Response)'}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="py-0 px-4 pb-4 space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label className="text-xs text-muted-foreground uppercase tracking-wider">User Question</Label>
+                    <Textarea 
+                      placeholder="Enter the question..." 
+                      className="bg-black/40 border-white/10 min-h-[80px] text-sm"
+                      value={newEntryQuestion}
+                      onChange={(e) => setNewEntryQuestion(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs text-muted-foreground uppercase tracking-wider">AI Response</Label>
+                    <Textarea 
+                      placeholder="Enter the ideal response..." 
+                      className="bg-black/40 border-white/10 min-h-[80px] text-sm"
+                      value={newEntryResponse}
+                      onChange={(e) => setNewEntryResponse(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2">
+                  {editingEntryId && (
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={() => {
+                        setEditingEntryId(null);
+                        setNewEntryQuestion("");
+                        setNewEntryResponse("");
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  )}
+                  <Button 
+                    size="sm" 
+                    className="bg-blue-600 hover:bg-blue-700"
+                    onClick={handleSaveCacheEntry}
+                  >
+                    {editingEntryId ? 'Update Entry' : 'Save Entry'}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Entries List */}
+            <div className="flex-1 flex flex-col gap-3 overflow-hidden">
+              <div className="flex items-center justify-between shrink-0">
+                <h3 className="text-sm font-semibold flex items-center gap-2">
+                  <Activity className="h-4 w-4 text-blue-400" />
+                  Existing Cache Entries ({cacheEntries.length})
+                </h3>
+                <div className="relative w-64">
+                  <Input 
+                    placeholder="Search entries..." 
+                    className="h-8 text-xs bg-black/40 border-white/10 pl-8"
+                    value={entriesSearch}
+                    onChange={(e) => setEntriesSearch(e.target.value)}
+                  />
+                  <svg className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto rounded-lg border border-white/5 bg-black/20">
+                {entriesLoading ? (
+                  <div className="h-full flex flex-col items-center justify-center gap-3 opacity-50">
+                    <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+                    <p className="text-sm">Loading cache entries...</p>
+                  </div>
+                ) : cacheEntries.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center gap-3 opacity-20">
+                    <DatabaseIcon className="h-12 w-12" />
+                    <p className="text-sm">No cache entries found for this account.</p>
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader className="bg-white/5 sticky top-0 z-10">
+                      <TableRow className="hover:bg-transparent border-white/10">
+                        <TableHead className="w-[40%] text-xs uppercase font-bold text-white/50">Question</TableHead>
+                        <TableHead className="w-[45%] text-xs uppercase font-bold text-white/50">Response</TableHead>
+                        <TableHead className="w-[15%] text-xs uppercase font-bold text-white/50 text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {cacheEntries
+                        .filter(e => 
+                          e.question_norm?.toLowerCase().includes(entriesSearch.toLowerCase()) || 
+                          e.response_text?.toLowerCase().includes(entriesSearch.toLowerCase())
+                        )
+                        .map((entry) => (
+                        <TableRow key={entry.id} className="hover:bg-white/5 border-white/5 transition-colors group">
+                          <TableCell className="align-top py-4">
+                            <div className="text-xs font-medium text-blue-400/90 leading-relaxed line-clamp-3 group-hover:line-clamp-none transition-all">
+                              {entry.question_norm}
+                            </div>
+                          </TableCell>
+                          <TableCell className="align-top py-4">
+                            <div className="text-xs text-white/70 leading-relaxed line-clamp-3 group-hover:line-clamp-none transition-all">
+                              {entry.response_text}
+                            </div>
+                          </TableCell>
+                          <TableCell className="align-top py-4 text-right">
+                            <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <Button 
+                                size="icon" 
+                                variant="ghost" 
+                                className="h-7 w-7 text-blue-400 hover:text-blue-300 hover:bg-blue-500/10"
+                                onClick={() => {
+                                  setEditingEntryId(entry.id);
+                                  setNewEntryQuestion(entry.question_norm);
+                                  setNewEntryResponse(entry.response_text);
+                                }}
+                              >
+                                <Edit className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button 
+                                size="icon" 
+                                variant="ghost" 
+                                className="h-7 w-7 text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                                onClick={() => handleDeleteCacheEntry(entry.id)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="shrink-0 border-t border-white/5 pt-4">
+            <Button variant="outline" onClick={() => setIsEntriesDialogOpen(false)} className="border-white/10 hover:bg-white/5">
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>
