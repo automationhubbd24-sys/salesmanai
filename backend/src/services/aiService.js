@@ -1238,17 +1238,16 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             console.warn("[AI Logger] Error preparing logData:", err.message);
         }
 
-        // Save to Semantic Cache if enabled and not served from cache
+        // --- AUTO-SAVE TO SEMANTIC CACHE DISABLED (As per user request for Manual Entry Only) ---
+        /*
         try {
             const semEnabled = pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1 || pageConfig.semantic_cache_enabled === 'true');
             const embedEnabled = pageConfig && (pageConfig.embed_enabled === true || pageConfig.embed_enabled === 1 || pageConfig.embed_enabled === 'true');
             const canCache = isCacheable(cleanUserMessage);
             
-            // --- FIX: If either Semantic Cache OR Embedding is enabled, we save to cache ---
             if ((semEnabled || embedEnabled) && !usedSemanticCache && canCache && result && result.reply && cleanUserMessage) {
                 const dbService = require('./dbService');
                 
-                // If Embedding is enabled, generate vector for saving
                 if (embedEnabled) {
                     getEmbedding(cleanUserMessage).then(v => {
                         dbService.saveSemanticCacheEntry({
@@ -1273,6 +1272,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         } catch (e) {
             console.warn(`[AI] Failed to trigger semantic cache save: ${e.message}`);
         }
+        */
 
         // --- 2. Log to API Usage Stats (api_usage_stats table) ---
         if (pageConfig.user_id && (result.token_usage > 0 || pageConfig.is_external_api === true || pageConfig.billing_mode === 'request')) {
