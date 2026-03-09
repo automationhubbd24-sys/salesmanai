@@ -2614,16 +2614,16 @@ async function getSemanticCacheEntries({ page_id = null, session_name = null, li
         }
         
         const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' OR ')}` : '';
-        params.push(limit, offset);
         
         const sql = `
             SELECT id, page_id, session_name, context_id, question_norm, response_text, created_at
             FROM semantic_cache
             ${whereClause}
             ORDER BY created_at DESC
-            LIMIT $${params.length - 1} OFFSET $${params.length}
+            LIMIT $${params.length + 1} OFFSET $${params.length + 2}
         `;
         
+        params.push(limit, offset);
         const res = await query(sql, params);
         return res.rows;
     } catch (e) {
