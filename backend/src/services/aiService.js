@@ -725,22 +725,31 @@ async function getEmbedding(text) {
     try {
         const config = await dbService.getEmbeddingGlobalConfig();
         if (!config || !config.api_key) {
-            // console.warn('[AI Embedding] Global config or API Key missing.');
             return null;
         }
 
-        const openai = new OpenAI({
-            apiKey: config.api_key,
-            baseURL: config.base_url || 'https://api.openai.com/v1'
-        });
+        const provider = (config.provider || '').toLowerCase();
+        
+        if (provider === 'google' || provider === 'gemini') {
+            const genAI = new GoogleGenerativeAI(config.api_key);
+            const model = genAI.getGenerativeModel({ model: config.model || "text-embedding-004" });
+            const result = await model.embedContent(text.replace(/\n/g, ' '));
+            return result.embedding.values;
+        } else {
+            // Default to OpenAI/OpenRouter (OpenAI SDK compatible)
+            const openai = new OpenAI({
+                apiKey: config.api_key,
+                baseURL: config.base_url || 'https://api.openai.com/v1'
+            });
 
-        const response = await openai.embeddings.create({
-            model: config.model || 'text-embedding-3-small',
-            input: text.replace(/\n/g, ' '),
-            encoding_format: "float",
-        });
+            const response = await openai.embeddings.create({
+                model: config.model || 'text-embedding-3-small',
+                input: text.replace(/\n/g, ' '),
+                encoding_format: "float",
+            });
 
-        return response.data[0].embedding;
+            return response.data[0].embedding;
+        }
     } catch (e) {
         console.error(`[AI Embedding] Generation failed: ${e.message}`);
         return null;

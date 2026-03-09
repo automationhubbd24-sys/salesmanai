@@ -2769,6 +2769,7 @@ async function findSemanticCache({ page_id = null, session_name = null, context_
                 SELECT response_text, context_id, (1 - (question_vector <=> $${vectorIdx}::vector)) as similarity
                 FROM semantic_cache
                 WHERE question_vector IS NOT NULL
+                AND dimension(question_vector) = dimension($${vectorIdx}::vector)
                 AND (1 - (question_vector <=> $${vectorIdx}::vector)) >= $2
                 ${scopeWhere}
                 ${contextWhere}
