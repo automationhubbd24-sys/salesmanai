@@ -465,8 +465,19 @@ async function queueMessage(event, entryPageId = null) {
 
                 if (isLocked) {
                     await dbService.toggleFbLock(pageId, messageRecipientId, true);
+                    console.log(`[Handover Lock] Page ${pageId} locked chat for User ${messageRecipientId} via emoji.`);
+                    // REGISTER BOT REPLY to avoid echo loop since we are about to send this 
+                    trackBotReply(messageRecipientId, text);
+                    // SEND the emoji to customer
+                    await facebookService.sendMessage(pageId, messageRecipientId, text, pageData.config.page_access_token);
                 } else if (isUnlocked) {
                     await dbService.toggleFbLock(pageId, messageRecipientId, false);
+                    console.log(`[Handover Lock] Page ${pageId} unlocked chat for User ${messageRecipientId} via emoji.`);
+                    // No need to send anything for unlock usually, or you can send it if you want.
+                    // For consistency with your request "bot lock emoji send korlo seta sent hobe", 
+                    // we send the unlock emoji too if the admin/bot sent it.
+                    trackBotReply(messageRecipientId, text);
+                    await facebookService.sendMessage(pageId, messageRecipientId, text, pageData.config.page_access_token);
                 }
             }
         } catch (err) {
@@ -841,7 +852,15 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
     const hasAlphaNumericOrBangla = /[A-Za-z0-9\u0980-\u09FF]/.test(normalizedForEmojiCheck);
     const hasQuestionMark = normalizedForEmojiCheck.includes('?');
     const hasMediaContext = allImages.length > 0 || allAudios.length > 0 || !!replyToId;
-    if (!hasAlphaNumericOrBangla && !hasQuestionMark && !hasMediaContext && normalizedForEmojiCheck.length > 0) {
+
+    // --- LOCK EMOJI GATEKEEPER BYPASS ---
+    // If the message contains a lock emoji, we want to allow it through to process the lock logic,
+    // but still block other pure emoji messages.
+    const pageDataForEmoji = await getCachedPageData(pageId);
+    const lockList = [pageDataForEmoji?.prompts?.block_emoji, pageDataForEmoji?.prompts?.lock_emojis, pageDataForEmoji?.prompts?.block_emojis].filter(Boolean).join(',').split(/[, ]+/).map(e => normalizeText(e.trim())).filter(e => e);
+    const hasLockEmoji = lockList.some(e => normalizeText(normalizedForEmojiCheck).includes(e));
+
+    if (!hasAlphaNumericOrBangla && !hasQuestionMark && !hasMediaContext && normalizedForEmojiCheck.length > 0 && !hasLockEmoji) {
         const logMsg = `[Emoji Gatekeeper] Blocked emoji-only message for ${sessionId}.`;
         console.log(logMsg);
         logToFile(logMsg);

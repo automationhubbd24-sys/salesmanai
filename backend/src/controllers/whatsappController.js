@@ -511,11 +511,19 @@ const handleWebhook = async (req, res) => {
                         dbService.toggleWhatsAppLock(sessionName, targetUserId, true).catch(() => {});
                         const chatKey = `${sessionName}_${targetUserId}`;
                         handoverMap.set(chatKey, Date.now() + 24 * 60 * 60 * 1000);
+                        
+                        // SEND TO CUSTOMER
+                        trackBotReply(targetUserId, messageText);
+                        whatsappService.sendMessage(sessionName, targetUserId, messageText).catch(() => {});
                     } else if (unlockList.some(e => cleanContent.includes(e))) {
                         console.log(`[WA] Admin sent UNLOCK emoji to ${targetUserId}`);
                         dbService.toggleWhatsAppLock(sessionName, targetUserId, false).catch(() => {});
                         const chatKey = `${sessionName}_${targetUserId}`;
                         handoverMap.delete(chatKey);
+
+                        // SEND TO CUSTOMER
+                        trackBotReply(targetUserId, messageText);
+                        whatsappService.sendMessage(sessionName, targetUserId, messageText).catch(() => {});
                     }
                 }
             }
