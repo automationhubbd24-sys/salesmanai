@@ -295,12 +295,21 @@ export default function AdminPage() {
       const response = await fetch(`${BACKEND_URL}/api/db-admin/semantic-cache/entries?${queryParams.toString()}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
+      
       const data = await response.json();
       if (data.success) {
         setCacheEntries(data.entries || []);
+        if (!data.entries || data.entries.length === 0) {
+          toast.info("No cache entries found for this account.");
+        }
+      } else {
+        const errorMsg = data.error || "Failed to fetch entries";
+        toast.error(`Fetch Error: ${errorMsg}`);
+        console.error('Fetch entries error response:', data);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Fetch entries error:', error);
+      toast.error(`Connection Error: ${error.message || "Failed to connect to server"}`);
     } finally {
       setEntriesLoading(false);
     }

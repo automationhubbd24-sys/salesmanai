@@ -572,16 +572,27 @@ exports.getSemanticCacheEntries = async (req, res) => {
     try {
         const dbService = require('../services/dbService');
         const { page_id, session_name, limit, offset } = req.query;
+        
+        if (!page_id && !session_name) {
+            return res.status(400).json({ success: false, error: 'page_id or session_name parameter is missing' });
+        }
+
         const entries = await dbService.getSemanticCacheEntries({
             page_id: page_id || null,
             session_name: session_name || null,
             limit: parseInt(limit) || 50,
             offset: parseInt(offset) || 0
         });
-        res.json({ success: true, entries });
+        
+        // Detailed check if query returned entries
+        if (!entries || !Array.isArray(entries)) {
+             return res.status(500).json({ success: false, error: 'Database returned invalid data format' });
+        }
+
+        res.json({ success: true, entries, count: entries.length });
     } catch (error) {
         console.error('[DBAdmin] getSemanticCacheEntries error:', error);
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({ success: false, error: `Internal Server Error: ${error.message}` });
     }
 };
 
