@@ -2610,13 +2610,12 @@ async function getSemanticCacheEntries({ page_id = null, session_name = null, li
         const conditions = [];
         const params = [];
         
-        // Use a more robust matching logic
-        if (page_id) {
-            params.push(String(page_id).trim());
-            conditions.push(`(TRIM(page_id) = $${params.length} OR TRIM(session_name) = $${params.length})`);
-        } else if (session_name) {
-            params.push(String(session_name).trim());
-            conditions.push(`(TRIM(page_id) = $${params.length} OR TRIM(session_name) = $${params.length})`);
+        const searchId = (page_id || session_name || '').toString().trim();
+        
+        if (searchId) {
+            params.push(searchId);
+            // Using a more flexible matching that handles potential TEXT vs BIGINT or hidden whitespace
+            conditions.push(`(page_id = $1 OR session_name = $1 OR page_id LIKE '%' || $1 || '%' OR session_name LIKE '%' || $1 || '%')`);
         }
         
         const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' OR ')}` : '';
@@ -2624,21 +2623,30 @@ async function getSemanticCacheEntries({ page_id = null, session_name = null, li
         const limitVal = parseInt(limit) || 50;
         const offsetVal = parseInt(offset) || 0;
         
+        params.push(limitVal, offsetVal);
+        
         const sql = `
             SELECT id, page_id, session_name, context_id, question_norm, response_text, created_at
             FROM semantic_cache
             ${whereClause}
             ORDER BY created_at DESC
-            LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+            LIMIT $${params.length - 1} OFFSET $${params.length}
         `;
         
-        params.push(limitVal, offsetVal);
+        console.log(`[DB Debug] getSemanticCacheEntries SearchID: "${searchId}" | SQL: ${sql.replace(/\s+/g, ' ')}`);
         
         const res = await query(sql, params);
+        
+        // If no entries found with specific ID, let's check total entries in table to diagnose DB connection
+        if (res.rows.length === 0) {
+            const totalCount = await query("SELECT COUNT(*) FROM semantic_cache");
+            console.log(`[DB Debug] No entries for ${searchId}. Total entries in table: ${totalCount.rows[0].count}`);
+        }
+
         return res.rows || [];
     } catch (e) {
-        console.error(`[DB] getSemanticCacheEntries failed: ${e.message}`);
-        return [];
+        console.error(`[DB Error] getSemanticCacheEntries failed: ${e.message}`);
+        throw e; // Throw instead of returning empty array so controller can report it
     }
 }
 

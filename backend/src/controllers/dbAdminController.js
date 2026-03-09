@@ -590,17 +590,12 @@ exports.getSemanticCacheEntries = async (req, res) => {
             offset: parseInt(offset) || 0
         });
         
-        console.log(`[DBAdmin] Found ${entries?.length || 0} entries for ID: ${page_id || session_name}`);
-
-        // Detailed check if query returned entries
-        if (!entries || !Array.isArray(entries)) {
-             return res.status(500).json({ success: false, error: 'Database returned invalid data format' });
-        }
+        console.log(`[DBAdmin] Found ${entries?.length || 0} entries for Search ID: ${page_id || session_name}`);
 
         res.json({ success: true, entries, count: entries.length });
     } catch (error) {
         console.error('[DBAdmin] getSemanticCacheEntries error:', error);
-        res.status(500).json({ success: false, error: `Internal Server Error: ${error.message}` });
+        res.status(500).json({ success: false, error: `Server Error: ${error.message}` });
     }
 };
 
