@@ -199,8 +199,8 @@ async function getCachedPageData(sessionName) {
     const now = Date.now();
     const cached = configCache.get(sessionName);
     
-    // Refresh cache if not exists or older than 2 minutes
-    if (!cached || (now - cached.timestamp > 2 * 60 * 1000)) {
+    // Refresh cache ONLY if not exists. Persistence is manual.
+    if (!cached) {
         try {
             const config = await dbService.getWhatsAppConfig(sessionName);
             if (config) {
@@ -208,7 +208,7 @@ async function getCachedPageData(sessionName) {
                 return { config, prompts: config.page_prompts || {} };
             }
         } catch (e) {
-            console.warn(`[Cache] Failed to refresh WA config for ${sessionName}:`, e.message);
+            console.warn(`[Cache] Failed to fetch WA config for ${sessionName}:`, e.message);
         }
     }
     return cached || { config: null, prompts: null };
@@ -2997,8 +2997,31 @@ async function checkAndCleanupExpiredSessions() {
     }
 }
 
+
+// --- CACHE MANAGEMENT ---
+/**
+ * Clears cached configuration and prompts for a specific session.
+ * @param {string} sessionName - WhatsApp Session Name
+ */
+function clearPageCache(sessionName) {
+    if (!sessionName) return;
+    const key = String(sessionName);
+    configCache.delete(key);
+    console.log(`[WA Cache] Cleared config cache for: ${key}`);
+}
+
+/**
+ * Clears all configuration caches.
+ */
+function clearAllCaches() {
+    configCache.clear();
+    console.log(`[WA Cache] All config caches cleared.`);
+}
+
 module.exports = {
     handleWebhook,
     checkAndCleanupExpiredSessions,
-    checkAndAutoRepairSessions
+    checkAndAutoRepairSessions,
+    clearPageCache,
+    clearAllCaches
 };

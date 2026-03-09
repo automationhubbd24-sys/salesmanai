@@ -5,6 +5,8 @@ const pgClient = require('../services/pgClient');
 const jwt = require('jsonwebtoken');
 const authMiddleware = require('../middleware/authMiddleware');
 
+const webhookController = require('../controllers/webhookController');
+
 // Get Messenger Pages (Merged with Team Permissions)
 router.get('/pages', async (req, res) => {
     try {
@@ -174,6 +176,8 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
                 email = EXCLUDED.email`,
             [String(page_id), name, page_access_token, ownerEmail, 'google', 'gemini-2.5-flash', true]
         );
+
+        webhookController.clearPageCache(page_id);
 
         res.json({ id: dbId });
     } catch (error) {
@@ -554,6 +558,10 @@ router.put('/config/:id', async (req, res) => {
             }
         }
 
+        if (tokenUpdates.length > 0 || updates.length > 0) {
+            webhookController.clearPageCache(pageId);
+        }
+
         res.json(updatedConfig);
     } catch (error) {
         console.error("Error updating Messenger config:", error);
@@ -630,6 +638,7 @@ router.delete('/pages/:pageId', async (req, res) => {
                 }
 
                 await dbService.deleteMessengerPage(pageId);
+                webhookController.clearPageCache(pageId);
 
                 res.json({ success: true });
     } catch (error) {

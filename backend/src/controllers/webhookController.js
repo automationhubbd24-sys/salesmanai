@@ -39,8 +39,8 @@ async function getCachedPageData(pageId) {
     const now = Date.now();
     const cached = configCache.get(pageId);
     
-    // Refresh cache if not exists or older than 2 minutes
-    if (!cached || (now - cached.timestamp > 2 * 60 * 1000)) {
+    // Refresh cache ONLY if not exists. Persistence is manual.
+    if (!cached) {
         try {
             const [config, prompts] = await Promise.all([
                 dbService.getPageConfig(pageId),
@@ -51,7 +51,7 @@ async function getCachedPageData(pageId) {
                 return { config, prompts };
             }
         } catch (e) {
-            console.warn(`[Cache] Failed to refresh for ${pageId}:`, e.message);
+            console.warn(`[Cache] Failed to fetch data for ${pageId}:`, e.message);
         }
     }
     return cached || { config: null, prompts: null };
@@ -2359,7 +2359,37 @@ async function processCommentEvent(changeValue, entryPageId = null) {
     }
 }
 
+// --- CACHE MANAGEMENT ---
+/**
+ * Clears cached configuration and prompts for a specific page.
+ * @param {string} pageId - Facebook Page ID or WhatsApp Session Name
+ */
+function clearPageCache(pageId) {
+    if (!pageId) return;
+    const key = String(pageId);
+    configCache.delete(key);
+    
+    // Also reset gatekeeper to allow new/updated pages immediately
+    lastCacheUpdate = 0; 
+    refreshAllowedPages();
+    
+    console.log(`[Cache] Cleared config cache and gatekeeper reset for: ${key}`);
+}
+
+/**
+ * Clears the gatekeeper cache and all configuration caches.
+ */
+async function clearAllCaches() {
+    configCache.clear();
+    allowedPagesCache.clear();
+    lastCacheUpdate = 0;
+    await refreshAllowedPages();
+    console.log(`[Cache] All caches cleared and gatekeeper refreshed.`);
+}
+
 module.exports = {
     handleWebhook,
-    verifyWebhook
+    verifyWebhook,
+    clearPageCache,
+    clearAllCaches
 };

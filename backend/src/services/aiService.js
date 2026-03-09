@@ -161,43 +161,47 @@ function handleAiError(error, apiKey, model) {
 
 // --- GLOBAL ENGINE CONFIG CACHE ---
 let globalEngineConfigCache = new Map();
-let lastConfigFetch = new Map(); // Store fetch time per provider
-const CONFIG_CACHE_TTL = 60 * 60 * 1000; // 1 Hour TTL
 
 async function getGlobalEngineConfig(provider) {
-    const now = Date.now();
-    const lastFetch = lastConfigFetch.get(provider) || 0;
-
-    // Check Cache
-    if (globalEngineConfigCache.has(provider) && (now - lastFetch < CONFIG_CACHE_TTL)) {
+    // Check Cache. Persistence is manual.
+    if (globalEngineConfigCache.has(provider)) {
         return globalEngineConfigCache.get(provider);
     }
 
     try {
-        console.log(`[AI] Refreshing Global Engine Config for ${provider}...`);
+        console.log(`[AI] Fetching Global Engine Config for ${provider}...`);
         const pgClient = require('./pgClient');
         const res = await pgClient.query('SELECT * FROM api_engine_configs WHERE provider = $1', [provider]);
         const config = res.rows[0] || null;
         
         globalEngineConfigCache.set(provider, config);
-        lastConfigFetch.set(provider, now);
         
         return config;
     } catch (err) {
         console.warn(`[AI] Failed to fetch global engine config for ${provider}:`, err.message);
-        return globalEngineConfigCache.get(provider) || null; // Fallback to stale cache
+        return null;
+    }
+}
+
+/**
+ * Clears the global engine configuration cache.
+ * @param {string} provider - Optional provider to clear specifically.
+ */
+function clearGlobalConfigCache(provider = null) {
+    if (provider) {
+        globalEngineConfigCache.delete(provider);
+        console.log(`[AI Cache] Global config cleared for provider: ${provider}`);
+    } else {
+        globalEngineConfigCache.clear();
+        console.log(`[AI Cache] All global engine configs cleared.`);
     }
 }
 
 async function refreshGlobalEngineConfigCache(provider = null) {
+    clearGlobalConfigCache(provider);
     if (provider) {
-        globalEngineConfigCache.delete(provider);
-        lastConfigFetch.delete(provider);
         return getGlobalEngineConfig(provider);
     }
-
-    globalEngineConfigCache.clear();
-    lastConfigFetch.clear();
     return true;
 }
 
@@ -2598,5 +2602,6 @@ module.exports = {
     fetchOgImage,
     processImageWithVision,
     transcribeAudio,
-    refreshGlobalEngineConfigCache
+    refreshGlobalEngineConfigCache,
+    clearGlobalConfigCache
 };

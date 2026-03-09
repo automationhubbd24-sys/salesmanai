@@ -1,4 +1,6 @@
 const pgClient = require('../services/pgClient');
+const keyService = require('../services/keyService');
+const aiService = require('../services/aiService');
 
 exports.list = async (req, res) => {
     try {
@@ -26,6 +28,8 @@ exports.create = async (req, res) => {
             [provider, api, 'active']
         );
 
+        await keyService.updateKeyCache(true);
+
         res.json({ success: true, item: result.rows[0] });
     } catch (error) {
         console.error('apiList create error:', error);
@@ -41,6 +45,9 @@ exports.remove = async (req, res) => {
         }
 
         await pgClient.query('DELETE FROM api_list WHERE id = $1', [id]);
+        
+        await keyService.updateKeyCache(true);
+
         res.json({ success: true });
     } catch (error) {
         console.error('apiList remove error:', error);
@@ -105,6 +112,10 @@ exports.saveGlobalConfig = async (req, res) => {
                 voice_rpm || 0, voice_rpd || 0, voice_rph || 0
             ]
         );
+
+        if (result.rowCount > 0) {
+            aiService.clearGlobalConfigCache(provider);
+        }
 
         res.json({ success: true, config: result.rows[0] });
     } catch (error) {

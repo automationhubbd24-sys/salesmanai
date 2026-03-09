@@ -38,7 +38,8 @@ const pendingUpdates = new Set();
 // Function declaration MUST be hoisted or defined before call
 async function updateKeyCache(force = false) {
     const now = Date.now();
-    if (!force && now - lastCacheUpdate < CACHE_TTL && keyCache.length > 0) {
+    // Refresh cache ONLY if not exists or forced. Persistence is manual.
+    if (!force && keyCache.length > 0) {
         return;
     }
 
@@ -86,13 +87,8 @@ async function updateKeyCache(force = false) {
 // Flush Interval (Increased to 30 Seconds to save CPU)
 setInterval(flushUsageStats, 30 * 1000);
 
-// --- Background Cache Refresh (30 Minutes) ---
-// Proactively fetches new keys/limits from DB to keep memory fresh
-setInterval(() => {
-    if (typeof updateKeyCache === 'function') {
-        updateKeyCache(true); 
-    }
-}, 30 * 60 * 1000);
+// --- Background Cache Refresh REMOVED ---
+// Persistence is now manual until user saves/updates.
 // --------------------------------------------------
 
 // --- Default Limits Map (Fallback if DB values are null) ---

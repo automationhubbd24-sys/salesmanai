@@ -617,6 +617,10 @@ router.put('/config/:id', async (req, res) => {
             values
         );
 
+        if (updateResult.rowCount > 0) {
+            whatsappController.clearPageCache(updateResult.rows[0].session_name);
+        }
+
         res.json(updateResult.rows[0]);
     } catch (err) {
         console.error("Update WhatsApp Config Error:", err);
@@ -779,6 +783,7 @@ router.post('/session/create', async (req, res) => {
         // 1. Insert into DB immediately with 'created' status (So card appears in UI)
         console.log(`[WhatsApp] Inserting session '${finalName}' into DB for User ${user.id}...`);
         const dbEntry = await dbService.createWhatsAppEntry(finalName, user.id, duration, 'created', user.email);
+        whatsappController.clearPageCache(finalName);
         console.log(`[WhatsApp] DB Entry Created: ID=${dbEntry.id}, Session=${dbEntry.session_name}`);
 
         // 1.5 Insert into public.whatsapp_sessions table (Requested by User)
@@ -1064,6 +1069,7 @@ router.delete('/session/delete', async (req, res) => {
         
         // 4. Always Delete from DB
         await dbService.deleteWhatsAppEntry(target);
+        whatsappController.clearPageCache(target);
         console.log(`[WhatsApp] DB Entry deleted for '${target}'.`);
         
         res.json({ success: true });
