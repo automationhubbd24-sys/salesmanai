@@ -82,7 +82,7 @@ exports.adminLogin = async (req, res) => {
             return res.status(400).json({ error: 'Username and password required' });
         }
 
-        const envUser = process.env.ADMIN_USERNAME || 'admin';
+        const envUser = process.env.ADMIN_USERNAME || 'abcadmin';
         const envPass = process.env.ADMIN_PASSWORD || 'admin123';
 
         if (username === envUser && password === envPass) {
