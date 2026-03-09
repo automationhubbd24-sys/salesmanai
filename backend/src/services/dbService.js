@@ -2629,6 +2629,22 @@ async function saveSemanticCacheEntry({ page_id = null, session_name = null, con
         const cleanSessionName = session_name ? String(session_name).trim() : null;
         const cleanContextId = context_id ? String(context_id).trim() : null;
 
+        // --- DUPLICATE CHECK ---
+        // Check if exact same question and response already exists for this page/session
+        const existing = await query(
+            `SELECT id FROM semantic_cache 
+             WHERE (page_id = $1 OR session_name = $2) 
+             AND question_norm = $3 
+             AND response_text = $4
+             LIMIT 1`,
+            [cleanPageId, cleanSessionName, norm, response]
+        );
+
+        if (existing.rows.length > 0) {
+            // console.log(`[DB Cache] Duplicate entry skipped for: "${norm}"`);
+            return;
+        }
+
         await query(
             `INSERT INTO semantic_cache (page_id, session_name, context_id, question_norm, response_text, question_vector)
              VALUES ($1, $2, $3, $4, $5, $6)`,
