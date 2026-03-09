@@ -2774,17 +2774,20 @@ async function findSemanticCache({ page_id = null, session_name = null, context_
             params.push(JSON.stringify(vector));
             const vectorIdx = params.length;
             
+            // Note: In some PG versions, dimension() function might be missing from pgvector.
+            // We'll use a safer approach by letting PG handle the dimension mismatch error
+            // or we can skip the dimension check if we are sure about the vector size.
             sql = `
                 SELECT response_text, context_id, 
                     (CASE 
-                        WHEN question_vector IS NOT NULL AND dimension(question_vector) = dimension($${vectorIdx}::vector) 
+                        WHEN question_vector IS NOT NULL 
                         THEN (1 - (question_vector <=> $${vectorIdx}::vector)) 
                         ELSE similarity(question_norm, $1) 
                     END) as final_similarity
                 FROM semantic_cache
                 WHERE 
                     (
-                        (question_vector IS NOT NULL AND dimension(question_vector) = dimension($${vectorIdx}::vector) AND (1 - (question_vector <=> $${vectorIdx}::vector)) >= $2)
+                        (question_vector IS NOT NULL AND (1 - (question_vector <=> $${vectorIdx}::vector)) >= $2)
                         OR 
                         (similarity(question_norm, $1) >= $2)
                     )
