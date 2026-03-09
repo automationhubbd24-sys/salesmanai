@@ -549,7 +549,8 @@ CREATE TABLE IF NOT EXISTS public.api_list (
 alter table api_list add column if not exists rpm_limit int default 5; -- Requests Per Minute
 alter table api_list add column if not exists rpd_limit int default 20; -- Requests Per Day
 alter table api_list add column if not exists rph_limit int default 0;
-alter table api_list add column if not exists usage_today int default 0;
+alter table api_list add column if not exists usage_today int default 0; -- Requests Today
+alter table api_list add column if not exists usage_tokens_today int default 0; -- Tokens Used Today
 alter table api_list add column if not exists last_used_at timestamp with time zone;
 alter table api_list add column if not exists last_date_checked date default CURRENT_DATE;
 alter table api_list add column if not exists status text default 'active';
@@ -567,3 +568,18 @@ create table if not exists team_members (
   permissions jsonb default '{}'::jsonb,
   constraint team_members_unique_pair unique (owner_email, member_email)
 );
+
+-- 14. Semantic Cache (NEW)
+CREATE TABLE IF NOT EXISTS public.semantic_cache (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  page_id text,
+  session_name text,
+  context_id text,
+  question_norm text NOT NULL,
+  response_text text NOT NULL,
+  created_at timestamp with time zone DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_semcache_question_trgm ON semantic_cache USING gin (question_norm gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_semcache_page ON semantic_cache (page_id);
+CREATE INDEX IF NOT EXISTS idx_semcache_session ON semantic_cache (session_name);
+CREATE INDEX IF NOT EXISTS idx_semcache_context ON semantic_cache (context_id);

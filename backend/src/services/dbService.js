@@ -626,7 +626,19 @@ async function initTables() {
         `);
         console.log("[DB] 'api_usage_stats' table checked/initialized.");
 
-        // Ensure 'api_list' has unique constraint on 'api'
+        await query(`
+            DO $$ 
+            BEGIN 
+                IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='api_list') THEN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='api_list' AND column_name='usage_tokens_today') THEN
+                        ALTER TABLE api_list ADD COLUMN usage_tokens_today INTEGER DEFAULT 0;
+                    END IF;
+                END IF;
+            END $$;
+        `);
+        console.log("[DB] 'api_list' usage_tokens_today column checked.");
+
+        // Ensure 'api_list' has unique constraint on 'api'"
         await query(`
             DO $$ 
             BEGIN 
@@ -2559,12 +2571,12 @@ async function ensureSemanticCacheTables() {
         
         // Migration: Add context_id if it doesn't exist
         await query(`
-            DO $ 
+            DO $$ 
             BEGIN 
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='semantic_cache' AND column_name='context_id') THEN
                     ALTER TABLE semantic_cache ADD COLUMN context_id TEXT;
                 END IF;
-            END $;
+            END $$;
         `);
     } catch (e) {
         console.warn(`[DB] Failed to ensure semantic_cache tables: ${e.message}`);

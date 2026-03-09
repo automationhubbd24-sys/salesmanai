@@ -537,6 +537,7 @@ CREATE TABLE IF NOT EXISTS api_list (
   rpm_limit INTEGER DEFAULT 5,
   rpd_limit INTEGER DEFAULT 20,
   usage_today INTEGER DEFAULT 0,
+  usage_tokens_today INTEGER DEFAULT 0,
   last_used_at TIMESTAMP WITH TIME ZONE,
   last_date_checked DATE DEFAULT CURRENT_DATE,
   status TEXT DEFAULT 'active',
@@ -577,3 +578,18 @@ CREATE TABLE IF NOT EXISTS fb_contacts (
   last_interaction TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   PRIMARY KEY (page_id, sender_id)
 );
+
+-- 39. Semantic Cache (NEW)
+CREATE TABLE IF NOT EXISTS semantic_cache (
+    id BIGSERIAL PRIMARY KEY,
+    page_id TEXT,
+    session_name TEXT,
+    context_id TEXT,
+    question_norm TEXT NOT NULL,
+    response_text TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_semcache_question_trgm ON semantic_cache USING gin (question_norm gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_semcache_page ON semantic_cache (page_id);
+CREATE INDEX IF NOT EXISTS idx_semcache_session ON semantic_cache (session_name);
+CREATE INDEX IF NOT EXISTS idx_semcache_context ON semantic_cache (context_id);
