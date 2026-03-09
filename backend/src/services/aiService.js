@@ -732,9 +732,21 @@ async function getEmbedding(text) {
         
         if (provider === 'google' || provider === 'gemini') {
             const genAI = new GoogleGenerativeAI(config.api_key);
-            const model = genAI.getGenerativeModel({ model: config.model || "text-embedding-004" });
+            // Use the specific model from config, or fallback to text-embedding-004
+            const modelName = config.model || "text-embedding-004";
+            const model = genAI.getGenerativeModel({ model: modelName });
+            
             const result = await model.embedContent(text.replace(/\n/g, ' '));
-            return result.embedding.values;
+            const embedding = result.embedding.values;
+
+            // --- FIX: Gemini embedding-001 returns 3072 dims, but our DB expects 1536 ---
+            // If the model is embedding-001 and we get 3072, we truncate to 1536
+            if (modelName.includes('embedding-001') && embedding.length === 3072) {
+                // console.log(`[AI Embedding] Truncating Gemini 3072 dims to 1536 for compatibility.`);
+                return embedding.slice(0, 1536);
+            }
+
+            return embedding;
         } else {
             // Default to OpenAI/OpenRouter (OpenAI SDK compatible)
             const openai = new OpenAI({
