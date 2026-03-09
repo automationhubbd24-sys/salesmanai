@@ -2829,6 +2829,7 @@ module.exports = {
     getSemanticCacheEntries,
     deleteSemanticCacheEntry,
     updateSemanticCacheEntry,
+    clearSemanticCache,
     getProducts,
     getProductById,
     updateProduct,

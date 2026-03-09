@@ -239,6 +239,7 @@ export default function AdminPage() {
   const [newEntryResponse, setNewEntryResponse] = useState("");
   const [editingEntryId, setEditingEntryId] = useState<number | null>(null);
   const [entriesSearch, setEntriesSearch] = useState("");
+  const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [embeddingConfig, setEmbeddingConfig] = useState<{ provider: string; model: string; base_url: string; api_key: string }>({
     provider: "openai",
     model: "",
@@ -388,8 +389,6 @@ export default function AdminPage() {
 
   const handleClearCache = async () => {
     if (!selectedConfigForEntries) return;
-    const msg = `Are you sure you want to delete ALL (${cacheEntries.length}) cache entries for this account? This cannot be undone!`;
-    if (!confirm(msg)) return;
     
     try {
       const token = getAdminToken();
@@ -410,6 +409,7 @@ export default function AdminPage() {
       const data = await response.json();
       if (data.success) {
         toast.success('All cache entries cleared');
+        setIsClearConfirmOpen(false);
         fetchCacheEntries(selectedConfigForEntries.platform, selectedConfigForEntries.id);
       } else {
         toast.error(data.error || "Clear failed");
@@ -3451,7 +3451,7 @@ export default function AdminPage() {
                     <Button 
                       variant="ghost" 
                       size="sm" 
-                      onClick={handleClearCache}
+                      onClick={() => setIsClearConfirmOpen(true)}
                       className="h-8 px-2 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 flex items-center gap-1.5"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -3544,6 +3544,39 @@ export default function AdminPage() {
           <DialogFooter className="shrink-0 border-t border-white/5 pt-4">
             <Button variant="outline" onClick={() => setIsEntriesDialogOpen(false)} className="border-white/10 hover:bg-white/5">
               Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Clear Cache Confirmation Dialog */}
+      <Dialog open={isClearConfirmOpen} onOpenChange={setIsClearConfirmOpen}>
+        <DialogContent className="sm:max-w-[400px] bg-zinc-950 border-white/10 text-white shadow-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-400">
+              <Trash2 className="h-5 w-5" />
+              Clear All Cache Entries
+            </DialogTitle>
+            <DialogDescription className="text-zinc-400 pt-2">
+              Are you sure you want to delete <strong>ALL ({cacheEntries.length})</strong> cache entries for <strong>{selectedConfigForEntries?.name}</strong>? 
+              <br/><br/>
+              This action cannot be undone and will affect all automated responses for this account.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 mt-4">
+            <Button 
+              variant="outline" 
+              onClick={() => setIsClearConfirmOpen(false)}
+              className="border-white/10 hover:bg-white/5 text-xs"
+            >
+              Cancel
+            </Button>
+            <Button 
+              variant="destructive" 
+              onClick={handleClearCache}
+              className="bg-red-600 hover:bg-red-700 text-xs font-bold"
+            >
+              Yes, Clear Everything
             </Button>
           </DialogFooter>
         </DialogContent>
