@@ -571,19 +571,27 @@ exports.updateSemanticCacheConfig = async (req, res) => {
 exports.getSemanticCacheEntries = async (req, res) => {
     try {
         const dbService = require('../services/dbService');
-        const { page_id, session_name, limit, offset } = req.query;
+        let { page_id, session_name, limit, offset } = req.query;
         
+        // Ensure null if empty string
+        page_id = (page_id && String(page_id).trim() !== "") ? String(page_id).trim() : null;
+        session_name = (session_name && String(session_name).trim() !== "") ? String(session_name).trim() : null;
+
+        console.log(`[DBAdmin] Fetching cache entries. Query:`, { page_id, session_name, limit, offset });
+
         if (!page_id && !session_name) {
-            return res.status(400).json({ success: false, error: 'page_id or session_name parameter is missing' });
+            return res.status(400).json({ success: false, error: 'page_id or session_name parameter is missing or empty' });
         }
 
         const entries = await dbService.getSemanticCacheEntries({
-            page_id: page_id || null,
-            session_name: session_name || null,
+            page_id,
+            session_name,
             limit: parseInt(limit) || 50,
             offset: parseInt(offset) || 0
         });
         
+        console.log(`[DBAdmin] Found ${entries?.length || 0} entries for ID: ${page_id || session_name}`);
+
         // Detailed check if query returned entries
         if (!entries || !Array.isArray(entries)) {
              return res.status(500).json({ success: false, error: 'Database returned invalid data format' });

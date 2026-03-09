@@ -2589,13 +2589,18 @@ async function saveSemanticCacheEntry({ page_id = null, session_name = null, con
         await ensureSemanticCacheTables();
         const norm = (question || '').toString().toLowerCase().replace(/[^\w\s\u0980-\u09FF]/g, '').trim();
         if (!norm || !response) return;
+        
+        const cleanPageId = page_id ? String(page_id).trim() : null;
+        const cleanSessionName = session_name ? String(session_name).trim() : null;
+        const cleanContextId = context_id ? String(context_id).trim() : null;
+
         await query(
             `INSERT INTO semantic_cache (page_id, session_name, context_id, question_norm, response_text)
              VALUES ($1, $2, $3, $4, $5)`,
-            [page_id, session_name, context_id, norm, response]
+            [cleanPageId, cleanSessionName, cleanContextId, norm, response]
         );
     } catch (e) {
-        console.warn(`[DB] saveSemanticCacheEntry failed: ${e.message}`);
+        console.error(`[DB] saveSemanticCacheEntry failed: ${e.message}`);
     }
 }
 
@@ -2605,15 +2610,19 @@ async function getSemanticCacheEntries({ page_id = null, session_name = null, li
         const conditions = [];
         const params = [];
         
+        // Use a more robust matching logic
         if (page_id) {
-            params.push(page_id);
-            conditions.push(`(page_id = $${params.length} OR session_name = $${params.length})`);
+            params.push(String(page_id).trim());
+            conditions.push(`(TRIM(page_id) = $${params.length} OR TRIM(session_name) = $${params.length})`);
         } else if (session_name) {
-            params.push(session_name);
-            conditions.push(`(page_id = $${params.length} OR session_name = $${params.length})`);
+            params.push(String(session_name).trim());
+            conditions.push(`(TRIM(page_id) = $${params.length} OR TRIM(session_name) = $${params.length})`);
         }
         
         const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' OR ')}` : '';
+        
+        const limitVal = parseInt(limit) || 50;
+        const offsetVal = parseInt(offset) || 0;
         
         const sql = `
             SELECT id, page_id, session_name, context_id, question_norm, response_text, created_at
@@ -2623,11 +2632,12 @@ async function getSemanticCacheEntries({ page_id = null, session_name = null, li
             LIMIT $${params.length + 1} OFFSET $${params.length + 2}
         `;
         
-        params.push(limit, offset);
+        params.push(limitVal, offsetVal);
+        
         const res = await query(sql, params);
-        return res.rows;
+        return res.rows || [];
     } catch (e) {
-        console.warn(`[DB] getSemanticCacheEntries failed: ${e.message}`);
+        console.error(`[DB] getSemanticCacheEntries failed: ${e.message}`);
         return [];
     }
 }
@@ -2695,11 +2705,11 @@ async function findSemanticCache({ page_id = null, session_name = null, context_
         const params = [norm, threshold];
         
         if (page_id) {
-            conditions.push(`page_id = ${params.length + 1}`);
+            conditions.push(`page_id = $${params.length + 1}`);
             params.push(page_id);
         }
         if (session_name) {
-            conditions.push(`session_name = ${params.length + 1}`);
+            conditions.push(`session_name = $${params.length + 1}`);
             params.push(session_name);
         }
         
@@ -2708,8 +2718,10 @@ async function findSemanticCache({ page_id = null, session_name = null, context_
         // Context Logic: Prefer entry with matching context_id if provided.
         // If context_id is provided, we search for entries with that ID or NULL (Independent).
         let contextWhere = '';
+        let contextSort = '1'; // Default sort value if no context_id
         if (context_id) {
-            contextWhere = `AND (context_id = ${params.length + 1} OR context_id IS NULL)`;
+            contextWhere = `AND (context_id = $${params.length + 1} OR context_id IS NULL)`;
+            contextSort = `$${params.length + 1}`;
             params.push(context_id);
         } else {
             contextWhere = `AND context_id IS NULL`;
@@ -2722,18 +2734,19 @@ async function findSemanticCache({ page_id = null, session_name = null, context_
             ${scopeWhere}
             ${contextWhere}
             ORDER BY 
-                (CASE WHEN context_id = ${context_id ? params.length : 1} THEN 1 ELSE 2 END) ASC,
+                (CASE WHEN context_id = ${contextSort} THEN 1 ELSE 2 END) ASC,
                 similarity(question_norm, $1) DESC, 
                 created_at DESC
             LIMIT 1
         `;
+        
         const res = await query(sql, params);
         if (res.rows.length > 0) {
             return res.rows[0].response_text;
         }
         return null;
     } catch (e) {
-        console.warn(`[DB] findSemanticCache failed: ${e.message}`);
+        console.error(`[DB] findSemanticCache failed: ${e.message}`);
         return null;
     }
 }
