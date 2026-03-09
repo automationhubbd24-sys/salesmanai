@@ -2770,21 +2770,29 @@ async function findSemanticCache({ page_id = null, session_name = null, context_
 
         let sql = '';
         if (vector && Array.isArray(vector)) {
-            // Vector Search Logic
+            // Combined Search Logic: Prefer Vector, Fallback to Text Similarity (Fuzzy)
             params.push(JSON.stringify(vector));
             const vectorIdx = params.length;
             
             sql = `
-                SELECT response_text, context_id, (1 - (question_vector <=> $${vectorIdx}::vector)) as similarity
+                SELECT response_text, context_id, 
+                    (CASE 
+                        WHEN question_vector IS NOT NULL AND dimension(question_vector) = dimension($${vectorIdx}::vector) 
+                        THEN (1 - (question_vector <=> $${vectorIdx}::vector)) 
+                        ELSE similarity(question_norm, $1) 
+                    END) as final_similarity
                 FROM semantic_cache
-                WHERE question_vector IS NOT NULL
-                AND dimension(question_vector) = dimension($${vectorIdx}::vector)
-                AND (1 - (question_vector <=> $${vectorIdx}::vector)) >= $2
-                ${scopeWhere}
-                ${contextWhere}
+                WHERE 
+                    (
+                        (question_vector IS NOT NULL AND dimension(question_vector) = dimension($${vectorIdx}::vector) AND (1 - (question_vector <=> $${vectorIdx}::vector)) >= $2)
+                        OR 
+                        (similarity(question_norm, $1) >= $2)
+                    )
+                    ${scopeWhere}
+                    ${contextWhere}
                 ORDER BY 
                     ${contextSortClause} ASC,
-                    (1 - (question_vector <=> $${vectorIdx}::vector)) DESC, 
+                    final_similarity DESC, 
                     created_at DESC
                 LIMIT 1
             `;
@@ -2806,7 +2814,7 @@ async function findSemanticCache({ page_id = null, session_name = null, context_
         
         const res = await query(sql, params);
         if (res.rows.length > 0) {
-            console.log(`[DB Cache] HIT! Similarity: ${res.rows[0].similarity}`);
+            console.log(`[DB Cache] HIT! Similarity: ${res.rows[0].final_similarity || res.rows[0].similarity}`);
             return res.rows[0].response_text;
         }
         return null;
