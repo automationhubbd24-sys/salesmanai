@@ -521,7 +521,7 @@ async function initTables() {
         console.log("[DB] 'fb_contacts' table/column checked.");
 
         await query(`
-            DO $ 
+            DO $$ 
             BEGIN 
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='allow_description') THEN
                     ALTER TABLE fb_message_database ADD COLUMN allow_description BOOLEAN DEFAULT FALSE;

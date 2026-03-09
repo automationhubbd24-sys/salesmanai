@@ -345,6 +345,7 @@ CREATE TABLE IF NOT EXISTS fb_order_tracking (
   location TEXT,
   product_quantity TEXT,
   price TEXT,
+  sender_number TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_fb_order_tracking_page_id ON fb_order_tracking(page_id);

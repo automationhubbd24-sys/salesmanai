@@ -334,6 +334,7 @@ CREATE TABLE IF NOT EXISTS public.fb_order_tracking (
   location text NULL,
   product_quantity text NULL,
   price text NULL,
+  sender_number text NULL,
   created_at timestamp with time zone DEFAULT now()
 );
 create index if not exists idx_fb_order_tracking_page_id on fb_order_tracking(page_id);
