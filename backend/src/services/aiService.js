@@ -423,15 +423,16 @@ const functionTools = [
         type: 'function',
         function: {
             name: 'create_order',
-            description: 'Create order details when user confirms an order',
+            description: 'Create order details when user confirms an order. This will trigger the backend to save order information and phone number.',
             parameters: {
                 type: 'object',
                 properties: {
-                    product_name: { type: 'string' },
-                    phone: { type: 'string' },
-                    address: { type: 'string' },
-                    quantity: { type: 'string' },
-                    price: { type: 'string' }
+                    product_name: { type: 'string', description: 'Name of the product being ordered' },
+                    phone: { type: 'string', description: 'Customer phone number for the order' },
+                    address: { type: 'string', description: 'Delivery address' },
+                    quantity: { type: 'string', description: 'Quantity of items' },
+                    price: { type: 'string', description: 'Total price or unit price' },
+                    customer_name: { type: 'string', description: 'Customer name' }
                 },
                 required: ['product_name', 'phone', 'address']
             }
@@ -1014,8 +1015,31 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null
             }
 
             case 'create_order': {
-                // Just return success for AI to confirm
-                return { status: 'SUCCESS', message: "Order details captured. The system will process it after confirmation." };
+                // Save order details to database
+                const dbService = require('./dbService');
+                try {
+                    await dbService.saveOrder({
+                        page_id: pageId,
+                        sender_id: senderId,
+                        product_name: args.product_name,
+                        phone: args.phone,
+                        address: args.address,
+                        quantity: args.quantity || '1',
+                        price: args.price || '0',
+                        customer_name: args.customer_name || senderId,
+                        platform: platform
+                    });
+                    
+                    // Also update/save contact phone number if platform is WhatsApp
+                    if (platform === 'whatsapp' && args.phone) {
+                        await dbService.updateContactPhone(pageId, senderId, args.phone);
+                    }
+
+                    return { status: 'SUCCESS', message: "Order details captured and saved successfully. I will now confirm this with the user." };
+                } catch (saveErr) {
+                    console.error("[AgentLoop] Failed to save order:", saveErr.message);
+                    return { status: 'ERROR', message: `Failed to save order details: ${saveErr.message}` };
+                }
             }
 
             default:

@@ -7,10 +7,11 @@ async function getPageConfig(pageId) {
       `SELECT pam.*, 
               fb.semantic_cache_enabled, 
               fb.semantic_cache_threshold, 
-              fb.embed_enabled
+              fb.embed_enabled,
+              fb.semantic_cache_autosave
        FROM page_access_token_message pam
-       LEFT JOIN fb_message_database fb ON fb.page_id = pam.page_id
-       WHERE pam.page_id = $1 LIMIT 1`,
+       LEFT JOIN fb_message_database fb ON CAST(fb.page_id AS TEXT) = CAST(pam.page_id AS TEXT)
+       WHERE CAST(pam.page_id AS TEXT) = CAST($1 AS TEXT) LIMIT 1`,
       [pageId]
     );
 
@@ -1776,6 +1777,48 @@ async function logMessage(msgData) {
     }
 }
 
+// 12. Save Order (Unified Wrapper)
+async function saveOrder(orderData) {
+    const { platform } = orderData;
+    if (platform === 'whatsapp') {
+        return await saveWhatsAppOrderTracking({
+            session_name: orderData.page_id, // For WA, page_id is session_name
+            sender_id: orderData.sender_id,
+            product_name: orderData.product_name,
+            number: orderData.phone,
+            location: orderData.address,
+            product_quantity: orderData.quantity,
+            price: orderData.price
+        });
+    } else {
+        return await saveOrderTracking({
+            page_id: orderData.page_id,
+            sender_id: orderData.sender_id,
+            product_name: orderData.product_name,
+            number: orderData.phone,
+            location: orderData.address,
+            product_quantity: orderData.quantity,
+            price: orderData.price,
+            sender_number: orderData.phone
+        });
+    }
+}
+
+async function updateContactPhone(pageId, senderId, phone) {
+    try {
+        await query(
+            `UPDATE whatsapp_contacts 
+             SET phone_number = $1 
+             WHERE session_name = $2 AND (phone_number = $3 OR lid = $3)`,
+            [phone, pageId, senderId]
+        );
+        return true;
+    } catch (e) {
+        console.warn("[DB] Failed to update contact phone:", e.message);
+        return false;
+    }
+}
+
 // 12. Save Order Tracking (Messenger)
 async function saveOrderTracking(orderData) {
     let { page_id, sender_id, product_name, number, location, product_quantity, price, sender_number } = orderData;
@@ -2767,7 +2810,7 @@ async function findSemanticCache({ page_id = null, session_name = null, context_
         const searchId = (page_id || session_name || '').toString().trim();
         if (searchId) {
             params.push(searchId);
-            conditions.push(`(page_id = $${params.length} OR session_name = $${params.length})`);
+            conditions.push(`(CAST(page_id AS TEXT) = CAST($${params.length} AS TEXT) OR CAST(session_name AS TEXT) = CAST($${params.length} AS TEXT))`);
         }
         
         const scopeWhere = conditions.length > 0 ? `AND (${conditions.join(' OR ')})` : '';
@@ -2777,11 +2820,13 @@ async function findSemanticCache({ page_id = null, session_name = null, context_
         let contextSortClause = '1';
         
         if (context_id) {
-            contextWhere = `AND (context_id = $${params.length + 1} OR context_id IS NULL)`;
-            contextSortClause = `(CASE WHEN context_id = $${params.length + 1} THEN 1 ELSE 2 END)`;
+            contextWhere = `AND (CAST(context_id AS TEXT) = CAST($${params.length + 1} AS TEXT) OR context_id IS NULL)`;
+            contextSortClause = `(CASE WHEN CAST(context_id AS TEXT) = CAST($${params.length + 1} AS TEXT) THEN 1 ELSE 2 END)`;
             params.push(String(context_id).trim());
         } else {
-            contextWhere = `AND context_id IS NULL`;
+            // If no context, prioritize global entries (NULL) but allow any match for the question
+            contextWhere = ''; 
+            contextSortClause = `(CASE WHEN context_id IS NULL THEN 1 ELSE 2 END)`;
         }
 
         let sql = '';
@@ -2884,6 +2929,8 @@ module.exports = {
     saveWhatsAppContact,
     updateWhatsAppEntry,
     updateWhatsAppEntryByName,
+    saveOrder,
+    updateContactPhone,
     getLastWhatsAppMessage,
     getLastNWhatsAppMessages,
     toggleWhatsAppLock,
