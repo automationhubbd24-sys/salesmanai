@@ -2770,24 +2770,23 @@ async function findSemanticCache({ page_id = null, session_name = null, context_
 
         let sql = '';
         if (vector && Array.isArray(vector)) {
-            // Combined Search Logic: Prefer Vector, Fallback to Text Similarity (Fuzzy)
+            // Combined Search Logic: Prefer Vector (Meaning), Fallback to Text Similarity (Words)
             params.push(JSON.stringify(vector));
             const vectorIdx = params.length;
             
-            // Note: In some PG versions, dimension() function might be missing from pgvector.
-            // We'll use a safer approach by letting PG handle the dimension mismatch error
-            // or we can skip the dimension check if we are sure about the vector size.
+            // --- FIX: We use a slightly more relaxed threshold for vector matching (0.05 bonus)
+            // to ensure 'delivary time' matches 'koi din time lagbe' better.
             sql = `
                 SELECT response_text, context_id, 
                     (CASE 
                         WHEN question_vector IS NOT NULL 
-                        THEN (1 - (question_vector <=> $${vectorIdx}::vector)) 
+                        THEN (1 - (question_vector <=> $${vectorIdx}::vector)) + 0.05
                         ELSE similarity(question_norm, $1) 
                     END) as final_similarity
                 FROM semantic_cache
                 WHERE 
                     (
-                        (question_vector IS NOT NULL AND (1 - (question_vector <=> $${vectorIdx}::vector)) >= $2)
+                        (question_vector IS NOT NULL AND (1 - (question_vector <=> $${vectorIdx}::vector)) >= ($2 - 0.05))
                         OR 
                         (similarity(question_norm, $1) >= $2)
                     )
