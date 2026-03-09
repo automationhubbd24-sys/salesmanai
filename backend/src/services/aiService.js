@@ -1192,9 +1192,11 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
 
         // Save to Semantic Cache if enabled and not served from cache
         try {
-            const semEnabled = pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1);
+            const semEnabled = pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1 || pageConfig.semantic_cache_enabled === 'true');
             const canCache = isCacheable(cleanUserMessage);
             
+            console.log(`[AI Cache Debug] Page: ${pageConfig.page_id} | Enabled: ${semEnabled} | UsedCache: ${usedSemanticCache} | CanCache: ${canCache} | CleanMsg: "${cleanUserMessage}"`);
+
             if (semEnabled && !usedSemanticCache && canCache && result && result.reply && cleanUserMessage) {
                 const dbService = require('./dbService');
                 // Non-blocking save (Fire and forget) to reduce latency
@@ -1205,9 +1207,9 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                     context_id: currentContextId, 
                     question: cleanUserMessage,
                     response: result.reply
+                }).then(() => {
+                    console.log(`[AI Cache Debug] Successfully saved entry for "${cleanUserMessage}"`);
                 }).catch(e => console.warn(`[AI] Background cache save failed: ${e.message}`));
-            } else if (semEnabled && !usedSemanticCache && !canCache) {
-                // console.log(`[AI] Message skipped for semantic cache (not cacheable): "${cleanUserMessage}"`);
             }
         } catch (e) {
             console.warn(`[AI] Failed to trigger semantic cache save: ${e.message}`);
