@@ -1232,11 +1232,11 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             const embedEnabled = pageConfig && (pageConfig.embed_enabled === true || pageConfig.embed_enabled === 1 || pageConfig.embed_enabled === 'true');
             const canCache = isCacheable(cleanUserMessage);
             
-            if (semEnabled && !usedSemanticCache && canCache && result && result.reply && cleanUserMessage) {
+            // --- FIX: If either Semantic Cache OR Embedding is enabled, we save to cache ---
+            if ((semEnabled || embedEnabled) && !usedSemanticCache && canCache && result && result.reply && cleanUserMessage) {
                 const dbService = require('./dbService');
                 
                 // If Embedding is enabled, generate vector for saving
-                let saveVector = null;
                 if (embedEnabled) {
                     getEmbedding(cleanUserMessage).then(v => {
                         dbService.saveSemanticCacheEntry({
@@ -1247,7 +1247,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                             response: result.reply,
                             vector: v
                         }).catch(e => console.warn(`[AI] Background vector cache save failed: ${e.message}`));
-                    });
+                    }).catch(e => console.warn(`[AI] Failed to generate embedding for save: ${e.message}`));
                 } else {
                     dbService.saveSemanticCacheEntry({
                         page_id: pageConfig.page_id || null,
@@ -1305,10 +1305,10 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         const threshold = pageConfig && pageConfig.semantic_cache_threshold ? Math.max(0.5, Math.min(0.99, Number(pageConfig.semantic_cache_threshold))) : 0.96;
         const isMediaTurn = (imageUrls && imageUrls.length > 0) || (audioUrls && audioUrls.length > 0);
         
+        // --- FIX: Lookup only happens if Semantic Cache is explicitly ENABLED ---
         if (semEnabled && !isMediaTurn && cleanUserMessage) {
             const dbService = require('./dbService');
             
-            // --- SMART HISTORY CONTEXT FOR CACHE ---
             let cacheQuery = cleanUserMessage;
             if (cleanUserMessage.length < 15 && history.length > 0) {
                 const lastUserMsg = [...history].reverse().find(m => m.role === 'user');
@@ -1317,7 +1317,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                 }
             }
 
-            // If Embedding is enabled, generate vector
+            // If Embedding is also enabled, generate vector for lookup
             if (embedEnabled) {
                 userMessageVector = await getEmbedding(cacheQuery);
             }

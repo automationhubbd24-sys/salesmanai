@@ -2561,12 +2561,21 @@ async function getEmbeddingGlobalConfig() {
 
         const row = result.rows[0] || null;
         const details = (row && row.text_model_details) || {};
+        
+        // Handle different possible provider name formats
+        let provider = details.provider || 'openai';
+        if (row && row.text_model) {
+            const modelLower = row.text_model.toLowerCase();
+            if (modelLower.includes('gemini') || modelLower.includes('embedding-001')) {
+                provider = 'google';
+            }
+        }
 
         return {
             model: (row && row.text_model) || 'text-embedding-3-small',
             base_url: details.base_url || 'https://api.openai.com/v1',
             api_key: details.api_key || '',
-            provider: details.provider || 'openai'
+            provider: provider
         };
     } catch (e) {
         console.warn(`[DB] Failed to fetch embedding config: ${e.message}`);
