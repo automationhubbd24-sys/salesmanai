@@ -107,6 +107,7 @@ interface CacheConfig {
   semantic_cache_enabled: boolean;
   semantic_cache_threshold: number;
   embed_enabled: boolean;
+  semantic_cache_autosave?: boolean;
   created_at?: string;
 }
 

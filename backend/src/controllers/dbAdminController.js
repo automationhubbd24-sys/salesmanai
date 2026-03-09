@@ -359,68 +359,34 @@ exports.saveEmbeddingGlobalConfig = async (req, res) => {
 
 exports.getSemanticCacheConfigs = async (req, res) => {
     try {
-        // 1. Ensure columns exist first (Migration)
+        const pgClient = require('../services/pgClient');
+        
+        // Quick Repair: Ensure all necessary columns exist before querying
         try {
-            // Messenger table
-            await pgClient.query(`
-                DO $$ 
-                BEGIN 
-                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='audio_detection') THEN
-                        ALTER TABLE fb_message_database ADD COLUMN audio_detection boolean DEFAULT false;
-                    END IF;
-                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='semantic_cache_enabled') THEN
-                        ALTER TABLE fb_message_database ADD COLUMN semantic_cache_enabled boolean DEFAULT false;
-                    END IF;
-                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='semantic_cache_threshold') THEN
-                        ALTER TABLE fb_message_database ADD COLUMN semantic_cache_threshold numeric DEFAULT 0.96;
-                    END IF;
-                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='embed_enabled') THEN
-                        ALTER TABLE fb_message_database ADD COLUMN embed_enabled boolean DEFAULT false;
-                    END IF;
-                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='created_at') THEN
-                        ALTER TABLE fb_message_database ADD COLUMN created_at TIMESTAMPTZ DEFAULT NOW();
-                    END IF;
-                END $$;
-            `);
+            // Messenger Repair
+            await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS audio_detection boolean DEFAULT false`);
+            await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS semantic_cache_enabled boolean DEFAULT false`);
+            await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS semantic_cache_threshold numeric DEFAULT 0.96`);
+            await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS embed_enabled boolean DEFAULT false`);
+            await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS semantic_cache_autosave boolean DEFAULT true`);
+            await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`);
             
-            // WhatsApp table
-            await pgClient.query(`
-                DO $$ 
-                BEGIN 
-                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='semantic_cache_enabled') THEN
-                        ALTER TABLE whatsapp_message_database ADD COLUMN semantic_cache_enabled boolean DEFAULT false;
-                    END IF;
-                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='semantic_cache_threshold') THEN
-                        ALTER TABLE whatsapp_message_database ADD COLUMN semantic_cache_threshold numeric DEFAULT 0.96;
-                    END IF;
-                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='embed_enabled') THEN
-                        ALTER TABLE whatsapp_message_database ADD COLUMN embed_enabled boolean DEFAULT false;
-                    END IF;
-                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='created_at') THEN
-                        ALTER TABLE whatsapp_message_database ADD COLUMN created_at TIMESTAMPTZ DEFAULT NOW();
-                    END IF;
-                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='push_name') THEN
-                        ALTER TABLE whatsapp_message_database ADD COLUMN push_name text;
-                    END IF;
-                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='ai_provider') THEN
-                        ALTER TABLE whatsapp_message_database ADD COLUMN ai_provider text;
-                    END IF;
-                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='chat_model') THEN
-                        ALTER TABLE whatsapp_message_database ADD COLUMN chat_model text;
-                    END IF;
-                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='voice_model') THEN
-                        ALTER TABLE whatsapp_message_database ADD COLUMN voice_model text;
-                    END IF;
-                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='cheap_engine') THEN
-                        ALTER TABLE whatsapp_message_database ADD COLUMN cheap_engine boolean DEFAULT true;
-                    END IF;
-                END $$;
-            `);
-            
-            // pam table (page_access_token_message)
+            // WhatsApp Repair
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS semantic_cache_enabled boolean DEFAULT false`);
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS semantic_cache_threshold numeric DEFAULT 0.96`);
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS embed_enabled boolean DEFAULT false`);
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS semantic_cache_autosave boolean DEFAULT true`);
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS push_name text`);
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS ai_provider text`);
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS chat_model text`);
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS voice_model text`);
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS cheap_engine boolean DEFAULT true`);
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`);
+
+            // Page Table Repair
             await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`);
-            
-            // UNIQUE constraint for upsert
+
+            // Ensure unique constraint for Messenger Upsert
             await pgClient.query(`
                 DO $$ 
                 BEGIN 
@@ -429,51 +395,50 @@ exports.getSemanticCacheConfigs = async (req, res) => {
                     END IF;
                 END $$;
             `);
-        } catch (migrationError) {
-            console.warn('Migration error in getSemanticCacheConfigs:', migrationError.message);
+        } catch (e) {
+            console.warn('getSemanticCacheConfigs table repair warning:', e.message);
         }
 
-        // 2. Fetch Data with careful column checking
-        // We use subqueries to handle potential column missing errors during the very first run
         const messengerSql = `
             SELECT 
                 'messenger' AS platform,
-                page_id AS id,
+                CAST(page_id AS TEXT) AS id,
                 name,
                 semantic_cache_enabled,
                 semantic_cache_threshold,
                 embed_enabled,
+                semantic_cache_autosave,
                 created_at
             FROM (
                 SELECT 
-                    pam.page_id, 
-                    COALESCE(pam.name, pam.page_id) as name, 
+                    CAST(pam.page_id AS TEXT) as page_id, 
+                    COALESCE(pam.name, CAST(pam.page_id AS TEXT)) as name, 
                     COALESCE(fb.semantic_cache_enabled, false) as semantic_cache_enabled, 
-                     COALESCE(fb.semantic_cache_threshold, 0.96) as semantic_cache_threshold, 
-                     COALESCE(fb.embed_enabled, false) as embed_enabled, 
-                     COALESCE(fb.semantic_cache_autosave, true) as semantic_cache_autosave,
-                     COALESCE(pam.created_at, NOW()) as created_at
+                    COALESCE(fb.semantic_cache_threshold, 0.96) as semantic_cache_threshold, 
+                    COALESCE(fb.embed_enabled, false) as embed_enabled, 
+                    COALESCE(fb.semantic_cache_autosave, true) as semantic_cache_autosave,
+                    COALESCE(pam.created_at, NOW()) as created_at
                 FROM page_access_token_message pam
-                LEFT JOIN fb_message_database fb ON fb.page_id = pam.page_id
+                LEFT JOIN fb_message_database fb ON CAST(fb.page_id AS TEXT) = CAST(pam.page_id AS TEXT)
                 UNION
                 SELECT 
-                    fb.page_id, 
-                    fb.page_id as name, 
+                    CAST(fb.page_id AS TEXT) as page_id, 
+                    CAST(fb.page_id AS TEXT) as name, 
                     COALESCE(fb.semantic_cache_enabled, false) as semantic_cache_enabled, 
                     COALESCE(fb.semantic_cache_threshold, 0.96) as semantic_cache_threshold, 
                     COALESCE(fb.embed_enabled, false) as embed_enabled, 
                     COALESCE(fb.semantic_cache_autosave, true) as semantic_cache_autosave,
                     COALESCE(fb.created_at, NOW()) as created_at
                 FROM fb_message_database fb
-                WHERE NOT EXISTS (SELECT 1 FROM page_access_token_message pam2 WHERE pam2.page_id = fb.page_id)
+                WHERE NOT EXISTS (SELECT 1 FROM page_access_token_message pam2 WHERE CAST(pam2.page_id AS TEXT) = CAST(fb.page_id AS TEXT))
             ) AS combined_messenger
         `;
 
         const whatsappSql = `
             SELECT 
                 'whatsapp' AS platform,
-                session_name AS id,
-                COALESCE(push_name, session_name) AS name,
+                CAST(session_name AS TEXT) AS id,
+                COALESCE(push_name, CAST(session_name AS TEXT)) AS name,
                 COALESCE(semantic_cache_enabled, false) AS semantic_cache_enabled,
                 COALESCE(semantic_cache_threshold, 0.96) AS semantic_cache_threshold,
                 COALESCE(embed_enabled, false) AS embed_enabled,
