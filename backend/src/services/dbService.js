@@ -521,14 +521,34 @@ async function initTables() {
         console.log("[DB] 'fb_contacts' table/column checked.");
 
         await query(`
-            DO $$ 
+            DO $ 
             BEGIN 
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='allow_description') THEN
                     ALTER TABLE fb_message_database ADD COLUMN allow_description BOOLEAN DEFAULT FALSE;
                 END IF;
+
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='sender_number') THEN
+                    ALTER TABLE fb_order_tracking ADD COLUMN sender_number TEXT;
+                END IF;
+
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='audio_detection') THEN
+                    ALTER TABLE fb_message_database ADD COLUMN audio_detection BOOLEAN DEFAULT FALSE;
+                END IF;
+
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='semantic_cache_enabled') THEN
+                    ALTER TABLE fb_message_database ADD COLUMN semantic_cache_enabled BOOLEAN DEFAULT FALSE;
+                END IF;
+
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='semantic_cache_threshold') THEN
+                    ALTER TABLE fb_message_database ADD COLUMN semantic_cache_threshold NUMERIC DEFAULT 0.96;
+                END IF;
+
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='embed_enabled') THEN
+                    ALTER TABLE fb_message_database ADD COLUMN embed_enabled BOOLEAN DEFAULT FALSE;
+                END IF;
             END $$;
         `);
-        console.log("[DB] 'fb_message_database.allow_description' column checked.");
+        console.log("[DB] 'fb_message_database' extra columns checked.");
 
         // 1. Rename allowed_page_ids to allowed_messenger_ids if it exists
         // Or just add allowed_messenger_ids as a clear column
@@ -2526,6 +2546,7 @@ async function ensureSemanticCacheTables() {
                 id BIGSERIAL PRIMARY KEY,
                 page_id TEXT,
                 session_name TEXT,
+                context_id TEXT,
                 question_norm TEXT NOT NULL,
                 response_text TEXT NOT NULL,
                 created_at TIMESTAMPTZ DEFAULT now()
@@ -2534,28 +2555,39 @@ async function ensureSemanticCacheTables() {
         await query(`CREATE INDEX IF NOT EXISTS idx_semcache_question_trgm ON semantic_cache USING gin (question_norm gin_trgm_ops)`);
         await query(`CREATE INDEX IF NOT EXISTS idx_semcache_page ON semantic_cache (page_id)`);
         await query(`CREATE INDEX IF NOT EXISTS idx_semcache_session ON semantic_cache (session_name)`);
+        await query(`CREATE INDEX IF NOT EXISTS idx_semcache_context ON semantic_cache (context_id)`);
+        
+        // Migration: Add context_id if it doesn't exist
+        await query(`
+            DO $ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='semantic_cache' AND column_name='context_id') THEN
+                    ALTER TABLE semantic_cache ADD COLUMN context_id TEXT;
+                END IF;
+            END $;
+        `);
     } catch (e) {
         console.warn(`[DB] Failed to ensure semantic_cache tables: ${e.message}`);
     }
 }
 
-async function saveSemanticCacheEntry({ page_id = null, session_name = null, question, response }) {
+async function saveSemanticCacheEntry({ page_id = null, session_name = null, context_id = null, question, response }) {
     const { query } = require('./pgClient');
     try {
         await ensureSemanticCacheTables();
         const norm = (question || '').toString().toLowerCase().replace(/[^\w\s\u0980-\u09FF]/g, '').trim();
         if (!norm || !response) return;
         await query(
-            `INSERT INTO semantic_cache (page_id, session_name, question_norm, response_text)
-             VALUES ($1, $2, $3, $4)`,
-            [page_id, session_name, norm, response]
+            `INSERT INTO semantic_cache (page_id, session_name, context_id, question_norm, response_text)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [page_id, session_name, context_id, norm, response]
         );
     } catch (e) {
         console.warn(`[DB] saveSemanticCacheEntry failed: ${e.message}`);
     }
 }
 
-async function findSemanticCache({ page_id = null, session_name = null, question, threshold = 0.96 }) {
+async function findSemanticCache({ page_id = null, session_name = null, context_id = null, question, threshold = 0.96 }) {
     const { query } = require('./pgClient');
     try {
         await ensureSemanticCacheTables();
@@ -2564,22 +2596,38 @@ async function findSemanticCache({ page_id = null, session_name = null, question
 
         const conditions = [];
         const params = [norm, threshold];
+        
         if (page_id) {
-            conditions.push(`page_id = $3`);
+            conditions.push(`page_id = ${params.length + 1}`);
             params.push(page_id);
         }
         if (session_name) {
-            conditions.push(`session_name = $${params.length + 1}`);
+            conditions.push(`session_name = ${params.length + 1}`);
             params.push(session_name);
         }
+        
         const scopeWhere = conditions.length > 0 ? `AND (${conditions.join(' OR ')})` : '';
 
+        // Context Logic: Prefer entry with matching context_id if provided.
+        // If context_id is provided, we search for entries with that ID or NULL (Independent).
+        let contextWhere = '';
+        if (context_id) {
+            contextWhere = `AND (context_id = ${params.length + 1} OR context_id IS NULL)`;
+            params.push(context_id);
+        } else {
+            contextWhere = `AND context_id IS NULL`;
+        }
+
         const sql = `
-            SELECT response_text
+            SELECT response_text, context_id
             FROM semantic_cache
             WHERE similarity(question_norm, $1) >= $2
             ${scopeWhere}
-            ORDER BY similarity(question_norm, $1) DESC, created_at DESC
+            ${contextWhere}
+            ORDER BY 
+                (CASE WHEN context_id = ${context_id ? params.length : 1} THEN 1 ELSE 2 END) ASC,
+                similarity(question_norm, $1) DESC, 
+                created_at DESC
             LIMIT 1
         `;
         const res = await query(sql, params);

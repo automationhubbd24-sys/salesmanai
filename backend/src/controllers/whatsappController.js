@@ -181,6 +181,19 @@ const recentBotReplies = new Map();
 // Config Cache (In-Memory Optimization)
 const configCache = new Map(); // Key: sessionName, Value: { config, prompts, timestamp }
 
+// Helper to track bot replies for echo filtering
+function trackBotReply(senderId, text) {
+    const normalized = normalizeText(text);
+    if (!normalized) return;
+    
+    const now = Date.now();
+    let history = recentBotReplies.get(senderId) || [];
+    // Keep only last 20 seconds of replies
+    history = history.filter(r => now - r.timestamp < 20000);
+    history.push({ text: normalized, timestamp: now });
+    recentBotReplies.set(senderId, history);
+}
+
 // Helper to get cached page data (Fast Path)
 async function getCachedPageData(sessionName) {
     const now = Date.now();
@@ -1295,17 +1308,24 @@ async function queueMessage(session, messagePayload) {
     // User Requirement: Reply in <1s for cache hits.
     if (messageText && messageText.trim() && !imageUrls.length && !audioUrls.length) {
         const cacheQuery = messageText.trim().replace(/\s+/g, ' ');
-        dbService.findSemanticCache({
-            page_id: sessionName,
-            session_name: sessionName,
-            question: cacheQuery,
-            threshold: 0.96
-        }).then(async (cached) => {
+        
+        // Fetch Context (last_product_id) to make cache intelligent
+        dbService.getConversationState(sessionName, senderId).then(async (state) => {
+            const contextId = state?.last_product_id || null;
+            
+            const cached = await dbService.findSemanticCache({
+                page_id: sessionName,
+                session_name: sessionName,
+                context_id: contextId,
+                question: cacheQuery,
+                threshold: 0.96
+            });
+
             if (cached) {
                 const pageData = await getCachedPageData(sessionName);
                 const pageConfig = pageData?.config;
                 if (pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1)) {
-                    console.log(`[WA] ⚡ ULTRA-FAST CACHE HIT!`);
+                    console.log(`[WA] ⚡ ULTRA-FAST CACHE HIT! (Context: ${contextId || 'None'})`);
                     if (typeof trackBotReply === 'function') trackBotReply(senderId, cached);
                     
                     await whatsappService.sendSeen(sessionName, senderId);
@@ -1515,6 +1535,17 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
         }
     } catch (e) {
         console.warn(`[WA] Early Label Check Failed: ${e.message}`);
+    }
+
+    // 1. STICKER & EMOJI GATEKEEPER
+    const hasOnlyStickers = messages.every(m => m.isSticker === true);
+    const combinedRawText = messages.map(m => m.text).filter(Boolean).join(' ').trim();
+    // Regex for Alphanumeric or Bangla characters
+    const hasNoAlphanumeric = combinedRawText && !/[a-zA-Z0-9\u0980-\u09FF]/.test(combinedRawText);
+
+    if (hasOnlyStickers || (combinedRawText && hasNoAlphanumeric && messages.every(m => !m.images?.length))) {
+        console.log(`[Gatekeeper] Blocking reply for stickers/emojis only from ${senderId}`);
+        return;
     }
 
     // --- PRE-PROCESS COMBINED TEXT FOR CACHE ---

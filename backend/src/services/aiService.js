@@ -437,6 +437,16 @@ const functionTools = [
 
 const normalizeText = (value) => (value || '').toString().toLowerCase().trim();
 
+/**
+ * Lightweight filter for semantic caching.
+ * Only blocks extremely short or empty messages.
+ * Relies on context_id (last_product_id) to differentiate 10k+ items.
+ */
+function isCacheable(message) {
+    if (!message || message.trim().length < 2) return false; 
+    return true;
+}
+
 const computeCandidateScore = (query, product) => {
     const q = normalizeText(query);
     const name = normalizeText(product.name);
@@ -1126,6 +1136,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     if (!ownerName || ownerName === 'null') ownerName = 'Automation Hub BD';
 
     let cleanUserMessage = (userMessage || '').trim();
+    let currentContextId = null; // For context-aware semantic cache
 
     // 0. Unified Logger Helper (Defined at top to avoid Hoisting/Initialization errors)
     const finalize = async (result) => {
@@ -1178,15 +1189,21 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         // Save to Semantic Cache if enabled and not served from cache
         try {
             const semEnabled = pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1);
-            if (semEnabled && !usedSemanticCache && result && result.reply && cleanUserMessage) {
+            const canCache = isCacheable(cleanUserMessage);
+            
+            if (semEnabled && !usedSemanticCache && canCache && result && result.reply && cleanUserMessage) {
                 const dbService = require('./dbService');
                 // Non-blocking save (Fire and forget) to reduce latency
+                // Save with currentContextId to make it context-aware
                 dbService.saveSemanticCacheEntry({
                     page_id: pageConfig.page_id || null,
                     session_name: pageConfig.page_id || null,
+                    context_id: currentContextId, 
                     question: cleanUserMessage,
                     response: result.reply
                 }).catch(e => console.warn(`[AI] Background cache save failed: ${e.message}`));
+            } else if (semEnabled && !usedSemanticCache && !canCache) {
+                // console.log(`[AI] Message skipped for semantic cache (not cacheable): "${cleanUserMessage}"`);
             }
         } catch (e) {
             console.warn(`[AI] Failed to trigger semantic cache save: ${e.message}`);
@@ -1212,7 +1229,21 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         return result;
     };
     
-    // --- 1. QUICK SEMANTIC CACHE CHECK (No AI Slot needed) ---
+    // --- 1. CONVERSATION STATE: Fetch Last Product Context ---
+    let lastProductContext = null;
+    if (userId && pageConfig.page_id) {
+        try {
+            const state = await dbService.getConversationState(pageConfig.page_id, userId);
+            if (state && state.last_product_id) {
+                currentContextId = state.last_product_id;
+                lastProductContext = `[CONTEXT: LAST_RESOLVED_PRODUCT_ID: "${state.last_product_id}"] (Note: User is likely referring to this product if they say "it", "this", or "how to use" without naming it.)`;
+            }
+        } catch (e) {
+            console.warn("[AI Context] Failed to fetch conv state:", e.message);
+        }
+    }
+
+    // --- 2. QUICK SEMANTIC CACHE CHECK (No AI Slot needed) ---
     let usedSemanticCache = false;
     try {
         const semEnabled = pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1);
@@ -1224,11 +1255,12 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             const cached = await dbService.findSemanticCache({
                 page_id: pageConfig.page_id || null,
                 session_name: pageConfig.page_id || null,
+                context_id: currentContextId,
                 question: cleanUserMessage,
                 threshold
             });
             if (cached) {
-                console.log(`[AI] Semantic Cache HIT! (Threshold: ${threshold})`);
+                console.log(`[AI] Semantic Cache HIT! (Context: ${currentContextId || 'None'}, Threshold: ${threshold})`);
                 return finalize({ 
                     reply: cached, 
                     sentiment: 'neutral', 
@@ -1241,21 +1273,8 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         console.warn(`[AI] Semantic Cache check failed: ${e.message}`);
     }
 
-    // --- 2. ACQUIRE AI SLOT (Only for actual LLM calls) ---
+    // --- 3. ACQUIRE AI SLOT (Only for actual LLM calls) ---
     await acquireAiSlot();
-
-    // --- CONVERSATION STATE: Fetch Last Product Context ---
-    let lastProductContext = null;
-    if (userId && pageConfig.page_id) {
-        try {
-            const state = await dbService.getConversationState(pageConfig.page_id, userId);
-            if (state && state.last_product_id) {
-                lastProductContext = `[CONTEXT: LAST_RESOLVED_PRODUCT_ID: "${state.last_product_id}"] (Note: User is likely referring to this product if they say "it", "this", or "how to use" without naming it.)`;
-            }
-        } catch (e) {
-            console.warn("[AI Context] Failed to fetch conv state:", e.message);
-        }
-    }
 
     // --- SMART HISTORY PROCESSOR ---
     // User Requirement: "system memory ta read korte partese na"
@@ -1918,7 +1937,7 @@ async function processImageWithVision(imageUrl, pageConfig = {}, customOptions =
                 const response = await axios.get(imageUrl, { 
                     responseType: 'arraybuffer',
                     headers: headers,
-                    timeout: 10000,
+                    timeout: 40000,
                     proxy: false 
                 });
                 base64Image = Buffer.from(response.data).toString('base64');
@@ -2117,7 +2136,7 @@ Rules:
                     'HTTP-Referer': 'https://orderly-conversations.com', 
                     'X-Title': 'Orderly Conversations'
                 },
-                timeout: 10000
+                timeout: 40000
             });
 
             result = response.data?.choices?.[0]?.message?.content;
@@ -2139,7 +2158,7 @@ Rules:
             const geminiProxyAgent = getGeminiProxyAgent(url, useProxy);
             const visionResponse = await axios.post(url, payload, {
                     headers: { 'Content-Type': 'application/json' },
-                    timeout: 10000,
+                    timeout: 40000,
                     ...(geminiProxyAgent ? { 
                         httpsAgent: geminiProxyAgent, 
                         httpAgent: geminiProxyAgent, 
@@ -2214,7 +2233,7 @@ Rules:
                 'HTTP-Referer': 'https://orderly-conversations.com', 
                 'X-Title': 'Orderly Conversations'
             },
-            timeout: 10000
+            timeout: 40000
         });
 
         const result = response.data?.choices?.[0]?.message?.content;

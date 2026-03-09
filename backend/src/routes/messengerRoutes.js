@@ -418,13 +418,27 @@ router.put('/config/:id', async (req, res) => {
             'semantic_cache_enabled', 'semantic_cache_threshold', 'embed_enabled'
         ];
 
-        // Ensure new columns exist
+        // Ensure new columns exist (Migration on the fly)
         try {
-            await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS semantic_cache_enabled boolean DEFAULT false`);
-            await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS semantic_cache_threshold numeric DEFAULT 0.96`);
-            await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS embed_enabled boolean DEFAULT false`);
+            await pgClient.query(`
+                DO $$ 
+                BEGIN 
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='audio_detection') THEN
+                        ALTER TABLE fb_message_database ADD COLUMN audio_detection boolean DEFAULT false;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='semantic_cache_enabled') THEN
+                        ALTER TABLE fb_message_database ADD COLUMN semantic_cache_enabled boolean DEFAULT false;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='semantic_cache_threshold') THEN
+                        ALTER TABLE fb_message_database ADD COLUMN semantic_cache_threshold numeric DEFAULT 0.96;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='embed_enabled') THEN
+                        ALTER TABLE fb_message_database ADD COLUMN embed_enabled boolean DEFAULT false;
+                    END IF;
+                END $$;
+            `);
         } catch (e) {
-            console.warn("[Messenger] Failed to add semantic cache columns:", e.message);
+            console.warn("[Messenger] Migration failed (on-the-fly):", e.message);
         }
 
         const updates = [];

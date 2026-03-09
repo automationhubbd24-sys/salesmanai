@@ -449,7 +449,8 @@ async function queueMessage(event, entryPageId = null) {
             }).catch(() => {});
 
             // Save to AI Context Memory (Async)
-            dbService.saveChatMessage(sessionId, 'assistant', text, messageId).catch(() => {});
+            const echoSessionId = `${pageId}_${messageRecipientId}`;
+            dbService.saveChatMessage(echoSessionId, 'assistant', text, messageId).catch(() => {});
 
             // --- INSTANT EMOJI LOCK CHECK ---
             const pageData = await getCachedPageData(pageId);
@@ -568,24 +569,45 @@ async function queueMessage(event, entryPageId = null) {
     }).catch(err => console.error(`Error saving to fb_chats (Page: ${pageId}, Msg: ${messageId}):`, err.message));
     // -------------------------------------------------
 
-    // --- EARLY SEMANTIC CACHE CHECK (ULTRA-FAST PATH) ---
-    // User Requirement: Reply in <1s for cache hits.
-    // Check cache before ANY other logic (Gatekeeper, config cache update, etc)
-    if (messageText && messageText.trim() && !event.message?.attachments) {
-        // Use a lightweight check first
-        const cacheQuery = messageText.trim().replace(/\s+/g, ' ');
-        dbService.findSemanticCache({
-            page_id: pageId,
-            session_name: pageId,
-            question: cacheQuery,
-            threshold: 0.96 // Standard default
-        }).then(async (cached) => {
-            if (cached) {
-                // Now get config just for the token
-                const pageData = await getCachedPageData(pageId);
-                const pageConfig = pageData?.config;
-                if (pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1)) {
-                    console.log(`[FB] ⚡ ULTRA-FAST CACHE HIT!`);
+    const sessionId = `${pageId}_${senderId}`;
+
+    // --- EXTRACT MEDIA (Moved up for early cache check) ---
+    const thisMsgImages = event.message?.attachments?.filter(att => 
+        att.type === 'image' && !att.payload?.sticker_id
+    ).map(att => att.payload.url) || [];
+    
+    const thisMsgAudios = event.message?.attachments?.filter(att => 
+        att.type === 'audio' || 
+        (att.type === 'file' && att.payload?.url && /\.(mp3|wav|ogg|m4a|aac|mp4)(\?|$)/i.test(att.payload.url))
+    ).map(att => att.payload.url) || [];
+
+    // --- EARLY SEMANTIC CACHE CHECK (Instant Path) ---
+    // If this is the first message and not media, check cache immediately to bypass debounce.
+    const isFirstMessage = !debounceMap.has(sessionId);
+    const hasMediaInThisMsg = thisMsgImages.length > 0 || thisMsgAudios.length > 0;
+    
+    if (isFirstMessage && !hasMediaInThisMsg && messageText && messageText.trim()) {
+        const pageData = await getCachedPageData(pageId);
+        const pageConfig = pageData?.config;
+        if (pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1)) {
+            const threshold = pageConfig.semantic_cache_threshold ? Math.max(0.5, Math.min(0.99, Number(pageConfig.semantic_cache_threshold))) : 0.96;
+            const cacheQuery = messageText.trim().replace(/\s+/g, ' ');
+            
+            try {
+                // Fetch Context (last_product_id) to make cache intelligent
+                const state = await dbService.getConversationState(pageId, senderId);
+                const contextId = state?.last_product_id || null;
+
+                const cached = await dbService.findSemanticCache({
+                    page_id: pageId,
+                    session_name: pageId,
+                    context_id: contextId,
+                    question: cacheQuery,
+                    threshold
+                });
+
+                if (cached) {
+                    console.log(`[FB] ⚡ ULTRA-FAST CACHE HIT! (Context: ${contextId || 'None'})`);
                     trackBotReply(senderId, cached);
                     await facebookService.sendMessage(pageId, senderId, cached, pageConfig.page_access_token);
                     
@@ -600,12 +622,15 @@ async function queueMessage(event, entryPageId = null) {
                         reply_by: 'bot',
                         ai_model: 'semantic-cache'
                     }).catch(() => {});
+                    
+                    return; // EXIT EARLY
                 }
+            } catch (e) {
+                console.warn(`[FB] Early cache check failed:`, e.message);
             }
-        }).catch(e => console.warn(`[FB] Ultra-fast cache check failed:`, e.message));
+        }
     }
-
-    const sessionId = `${pageId}_${senderId}`;
+    // --------------------------------------------------
 
     // Initialize buffer if not exists
     if (!debounceMap.has(sessionId)) {
@@ -614,17 +639,9 @@ async function queueMessage(event, entryPageId = null) {
 
     const sessionData = debounceMap.get(sessionId);
     
-    // --- PUSH OBJECT ---
-    // Extract URLs for this specific message (STRICTLY EXCLUDING STICKERS)
-    const thisMsgImages = event.message?.attachments?.filter(att => 
-        att.type === 'image' && !att.payload?.sticker_id
-    ).map(att => att.payload.url) || [];
-    
-    const thisMsgAudios = event.message?.attachments?.filter(att => 
-        att.type === 'audio' || 
-        (att.type === 'file' && att.payload?.url && /\.(mp3|wav|ogg|m4a|aac|mp4)(\?|$)/i.test(att.payload.url))
-    ).map(att => att.payload.url) || [];
+    // Extract URLs for this specific message (ALREADY EXTRACTED ABOVE)
 
+    // Push Object
     sessionData.messages.push({
         id: messageId,
         text: messageText,
@@ -922,6 +939,18 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         }
         console.log(`[Context] Dynamic History Limit: ${historyLimit} (Source: ${pagePrompts ? 'DB' : 'Default'})`);
 
+        // 1. STICKER & EMOJI GATEKEEPER
+        const hasOnlyStickers = messages.every(m => m.isSticker === true);
+        const combinedRawText = messages.map(m => m.text).filter(Boolean).join(' ').trim();
+        // Regex for Alphanumeric or Bangla characters
+        const hasNoAlphanumeric = combinedRawText && !/[a-zA-Z0-9\u0980-\u09FF]/.test(combinedRawText);
+
+        if (hasOnlyStickers || (combinedRawText && hasNoAlphanumeric && messages.every(m => !m.images?.length))) {
+            console.log(`[Gatekeeper] Blocking reply for stickers/emojis only from ${senderId}`);
+            debounceMap.delete(sessionId);
+            return;
+        }
+
         console.log("Fetching remaining context data in parallel...");
         
         // 2. Fetch the rest in parallel using the dynamic limit
@@ -1012,7 +1041,7 @@ STRICT RULES:
                         message_id: `img_analysis_${Date.now()}_${idx}`,
                         text: `[Visual Data]:\n${perMsgText}`,
                         timestamp: Date.now(),
-                        status: 'bot_reply',
+                        status: 'sent',
                         reply_by: 'bot',
                         token: totalVisionTokens, // Specific tokens for vision
                         ai_model: lastModelUsed

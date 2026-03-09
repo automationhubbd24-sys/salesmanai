@@ -195,6 +195,10 @@ CREATE TABLE IF NOT EXISTS fb_message_database (
   check_conversion INTEGER DEFAULT 20,
   memory_context_name TEXT,
   order_lock_minutes INTEGER DEFAULT 1440,
+  audio_detection BOOLEAN DEFAULT FALSE,
+  semantic_cache_enabled BOOLEAN DEFAULT FALSE,
+  semantic_cache_threshold NUMERIC DEFAULT 0.96,
+  embed_enabled BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 

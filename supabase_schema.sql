@@ -241,6 +241,10 @@ alter table fb_message_database add column if not exists unblock_emoji text;
 alter table fb_message_database add column if not exists check_conversion integer default 20;
 alter table fb_message_database add column if not exists memory_context_name text;
 alter table fb_message_database add column if not exists order_lock_minutes integer default 1440;
+alter table fb_message_database add column if not exists audio_detection boolean default false;
+alter table fb_message_database add column if not exists semantic_cache_enabled boolean default false;
+alter table fb_message_database add column if not exists semantic_cache_threshold numeric default 0.96;
+alter table fb_message_database add column if not exists embed_enabled boolean default false;
 alter table fb_message_database add column if not exists image_prompt text;
 
 create table if not exists page_prompts (

@@ -362,21 +362,60 @@ exports.getSemanticCacheConfigs = async (req, res) => {
         // 1. Ensure columns exist first (Migration)
         try {
             // Messenger table
-            await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS semantic_cache_enabled boolean DEFAULT false`);
-            await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS semantic_cache_threshold numeric DEFAULT 0.96`);
-            await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS embed_enabled boolean DEFAULT false`);
-            await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`);
+            await pgClient.query(`
+                DO $$ 
+                BEGIN 
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='audio_detection') THEN
+                        ALTER TABLE fb_message_database ADD COLUMN audio_detection boolean DEFAULT false;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='semantic_cache_enabled') THEN
+                        ALTER TABLE fb_message_database ADD COLUMN semantic_cache_enabled boolean DEFAULT false;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='semantic_cache_threshold') THEN
+                        ALTER TABLE fb_message_database ADD COLUMN semantic_cache_threshold numeric DEFAULT 0.96;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='embed_enabled') THEN
+                        ALTER TABLE fb_message_database ADD COLUMN embed_enabled boolean DEFAULT false;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='created_at') THEN
+                        ALTER TABLE fb_message_database ADD COLUMN created_at TIMESTAMPTZ DEFAULT NOW();
+                    END IF;
+                END $$;
+            `);
             
             // WhatsApp table
-            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS semantic_cache_enabled boolean DEFAULT false`);
-            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS semantic_cache_threshold numeric DEFAULT 0.96`);
-            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS embed_enabled boolean DEFAULT false`);
-            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`);
-            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS push_name text`);
-            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS ai_provider text`);
-            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS chat_model text`);
-            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS voice_model text`);
-            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS cheap_engine boolean DEFAULT true`);
+            await pgClient.query(`
+                DO $$ 
+                BEGIN 
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='semantic_cache_enabled') THEN
+                        ALTER TABLE whatsapp_message_database ADD COLUMN semantic_cache_enabled boolean DEFAULT false;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='semantic_cache_threshold') THEN
+                        ALTER TABLE whatsapp_message_database ADD COLUMN semantic_cache_threshold numeric DEFAULT 0.96;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='embed_enabled') THEN
+                        ALTER TABLE whatsapp_message_database ADD COLUMN embed_enabled boolean DEFAULT false;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='created_at') THEN
+                        ALTER TABLE whatsapp_message_database ADD COLUMN created_at TIMESTAMPTZ DEFAULT NOW();
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='push_name') THEN
+                        ALTER TABLE whatsapp_message_database ADD COLUMN push_name text;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='ai_provider') THEN
+                        ALTER TABLE whatsapp_message_database ADD COLUMN ai_provider text;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='chat_model') THEN
+                        ALTER TABLE whatsapp_message_database ADD COLUMN chat_model text;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='voice_model') THEN
+                        ALTER TABLE whatsapp_message_database ADD COLUMN voice_model text;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='cheap_engine') THEN
+                        ALTER TABLE whatsapp_message_database ADD COLUMN cheap_engine boolean DEFAULT true;
+                    END IF;
+                END $$;
+            `);
             
             // pam table (page_access_token_message)
             await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`);
