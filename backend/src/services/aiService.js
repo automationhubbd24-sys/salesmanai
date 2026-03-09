@@ -720,7 +720,34 @@ function extractImagesFromText(text) {
     };
 }
 
-    // Helper to clean and extract JSON from AI response (handles <think> blocks and markdown)
+async function getEmbedding(text) {
+    if (!text) return null;
+    try {
+        const config = await dbService.getEmbeddingGlobalConfig();
+        if (!config || !config.api_key) {
+            // console.warn('[AI Embedding] Global config or API Key missing.');
+            return null;
+        }
+
+        const openai = new OpenAI({
+            apiKey: config.api_key,
+            baseURL: config.base_url || 'https://api.openai.com/v1'
+        });
+
+        const response = await openai.embeddings.create({
+            model: config.model || 'text-embedding-3-small',
+            input: text.replace(/\n/g, ' '),
+            encoding_format: "float",
+        });
+
+        return response.data[0].embedding;
+    } catch (e) {
+        console.error(`[AI Embedding] Generation failed: ${e.message}`);
+        return null;
+    }
+}
+
+// Helper to clean and extract JSON from AI response (handles <think> blocks and markdown)
 function extractJsonFromAiResponse(rawContent) {
     let parsed = {};
     
@@ -1193,23 +1220,34 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         // Save to Semantic Cache if enabled and not served from cache
         try {
             const semEnabled = pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1 || pageConfig.semantic_cache_enabled === 'true');
+            const embedEnabled = pageConfig && (pageConfig.embed_enabled === true || pageConfig.embed_enabled === 1 || pageConfig.embed_enabled === 'true');
             const canCache = isCacheable(cleanUserMessage);
             
-            console.log(`[AI Cache Debug] Page: ${pageConfig.page_id} | Enabled: ${semEnabled} | UsedCache: ${usedSemanticCache} | CanCache: ${canCache} | CleanMsg: "${cleanUserMessage}"`);
-
             if (semEnabled && !usedSemanticCache && canCache && result && result.reply && cleanUserMessage) {
                 const dbService = require('./dbService');
-                // Non-blocking save (Fire and forget) to reduce latency
-                // Save with currentContextId to make it context-aware
-                dbService.saveSemanticCacheEntry({
-                    page_id: pageConfig.page_id || null,
-                    session_name: pageConfig.page_id || null,
-                    context_id: currentContextId, 
-                    question: cleanUserMessage,
-                    response: result.reply
-                }).then(() => {
-                    console.log(`[AI Cache Debug] Successfully saved entry for "${cleanUserMessage}"`);
-                }).catch(e => console.warn(`[AI] Background cache save failed: ${e.message}`));
+                
+                // If Embedding is enabled, generate vector for saving
+                let saveVector = null;
+                if (embedEnabled) {
+                    getEmbedding(cleanUserMessage).then(v => {
+                        dbService.saveSemanticCacheEntry({
+                            page_id: pageConfig.page_id || null,
+                            session_name: pageConfig.page_id || null,
+                            context_id: currentContextId, 
+                            question: cleanUserMessage,
+                            response: result.reply,
+                            vector: v
+                        }).catch(e => console.warn(`[AI] Background vector cache save failed: ${e.message}`));
+                    });
+                } else {
+                    dbService.saveSemanticCacheEntry({
+                        page_id: pageConfig.page_id || null,
+                        session_name: pageConfig.page_id || null,
+                        context_id: currentContextId, 
+                        question: cleanUserMessage,
+                        response: result.reply
+                    }).catch(e => console.warn(`[AI] Background cache save failed: ${e.message}`));
+                }
             }
         } catch (e) {
             console.warn(`[AI] Failed to trigger semantic cache save: ${e.message}`);
@@ -1251,8 +1289,10 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
 
     // --- 2. QUICK SEMANTIC CACHE CHECK (No AI Slot needed) ---
     let usedSemanticCache = false;
+    let userMessageVector = null;
     try {
-        const semEnabled = pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1);
+        const semEnabled = pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1 || pageConfig.semantic_cache_enabled === 'true');
+        const embedEnabled = pageConfig && (pageConfig.embed_enabled === true || pageConfig.embed_enabled === 1 || pageConfig.embed_enabled === 'true');
         const threshold = pageConfig && pageConfig.semantic_cache_threshold ? Math.max(0.5, Math.min(0.99, Number(pageConfig.semantic_cache_threshold))) : 0.96;
         const isMediaTurn = (imageUrls && imageUrls.length > 0) || (audioUrls && audioUrls.length > 0);
         
@@ -1260,8 +1300,6 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             const dbService = require('./dbService');
             
             // --- SMART HISTORY CONTEXT FOR CACHE ---
-            // If the user says something short like "price?" or "it's price", 
-            // we prepend the last user message to make it more specific for the cache.
             let cacheQuery = cleanUserMessage;
             if (cleanUserMessage.length < 15 && history.length > 0) {
                 const lastUserMsg = [...history].reverse().find(m => m.role === 'user');
@@ -1270,15 +1308,21 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                 }
             }
 
+            // If Embedding is enabled, generate vector
+            if (embedEnabled) {
+                userMessageVector = await getEmbedding(cacheQuery);
+            }
+
             const cached = await dbService.findSemanticCache({
                 page_id: pageConfig.page_id || null,
                 session_name: pageConfig.page_id || null,
                 context_id: currentContextId,
                 question: cacheQuery,
-                threshold
+                threshold,
+                vector: userMessageVector
             });
             if (cached) {
-                console.log(`[AI] Semantic Cache HIT! (Context: ${currentContextId || 'None'}, Threshold: ${threshold})`);
+                console.log(`[AI] Semantic Cache HIT! (Type: ${userMessageVector ? 'Vector' : 'Fuzzy'}, Threshold: ${threshold})`);
                 usedSemanticCache = true;
                 return finalize({ 
                     reply: cached, 

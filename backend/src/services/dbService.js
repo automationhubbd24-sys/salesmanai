@@ -2549,6 +2549,31 @@ function calculateRequestCost(model, requests = 1) {
 }
 
 // --- Semantic Cache Utilities ---
+async function getEmbeddingGlobalConfig() {
+    try {
+        const result = await query(
+            `SELECT text_model, text_model_details
+             FROM openrouter_engine_config
+             WHERE config_type = $1
+             LIMIT 1`,
+            ['embedding_global']
+        );
+
+        const row = result.rows[0] || null;
+        const details = (row && row.text_model_details) || {};
+
+        return {
+            model: (row && row.text_model) || 'text-embedding-3-small',
+            base_url: details.base_url || 'https://api.openai.com/v1',
+            api_key: details.api_key || '',
+            provider: details.provider || 'openai'
+        };
+    } catch (e) {
+        console.warn(`[DB] Failed to fetch embedding config: ${e.message}`);
+        return null;
+    }
+}
+
 async function ensureSemanticCacheTables() {
     const { query } = require('./pgClient');
     try {
@@ -2584,7 +2609,7 @@ async function ensureSemanticCacheTables() {
     }
 }
 
-async function saveSemanticCacheEntry({ page_id = null, session_name = null, context_id = null, question, response }) {
+async function saveSemanticCacheEntry({ page_id = null, session_name = null, context_id = null, question, response, vector = null }) {
     const { query } = require('./pgClient');
     try {
         await ensureSemanticCacheTables();
@@ -2596,9 +2621,9 @@ async function saveSemanticCacheEntry({ page_id = null, session_name = null, con
         const cleanContextId = context_id ? String(context_id).trim() : null;
 
         await query(
-            `INSERT INTO semantic_cache (page_id, session_name, context_id, question_norm, response_text)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [cleanPageId, cleanSessionName, cleanContextId, norm, response]
+            `INSERT INTO semantic_cache (page_id, session_name, context_id, question_norm, response_text, question_vector)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [cleanPageId, cleanSessionName, cleanContextId, norm, response, vector ? JSON.stringify(vector) : null]
         );
     } catch (e) {
         console.error(`[DB] saveSemanticCacheEntry failed: ${e.message}`);
@@ -2704,7 +2729,7 @@ async function updateSemanticCacheEntry(id, { question, response }) {
     }
 }
 
-async function findSemanticCache({ page_id = null, session_name = null, context_id = null, question, threshold = 0.96 }) {
+async function findSemanticCache({ page_id = null, session_name = null, context_id = null, question, threshold = 0.96, vector = null }) {
     const { query } = require('./pgClient');
     try {
         await ensureSemanticCacheTables();
@@ -2714,21 +2739,17 @@ async function findSemanticCache({ page_id = null, session_name = null, context_
         const conditions = [];
         const params = [norm, threshold];
         
-        if (page_id) {
-            conditions.push(`page_id = $${params.length + 1}`);
-            params.push(page_id);
-        }
-        if (session_name) {
-            conditions.push(`session_name = $${params.length + 1}`);
-            params.push(session_name);
+        const searchId = (page_id || session_name || '').toString().trim();
+        if (searchId) {
+            params.push(searchId);
+            conditions.push(`(page_id = $${params.length} OR session_name = $${params.length})`);
         }
         
         const scopeWhere = conditions.length > 0 ? `AND (${conditions.join(' OR ')})` : '';
 
-        // Context Logic: Prefer entry with matching context_id if provided.
-        // If context_id is provided, we search for entries with that ID or NULL (Independent).
+        // Context Logic
         let contextWhere = '';
-        let contextSortClause = '1'; // Default sort (no specific preference)
+        let contextSortClause = '1';
         
         if (context_id) {
             contextWhere = `AND (context_id = $${params.length + 1} OR context_id IS NULL)`;
@@ -2738,21 +2759,44 @@ async function findSemanticCache({ page_id = null, session_name = null, context_
             contextWhere = `AND context_id IS NULL`;
         }
 
-        const sql = `
-            SELECT response_text, context_id
-            FROM semantic_cache
-            WHERE similarity(question_norm, $1) >= $2
-            ${scopeWhere}
-            ${contextWhere}
-            ORDER BY 
-                ${contextSortClause} ASC,
-                similarity(question_norm, $1) DESC, 
-                created_at DESC
-            LIMIT 1
-        `;
+        let sql = '';
+        if (vector && Array.isArray(vector)) {
+            // Vector Search Logic
+            params.push(JSON.stringify(vector));
+            const vectorIdx = params.length;
+            
+            sql = `
+                SELECT response_text, context_id, (1 - (question_vector <=> $${vectorIdx}::vector)) as similarity
+                FROM semantic_cache
+                WHERE question_vector IS NOT NULL
+                AND (1 - (question_vector <=> $${vectorIdx}::vector)) >= $2
+                ${scopeWhere}
+                ${contextWhere}
+                ORDER BY 
+                    ${contextSortClause} ASC,
+                    (1 - (question_vector <=> $${vectorIdx}::vector)) DESC, 
+                    created_at DESC
+                LIMIT 1
+            `;
+        } else {
+            // Standard Text Search (Similarity)
+            sql = `
+                SELECT response_text, context_id, similarity(question_norm, $1) as similarity
+                FROM semantic_cache
+                WHERE similarity(question_norm, $1) >= $2
+                ${scopeWhere}
+                ${contextWhere}
+                ORDER BY 
+                    ${contextSortClause} ASC,
+                    similarity(question_norm, $1) DESC, 
+                    created_at DESC
+                LIMIT 1
+            `;
+        }
         
         const res = await query(sql, params);
         if (res.rows.length > 0) {
+            console.log(`[DB Cache] HIT! Similarity: ${res.rows[0].similarity}`);
             return res.rows[0].response_text;
         }
         return null;
@@ -2831,6 +2875,7 @@ module.exports = {
     deleteSemanticCacheEntry,
     updateSemanticCacheEntry,
     clearSemanticCache,
+    getEmbeddingGlobalConfig,
     getProducts,
     getProductById,
     updateProduct,
