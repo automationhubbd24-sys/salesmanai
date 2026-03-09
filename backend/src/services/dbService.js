@@ -2667,21 +2667,22 @@ async function clearSemanticCache({ page_id = null, session_name = null }) {
     try {
         const conditions = [];
         const params = [];
-        if (page_id) {
-            params.push(page_id);
-            conditions.push(`(page_id = $${params.length} OR session_name = $${params.length})`);
-        } else if (session_name) {
-            params.push(session_name);
-            conditions.push(`(page_id = $${params.length} OR session_name = $${params.length})`);
+        
+        const searchId = (page_id || session_name || '').toString().trim();
+        
+        if (searchId) {
+            params.push(searchId);
+            conditions.push(`(page_id = $1 OR session_name = $1)`);
         }
 
         if (conditions.length === 0) return false;
 
         const sql = `DELETE FROM semantic_cache WHERE ${conditions.join(' OR ')}`;
+        console.log(`[DB Debug] clearSemanticCache SQL: ${sql} | ID: ${searchId}`);
         await query(sql, params);
         return true;
     } catch (e) {
-        console.warn(`[DB] clearSemanticCache failed: ${e.message}`);
+        console.error(`[DB Error] clearSemanticCache failed: ${e.message}`);
         return false;
     }
 }
