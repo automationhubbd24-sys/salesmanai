@@ -91,7 +91,7 @@ exports.adminLogin = async (req, res) => {
                 return res.status(500).json({ error: 'Admin auth secret is not configured' });
             }
             const token = require('jsonwebtoken').sign(
-                { role: 'admin' },
+                { role: 'admin', username: username },
                 jwtSecret,
                 { expiresIn: '7d' }
             );

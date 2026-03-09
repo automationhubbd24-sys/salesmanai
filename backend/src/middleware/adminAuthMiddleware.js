@@ -20,7 +20,8 @@ module.exports = (req, res, next) => {
         }
 
         req.admin = {
-            role: payload.role
+            role: payload.role,
+            username: payload.username
         };
         next();
     } catch (error) {
