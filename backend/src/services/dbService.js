@@ -2643,6 +2643,30 @@ async function deleteSemanticCacheEntry(id) {
     }
 }
 
+async function clearSemanticCache({ page_id = null, session_name = null }) {
+    const { query } = require('./pgClient');
+    try {
+        const conditions = [];
+        const params = [];
+        if (page_id) {
+            params.push(page_id);
+            conditions.push(`(page_id = $${params.length} OR session_name = $${params.length})`);
+        } else if (session_name) {
+            params.push(session_name);
+            conditions.push(`(page_id = $${params.length} OR session_name = $${params.length})`);
+        }
+
+        if (conditions.length === 0) return false;
+
+        const sql = `DELETE FROM semantic_cache WHERE ${conditions.join(' OR ')}`;
+        await query(sql, params);
+        return true;
+    } catch (e) {
+        console.warn(`[DB] clearSemanticCache failed: ${e.message}`);
+        return false;
+    }
+}
+
 async function updateSemanticCacheEntry(id, { question, response }) {
     const { query } = require('./pgClient');
     try {

@@ -377,6 +377,39 @@ export default function AdminPage() {
     }
   };
 
+  const handleClearCache = async () => {
+    if (!selectedConfigForEntries) return;
+    const msg = `Are you sure you want to delete ALL (${cacheEntries.length}) cache entries for this account? This cannot be undone!`;
+    if (!confirm(msg)) return;
+    
+    try {
+      const token = getAdminToken();
+      const payload = {
+        page_id: selectedConfigForEntries.platform === 'messenger' ? selectedConfigForEntries.id : null,
+        session_name: selectedConfigForEntries.platform === 'whatsapp' ? selectedConfigForEntries.id : null,
+      };
+
+      const response = await fetch(`${BACKEND_URL}/api/db-admin/semantic-cache/clear`, {
+        method: 'POST',
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+      
+      const data = await response.json();
+      if (data.success) {
+        toast.success('All cache entries cleared');
+        fetchCacheEntries(selectedConfigForEntries.platform, selectedConfigForEntries.id);
+      } else {
+        toast.error(data.error || "Clear failed");
+      }
+    } catch (error) {
+      toast.error('Failed to clear cache');
+    }
+  };
+
   const updateCacheConfig = async (config: CacheConfig, updates: Partial<CacheConfig>) => {
     try {
       const token = getAdminToken();
@@ -3404,14 +3437,27 @@ export default function AdminPage() {
                   <Activity className="h-4 w-4 text-blue-400" />
                   Existing Cache Entries ({cacheEntries.length})
                 </h3>
-                <div className="relative w-64">
-                  <Input 
-                    placeholder="Search entries..." 
-                    className="h-8 text-xs bg-black/40 border-white/10 pl-8"
-                    value={entriesSearch}
-                    onChange={(e) => setEntriesSearch(e.target.value)}
-                  />
-                  <svg className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                <div className="flex items-center gap-2">
+                  {cacheEntries.length > 0 && (
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={handleClearCache}
+                      className="h-8 px-2 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 flex items-center gap-1.5"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Clear All
+                    </Button>
+                  )}
+                  <div className="relative w-64">
+                    <Input 
+                      placeholder="Search entries..." 
+                      className="h-8 text-xs bg-black/40 border-white/10 pl-8"
+                      value={entriesSearch}
+                      onChange={(e) => setEntriesSearch(e.target.value)}
+                    />
+                    <svg className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                  </div>
                 </div>
               </div>
 

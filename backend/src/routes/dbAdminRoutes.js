@@ -11,6 +11,7 @@ router.post('/cache-configs/update', adminAuthMiddleware, dbAdminController.upda
 // Semantic Cache Entries Management (All Authenticated Admins)
 router.get('/semantic-cache/entries', adminAuthMiddleware, dbAdminController.getSemanticCacheEntries);
 router.post('/semantic-cache/add', adminAuthMiddleware, dbAdminController.addSemanticCacheEntry);
+router.post('/semantic-cache/clear', adminAuthMiddleware, dbAdminController.clearSemanticCache);
 router.put('/semantic-cache/update/:id', adminAuthMiddleware, dbAdminController.updateSemanticCacheEntry);
 router.delete('/semantic-cache/delete/:id', adminAuthMiddleware, dbAdminController.deleteSemanticCacheEntry);
 

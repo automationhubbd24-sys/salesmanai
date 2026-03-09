@@ -641,3 +641,24 @@ exports.deleteSemanticCacheEntry = async (req, res) => {
         res.status(500).json({ success: false, error: error.message });
     }
 };
+
+exports.clearSemanticCache = async (req, res) => {
+    try {
+        const dbService = require('../services/dbService');
+        const { page_id, session_name } = req.body;
+        
+        if (!page_id && !session_name) {
+            return res.status(400).json({ success: false, error: 'page_id or session_name is required' });
+        }
+
+        const success = await dbService.clearSemanticCache({ page_id, session_name });
+        if (success) {
+            res.json({ success: true, message: 'All cache entries cleared for this account' });
+        } else {
+            res.status(500).json({ success: false, error: 'Failed to clear cache' });
+        }
+    } catch (error) {
+        console.error('[DBAdmin] clearSemanticCache error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
