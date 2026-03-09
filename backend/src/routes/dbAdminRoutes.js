@@ -8,11 +8,11 @@ router.get('/tables', adminAuthMiddleware, dbAdminController.listTables);
 router.get('/cache-configs', adminAuthMiddleware, dbAdminController.getSemanticCacheConfigs);
 router.post('/cache-configs/update', adminAuthMiddleware, dbAdminController.updateSemanticCacheConfig);
 
-// Semantic Cache Entries Management (Superadmin Only)
-router.get('/semantic-cache/entries', adminAuthMiddleware, abcAdminMiddleware, dbAdminController.getSemanticCacheEntries);
-router.post('/semantic-cache/add', adminAuthMiddleware, abcAdminMiddleware, dbAdminController.addSemanticCacheEntry);
-router.put('/semantic-cache/update/:id', adminAuthMiddleware, abcAdminMiddleware, dbAdminController.updateSemanticCacheEntry);
-router.delete('/semantic-cache/delete/:id', adminAuthMiddleware, abcAdminMiddleware, dbAdminController.deleteSemanticCacheEntry);
+// Semantic Cache Entries Management (All Authenticated Admins)
+router.get('/semantic-cache/entries', adminAuthMiddleware, dbAdminController.getSemanticCacheEntries);
+router.post('/semantic-cache/add', adminAuthMiddleware, dbAdminController.addSemanticCacheEntry);
+router.put('/semantic-cache/update/:id', adminAuthMiddleware, dbAdminController.updateSemanticCacheEntry);
+router.delete('/semantic-cache/delete/:id', adminAuthMiddleware, dbAdminController.deleteSemanticCacheEntry);
 
 router.get('/table/:table', adminAuthMiddleware, dbAdminController.getTableData);
 router.get('/embedding-config', adminAuthMiddleware, dbAdminController.getEmbeddingGlobalConfig);
