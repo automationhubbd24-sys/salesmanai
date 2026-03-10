@@ -1872,7 +1872,7 @@ ${productContext || "No specific product context provided yet."}
     let finalProvider = resolved.finalProvider;
     let finalModel = resolved.finalModel;
 
-    const step1 = `[AI Step 1] Engine Resolved: ${finalProvider} / ${finalModel}`;
+    const step1 = `[AI Step 1] Engine Resolved: ${finalProvider}/${finalModel}`;
     console.log(step1);
     logDebug(step1);
 

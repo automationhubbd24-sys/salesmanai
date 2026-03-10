@@ -248,8 +248,8 @@ router.post('/v1/chat/completions', async (req, res) => {
         else if (model.includes('/') || model.includes(':free')) provider = 'openrouter';
     }
 
-    console.log(`[API Engine] Processing Request: ${provider} / ${model}`);
-     logDebug(`[API Engine] Processing Request: ${provider} / ${model}`);
+    console.log(`[API Engine] Processing Request: ${provider}/${model}`);
+     logDebug(`[API Engine] Processing Request: ${provider}/${model}`);
   
      // --- BRANDED MODEL MAPPING ---
     // Google/Gemini doesn't recognize branded model names. Map them to real models.
