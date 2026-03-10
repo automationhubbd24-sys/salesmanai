@@ -272,7 +272,7 @@ router.post('/v1/chat/completions', async (req, res) => {
     else if (provider === 'mistral') targetUrl = 'https://api.mistral.ai/v1/chat/completions';
     else if (provider === 'deepseek') targetUrl = 'https://api.deepseek.com/chat/completions';
     else if (provider === 'google' || provider === 'gemini') {
-        targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+        targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/';
     }
 
     console.log(`[API Engine] Target URL: ${targetUrl}`);
@@ -310,7 +310,7 @@ router.post('/v1/chat/completions', async (req, res) => {
                     }
                 }
 
-                const response = await axios.post(targetUrl, req.body, {
+                const response = await axios.post(targetUrl.endsWith('/') ? `${targetUrl}chat/completions` : targetUrl, req.body, {
                     headers: {
                         'Authorization': `Bearer ${keyData.key}`,
                         'Content-Type': 'application/json'
@@ -379,7 +379,7 @@ router.post('/v1/chat/completions', async (req, res) => {
             }
         }
 
-        const response = await axios.post(targetUrl, req.body, {
+        const response = await axios.post(targetUrl.endsWith('/') ? `${targetUrl}chat/completions` : targetUrl, req.body, {
             headers: {
                 'Authorization': `Bearer ${keyData.key}`,
                 'Content-Type': 'application/json'
