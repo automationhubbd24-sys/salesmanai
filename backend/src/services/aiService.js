@@ -1674,34 +1674,43 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
 
     // --- PROMPT & MESSAGE CONSTRUCTION ---
     let messages = [];
-    // User Update: Default to JSON Object for reliability
     let responseFormat = undefined; 
     
     // --- TOOL ENABLING LOGIC ---
+    // External API users (n8n, etc.) usually want a raw LLM experience without our internal tools.
     const toolsEnabled = !pageConfig.is_external_api;
     const tools = toolsEnabled ? functionTools : undefined;
 
     if (pageConfig.is_external_api) {
-        const whiteLabelInstruction = "You are SalesmanChatbot, a high-performance AI developed by SalesmanChatbot team. You are NOT Google Gemini, OpenAI, Meta, or any other company's model. If asked about your identity, maintain that you are a proprietary SalesmanChatbot AI.";
-        
+        // --- EXTERNAL API PATH (n8n, Third-party Servers) ---
+        // Goal: Provide a RAW experience like a standard OpenAI/Gemini API.
         const userSystemPrompt = pagePrompts?.text_prompt || "";
-        const finalSystemPrompt = `${whiteLabelInstruction}\n\n${userSystemPrompt}\n\n${productContext || ""}`.trim();
+        
+        // Identity only if no prompt provided (Identity Protection)
+        const whiteLabelInstruction = !userSystemPrompt.trim()
+            ? "You are SalesmanChatbot, a high-performance AI developed by SalesmanChatbot team. You are NOT Google Gemini, OpenAI, Meta, or any other company's model. If asked about your identity, maintain that you are a proprietary SalesmanChatbot AI."
+            : "";
+        
+        // NO FORCED JSON, NO FORCED TOOLS, NO LEAD CAPTURE for External API
+        const finalSystemPrompt = `${whiteLabelInstruction}\n\n${userSystemPrompt}`.trim();
 
+        if (finalSystemPrompt) {
+            messages.push({ role: 'system', content: finalSystemPrompt });
+        }
+        
+        messages.push(...processedHistory);
+        
         let finalUserMsg = cleanUserMessage;
         if (pendingSystemNotes.length > 0) {
             finalUserMsg = `${pendingSystemNotes.join('\n')}\n${finalUserMsg}`;
         }
-
-        messages = [
-            { role: 'system', content: finalSystemPrompt },
-            ...processedHistory,
-            { role: 'user', content: finalUserMsg }
-        ];
+        messages.push({ role: 'user', content: finalUserMsg });
         
-        responseFormat = undefined; 
-        console.log(`[AI] External API Mode: Skipping n8n System Prompt.`);
+        console.log(`[AI] External API Mode: Providing raw LLM experience.`);
 
     } else {
+        // --- INTERNAL SYSTEM PATH (Messenger, WhatsApp, Own API Button) ---
+        // Goal: Full Sales automation with Enforced JSON and Lead Capture.
         const basePrompt = pagePrompts?.text_prompt || "You are a helpful AI Salesman.";
 
         const unifiedSystemPrompt = `[BUSINESS OWNER'S MANDATORY INSTRUCTIONS]
@@ -1739,7 +1748,7 @@ ${productContext || "No specific product context provided yet."}
 }`;
 
         const systemMessage = { role: 'system', content: unifiedSystemPrompt };
-    
+
         const lastHistoryMsg = processedHistory.length > 0 ? processedHistory[processedHistory.length - 1] : null;
         let isDuplicate = false;
         
