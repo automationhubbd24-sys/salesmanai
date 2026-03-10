@@ -265,14 +265,14 @@ router.post('/v1/chat/completions', async (req, res) => {
     req.body.model = upstreamModel;
 
     // Determine Upstream Target
-    let targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+    let targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions';
     if (provider === 'openai') targetUrl = 'https://api.openai.com/v1/chat/completions';
     else if (provider === 'groq') targetUrl = 'https://api.groq.com/openai/v1/chat/completions';
     else if (provider === 'openrouter') targetUrl = 'https://openrouter.ai/api/v1/chat/completions';
     else if (provider === 'mistral') targetUrl = 'https://api.mistral.ai/v1/chat/completions';
     else if (provider === 'deepseek') targetUrl = 'https://api.deepseek.com/chat/completions';
     else if (provider === 'google' || provider === 'gemini') {
-        targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+        targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions';
     }
 
     console.log(`[API Engine] Target URL: ${targetUrl}`);
@@ -324,14 +324,17 @@ router.post('/v1/chat/completions', async (req, res) => {
                 const response = await axios.post(targetUrl, cleanBody, {
                     headers: {
                         'Authorization': `Bearer ${keyData.key}`,
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                     },
                     httpsAgent: agent,
                     httpAgent: agent,
                     proxy: false, // Important for HttpsProxyAgent
                     responseType: 'stream',
                     timeout: 60000,
-                    validateStatus: () => true
+                    validateStatus: () => true,
+                    // DO NOT send Host or Content-Length manually, let Axios/Agent handle it
+                    maxRedirects: 5
                 });
 
                 if (response.status >= 400) {
@@ -428,7 +431,8 @@ router.post('/v1/chat/completions', async (req, res) => {
             const response = await axios.post(targetUrl, cleanBody, {
                 headers: {
                     'Authorization': `Bearer ${keyData.key}`,
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                 },
                 httpsAgent: agent,
                 httpAgent: agent,
