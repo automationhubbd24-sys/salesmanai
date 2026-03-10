@@ -1,7 +1,42 @@
 const express = require('express');
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
+const fs = require('fs');
+const path = require('path');
 const router = express.Router();
+
+// --- NEW: AI Log Viewer ---
+router.get('/ai-logs', (req, res) => {
+    try {
+        const logPath = path.join(__dirname, '../../logs/ai.log');
+        if (!fs.existsSync(logPath)) {
+            return res.status(404).json({ error: 'Log file not found' });
+        }
+
+        // Get last N lines
+        const lines = req.query.lines ? parseInt(req.query.lines) : 100;
+        const content = fs.readFileSync(logPath, 'utf8');
+        const allLines = content.split('\n');
+        const lastLines = allLines.slice(-lines).join('\n');
+
+        res.type('text/plain').send(lastLines);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// --- NEW: Clear AI Logs ---
+router.get('/clear-ai-logs', (req, res) => {
+    try {
+        const logPath = path.join(__dirname, '../../logs/ai.log');
+        if (fs.existsSync(logPath)) {
+            fs.writeFileSync(logPath, '');
+        }
+        res.json({ ok: true, message: 'AI logs cleared' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 
 function buildProxyUrlFromHeaders(req) {
     const hdrUser = (req.header('x-brd-user') || '').replace(/['"]/g, '').trim();

@@ -1872,7 +1872,9 @@ ${productContext || "No specific product context provided yet."}
     let finalProvider = resolved.finalProvider;
     let finalModel = resolved.finalModel;
 
-    console.log(`[AI Step 1] Engine Resolved: ${finalProvider} / ${finalModel}`);
+    const step1 = `[AI Step 1] Engine Resolved: ${finalProvider} / ${finalModel}`;
+    console.log(step1);
+    logDebug(step1);
 
     const currentModel = finalModel;
     
@@ -1887,7 +1889,9 @@ ${productContext || "No specific product context provided yet."}
              keyData = await keyService.getSmartKey(finalProvider, 'default');
         }
 
-        console.log(`[AI Step 2] SmartKey Selection: ${keyData ? 'SUCCESS' : 'FAILED'}`);
+        const step2 = `[AI Step 2] SmartKey Selection: ${keyData ? 'SUCCESS' : 'FAILED'}`;
+        console.log(step2);
+        logDebug(step2);
 
         if (!keyData || !keyData.key) {
             console.warn(`[AI] No valid keys for ${finalProvider}/${currentModel}.`);
@@ -1902,7 +1906,9 @@ ${productContext || "No specific product context provided yet."}
         const apiKey = keyData.key;
         let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/v1';
         
-        console.log(`[AI Step 3] Selected Key ID: ${keyData.id} (Masked: ${apiKey.substring(0, 10)}...)`);
+        const step3 = `[AI Step 3] Selected Key ID: ${keyData.id} (Masked: ${apiKey.substring(0, 10)}...)`;
+        console.log(step3);
+        logDebug(step3);
 
         // DYNAMIC BASE URL MAPPING
         if (finalProvider === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
@@ -1916,7 +1922,9 @@ ${productContext || "No specific product context provided yet."}
             baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai';
         }
         
-        console.log(`[AI Step 4] Using Base URL: ${baseURL} for Provider: ${finalProvider}`);
+        const step4 = `[AI Step 4] Using Base URL: ${baseURL} for Provider: ${finalProvider}`;
+        console.log(step4);
+        logDebug(step4);
         
         let rawContent = '';
         let tokenUsage = 0;
@@ -2014,7 +2022,9 @@ ${productContext || "No specific product context provided yet."}
         const isManagedEngine = !(pageConfig && pageConfig.api_key && pageConfig.api_key !== 'MANAGED_SECRET_KEY');
         
         if (shouldForceProxy || isManagedEngine) {
-            console.log(`[AI Step 5] Enabling Proxy Rotation (Managed: ${isManagedEngine}, Forced: ${shouldForceProxy})`);
+            const step5 = `[AI Step 5] Enabling Proxy Rotation (Managed: ${isManagedEngine}, Forced: ${shouldForceProxy})`;
+            console.log(step5);
+            logDebug(step5);
             if (finalProvider === 'google' || finalProvider === 'gemini') {
                 proxyAgent = getGeminiProxyAgent(baseURL, true);
             } else if (finalProvider === 'groq') {
@@ -2025,7 +2035,9 @@ ${productContext || "No specific product context provided yet."}
                 proxyAgent = getDeepSeekProxyAgent(true);
             }
         } else {
-            console.log(`[AI Step 5] Proxy Disabled (Using Direct Connection)`);
+            const step5 = `[AI Step 5] Proxy Disabled (Using Direct Connection)`;
+            console.log(step5);
+            logDebug(step5);
         }
 
         const result = await runAgentLoop({
@@ -2046,6 +2058,10 @@ ${productContext || "No specific product context provided yet."}
 
     } catch (err) {
         console.error(`[AI] Phase 2 Logic Failed:`, err);
+        logDebug(`[AI ERROR] Phase 2 Logic Failed: ${err.message}`);
+        if (err.response) {
+            logDebug(`[AI ERROR DETAIL] Status: ${err.response.status}, Data: ${JSON.stringify(err.response.data)}`);
+        }
         
         // --- NEW: RETURN ORIGINAL LLM ERROR MESSAGE ---
         const originalError = err.response?.data?.error?.message || 
@@ -2760,5 +2776,6 @@ module.exports = {
     processImageWithVision,
     transcribeAudio,
     refreshGlobalEngineConfigCache,
-    clearGlobalConfigCache
+    clearGlobalConfigCache,
+    logDebug
 };

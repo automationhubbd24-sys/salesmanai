@@ -6,6 +6,7 @@ const pgClient = require('../src/services/pgClient');
 const adminAuthMiddleware = require('../src/middleware/adminAuthMiddleware');
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
+const { logDebug } = require('../src/services/aiService');
 
 // --- Proxy Helper ---
 function getProxyUrl() {
@@ -248,8 +249,9 @@ router.post('/v1/chat/completions', async (req, res) => {
     }
 
     console.log(`[API Engine] Processing Request: ${provider} / ${model}`);
-
-    // --- BRANDED MODEL MAPPING ---
+     logDebug(`[API Engine] Processing Request: ${provider} / ${model}`);
+  
+     // --- BRANDED MODEL MAPPING ---
     // Google/Gemini doesn't recognize branded model names. Map them to real models.
     let upstreamModel = model;
     if (provider === 'google' || provider === 'gemini') {
@@ -274,6 +276,7 @@ router.post('/v1/chat/completions', async (req, res) => {
     }
 
     console.log(`[API Engine] Target URL: ${targetUrl}`);
+    logDebug(`[API Engine] Target URL: ${targetUrl}`);
 
     try {
         const isSystemEngine = req.body.is_system_engine !== false;
@@ -301,7 +304,9 @@ router.post('/v1/chat/completions', async (req, res) => {
                     const proxyUrl = getProxyUrl();
                     if (proxyUrl) {
                         agent = new HttpsProxyAgent(proxyUrl);
-                        console.log(`[API Engine] 🌐 Using Bright Data Proxy for Model: ${upstreamModel} (Forced: ${shouldForceProxy})`);
+                        const proxyLog = `[API Engine] 🌐 Using Bright Data Proxy for Model: ${upstreamModel} (Forced: ${shouldForceProxy})`;
+                        console.log(proxyLog);
+                        logDebug(proxyLog);
                     }
                 }
 
@@ -368,7 +373,9 @@ router.post('/v1/chat/completions', async (req, res) => {
             const proxyUrl = getProxyUrl();
             if (proxyUrl) {
                 agent = new HttpsProxyAgent(proxyUrl);
-                console.log(`[API Engine] 🌐 Using Bright Data Proxy for Model: ${upstreamModel} (Forced: ${shouldForceProxy})`);
+                const proxyLogStr = `[API Engine] 🌐 Using Bright Data Proxy for Model: ${upstreamModel} (Forced: ${shouldForceProxy})`;
+                console.log(proxyLogStr);
+                logDebug(proxyLogStr);
             }
         }
 
