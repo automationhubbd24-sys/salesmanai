@@ -2084,20 +2084,20 @@ ${productContext || "No specific product context provided yet."}
         console.log(`[AI] Phase 2: Calling SalesmanChatbot AgentLoop (${finalProvider}/${currentModel})...`);
 
         // Mandatory Proxy for Branded Engines (pro, flash, lite)
-        const isBrandedEngine = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(targetEngineName);
+        const isBrandedEngine = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(resolved.targetEngineName);
         const isManagedEngine = !(pageConfig && (pageConfig.cheap_engine === false || pageConfig.api_key));
         
         let proxyAgent = null;
 
         if (isBrandedEngine) {
-            console.log(`[AI] Mandatory Proxy Rotation for Branded Engine: ${targetEngineName}`);
+            console.log(`[AI] Mandatory Proxy Rotation for Branded Engine: ${resolved.targetEngineName}`);
             if (finalProvider === 'google' || finalProvider === 'gemini') {
-                proxyAgent = getGeminiProxyAgent(baseURL, true, targetEngineName);
+                proxyAgent = getGeminiProxyAgent(baseURL, true, resolved.targetEngineName);
             } else if (finalProvider === 'groq') {
-                proxyAgent = getGroqProxyAgent(true, targetEngineName);
+                proxyAgent = getGroqProxyAgent(true, resolved.targetEngineName);
             } else if (finalProvider === 'openrouter') {
                 // Use Groq proxy logic for OpenRouter as they are both HTTP based
-                const proxy = getProxyUrl(targetEngineName);
+                const proxy = getProxyUrl(resolved.targetEngineName);
                 if (proxy) proxyAgent = new HttpsProxyAgent(proxy);
             }
         } else if (isManagedEngine) {
