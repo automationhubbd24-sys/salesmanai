@@ -42,6 +42,7 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
     if (keyData.last_rpd_hit_at) {
         const lastHit = new Date(keyData.last_rpd_hit_at).getTime();
         if (now - lastHit < 24 * 60 * 60 * 1000) {
+            console.log(`[KeyService] 🚫 Key ${keyData.id} rejected: Persistent Quota Block (Hit at: ${keyData.last_rpd_hit_at})`);
             return false;
         }
     }
@@ -145,6 +146,7 @@ async function getSmartKey(provider, model = 'default') {
     const validKeys = candidates.filter(k => k.status === 'active' && isKeyAlive(k.api));
     
     if (validKeys.length === 0) {
+        console.warn(`[KeyService] 🚫 No alive keys found for ${provider}/${model}. Candidates: ${candidates.length}, Dead: ${deadKeys.size}`);
         return null;
     }
 
