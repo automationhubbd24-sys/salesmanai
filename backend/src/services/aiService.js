@@ -1309,7 +1309,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
     }
 
     return { 
-        reply: "দুঃখিত, আমি আপনার অনুরোধটি প্রসেস করতে পারছি না। দয়া করে আবার চেষ্টা করুন বা সরাসরি আমাদের মেসেজ দিন।", 
+        reply: null, 
         error: "AgentLoop max iterations reached",
         token_usage: totalTokensInLoop,
         model: model
@@ -2142,8 +2142,9 @@ ${productContext || "No specific product context provided yet."}
     } catch (err) {
         console.error(`[AI] Phase 2 Logic Failed:`, err);
         return finalize({ 
-            reply: "দুঃখিত, বর্তমানে আমাদের সার্ভারে কিছু টেকনিক্যাল সমস্যা হচ্ছে। দয়া করে কিছুক্ষণ পর আবার চেষ্টা করুন।", 
-            error: err.message,
+            // Return null or very generic message for customer, but keep error for DB
+            reply: null, 
+            error: `Phase 2 Logic Failed: ${err.message}`,
             token_usage: 0,
             model: currentModel
         });
