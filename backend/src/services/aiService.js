@@ -1964,8 +1964,15 @@ ${productContext || "No specific product context provided yet."}
 
     } catch (err) {
         console.error(`[AI] Phase 2 Logic Failed:`, err);
+        
+        // --- NEW: RETURN ORIGINAL LLM ERROR MESSAGE ---
+        const originalError = err.response?.data?.error?.message || 
+                             err.response?.data?.message || 
+                             err.message || 
+                             "Unknown LLM Error";
+
         return finalize({ 
-            reply: "দুঃখিত, বর্তমানে আমাদের সার্ভারে কিছু টেকনিক্যাল সমস্যা হচ্ছে। দয়া করে কিছুক্ষণ পর আবার চেষ্টা করুন।", 
+            reply: originalError, 
             error: err.message,
             token_usage: 0,
             model: currentModel
