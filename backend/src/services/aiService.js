@@ -33,11 +33,13 @@ function getProxyUrl() {
     let host = proxyUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
     
     // 3. Construct the proxy URL with random session for IP rotation
+    // User Update: Use sess prefix WITHOUT underscore as per Bright Data strict session requirements
     const session = `sess${Math.floor(Math.random() * 9999999)}`;
     
     // Standard Bright Data Format: http://user-session-xxx:pass@host:port
     const finalUrl = `http://${user}-session-${session}:${pass}@${host}`;
     
+    console.log(`[Proxy Debug] Generated Session: ${session} | Host: ${host}`);
     return finalUrl;
 }
 
