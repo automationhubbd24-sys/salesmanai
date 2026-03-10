@@ -24,19 +24,16 @@ function getProxyUrl(modelName = 'default') {
     const pass = process.env.BRIGHT_DATA_PASS;
     if (!proxyUrl || !user || !pass) return null;
     
-    // Rotation using random session ID for better stability
-    const session = `sess_${modelName}_${Math.floor(Math.random() * 999999)}`;
+    // Some BrightData zones prefer simple alphanumeric session IDs
+    const cleanModelName = modelName.replace(/[^a-zA-Z0-9]/g, '');
+    const session = `${cleanModelName}${Math.floor(Math.random() * 9999)}`;
+    
+    // Format: http://user-session-abc123:pass@host:port
     const url = `http://${user}-session-${session}:${pass}@${proxyUrl}`;
     
-    // Validate proxy format (basic check)
-    if (!url.startsWith('http://')) {
-        console.warn("[Proxy] Invalid Proxy URL format constructed.");
-        return null;
-    }
+    if (!url.startsWith('http://')) return null;
 
-    // Log Proxy Session Info for Debugging (Per User Request)
-    console.log(`[Proxy] New Session Created: ${session} for model: ${modelName}`);
-    
+    console.log(`[Proxy] Using Session: ${session} for model: ${modelName}`);
     return url;
 }
 
