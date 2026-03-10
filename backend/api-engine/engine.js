@@ -101,7 +101,8 @@ router.get('/stats', adminAuthMiddleware, async (req, res) => {
                 openai: allKeys.filter(k => k.provider === 'openai').length,
                 groq: allKeys.filter(k => k.provider === 'groq').length,
                 openrouter: allKeys.filter(k => k.provider === 'openrouter').length,
-                mistral: allKeys.filter(k => k.provider === 'mistral').length
+                mistral: allKeys.filter(k => k.provider === 'mistral').length,
+                deepseek: allKeys.filter(k => k.provider === 'deepseek').length
             },
             ...poolData // total, page, limit, keys
         });
@@ -239,6 +240,7 @@ router.post('/v1/chat/completions', async (req, res) => {
     let provider = 'google';
     if (model.includes('gpt')) provider = 'openai';
     else if (model.includes('mistral')) provider = 'mistral';
+    else if (model.includes('deepseek')) provider = 'deepseek';
     else if (model.includes('llama') || model.includes('mixtral')) provider = 'groq';
     else if (model.includes('/') || model.includes(':free')) provider = 'openrouter';
 
@@ -250,9 +252,12 @@ router.post('/v1/chat/completions', async (req, res) => {
     else if (provider === 'groq') targetUrl = 'https://api.groq.com/openai/v1/chat/completions';
     else if (provider === 'openrouter') targetUrl = 'https://openrouter.ai/api/v1/chat/completions';
     else if (provider === 'mistral') targetUrl = 'https://api.mistral.ai/v1/chat/completions';
+    else if (provider === 'deepseek') targetUrl = 'https://api.deepseek.com/v1/chat/completions';
     else if (provider === 'google' || provider === 'gemini') {
         targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions';
     }
+
+    console.log(`[API Engine] Target URL: ${targetUrl}`);
 
     try {
         const isSystemEngine = req.body.is_system_engine !== false;

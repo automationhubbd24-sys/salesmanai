@@ -109,7 +109,9 @@ async function getSmartKey(provider, model = 'default') {
             'google': ['google', 'gemini'],
             'gemini': ['google', 'gemini'],
             'groq': ['groq'],
-            'openrouter': ['openrouter', 'or']
+            'openrouter': ['openrouter', 'or'],
+            'mistral': ['mistral'],
+            'deepseek': ['deepseek']
         };
 
         const searchTerms = providerAliases[targetProvider] || [targetProvider];

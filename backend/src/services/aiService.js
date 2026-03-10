@@ -32,12 +32,38 @@ function getProxyUrl() {
     let host = proxyUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
     
     // 3. Construct the proxy URL with random session for IP rotation
-    // Bright Data Session format: user-session-xxx
-    const session = `sess_${Math.floor(Math.random() * 9999999)}`;
+    // Mandatory for all salesmanchatbot-pro/flash/lite calls
+    const session = `sess_${Math.floor(Math.random() * 99999999)}`;
     
     // Standard Bright Data Format: http://user-session-xxx:pass@host
-    // The rotator project uses: f"http://{BRIGHT_DATA_USER}-session-{session_id}:{BRIGHT_DATA_PASS}@{BRIGHT_DATA_URL}"
-    return `http://${user}-session-${session}:${pass}@${host}`;
+    const finalProxyUrl = `http://${user}-session-${session}:${pass}@${host}`;
+    console.log(`[Proxy] 🌐 Mandatory Rotation Active. Session: ${session}`);
+    
+    return finalProxyUrl;
+}
+
+function getMistralProxyAgent(useProxy = true) {
+    if (!useProxy) return null;
+    const proxyUrl = getProxyUrl();
+    if (!proxyUrl) return null;
+    try {
+        return new HttpsProxyAgent(proxyUrl);
+    } catch (e) {
+        console.warn(`[Proxy] Failed to create Mistral Proxy Agent: ${e.message}`);
+        return null;
+    }
+}
+
+function getDeepSeekProxyAgent(useProxy = true) {
+    if (!useProxy) return null;
+    const proxyUrl = getProxyUrl();
+    if (!proxyUrl) return null;
+    try {
+        return new HttpsProxyAgent(proxyUrl);
+    } catch (e) {
+        console.warn(`[Proxy] Failed to create DeepSeek Proxy Agent: ${e.message}`);
+        return null;
+    }
 }
 
 function getGeminiProxyAgent(baseURL, useProxy = true) {
@@ -1864,6 +1890,7 @@ ${productContext || "No specific product context provided yet."}
         else if (finalProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
         else if (finalProvider === 'openai') baseURL = 'https://api.openai.com/v1';
         else if (finalProvider === 'mistral') baseURL = 'https://api.mistral.ai/v1';
+        else if (finalProvider === 'deepseek') baseURL = 'https://api.deepseek.com/v1';
         else if (finalProvider === 'google' || finalProvider === 'gemini') {
             // Use the exact same endpoint format as the rotator project
             baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/v1';
@@ -1965,6 +1992,10 @@ ${productContext || "No specific product context provided yet."}
                 proxyAgent = getGeminiProxyAgent(baseURL, true);
             } else if (finalProvider === 'groq') {
                 proxyAgent = getGroqProxyAgent(true);
+            } else if (finalProvider === 'mistral') {
+                proxyAgent = getMistralProxyAgent(true);
+            } else if (finalProvider === 'deepseek') {
+                proxyAgent = getDeepSeekProxyAgent(true);
             }
         }
 
