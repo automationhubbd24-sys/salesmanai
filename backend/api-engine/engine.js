@@ -299,7 +299,7 @@ router.post('/v1/chat/completions', async (req, res) => {
         }
 
         if (stream) {
-            const maxAttempts = 10;
+            const maxAttempts = 5;
             let lastError = null;
             for (let attempt = 1; attempt <= maxAttempts; attempt++) {
                 const keyData = await keyService.getSmartKey(provider, upstreamModel);
@@ -363,20 +363,24 @@ router.post('/v1/chat/completions', async (req, res) => {
                 }
 
                 const firstChunk = await readFirstChunk(response.data);
-                if (provider === 'google' || provider === 'gemini') {
-                    const streamError = parseStreamError(firstChunk);
-                    if (streamError) {
-                        const isQuota = String(streamError).toLowerCase().includes('quota') || String(streamError).toLowerCase().includes('limit');
-                        if (isQuota) {
-                            keyService.markKeyAsQuotaExceeded(keyData.key);
-                        } else {
-                            keyService.markKeyAsDead(keyData.key, 60000, 'stream_error');
-                        }
-                        if (response.data && response.data.destroy) response.data.destroy();
-                        lastError = { error: streamError };
-                        continue;
+                
+                // --- ROBUST STREAM ERROR DETECTION (FROM ROTATOR PROJECT) ---
+                if (firstChunk) {
+                    const chunkStr = firstChunk.toString();
+                    if (chunkStr.includes('"error"') || chunkStr.includes('"message"')) {
+                         try {
+                             const data = JSON.parse(chunkStr.replace(/^data: /, ''));
+                             if (data.error) {
+                                 console.warn(`[API Engine] In-stream error detected: ${data.error.message}`);
+                                 keyService.markKeyAsDead(keyData.key, 60000, 'in_stream_error');
+                                 if (response.data && response.data.destroy) response.data.destroy();
+                                 continue;
+                             }
+                         } catch (e) {}
                     }
                 }
+
+                keyService.markKeyAsSuccess(keyData.key); // Success! Reset backoff
 
                 if (response.headers && response.headers['content-type']) {
                     res.setHeader('Content-Type', response.headers['content-type']);
@@ -390,7 +394,7 @@ router.post('/v1/chat/completions', async (req, res) => {
             return res.status(status).json({ error: lastError || 'stream_failed' });
         }
 
-        const maxAttempts = 10;
+        const maxAttempts = 5;
         let lastError = null;
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
             const keyData = await keyService.getSmartKey(provider, upstreamModel);
@@ -457,6 +461,8 @@ router.post('/v1/chat/completions', async (req, res) => {
                 
                 return res.status(status).json(response.data || { error: 'request_failed' });
             }
+
+            keyService.markKeyAsSuccess(keyData.key); // Success! Reset backoff
 
             if (response.data?.usage) {
                 keyService.recordKeyUsage(keyData.key, response.data.usage.total_tokens);

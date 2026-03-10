@@ -14,6 +14,9 @@ const STATUS_DISABLED = 'disabled';
 const DISABLE_DURATION_MS = 24 * 60 * 60 * 1000;
 
 const deadKeys = new Map();
+const keyFailureStats = new Map(); // Track consecutive failures for backoff
+const BACKOFF_MIN = 5000; // 5 seconds
+const BACKOFF_MAX = 600000; // 10 minutes
 const DEFAULT_COOLDOWN = 60 * 1000; 
 const KEY_MIN_GAP_MS = process.env.KEY_MIN_GAP_MS ? parseInt(process.env.KEY_MIN_GAP_MS, 10) : 900;
 const KEY_MIN_GAP_JITTER_MS = process.env.KEY_MIN_GAP_JITTER_MS ? parseInt(process.env.KEY_MIN_GAP_JITTER_MS, 10) : 400;
@@ -299,7 +302,28 @@ function isModelLocked(modelName) {
 function markKeyAsDead(keyOrObj, duration = 60000, reason = 'unknown') {
     const key = typeof keyOrObj === 'object' ? keyOrObj.api : keyOrObj;
     if (!key) return;
-    deadKeys.set(key, { expiry: Date.now() + duration, reason });
+    
+    // Implement Exponential Backoff similar to the rotator project
+    const stats = keyFailureStats.get(key) || { failCount: 0, lastFail: 0 };
+    stats.failCount++;
+    stats.lastFail = Date.now();
+    
+    // Calculate backoff: min * (2 ^ (fails-1))
+    let backoff = BACKOFF_MIN * Math.pow(2, stats.failCount - 1);
+    if (backoff > BACKOFF_MAX) backoff = BACKOFF_MAX;
+    
+    // If user provided a specific duration (like 24h for quota), use that instead
+    const finalDuration = duration > backoff ? duration : backoff;
+    
+    deadKeys.set(key, { expiry: Date.now() + finalDuration, reason });
+    keyFailureStats.set(key, stats);
+    
+    console.log(`[KeyService] 💀 Key ${key.substring(0, 10)}... marked dead. Reason: ${reason}. Backoff: ${finalDuration/1000}s. Fails: ${stats.failCount}`);
+}
+
+function markKeyAsSuccess(key) {
+    if (!key) return;
+    keyFailureStats.delete(key); // Reset failures on success
 }
 
 function markKeyAsSuspended(key, reason = 'suspended') {
@@ -415,6 +439,7 @@ setTimeout(() => {
 module.exports = {
     getSmartKey, 
     markKeyAsDead,
+    markKeyAsSuccess,
     markKeyAsSuspended,
     markKeyAsQuotaExceeded,
     recordKeyUsage,

@@ -1125,6 +1125,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
             }
 
             const completion = await openai.chat.completions.create(requestPayload);
+            keyService.markKeyAsSuccess(apiKey); // Reset backoff on success
 
             const responseMessage = completion.choices[0].message;
             const toolCalls = responseMessage.tool_calls;
