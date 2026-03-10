@@ -1136,13 +1136,19 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 });
 
                 const response = result.response;
-                const candidate = response.candidates[0];
+                const candidate = response.candidates && response.candidates[0];
+                
+                if (!candidate || !candidate.content) {
+                    throw new Error(`Gemini API returned an empty response or was blocked. Safety Ratings: ${JSON.stringify(response.promptFeedback || {})}`);
+                }
+
                 const content = candidate.content;
+                const parts = content.parts || [];
                 
                 responseMessage = {
                     role: 'assistant',
-                    content: content.parts.map(p => p.text || '').join(''),
-                    tool_calls: content.parts
+                    content: parts.map(p => p.text || '').join(''),
+                    tool_calls: parts
                         .filter(p => p.functionCall)
                         .map((p, idx) => ({
                             id: `call_${Date.now()}_${idx}`,
