@@ -1906,8 +1906,8 @@ ${productContext || "No specific product context provided yet."}
         else if (finalProvider === 'deepseek') baseURL = 'https://api.deepseek.com/v1';
         else if (finalProvider === 'google' || finalProvider === 'gemini') {
             // Use the exact same endpoint format as the rotator project
-            // Updated for 2026 OpenAI Compatibility (Fixed: No v1 at the end for Gemini OpenAI compat)
-            baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai';
+            // Updated for 2026 OpenAI Compatibility (Fixed: v1/ is mandatory for some SDKs/Endpoints)
+            baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/v1';
         }
         
         let rawContent = '';
