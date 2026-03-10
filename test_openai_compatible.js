@@ -5,7 +5,7 @@ const BASE_URL = 'https://api.salesmanchatbot.online/api/external/v1';
 
 async function testChat() {
     try {
-        console.log("Testing SalesmanChatbot Pro Engine...");
+        console.log("Testing SalesmanChatbot Pro Engine with gemini-2.5-flash...");
         const response = await axios.post(`${BASE_URL}/chat/completions`, {
             model: "salesmanchatbot-pro",
             messages: [
@@ -19,8 +19,13 @@ async function testChat() {
             }
         });
 
-        console.log("\n--- Response ---");
+        console.log("\n--- Full Raw Response ---");
         console.log(JSON.stringify(response.data, null, 2));
+
+        if (response.data.choices && response.data.choices[0].message) {
+            console.log("\n--- AI Reply ---");
+            console.log(response.data.choices[0].message.content);
+        }
     } catch (error) {
         console.error("\n--- Error ---");
         if (error.response) {

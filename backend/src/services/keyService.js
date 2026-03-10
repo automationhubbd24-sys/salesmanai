@@ -103,7 +103,7 @@ async function getSmartKey(provider, model = 'default') {
         candidates = keysByModel.get(targetModel);
     } 
     
-    // 2. If no model-specific keys, try Provider keys
+        // 2. If no model-specific keys, try Provider keys
     if (candidates.length === 0) {
         const providerAliases = {
             'google': ['google', 'gemini'],
@@ -120,7 +120,7 @@ async function getSmartKey(provider, model = 'default') {
         }
     }
     
-    // 3. Last resort: If still no candidates, use ALL active keys (Safety Fallback)
+    // 3. Fallback: If still no candidates, use ALL active keys (Safety Fallback)
     if (candidates.length === 0 && keyCache.length > 0) {
         // Filter keys by provider if possible, otherwise use all
         candidates = keyCache.filter(k => {
@@ -135,7 +135,6 @@ async function getSmartKey(provider, model = 'default') {
     const validKeys = candidates.filter(k => k.status === 'active' && isKeyAlive(k.api));
     
     if (validKeys.length === 0) {
-        console.warn(`[KeyService] ❌ No active/alive keys found. Candidates: ${candidates.length}, Global Cache: ${keyCache.length}`);
         return null;
     }
 
