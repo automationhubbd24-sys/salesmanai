@@ -265,14 +265,14 @@ router.post('/v1/chat/completions', async (req, res) => {
     req.body.model = upstreamModel;
 
     // Determine Upstream Target
-    let targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+    let targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions';
     if (provider === 'openai') targetUrl = 'https://api.openai.com/v1/chat/completions';
     else if (provider === 'groq') targetUrl = 'https://api.groq.com/openai/v1/chat/completions';
     else if (provider === 'openrouter') targetUrl = 'https://openrouter.ai/api/v1/chat/completions';
     else if (provider === 'mistral') targetUrl = 'https://api.mistral.ai/v1/chat/completions';
     else if (provider === 'deepseek') targetUrl = 'https://api.deepseek.com/chat/completions';
     else if (provider === 'google' || provider === 'gemini') {
-        targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/';
+        targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions';
     }
 
     console.log(`[API Engine] Target URL: ${targetUrl}`);
@@ -310,7 +310,7 @@ router.post('/v1/chat/completions', async (req, res) => {
                     }
                 }
 
-                const response = await axios.post(targetUrl.endsWith('/') ? `${targetUrl}chat/completions` : targetUrl, req.body, {
+                const response = await axios.post(targetUrl, req.body, {
                     headers: {
                         'Authorization': `Bearer ${keyData.key}`,
                         'Content-Type': 'application/json'
@@ -379,7 +379,7 @@ router.post('/v1/chat/completions', async (req, res) => {
             }
         }
 
-        const response = await axios.post(targetUrl.endsWith('/') ? `${targetUrl}chat/completions` : targetUrl, req.body, {
+        const response = await axios.post(targetUrl, req.body, {
             headers: {
                 'Authorization': `Bearer ${keyData.key}`,
                 'Content-Type': 'application/json'
