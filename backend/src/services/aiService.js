@@ -1945,6 +1945,7 @@ ${productContext || "No specific product context provided yet."}
         // --- NEW: FETCH PROXY CONFIG FROM DB ---
         let shouldForceProxy = false;
         try {
+            const pgClient = require('./pgClient');
             const configResult = await pgClient.query('SELECT use_proxy FROM engine_configs WHERE name = $1 LIMIT 1', [currentModel]);
             if (configResult.rows.length > 0) {
                 shouldForceProxy = configResult.rows[0].use_proxy === true;

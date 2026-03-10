@@ -26,7 +26,9 @@ function getProxyUrl() {
     const session = `sess_${Math.floor(Math.random() * 9999999)}`;
     
     // Standard Bright Data Format: http://user-session-xxx:pass@host
-    return `http://${user}-session-${session}:${pass}@${host}`;
+    const url = `http://${user}-session-${session}:${pass}@${host}`;
+    console.log(`[Proxy] Generated URL for Session: ${session} (Host: ${host})`);
+    return url;
 }
 
 function parseStreamError(chunk) {
@@ -242,16 +244,18 @@ router.post('/v1/chat/completions', async (req, res) => {
 
     console.log(`[API Engine] Processing Request: ${provider} / ${model}`);
 
-        // Determine Upstream Target
-        let targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions';
-        if (provider === 'openai') targetUrl = 'https://api.openai.com/v1/chat/completions';
-        else if (provider === 'groq') targetUrl = 'https://api.groq.com/openai/v1/chat/completions';
-        else if (provider === 'openrouter') targetUrl = 'https://openrouter.ai/api/v1/chat/completions';
-        else if (provider === 'mistral') targetUrl = 'https://api.mistral.ai/v1/chat/completions';
-        else if (provider === 'google' || provider === 'gemini') {
-            targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions';
-        }
+    // Determine Upstream Target
+    let targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions';
+    if (provider === 'openai') targetUrl = 'https://api.openai.com/v1/chat/completions';
+    else if (provider === 'groq') targetUrl = 'https://api.groq.com/openai/v1/chat/completions';
+    else if (provider === 'openrouter') targetUrl = 'https://openrouter.ai/api/v1/chat/completions';
+    else if (provider === 'mistral') targetUrl = 'https://api.mistral.ai/v1/chat/completions';
+    else if (provider === 'google' || provider === 'gemini') {
+        targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions';
+    }
 
+    try {
+        const isSystemEngine = req.body.is_system_engine !== false;
         // --- NEW: FETCH PROXY CONFIG FROM DB ---
         let shouldForceProxy = false;
         try {
