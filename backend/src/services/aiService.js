@@ -1943,8 +1943,11 @@ ${productContext || "No specific product context provided yet."}
         console.log(`[AI] Phase 2: Calling SalesmanChatbot AgentLoop (${finalProvider}/${currentModel})...`);
 
         // Managed engine: use proxy for Gemini/Groq calls
+        // FIXED: A request is managed if the user hasn't provided their own API key
+        // External API calls with cheap_engine: false should still use proxy
         let proxyAgent = null;
-        const isManagedEngine = !(pageConfig && (pageConfig.cheap_engine === false || pageConfig.api_key));
+        const isManagedEngine = !(pageConfig && pageConfig.api_key && pageConfig.api_key !== 'MANAGED_SECRET_KEY');
+        
         if (isManagedEngine) {
             if (finalProvider === 'google' || finalProvider === 'gemini') {
                 proxyAgent = getGeminiProxyAgent(baseURL, true);

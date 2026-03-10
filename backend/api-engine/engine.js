@@ -251,13 +251,13 @@ router.post('/v1/chat/completions', async (req, res) => {
                 const keyData = await keyService.getSmartKey(provider, model);
                 if (!keyData) break;
 
-                // Proxy only for system keys to save costs
+                // Proxy logic: Managed engine calls should always use proxy
                 let agent = undefined;
                 if (isSystemEngine) {
                     const proxyUrl = getProxyUrl();
-                    agent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
-                    if (agent) {
-                        console.log(`[API Engine] 🌐 Using Bright Data Proxy for SalesmanChatbot Engine (Model: ${model})`);
+                    if (proxyUrl) {
+                        agent = new HttpsProxyAgent(proxyUrl);
+                        console.log(`[API Engine] 🌐 Using Bright Data Proxy for Model: ${model}`);
                     }
                 }
 
@@ -318,13 +318,14 @@ router.post('/v1/chat/completions', async (req, res) => {
             });
         }
 
-        // Proxy only for system keys to save costs
+        // Proxy logic: Managed engine calls should always use proxy
+        // If it's a system engine request or we are using our own pool keys
         let agent = undefined;
         if (isSystemEngine) {
             const proxyUrl = getProxyUrl();
-            agent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
-            if (agent) {
-                console.log(`[API Engine] 🌐 Using Bright Data Proxy for SalesmanChatbot Engine (Model: ${model})`);
+            if (proxyUrl) {
+                agent = new HttpsProxyAgent(proxyUrl);
+                console.log(`[API Engine] 🌐 Using Bright Data Proxy for Model: ${model}`);
             }
         }
 
