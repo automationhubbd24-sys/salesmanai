@@ -19,28 +19,17 @@ try {
 }
 
 function getProxyUrl() {
-    // 1. Fetch credentials with multiple fallback names for Coolify/Docker environment
-    const user = (process.env.BRIGHT_DATA_USER || process.env.BRIGHTDATA_PROXY_USER || '').replace(/['"]/g, '').trim();
-    const pass = (process.env.BRIGHT_DATA_PASS || process.env.BRIGHTDATA_PROXY_PASS || '').replace(/['"]/g, '').trim();
-    const proxyUrl = (process.env.BRIGHT_DATA_PROXY_URL || process.env.BRIGHTDATA_PROXY_HOST || 'brd.superproxy.io:33335').replace(/['"]/g, '').trim();
+    // HARDCODED FOR TESTING (As requested by user to bypass Coolify ENV issues)
+    const user = 'brd-customer-hl_69ebe07e-zone-data_center';
+    const pass = 'zgs4711vyxnp';
+    const host = 'brd.superproxy.io:33335';
     
-    if (!user || !pass) {
-        console.warn("[Proxy] ⚠️ Missing Bright Data credentials (USER or PASS) in environment variables.");
-        return null;
-    }
-
-    // 2. Standardize Host (Remove http/https and trailing slashes)
-    let host = proxyUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
-    
-    // 3. Construct the proxy URL with random session for IP rotation
-    // Bright Data Session format: user-session-xxx
-    // User Update: Using 'sess' without underscore for better compatibility
+    // Rotation using random session ID for better stability
     const session = `sess${Math.floor(Math.random() * 9999999)}`;
+    const finalUrl = `http://${user}-session-${session}:${pass}@${host}`;
     
-    // Standard Bright Data Format: http://user-session-xxx:pass@host
-    const finalProxyUrl = `http://${user}-session-${session}:${pass}@${host}`;
-    
-    return finalProxyUrl;
+    console.log(`[Proxy Test] Using Hardcoded Credentials. Session: ${session}`);
+    return finalUrl;
 }
 
 function getGeminiProxyAgent(baseURL, useProxy = true) {
