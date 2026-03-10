@@ -19,20 +19,24 @@ try {
 }
 
 function getProxyUrl() {
-    const proxyHost = (process.env.BRIGHTDATA_PROXY_HOST || process.env.BRIGHT_DATA_PROXY_URL || 'brd.superproxy.io').trim();
-    const proxyPort = (process.env.BRIGHTDATA_PROXY_PORT || '33335').trim();
-    const proxyUser = (process.env.BRIGHTDATA_PROXY_USER || process.env.BRIGHT_DATA_USER || '').trim();
-    const proxyPass = (process.env.BRIGHTDATA_PROXY_PASS || process.env.BRIGHT_DATA_PASS || '').trim();
-    
-    if (!proxyUser || !proxyPass) {
-        console.warn("[Proxy] ⚠️ Missing proxy credentials in environment variables. Falling back to direct connection.");
+    // Priority 1: Direct full URL from environment (if available)
+    const fullProxyUrl = process.env.BRIGHT_DATA_PROXY_URL;
+    const user = process.env.BRIGHT_DATA_USER;
+    const pass = process.env.BRIGHT_DATA_PASS;
+
+    if (!user || !pass || !fullProxyUrl) {
+        console.warn("[Proxy] ⚠️ Missing Bright Data credentials (USER, PASS, or PROXY_URL) in environment.");
         return null;
     }
+
+    // Standardize Host/Port from BRIGHT_DATA_PROXY_URL (it might be "host:port" or just "host")
+    let host = fullProxyUrl.replace('http://', '').replace('https://', '');
     
-    // Rotation using random session ID for better stability
+    // Rotation using random session ID
     const session = `sess${Math.floor(Math.random() * 9999999)}`;
-    // Bright Data username format is strict: user-session-ID:pass@host:port
-    const url = `http://${proxyUser}-session-${session}:${proxyPass}@${proxyHost}:${proxyPort}`;
+    
+    // Construct strict Bright Data format: http://user-session-xxx:pass@host:port
+    const url = `http://${user.trim()}-session-${session}:${pass.trim()}@${host.trim()}`;
     
     return url;
 }
