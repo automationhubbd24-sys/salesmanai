@@ -40,43 +40,43 @@ function getProxyUrl(modelName = 'default') {
     return url;
 }
 
-function getGeminiProxyAgent(baseURL, useProxy = true, modelName = 'gemini') {
-    if (!useProxy) return null;
-    const proxy = getProxyUrl(modelName);
-    if (!proxy) return null;
+/**
+ * Creates an HttpsProxyAgent and logs IP info for debugging
+ * @param {string} proxyUrl - Full proxy URL
+ * @returns {HttpsProxyAgent|null}
+ */
+function createProxyAgent(proxyUrl) {
+    if (!proxyUrl) return null;
     try {
-        // HttpsProxyAgent automatically handles http/https protocols
-        const agent = new HttpsProxyAgent(proxy);
+        const agent = new HttpsProxyAgent(proxyUrl);
+        const sessionName = proxyUrl.split('-session-')[1]?.split(':')[0] || 'unknown';
         
         // Log IP Info for Debugging (Non-blocking)
         axios.get('https://api.ip.sb/geoip', { httpsAgent: agent, timeout: 5000 })
-            .then(res => console.log(`[Proxy IP Details] Session: ${proxy.split('-session-')[1].split(':')[0]} | IP: ${res.data.ip} | Country: ${res.data.country} | Org: ${res.data.organization}`))
-            .catch(e => console.warn(`[Proxy IP Details] Failed to fetch IP info: ${e.message}`));
+            .then(res => {
+                console.log(`[Proxy IP Success] Session: ${sessionName} | IP: ${res.data.ip} | Country: ${res.data.country} | Org: ${res.data.organization}`);
+            })
+            .catch(e => {
+                console.warn(`[Proxy IP Error] Session: ${sessionName} failed to fetch IP info: ${e.message}. BrightData credentials or zone might be invalid.`);
+            });
 
         return agent;
     } catch (e) {
-        console.warn(`[Proxy] Failed to create Gemini Proxy Agent: ${e.message}`);
+        console.warn(`[Proxy] Failed to create Proxy Agent: ${e.message}`);
         return null;
     }
+}
+
+function getGeminiProxyAgent(baseURL, useProxy = true, modelName = 'gemini') {
+    if (!useProxy) return null;
+    const proxy = getProxyUrl(modelName);
+    return createProxyAgent(proxy);
 }
 
 function getGroqProxyAgent(useProxy = true, modelName = 'groq') {
     if (!useProxy) return null;
     const proxy = getProxyUrl(modelName);
-    if (!proxy) return null;
-    try {
-        const agent = new HttpsProxyAgent(proxy);
-        
-        // Log IP Info for Debugging (Non-blocking)
-        axios.get('https://api.ip.sb/geoip', { httpsAgent: agent, timeout: 5000 })
-            .then(res => console.log(`[Proxy IP Details] Session: ${proxy.split('-session-')[1].split(':')[0]} | IP: ${res.data.ip} | Country: ${res.data.country} | Org: ${res.data.organization}`))
-            .catch(e => console.warn(`[Proxy IP Details] Failed to fetch IP info: ${e.message}`));
-
-        return agent;
-    } catch (e) {
-        console.warn(`[Proxy] Failed to create Groq Proxy Agent: ${e.message}`);
-        return null;
-    }
+    return createProxyAgent(proxy);
 }
 
 async function convertOggToMp3(inputBuffer) {
@@ -2096,9 +2096,9 @@ ${productContext || "No specific product context provided yet."}
             } else if (finalProvider === 'groq') {
                 proxyAgent = getGroqProxyAgent(true, resolved.targetEngineName);
             } else if (finalProvider === 'openrouter') {
-                // Use Groq proxy logic for OpenRouter as they are both HTTP based
+                // Use the centralized proxy agent creation for OpenRouter
                 const proxy = getProxyUrl(resolved.targetEngineName);
-                if (proxy) proxyAgent = new HttpsProxyAgent(proxy);
+                proxyAgent = createProxyAgent(proxy);
             }
         } else if (isManagedEngine) {
             // Standard Managed Engine Proxy Logic
