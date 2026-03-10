@@ -33,23 +33,23 @@ function getProxyUrl() {
     let host = proxyUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
     
     // 3. Construct the proxy URL with random session for IP rotation
-    // User Update: Use sess prefix WITHOUT underscore as per Bright Data strict session requirements
+    // Bright Data Session format: user-session-xxx
+    // User Update: Using 'sess' without underscore for better compatibility
     const session = `sess${Math.floor(Math.random() * 9999999)}`;
     
-    // Standard Bright Data Format: http://user-session-xxx:pass@host:port
-    const finalUrl = `http://${user}-session-${session}:${pass}@${host}`;
+    // Standard Bright Data Format: http://user-session-xxx:pass@host
+    const finalProxyUrl = `http://${user}-session-${session}:${pass}@${host}`;
     
-    console.log(`[Proxy Debug] Generated Session: ${session} | Host: ${host}`);
-    return finalUrl;
+    return finalProxyUrl;
 }
 
 function getGeminiProxyAgent(baseURL, useProxy = true) {
     if (!useProxy) return null;
-    const proxy = getProxyUrl();
-    if (!proxy) return null;
+    const proxyUrl = getProxyUrl();
+    if (!proxyUrl) return null;
     try {
-        // HttpsProxyAgent automatically handles http/https protocols
-        return new HttpsProxyAgent(proxy);
+        console.log(`[Proxy] Creating Agent for Session: ${proxyUrl.split('-').pop().split(':')[0]}`);
+        return new HttpsProxyAgent(proxyUrl);
     } catch (e) {
         console.warn(`[Proxy] Failed to create Gemini Proxy Agent: ${e.message}`);
         return null;
@@ -58,10 +58,10 @@ function getGeminiProxyAgent(baseURL, useProxy = true) {
 
 function getGroqProxyAgent(useProxy = true) {
     if (!useProxy) return null;
-    const proxy = getProxyUrl();
-    if (!proxy) return null;
+    const proxyUrl = getProxyUrl();
+    if (!proxyUrl) return null;
     try {
-        return new HttpsProxyAgent(proxy);
+        return new HttpsProxyAgent(proxyUrl);
     } catch (e) {
         console.warn(`[Proxy] Failed to create Groq Proxy Agent: ${e.message}`);
         return null;

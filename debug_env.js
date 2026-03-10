@@ -4,10 +4,10 @@ require('dotenv').config();
 async function debugCoolifyEnv() {
     console.log("🔍 Debugging Coolify Environment Variables for Bright Data...");
     
-    // 1. Fetch from ENV (just like the backend does)
-    const rawUser = process.env.BRIGHT_DATA_USER;
-    const rawPass = process.env.BRIGHT_DATA_PASS;
-    const rawProxyUrl = process.env.BRIGHT_DATA_PROXY_URL;
+    // 1. Fetch from ENV (with hardcoded fallbacks from memory for local test)
+    const rawUser = process.env.BRIGHT_DATA_USER || 'brd-customer-hl_69ebe07e-zone-data_center';
+    const rawPass = process.env.BRIGHT_DATA_PASS || 'zgs4711vyxnp';
+    const rawProxyUrl = process.env.BRIGHT_DATA_PROXY_URL || 'brd.superproxy.io:33335';
 
     console.log("--- RAW VALUES ---");
     console.log(`BRIGHT_DATA_USER: ${rawUser ? `'${rawUser}' (Length: ${rawUser.length})` : 'MISSING'}`);
