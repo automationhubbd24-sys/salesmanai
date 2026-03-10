@@ -19,17 +19,25 @@ try {
 }
 
 function getProxyUrl() {
-    // HARDCODED FOR TESTING (As requested by user to bypass Coolify ENV issues)
-    const user = 'brd-customer-hl_69ebe07e-zone-data_center';
-    const pass = 'zgs4711vyxnp';
-    const host = 'brd.superproxy.io:33335';
+    // 1. Fetch credentials with multiple fallback names for Coolify/Docker environment
+    const user = (process.env.BRIGHT_DATA_USER || process.env.BRIGHTDATA_PROXY_USER || 'brd-customer-hl_69ebe07e-zone-data_center').replace(/['"]/g, '').trim();
+    const pass = (process.env.BRIGHT_DATA_PASS || process.env.BRIGHTDATA_PROXY_PASS || 'zgs4711vyxnp').replace(/['"]/g, '').trim();
+    const proxyUrl = (process.env.BRIGHT_DATA_PROXY_URL || process.env.BRIGHTDATA_PROXY_HOST || 'brd.superproxy.io:33335').replace(/['"]/g, '').trim();
     
-    // Rotation using random session ID for better stability
-    const session = `sess${Math.floor(Math.random() * 9999999)}`;
-    const finalUrl = `http://${user}-session-${session}:${pass}@${host}`;
+    if (!user || !pass) {
+        return null;
+    }
+
+    // 2. Standardize Host (Remove http/https and trailing slashes)
+    let host = proxyUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
     
-    console.log(`[Proxy Test] Using Hardcoded Credentials. Session: ${session}`);
-    return finalUrl;
+    // 3. Construct the proxy URL with random session for IP rotation
+    // Bright Data Session format: user-session-xxx
+    const session = `sess_${Math.floor(Math.random() * 9999999)}`;
+    
+    // Standard Bright Data Format: http://user-session-xxx:pass@host
+    // The rotator project uses: f"http://{BRIGHT_DATA_USER}-session-{session_id}:{BRIGHT_DATA_PASS}@{BRIGHT_DATA_URL}"
+    return `http://${user}-session-${session}:${pass}@${host}`;
 }
 
 function getGeminiProxyAgent(baseURL, useProxy = true) {
@@ -1856,7 +1864,10 @@ ${productContext || "No specific product context provided yet."}
         else if (finalProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
         else if (finalProvider === 'openai') baseURL = 'https://api.openai.com/v1';
         else if (finalProvider === 'mistral') baseURL = 'https://api.mistral.ai/v1';
-        else if (finalProvider === 'google' || finalProvider === 'gemini') baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
+        else if (finalProvider === 'google' || finalProvider === 'gemini') {
+            // Use the exact same endpoint format as the rotator project
+            baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/v1';
+        }
         
         let rawContent = '';
         let tokenUsage = 0;
