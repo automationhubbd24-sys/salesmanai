@@ -41,18 +41,21 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
     const rpdLimit = parseInt(keyData.rpd_limit) || 0;
     if (rpdLimit > 0) {
         if (keyData.last_date_checked !== today) {
+            keyData.usage_today = 0;
+            keyData.last_date_checked = today;
+            pendingUpdates.add(keyData.api);
+        }
+        
+        // Safety Fallback: If usage is somehow higher than limit, but it's a new session, allow a few more
+        if ((keyData.usage_today || 0) >= rpdLimit) {
             const lastHit = keyData.last_rpd_hit_at ? new Date(keyData.last_rpd_hit_at).getTime() : 0;
-            if (now - lastHit >= 24 * 60 * 60 * 1000) {
+            if (now - lastHit < 24 * 60 * 60 * 1000) {
+                return false;
+            } else {
+                // Time passed! Reset.
                 keyData.usage_today = 0;
                 keyData.last_date_checked = today;
             }
-        }
-        if ((keyData.usage_today || 0) >= rpdLimit) {
-            if (!keyData.last_rpd_hit_at || (now - new Date(keyData.last_rpd_hit_at).getTime() > 24 * 60 * 60 * 1000)) {
-                keyData.last_rpd_hit_at = new Date().toISOString();
-                pendingUpdates.add(keyData.api);
-            }
-            return false;
         }
     }
 
@@ -89,21 +92,50 @@ async function getSmartKey(provider, model = 'default') {
     
     if (isModelLocked(model)) return null;
 
+    // --- NEW: ROBUST PROVIDER MATCHING ---
+    const targetProvider = String(provider || '').trim().toLowerCase();
+    const targetModel = String(model || 'default').trim().toLowerCase();
+
     let candidates = [];
-    if (model !== 'default' && keysByModel.has(model)) {
-        candidates = keysByModel.get(model);
-    } else if (keysByProvider.has(provider)) {
-        candidates = keysByProvider.get(provider);
+    
+    // 1. Try Model Specific Keys First
+    if (targetModel !== 'default' && keysByModel.has(targetModel)) {
+        candidates = keysByModel.get(targetModel);
+    } 
+    
+    // 2. If no model-specific keys, try Provider keys
+    if (candidates.length === 0) {
+        const providerAliases = {
+            'google': ['google', 'gemini'],
+            'gemini': ['google', 'gemini'],
+            'groq': ['groq'],
+            'openrouter': ['openrouter', 'or']
+        };
+
+        const searchTerms = providerAliases[targetProvider] || [targetProvider];
+        for (const term of searchTerms) {
+            if (keysByProvider.has(term)) {
+                candidates = [...candidates, ...keysByProvider.get(term)];
+            }
+        }
     }
     
-    if (!candidates || candidates.length === 0) {
-        if (keysByProvider.has(provider)) candidates = keysByProvider.get(provider);
-        if (!candidates || candidates.length === 0) return null;
+    // 3. Last resort: If still no candidates, use ALL active keys (Safety Fallback)
+    if (candidates.length === 0 && keyCache.length > 0) {
+        // Filter keys by provider if possible, otherwise use all
+        candidates = keyCache.filter(k => {
+            const p = String(k.provider || '').trim().toLowerCase();
+            return p === 'google' || p === 'gemini' || targetProvider === 'google' || targetProvider === 'gemini';
+        });
+        
+        // If still empty, use all active keys
+        if (candidates.length === 0) candidates = keyCache;
     }
 
     const validKeys = candidates.filter(k => k.status === 'active' && isKeyAlive(k.api));
+    
     if (validKeys.length === 0) {
-        console.warn(`[KeyService] All keys dead for ${provider}/${model}`);
+        console.warn(`[KeyService] ❌ No active/alive keys found. Candidates: ${candidates.length}, Global Cache: ${keyCache.length}`);
         return null;
     }
 
@@ -157,7 +189,10 @@ async function getSmartKey(provider, model = 'default') {
 // --- 3. KEY CACHE MANAGEMENT ---
 async function updateKeyCache(force = false) {
     const now = Date.now();
-    if (!force && keyCache.length > 0) return;
+    // Refresh cache ONLY if forced or empty. CACHE_TTL should be respected.
+    if (!force && keyCache.length > 0 && (now - lastCacheUpdate < CACHE_TTL)) {
+        return;
+    }
 
     try {
         const pgClient = require('./pgClient');
@@ -165,17 +200,30 @@ async function updateKeyCache(force = false) {
         const rows = result.rows || [];
         keyCache = rows;
         
+        console.log(`[KeyService] 🔄 Cache updated from DB. Total keys: ${rows.length}`);
+        
         const newMap = new Map();
         const providerMap = new Map();
         const modelMap = new Map();
 
         rows.forEach(k => {
             newMap.set(k.api, k);
-            const p = (k.provider || 'unknown').toLowerCase();
+            
+            // Normalize Provider (Trim spaces and lowercase)
+            const p = String(k.provider || 'unknown').trim().toLowerCase();
             if (!providerMap.has(p)) providerMap.set(p, []);
             providerMap.get(p).push(k);
+            
+            // Map common aliases
+            if (p === 'google' || p === 'gemini') {
+                if (!providerMap.has('google')) providerMap.set('google', []);
+                if (!providerMap.has('gemini')) providerMap.set('gemini', []);
+                providerMap.get('google').push(k);
+                providerMap.get('gemini').push(k);
+            }
+
             if (k.model) {
-                const m = k.model.toLowerCase();
+                const m = String(k.model).trim().toLowerCase();
                 if (!modelMap.has(m)) modelMap.set(m, []);
                 modelMap.get(m).push(k);
             }
@@ -185,6 +233,9 @@ async function updateKeyCache(force = false) {
         keysByProvider = providerMap;
         keysByModel = modelMap;
         lastCacheUpdate = now;
+        
+        // Debug: Log providers found
+        console.log(`[KeyService] Providers in cache: ${Array.from(providerMap.keys()).join(', ')}`);
     } catch (err) {
         console.error(`[KeyService] Failed to update key cache:`, err.message);
     }
