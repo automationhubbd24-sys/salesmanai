@@ -206,70 +206,94 @@ async function refreshGlobalEngineConfigCache(provider = null) {
 }
 
 async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio) {
-    // 1. Get Base Engine Config from Provider (google, groq, openrouter, etc.)
-    const targetProvider = defaultProvider || 'google';
-    const gConfig = await getGlobalEngineConfig(targetProvider);
+    let targetProvider = defaultProvider || 'salesmanchatbot';
+    let targetEngineName = defaultModel || 'salesmanchatbot-pro';
 
-    // 2. Extract specific models from config
-    let textModel = gConfig?.text_model || defaultModel || 'gemini-2.0-flash';
-    let visionModel = gConfig?.vision_model || textModel;
-    let voiceModel = gConfig?.voice_model || textModel;
-
-    // 3. Resolve specific providers (with overrides)
-    let textProvider = gConfig?.text_provider_override && gConfig.text_provider_override !== 'default' 
-        ? gConfig.text_provider_override 
-        : targetProvider;
-    
-    let visionProvider = gConfig?.vision_provider_override && gConfig.vision_provider_override !== 'default' 
-        ? gConfig.vision_provider_override 
-        : targetProvider;
-    
-    let voiceProvider = gConfig?.voice_provider_override && gConfig.voice_provider_override !== 'default' 
-        ? gConfig.voice_provider_override 
-        : targetProvider;
-
-    // 4. Set Manual Limits (RPM/RPD/RPH)
-    if (keyService.setManualLimit && gConfig) {
-        // We set limits for the specific models configured for this engine
-        if (gConfig.text_rpm || gConfig.text_rpd || gConfig.text_rph) 
-            keyService.setManualLimit(textModel, { rpm: gConfig.text_rpm, rpd: gConfig.text_rpd, rph: gConfig.text_rph });
-        if (gConfig.vision_rpm || gConfig.vision_rpd || gConfig.vision_rph) 
-            keyService.setManualLimit(visionModel, { rpm: gConfig.vision_rpm, rpd: gConfig.vision_rpd, rph: gConfig.vision_rph });
-        if (gConfig.voice_rpm || gConfig.voice_rpd || gConfig.voice_rph) 
-            keyService.setManualLimit(voiceModel, { rpm: gConfig.voice_rpm, rpd: gConfig.voice_rpd, rph: gConfig.voice_rph });
+    if (targetEngineName === 'salesmanchatbot-pro') {
+        targetProvider = 'google';
+    } else if (targetEngineName === 'salesmanchatbot-flash') {
+        targetProvider = 'openrouter';
+    } else if (targetEngineName === 'salesmanchatbot-lite') {
+        targetProvider = 'groq';
     }
 
-    // 5. Select Final Engine based on current Modality
-    let finalModel = textModel;
+    if (targetProvider === 'salesmanchatbot' || targetProvider === 'gemini') {
+        const hasCustomConfig = await getGlobalEngineConfig(targetProvider);
+        if (!hasCustomConfig) {
+            targetProvider = 'google';
+        }
+    }
+
+    const gConfig = await getGlobalEngineConfig(targetProvider);
+
+    let engineTextModel = targetEngineName;
+    let engineVisionModel = targetEngineName;
+    let engineVoiceModel = targetEngineName;
+
+    let textProvider = targetProvider;
+    let visionProvider = targetProvider;
+    let voiceProvider = targetProvider;
+
+    if (gConfig) {
+        engineTextModel = gConfig.text_model || engineTextModel;
+        engineVisionModel = gConfig.vision_model || engineVisionModel;
+        engineVoiceModel = gConfig.voice_model || engineVoiceModel;
+
+        if (gConfig.text_provider_override && gConfig.text_provider_override !== 'default') 
+            textProvider = gConfig.text_provider_override;
+        
+        if (gConfig.vision_provider_override && gConfig.vision_provider_override !== 'default') 
+            visionProvider = gConfig.vision_provider_override;
+        
+        if (gConfig.voice_provider_override && gConfig.voice_provider_override !== 'default') 
+            voiceProvider = gConfig.voice_provider_override;
+
+        if (keyService.setManualLimit) {
+            if (gConfig.text_rpm || gConfig.text_rpd || gConfig.text_rph) 
+                keyService.setManualLimit(engineTextModel, { rpm: gConfig.text_rpm, rpd: gConfig.text_rpd, rph: gConfig.text_rph });
+            if (gConfig.vision_rpm || gConfig.vision_rpd || gConfig.vision_rph) 
+                keyService.setManualLimit(engineVisionModel, { rpm: gConfig.vision_rpm, rpd: gConfig.vision_rpd, rph: gConfig.vision_rph });
+            if (gConfig.voice_rpm || gConfig.voice_rpd || gConfig.voice_rph) 
+                keyService.setManualLimit(engineVoiceModel, { rpm: gConfig.voice_rpm, rpd: gConfig.voice_rpd, rph: gConfig.voice_rph });
+        }
+    }
+
+    let finalModel = engineTextModel;
     let finalProvider = textProvider;
 
     if (isAudio) {
-        finalModel = voiceModel;
+        finalModel = engineVoiceModel;
         finalProvider = voiceProvider;
+        console.log(`[AI] Smart Routing (Voice): Using ${finalProvider}/${finalModel}`);
     } else if (isVision) {
-        finalModel = visionModel;
+        finalModel = engineVisionModel;
         finalProvider = visionProvider;
+        console.log(`[AI] Smart Routing (Vision): Using ${finalProvider}/${finalModel}`);
+    } else {
+        console.log(`[AI] Smart Routing (Text): Using ${finalProvider}/${finalModel}`);
     }
 
-    // Standardize OpenRouter model format
     if (finalProvider === 'openrouter' && finalModel.includes(',')) {
         finalModel = finalModel.split(',')[0].trim();
     }
 
-    // --- Branded Model Name Mapping (Fallback if still branded) ---
-    if (finalModel === 'salesmanchatbot-pro') {
-        finalModel = (finalProvider === 'google' || finalProvider === 'gemini') ? 'gemini-2.0-flash' : 'gemini-2.0-flash';
-    } else if (finalModel === 'salesmanchatbot-flash') {
-        finalModel = 'gemini-1.5-flash';
-    } else if (finalModel === 'salesmanchatbot-lite') {
-        finalModel = (finalProvider === 'groq') ? 'llama-3.3-70b-versatile' : 'gemini-1.5-flash';
+    if (isAudio && voiceProvider === 'groq') {
+        finalProvider = 'groq';
     }
 
-    console.log(`[AI Engine] Resolved: ${finalProvider}/${finalModel} (Audio: ${isAudio}, Vision: ${isVision})`);
+    console.log(`[AI] Engine Resolved: ${finalProvider}/${finalModel} (Audio: ${isAudio}, Vision: ${isVision})`);
 
     return { 
         finalProvider,
         finalModel,
+        targetProvider,
+        targetEngineName,
+        engineTextModel,
+        engineVisionModel,
+        engineVoiceModel,
+        textProvider,
+        visionProvider,
+        voiceProvider,
         gConfig
     };
 }
@@ -399,16 +423,15 @@ const functionTools = [
         type: 'function',
         function: {
             name: 'create_order',
-            description: 'Create order details when user confirms an order. This will trigger the backend to save order information and phone number.',
+            description: 'Create order details when user confirms an order',
             parameters: {
                 type: 'object',
                 properties: {
-                    product_name: { type: 'string', description: 'Name of the product being ordered' },
-                    phone: { type: 'string', description: 'Customer phone number for the order' },
-                    address: { type: 'string', description: 'Delivery address' },
-                    quantity: { type: 'string', description: 'Quantity of items' },
-                    price: { type: 'string', description: 'Total price or unit price' },
-                    customer_name: { type: 'string', description: 'Customer name' }
+                    product_name: { type: 'string' },
+                    phone: { type: 'string' },
+                    address: { type: 'string' },
+                    quantity: { type: 'string' },
+                    price: { type: 'string' }
                 },
                 required: ['product_name', 'phone', 'address']
             }
@@ -709,21 +732,9 @@ async function getEmbedding(text) {
         
         if (provider === 'google' || provider === 'gemini') {
             const genAI = new GoogleGenerativeAI(config.api_key);
-            // Use the specific model from config, or fallback to text-embedding-004
-            const modelName = config.model || "text-embedding-004";
-            const model = genAI.getGenerativeModel({ model: modelName });
-            
+            const model = genAI.getGenerativeModel({ model: config.model || "text-embedding-004" });
             const result = await model.embedContent(text.replace(/\n/g, ' '));
-            const embedding = result.embedding.values;
-
-            // --- FIX: Gemini embedding-001 returns 3072 dims, but our DB expects 1536 ---
-            // If the model is embedding-001 and we get 3072, we truncate to 1536
-            if (modelName.includes('embedding-001') && embedding.length === 3072) {
-                // console.log(`[AI Embedding] Truncating Gemini 3072 dims to 1536 for compatibility.`);
-                return embedding.slice(0, 1536);
-            }
-
-            return embedding;
+            return result.embedding.values;
         } else {
             // Default to OpenAI/OpenRouter (OpenAI SDK compatible)
             const openai = new OpenAI({
@@ -991,31 +1002,8 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null
             }
 
             case 'create_order': {
-                // Save order details to database
-                const dbService = require('./dbService');
-                try {
-                    await dbService.saveOrder({
-                        page_id: pageId,
-                        sender_id: senderId,
-                        product_name: args.product_name,
-                        phone: args.phone,
-                        address: args.address,
-                        quantity: args.quantity || '1',
-                        price: args.price || '0',
-                        customer_name: args.customer_name || senderId,
-                        platform: platform
-                    });
-                    
-                    // Also update/save contact phone number if platform is WhatsApp
-                    if (platform === 'whatsapp' && args.phone) {
-                        await dbService.updateContactPhone(pageId, senderId, args.phone);
-                    }
-
-                    return { status: 'SUCCESS', message: "Order details captured and saved successfully. I will now confirm this with the user." };
-                } catch (saveErr) {
-                    console.error("[AgentLoop] Failed to save order:", saveErr.message);
-                    return { status: 'ERROR', message: `Failed to save order details: ${saveErr.message}` };
-                }
+                // Just return success for AI to confirm
+                return { status: 'SUCCESS', message: "Order details captured. The system will process it after confirmation." };
             }
 
             default:
@@ -1238,17 +1226,17 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             console.warn("[AI Logger] Error preparing logData:", err.message);
         }
 
-        // --- AUTO-SAVE TO SEMANTIC CACHE ---
+        // Save to Semantic Cache if enabled and not served from cache
         try {
             const semEnabled = pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1 || pageConfig.semantic_cache_enabled === 'true');
             const embedEnabled = pageConfig && (pageConfig.embed_enabled === true || pageConfig.embed_enabled === 1 || pageConfig.embed_enabled === 'true');
-            const autosaveEnabled = pageConfig && (pageConfig.semantic_cache_autosave !== false && pageConfig.semantic_cache_autosave !== 'false');
             const canCache = isCacheable(cleanUserMessage);
             
-            // Only auto-save if autosaveEnabled is TRUE
-            if (autosaveEnabled && (semEnabled || embedEnabled) && !usedSemanticCache && canCache && result && result.reply && cleanUserMessage) {
+            // --- FIX: If either Semantic Cache OR Embedding is enabled, we save to cache ---
+            if ((semEnabled || embedEnabled) && !usedSemanticCache && canCache && result && result.reply && cleanUserMessage) {
                 const dbService = require('./dbService');
                 
+                // If Embedding is enabled, generate vector for saving
                 if (embedEnabled) {
                     getEmbedding(cleanUserMessage).then(v => {
                         dbService.saveSemanticCacheEntry({
@@ -1729,9 +1717,8 @@ ${productContext || "No specific product context provided yet."}
             }
 
             try {
-                // User requirement: Always attempt to use proxy for Google/Gemini/Groq if configured
-                const isGoogleOrGroq = currentProvider.includes('google') || currentProvider.includes('gemini') || currentProvider.includes('groq');
-                const proxyAgent = getGeminiProxyAgent(baseURL, isGoogleOrGroq);
+                const useProxy = (currentProvider.includes('google') || currentProvider.includes('gemini') || currentProvider.includes('groq')) && !currentKey;
+                const proxyAgent = getGeminiProxyAgent(baseURL, useProxy);
                 
                 let modelToUse = pageConfig.chat_model;
                 if (!modelToUse) {
@@ -1946,80 +1933,34 @@ ${productContext || "No specific product context provided yet."}
             }
         }
 
-        if (finalProvider === 'google' || finalProvider === 'gemini') {
-            // Direct Gemini SDK Call (No context cache, consistent with Groq/OpenRouter)
-            console.log(`[AI] Calling Direct Google Gemini SDK (${finalModel})...`);
-            const genAI = new GoogleGenerativeAI(apiKey);
-            const model = genAI.getGenerativeModel({ model: finalModel });
+        console.log(`[AI] Phase 2: Calling SalesmanChatbot AgentLoop (${finalProvider}/${currentModel})...`);
 
-            // Convert OpenAI messages format to Gemini contents format
-            const geminiContents = messages.map(m => {
-                let role = m.role === 'assistant' ? 'model' : 'user';
-                if (m.role === 'system') role = 'user'; // System instructions handled separately or as first user msg
-                
-                return {
-                    role: role,
-                    parts: [{ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }]
-                };
-            });
-
-            // Handle System Prompt if present (Gemini best practice)
-            let systemInstruction = undefined;
-            const systemMsg = messages.find(m => m.role === 'system');
-            if (systemMsg) {
-                systemInstruction = {
-                    parts: [{ text: systemMsg.content }]
-                };
+        // Managed engine: use proxy for Gemini/Groq calls
+        let proxyAgent = null;
+        const isManagedEngine = !(pageConfig && (pageConfig.cheap_engine === false || pageConfig.api_key));
+        if (isManagedEngine) {
+            if (finalProvider === 'google' || finalProvider === 'gemini') {
+                proxyAgent = getGeminiProxyAgent(baseURL, true);
+            } else if (finalProvider === 'groq') {
+                proxyAgent = getGroqProxyAgent(true);
             }
-
-            const result = await model.generateContent({
-                contents: geminiContents.filter(m => messages[messages.indexOf(m)]?.role !== 'system'),
-                systemInstruction: systemInstruction
-            });
-
-            const aiText = result.response.text();
-            const tokenUsage = result.response.usageMetadata ? result.response.usageMetadata.totalTokenCount : 0;
-
-            // Simple Agentic JSON Parser for Gemini
-            try {
-                const cleanJson = aiText.replace(/```json|```/g, '').trim();
-                const structured = JSON.parse(cleanJson);
-                if (structured.reply_text) {
-                    return finalize({ 
-                        reply: structured.reply_text, 
-                        action: structured.action || "NONE",
-                        product_id: structured.product_id || null,
-                        image_urls: Array.isArray(structured.image_urls) ? structured.image_urls : [],
-                        sentiment: 'neutral', 
-                        token_usage: tokenUsage + totalTokenUsage, 
-                        model: finalModel, 
-                        foundProducts 
-                    });
-                }
-            } catch (e) {}
-
-            return finalize({ reply: aiText, sentiment: 'neutral', token_usage: tokenUsage + totalTokenUsage, model: finalModel, foundProducts });
-
-        } else {
-            // OpenAI Compatible Providers (Groq, OpenRouter, etc.)
-            console.log(`[AI] Calling Direct OpenAI Compatible API (${finalProvider}/${finalModel})...`);
-            
-            const result = await runAgentLoop({
-                apiKey: apiKey,
-                baseURL: baseURL,
-                model: finalModel,
-                messages: messages,
-                tools: tools,
-                pageConfig: pageConfig,
-                proxyAgent: proxyAgent,
-                totalTokenUsage: totalTokenUsage,
-                foundProducts: [],
-                userId: userId,
-                temperature: (pageConfig.is_external_api ? 0.7 : 0.2)
-            });
-
-            return finalize({ ...result, sentiment: 'neutral' });
         }
+
+        const result = await runAgentLoop({
+            apiKey: apiKey,
+            baseURL: baseURL,
+            model: currentModel,
+            messages: messages,
+            tools: tools,
+            pageConfig: pageConfig,
+            proxyAgent: proxyAgent,
+            totalTokenUsage: totalTokenUsage,
+            foundProducts: [],
+            userId: userId,
+            temperature: (pageConfig.is_external_api ? 0.7 : 0.2) // Low temp for format adherence
+        });
+
+        return finalize({ ...result, sentiment: 'neutral' });
 
     } catch (err) {
         console.error(`[AI] Phase 2 Logic Failed:`, err);
