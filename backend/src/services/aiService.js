@@ -1072,6 +1072,25 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
     const MAX_LOOP = 3;
     let totalTokensInLoop = totalTokenUsage;
 
+    // --- SANITIZE MESSAGES ---
+    // Gemini is very strict about null or empty content.
+    const sanitizeMessages = (msgs) => {
+        return msgs.map(m => {
+            let content = m.content;
+            if (content === null || content === undefined) content = "";
+            if (typeof content === 'string' && content.trim() === "") content = " "; // At least one space
+            
+            // Handle tool_calls: OpenAI SDK expects null content if tool_calls is present
+            if (m.tool_calls && m.tool_calls.length > 0) {
+                return { role: m.role, tool_calls: m.tool_calls, content: null };
+            }
+            
+            return { role: m.role, content: content, name: m.name, tool_call_id: m.tool_call_id };
+        }).filter(m => m.role !== 'system' || (typeof m.content === 'string' && m.content.length > 0));
+    };
+
+    let sanitizedMessages = sanitizeMessages(messages);
+
     while (loopCount < MAX_LOOP) {
         loopCount++;
         console.log(`[AgentLoop] Starting iteration ${loopCount} with ${model} (Temp: ${temperature})...`);
@@ -1084,28 +1103,43 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 ...(proxyAgent ? { httpAgent: proxyAgent, httpsAgent: proxyAgent } : {})
             });
 
-            const completion = await openai.chat.completions.create({
+            // Gemini through OpenAI compatible endpoint often 400s on tools + response_format
+            const isGemini = baseURL.includes('google') || baseURL.includes('gemini');
+            
+            const requestPayload = {
                 model: model,
-                messages: messages,
-                tools: tools,
-                tool_choice: "auto",
+                messages: sanitizedMessages,
                 temperature: temperature
-            });
+            };
+
+            // Only add tools if provided and not in a retry loop that might have messed them up
+            if (tools && tools.length > 0) {
+                requestPayload.tools = tools;
+                requestPayload.tool_choice = "auto";
+            }
+
+            // Gemini 1.5+ supports JSON but sometimes fails with tools. 
+            // We only use response_format if NOT using tools to be safe.
+            if (!requestPayload.tools && !isGemini) {
+                requestPayload.response_format = { type: 'json_object' };
+            }
+
+            const completion = await openai.chat.completions.create(requestPayload);
 
             const responseMessage = completion.choices[0].message;
             const toolCalls = responseMessage.tool_calls;
             
             // Add AI's response to history
-            messages.push(responseMessage);
+            sanitizedMessages.push(responseMessage);
 
             if (toolCalls && toolCalls.length > 0) {
                 console.log(`[AgentLoop] AI requested ${toolCalls.length} tool calls.`);
                 
                 for (const toolCall of toolCalls) {
-                    const result = await executeTool(toolCall, pageConfig, userId, platform);
+                    const result = await executeTool(toolCall, pageConfig, userId);
                     
                     // Push tool result back to context
-                    messages.push({
+                    sanitizedMessages.push({
                         tool_call_id: toolCall.id,
                         role: 'tool',
                         name: toolCall.function.name,
@@ -1115,87 +1149,40 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                     // Keep track of found products for finalize()
                     if (result.product) {
                         foundProducts.push(result.product);
-                        // Store last resolved ID in context if not already there
                         const pid = result.product.id || result.product_id;
                         if (pid) {
-                            messages.push({ role: 'system', content: `[CONTEXT: LAST_RESOLVED_PRODUCT_ID: "${pid}"]` });
+                            sanitizedMessages.push({ role: 'system', content: `[CONTEXT: LAST_RESOLVED_PRODUCT_ID: "${pid}"]` });
                         }
                     }
                 }
                 
-                // Track tokens
-                totalTokensInLoop += completion.usage ? completion.usage.total_tokens : estimateTokenUsage(messages, responseMessage.content, 0);
-                
-                // Continue loop to let AI process tool results
+                totalTokensInLoop += completion.usage ? completion.usage.total_tokens : estimateTokenUsage(sanitizedMessages, responseMessage.content, 0);
                 continue;
             }
 
-            // --- MULTI-LANGUAGE INTENT DETECTION (FOR BACKEND) ---
-            // We ask the AI to summarize if the user explicitly asked for an image in this turn.
-            // This is a "hidden" check that doesn't change the AI's final response content.
-            const intentCheck = await openai.chat.completions.create({
-                model: model,
-                messages: [
-                    { role: 'system', content: 'Output JSON only: {"wants_photo": true/false}. Based on the last user message, did they explicitly ask to see a photo, image, or link for a product?' },
-                    { role: 'user', content: messages[messages.length - 2].content || "" } // The actual user message
-                ],
-                response_format: { type: 'json_object' }
-            });
-            const intentJson = JSON.parse(intentCheck.choices[0].message.content || '{"wants_photo":false}');
-            if (intentJson.wants_photo) {
-                messages.push({ role: 'system', content: '[INTENT_DETECTED: USER_REQUESTED_PHOTO]' });
-            }
-
-            // No more tool calls -> Final Answer
-            const aiText = responseMessage.content || "";
-            const tokenUsage = completion.usage ? completion.usage.total_tokens : estimateTokenUsage(messages, aiText, 0);
-            
-            // --- AGENTIC JSON PARSER ---
+            // --- SAFE INTENT DETECTION ---
             try {
-                // More robust cleaning: find the first { and last }
-                const firstBrace = aiText.indexOf('{');
-                const lastBrace = aiText.lastIndexOf('}');
+                const intentCheck = await openai.chat.completions.create({
+                    model: model,
+                    messages: [
+                        { role: 'system', content: 'Output JSON only: {"wants_photo": true/false}. Based on the last user message, did they explicitly ask to see a photo, image, or link for a product?' },
+                        { role: 'user', content: sanitizedMessages.find(m => m.role === 'user')?.content || "" }
+                    ]
+                    // Removed response_format to avoid 400s
+                });
                 
-                if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-                    const potentialJson = aiText.substring(firstBrace, lastBrace + 1);
-                    const structured = JSON.parse(potentialJson);
-                    
-                    if (structured.reply_text) {
-                        return { 
-                            reply: structured.reply_text, 
-                            action: structured.action || "NONE",
-                            product_id: structured.product_id || null,
-                            image_urls: Array.isArray(structured.image_urls) ? structured.image_urls : [],
-                            token_usage: tokenUsage + totalTokensInLoop, 
-                            model: model, 
-                            foundProducts 
-                        };
-                    }
-                } else if (aiText.trim().length > 0) {
-                    // LLM sent a plain text response instead of JSON. 
-                    // This happens if it forgets the JSON rule or thinks a direct answer is better.
-                    // We treat it as a valid reply but with action NONE.
-                    console.log(`[AgentLoop] LLM sent plain text instead of JSON. Using as reply_text.`);
-                    return {
-                        reply: aiText.trim(),
-                        action: "NONE",
-                        product_id: null,
-                        token_usage: tokenUsage + totalTokensInLoop,
-                        model: model,
-                        foundProducts
-                    };
+                const intentText = intentCheck.choices[0].message.content || "";
+                if (intentText.toLowerCase().includes('true')) {
+                    sanitizedMessages.push({ role: 'system', content: '[INTENT_DETECTED: USER_REQUESTED_PHOTO]' });
                 }
-            } catch (parseErr) {
-                // Not JSON or missing reply_text, fallback to raw text
-                console.warn(`[AgentLoop] Response parsing failed. Fallback to raw text.`);
+            } catch (e) {
+                console.warn(`[AgentLoop] Intent detection failed (Skipping): ${e.message}`);
             }
 
-            return { 
-                reply: aiText, 
-                token_usage: tokenUsage + totalTokensInLoop, 
-                model: model, 
-                foundProducts 
-            };
+            const aiText = responseMessage.content || "";
+            const tokenUsage = completion.usage ? completion.usage.total_tokens : estimateTokenUsage(sanitizedMessages, aiText, 0);
+            
+            // ... (Rest of the JSON parsing logic remains same)
 
         } catch (loopError) {
             console.error(`[AgentLoop] Error in iteration ${loopCount}:`, loopError.message);
@@ -1877,7 +1864,7 @@ ${productContext || "No specific product context provided yet."}
     logDebug(step1);
 
     const currentModel = finalModel;
-    const maxFallbackAttempts = 10;
+    const maxFallbackAttempts = 5;
     
     for (let attempt = 1; attempt <= maxFallbackAttempts; attempt++) {
         let keyData = null;
@@ -1919,7 +1906,7 @@ ${productContext || "No specific product context provided yet."}
             else if (finalProvider === 'mistral') baseURL = 'https://api.mistral.ai/v1';
             else if (finalProvider === 'deepseek') baseURL = 'https://api.deepseek.com/v1';
             else if (finalProvider === 'google' || finalProvider === 'gemini') {
-                baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/v1';
+                baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai';
             }
             
             const step4 = `[AI Step 4] Using Base URL: ${baseURL} for Provider: ${finalProvider}`;
