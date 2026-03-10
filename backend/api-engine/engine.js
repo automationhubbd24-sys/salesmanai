@@ -14,11 +14,12 @@ function getProxyUrl(modelName = 'default') {
     const pass = process.env.BRIGHT_DATA_PASS;
     if (!proxyUrl || !user || !pass) return null;
     
-    // Rotation using random session ID for better stability
-    const session = `sess_${modelName}_${Math.floor(Math.random() * 999999)}`;
+    // Some BrightData zones prefer simple alphanumeric session IDs to avoid 407 errors
+    const cleanModelName = modelName.replace(/[^a-zA-Z0-9]/g, '');
+    const session = `${cleanModelName}${Math.floor(Math.random() * 9999)}`;
     const url = `http://${user}-session-${session}:${pass}@${proxyUrl}`;
 
-    console.log(`[API Engine Proxy] New Session Created: ${session} for model: ${modelName}`);
+    console.log(`[API Engine Proxy] Using Session: ${session} for model: ${modelName}`);
 
     return url;
 }
