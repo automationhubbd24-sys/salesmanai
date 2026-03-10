@@ -235,72 +235,68 @@ router.delete('/keys/:id', async (req, res) => {
 // --- 3. THE CORE PROXY ENGINE (Compatible with OpenAI Client) ---
 // Endpoint: /v1/chat/completions
 router.post('/v1/chat/completions', async (req, res) => {
-    const { model, messages, stream, provider: bodyProvider } = req.body;
-    
-    // Auto-Detect Provider if not specified via header (Internal Logic)
+    const { model, stream, provider: bodyProvider } = req.body;
+    const modelStr = String(model || '');
+
     let provider = bodyProvider;
     if (!provider) {
         provider = 'google';
-        if (model.includes('gpt')) provider = 'openai';
-        else if (model.includes('mistral')) provider = 'mistral';
-        else if (model.includes('deepseek')) provider = 'deepseek';
-        else if (model.includes('llama') || model.includes('mixtral')) provider = 'groq';
-        else if (model.includes('/') || model.includes(':free')) provider = 'openrouter';
+        if (modelStr.includes('gpt')) provider = 'openai';
+        else if (modelStr.includes('mistral')) provider = 'mistral';
+        else if (modelStr.includes('deepseek')) provider = 'deepseek';
+        else if (modelStr.includes('llama') || modelStr.includes('mixtral')) provider = 'groq';
+        else if (modelStr.includes('/') || modelStr.includes(':free')) provider = 'openrouter';
     }
 
-    console.log(`[API Engine] Processing Request: ${provider}/${model}`);
-     logDebug(`[API Engine] Processing Request: ${provider}/${model}`);
-  
-     // --- BRANDED MODEL MAPPING ---
-    // Google/Gemini doesn't recognize branded model names. Map them to real models.
-    let upstreamModel = model;
+    console.log(`[API Engine] Processing Request: ${provider}/${modelStr}`);
+    logDebug(`[API Engine] Processing Request: ${provider}/${modelStr}`);
+
+    let upstreamModel = modelStr;
     if (provider === 'google' || provider === 'gemini') {
-        if (model === 'salesmanchatbot-pro') upstreamModel = 'gemini-2.5-flash';
-        else if (model === 'salesmanchatbot-flash') upstreamModel = 'gemini-2.5-flash-lite';
-        else if (model === 'salesmanchatbot-lite') upstreamModel = 'gemini-2.5-flash-lite';
-    } else if (provider === 'groq' && model === 'salesmanchatbot-lite') {
+        if (modelStr === 'salesmanchatbot-pro') upstreamModel = 'gemini-2.5-flash';
+        else if (modelStr === 'salesmanchatbot-flash') upstreamModel = 'gemini-2.5-flash-lite';
+        else if (modelStr === 'salesmanchatbot-lite') upstreamModel = 'gemini-2.5-flash-lite';
+    } else if (provider === 'groq' && modelStr === 'salesmanchatbot-lite') {
         upstreamModel = 'llama-3.3-70b-versatile';
     }
-    // Update req.body for upstream request
-    req.body.model = upstreamModel;
 
-    // Determine Upstream Target
     let targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
     if (provider === 'openai') targetUrl = 'https://api.openai.com/v1/chat/completions';
     else if (provider === 'groq') targetUrl = 'https://api.groq.com/openai/v1/chat/completions';
     else if (provider === 'openrouter') targetUrl = 'https://openrouter.ai/api/v1/chat/completions';
     else if (provider === 'mistral') targetUrl = 'https://api.mistral.ai/v1/chat/completions';
     else if (provider === 'deepseek') targetUrl = 'https://api.deepseek.com/chat/completions';
-    else if (provider === 'google' || provider === 'gemini') {
-        targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
-    }
+
+    const cleanBody = { ...req.body, model: upstreamModel };
+    delete cleanBody.provider;
+    delete cleanBody.is_system_engine;
+    delete cleanBody.cheap_engine;
+    delete cleanBody.user_id;
+
+    const targetUrls = (provider === 'google' || provider === 'gemini')
+        ? [targetUrl, 'https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions']
+        : [targetUrl];
 
     console.log(`[API Engine] Target URL: ${targetUrl}`);
     logDebug(`[API Engine] Target URL: ${targetUrl}`);
 
-    // --- CLEAN REQUEST BODY ---
-    // Remove internal parameters that might cause 400 error from upstream
-    const cleanBody = { ...req.body };
-    delete cleanBody.provider;
-    delete cleanBody.is_system_engine;
-    delete cleanBody.cheap_engine;
-
     try {
         const isSystemEngine = req.body.is_system_engine !== false;
-        // --- NEW: FETCH PROXY CONFIG FROM DB ---
+
         let shouldForceProxy = false;
         try {
-            const configResult = await pgClient.query('SELECT use_proxy FROM engine_configs WHERE name = $1 LIMIT 1', [model]);
+            const configResult = await pgClient.query('SELECT use_proxy FROM engine_configs WHERE name = $1 LIMIT 1', [modelStr]);
             if (configResult.rows.length > 0) {
                 shouldForceProxy = configResult.rows[0].use_proxy === true;
             }
         } catch (e) {
-            console.warn(`[API Engine] Failed to fetch proxy config for ${model}: ${e.message}`);
+            console.warn(`[API Engine] Failed to fetch proxy config for ${modelStr}: ${e.message}`);
         }
 
         if (stream) {
             const maxAttempts = 5;
             let lastError = null;
+
             for (let attempt = 1; attempt <= maxAttempts; attempt++) {
                 const keyData = await keyService.getSmartKey(provider, upstreamModel);
                 if (!keyData) break;
@@ -309,9 +305,8 @@ router.post('/v1/chat/completions', async (req, res) => {
                 console.log(rotationLog);
                 logDebug(rotationLog);
 
-                // Proxy Logic: Use if forced by DB config OR if it's a system engine request
                 let agent = undefined;
-                if (shouldForceProxy || req.body.is_system_engine !== false) {
+                if (shouldForceProxy || isSystemEngine) {
                     const proxyUrl = getProxyUrl();
                     if (proxyUrl) {
                         agent = new HttpsProxyAgent(proxyUrl);
@@ -321,18 +316,28 @@ router.post('/v1/chat/completions', async (req, res) => {
                     }
                 }
 
-                const response = await axios.post(targetUrl, cleanBody, {
+                const requestConfig = {
                     headers: {
                         'Authorization': `Bearer ${keyData.key}`,
                         'Content-Type': 'application/json'
                     },
                     httpsAgent: agent,
                     httpAgent: agent,
-                    proxy: false, // Important for HttpsProxyAgent
+                    proxy: false,
                     responseType: 'stream',
                     timeout: 60000,
                     validateStatus: () => true
-                });
+                };
+
+                let response = null;
+                for (const url of targetUrls) {
+                    response = await axios.post(url, cleanBody, requestConfig);
+                    if (response.status === 404 && targetUrls.length > 1 && url === targetUrls[0]) {
+                        if (response.data && response.data.destroy) response.data.destroy();
+                        continue;
+                    }
+                    break;
+                }
 
                 if (response.status >= 400) {
                     const status = response.status || 500;
@@ -352,35 +357,34 @@ router.post('/v1/chat/completions', async (req, res) => {
                         } else {
                             keyService.markKeyAsDead(keyData.key, 24 * 60 * 60 * 1000, `upstream_stream_${status}`);
                         }
+
                         if (response.data && response.data.destroy) response.data.destroy();
                         await new Promise(r => setTimeout(r, 1000));
                         continue;
                     }
-                    
+
                     lastError = response.data;
                     if (response.data && response.data.destroy) response.data.destroy();
                     break;
                 }
 
                 const firstChunk = await readFirstChunk(response.data);
-                
-                // --- ROBUST STREAM ERROR DETECTION (FROM ROTATOR PROJECT) ---
                 if (firstChunk) {
                     const chunkStr = firstChunk.toString();
                     if (chunkStr.includes('"error"') || chunkStr.includes('"message"')) {
-                         try {
-                             const data = JSON.parse(chunkStr.replace(/^data: /, ''));
-                             if (data.error) {
-                                 console.warn(`[API Engine] In-stream error detected: ${data.error.message}`);
-                                 keyService.markKeyAsDead(keyData.key, 60000, 'in_stream_error');
-                                 if (response.data && response.data.destroy) response.data.destroy();
-                                 continue;
-                             }
-                         } catch (e) {}
+                        try {
+                            const data = JSON.parse(chunkStr.replace(/^data: /, ''));
+                            if (data.error) {
+                                console.warn(`[API Engine] In-stream error detected: ${data.error.message}`);
+                                keyService.markKeyAsDead(keyData.key, 60000, 'in_stream_error');
+                                if (response.data && response.data.destroy) response.data.destroy();
+                                continue;
+                            }
+                        } catch (e) {}
                     }
                 }
 
-                keyService.markKeyAsSuccess(keyData.key); // Success! Reset backoff
+                keyService.markKeyAsSuccess(keyData.key);
 
                 if (response.headers && response.headers['content-type']) {
                     res.setHeader('Content-Type', response.headers['content-type']);
@@ -390,22 +394,20 @@ router.post('/v1/chat/completions', async (req, res) => {
                 return;
             }
 
-            const status = 502;
-            return res.status(status).json({ error: lastError || 'stream_failed' });
+            return res.status(502).json({ error: lastError || 'stream_failed' });
         }
 
         const maxAttempts = 5;
-        let lastError = null;
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
             const keyData = await keyService.getSmartKey(provider, upstreamModel);
             if (!keyData) {
                 console.warn(`[API Engine] ⚠️ No keys available for ${provider}/${upstreamModel}`);
-                return res.status(429).json({ 
-                    error: { 
+                return res.status(429).json({
+                    error: {
                         message: "Engine Overload: All API keys are currently rate limited or exhausted.",
                         type: "insufficient_quota",
-                        code: 429 
-                    } 
+                        code: 429
+                    }
                 });
             }
 
@@ -413,9 +415,8 @@ router.post('/v1/chat/completions', async (req, res) => {
             console.log(rotationLog);
             logDebug(rotationLog);
 
-            // Proxy Logic: Use if forced by DB config OR if it's a system engine request
             let agent = undefined;
-            if (shouldForceProxy || req.body.is_system_engine !== false) {
+            if (shouldForceProxy || isSystemEngine) {
                 const proxyUrl = getProxyUrl();
                 if (proxyUrl) {
                     agent = new HttpsProxyAgent(proxyUrl);
@@ -425,7 +426,7 @@ router.post('/v1/chat/completions', async (req, res) => {
                 }
             }
 
-            const response = await axios.post(targetUrl, cleanBody, {
+            const requestConfig = {
                 headers: {
                     'Authorization': `Bearer ${keyData.key}`,
                     'Content-Type': 'application/json'
@@ -435,7 +436,16 @@ router.post('/v1/chat/completions', async (req, res) => {
                 proxy: false,
                 timeout: 60000,
                 validateStatus: () => true
-            });
+            };
+
+            let response = null;
+            for (const url of targetUrls) {
+                response = await axios.post(url, cleanBody, requestConfig);
+                if (response.status === 404 && targetUrls.length > 1 && url === targetUrls[0]) {
+                    continue;
+                }
+                break;
+            }
 
             if (response.status >= 400) {
                 const status = response.status || 500;
@@ -455,14 +465,15 @@ router.post('/v1/chat/completions', async (req, res) => {
                     } else {
                         keyService.markKeyAsDead(keyData.key, 24 * 60 * 60 * 1000, `upstream_chat_${status}`);
                     }
+
                     await new Promise(r => setTimeout(r, 1000));
                     continue;
                 }
-                
+
                 return res.status(status).json(response.data || { error: 'request_failed' });
             }
 
-            keyService.markKeyAsSuccess(keyData.key); // Success! Reset backoff
+            keyService.markKeyAsSuccess(keyData.key);
 
             if (response.data?.usage) {
                 keyService.recordKeyUsage(keyData.key, response.data.usage.total_tokens);
@@ -470,7 +481,6 @@ router.post('/v1/chat/completions', async (req, res) => {
 
             return res.json(response.data);
         }
-
     } catch (error) {
         // Handle Upstream Errors (Block Bad Keys)
         const status = error.response?.status || 500;

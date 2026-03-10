@@ -1748,8 +1748,7 @@ ${productContext || "No specific product context provided yet."}
             }
 
             try {
-                const useProxy = (currentProvider.includes('google') || currentProvider.includes('gemini') || currentProvider.includes('groq')) && !currentKey;
-                const proxyAgent = getGeminiProxyAgent(baseURL, useProxy);
+                const proxyAgent = null;
                 
                 let modelToUse = pageConfig.chat_model;
                 if (!modelToUse) {
@@ -2007,6 +2006,7 @@ ${productContext || "No specific product context provided yet."}
                 model: currentModel
             });
         }
+ 
     }
 }
 
