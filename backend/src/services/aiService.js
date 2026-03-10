@@ -1906,7 +1906,7 @@ ${productContext || "No specific product context provided yet."}
             }
 
             const apiKey = keyData.key;
-            let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/v1';
+            let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai';
             
             const step3 = `[AI Step 3] Selected Key ID: ${keyData.id} (Masked: ${apiKey.substring(0, 10)}...)`;
             console.log(step3);

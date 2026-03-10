@@ -265,18 +265,25 @@ router.post('/v1/chat/completions', async (req, res) => {
     req.body.model = upstreamModel;
 
     // Determine Upstream Target
-    let targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions';
+    let targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
     if (provider === 'openai') targetUrl = 'https://api.openai.com/v1/chat/completions';
     else if (provider === 'groq') targetUrl = 'https://api.groq.com/openai/v1/chat/completions';
     else if (provider === 'openrouter') targetUrl = 'https://openrouter.ai/api/v1/chat/completions';
     else if (provider === 'mistral') targetUrl = 'https://api.mistral.ai/v1/chat/completions';
     else if (provider === 'deepseek') targetUrl = 'https://api.deepseek.com/chat/completions';
     else if (provider === 'google' || provider === 'gemini') {
-        targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions';
+        targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
     }
 
     console.log(`[API Engine] Target URL: ${targetUrl}`);
     logDebug(`[API Engine] Target URL: ${targetUrl}`);
+
+    // --- CLEAN REQUEST BODY ---
+    // Remove internal parameters that might cause 400 error from upstream
+    const cleanBody = { ...req.body };
+    delete cleanBody.provider;
+    delete cleanBody.is_system_engine;
+    delete cleanBody.cheap_engine;
 
     try {
         const isSystemEngine = req.body.is_system_engine !== false;
@@ -314,7 +321,7 @@ router.post('/v1/chat/completions', async (req, res) => {
                     }
                 }
 
-                const response = await axios.post(targetUrl, req.body, {
+                const response = await axios.post(targetUrl, cleanBody, {
                     headers: {
                         'Authorization': `Bearer ${keyData.key}`,
                         'Content-Type': 'application/json'
@@ -414,7 +421,7 @@ router.post('/v1/chat/completions', async (req, res) => {
                 }
             }
 
-            const response = await axios.post(targetUrl, req.body, {
+            const response = await axios.post(targetUrl, cleanBody, {
                 headers: {
                     'Authorization': `Bearer ${keyData.key}`,
                     'Content-Type': 'application/json'
