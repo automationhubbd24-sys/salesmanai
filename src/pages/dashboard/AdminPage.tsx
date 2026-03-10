@@ -241,12 +241,13 @@ export default function AdminPage() {
   const [editingEntryId, setEditingEntryId] = useState<number | null>(null);
   const [entriesSearch, setEntriesSearch] = useState("");
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
-  const [embeddingConfig, setEmbeddingConfig] = useState<{ provider: string; model: string; base_url: string; api_key: string }>({
-    provider: "openai",
-    model: "",
-    base_url: "",
-    api_key: ""
-  });
+  const [selectedEngine, setSelectedEngine] = useState<string>("salesmanchatbot-pro");
+   const [embeddingConfig, setEmbeddingConfig] = useState<{ provider: string; model: string; base_url: string; api_key: string }>({
+     provider: "openai",
+     model: "",
+     base_url: "",
+     api_key: ""
+   });
 
   const getAdminToken = () => {
     return localStorage.getItem("admin_token") || localStorage.getItem("auth_token") || "";
@@ -637,17 +638,31 @@ export default function AdminPage() {
   const updateEngineConfig = async (name: string, config: Partial<EngineConfig>) => {
     try {
       const token = getAdminToken();
-      const res = await fetch(`${BACKEND_URL}/api/api-engine/config`, {
+      // Ensure the provider is correctly passed as 'name' for backend compatibility
+      const payload = {
+        provider: name,
+        text_model: config.text_model,
+        vision_model: config.image_model, // Mapping frontend image_model to backend vision_model
+        voice_model: config.voice_model,
+        text_provider_override: config.provider, // Engine name (e.g. salesmanchatbot-pro)
+        vision_provider_override: config.image_provider_override,
+        voice_provider_override: config.voice_provider_override
+      };
+
+      const res = await fetch(`${BACKEND_URL}/api/api-list/config`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ name, ...config })
+        body: JSON.stringify(payload)
       });
-      if (res.ok) {
+      const body = await res.json();
+      if (res.ok && body.success) {
         toast.success(`Updated ${name} configuration`);
         fetchEngineData();
+      } else {
+        toast.error(body.error || "Failed to update engine configuration");
       }
     } catch (error) {
       toast.error("Failed to update engine configuration");
@@ -1819,53 +1834,90 @@ export default function AdminPage() {
 
         {/* API Engine Tab */}
         <TabsContent value="api-engine" className="space-y-6">
-          {/* Engine Model Configuration */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {engineConfigs.map((config) => (
-              <Card key={config.id} className="border-primary/20 bg-card/50">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <Cpu className="h-5 w-5 text-primary" />
-                    {config.name === 'salesmanchatbot-pro' ? 'SalesmanChatbot 2.0 Pro Engine (Google)' : 
-                     config.name === 'salesmanchatbot-flash' ? 'SalesmanChatbot 2.0 Flash Engine (OpenRouter)' : 
-                     'SalesmanChatbot 2.0 Lite Engine (Groq)'}
-                  </CardTitle>
-                  <CardDescription>Configure models for {config.name}</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label className="text-xs">Text Model</Label>
-                    <Input 
-                      value={config.text_model} 
-                      onChange={(e) => updateEngineConfig(config.name, { text_model: e.target.value })}
-                      className="h-8 text-xs"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-xs">Voice Model</Label>
-                    <Input 
-                      value={config.voice_model} 
-                      onChange={(e) => updateEngineConfig(config.name, { voice_model: e.target.value })}
-                      className="h-8 text-xs"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-xs">Image Model</Label>
-                    <Input 
-                      value={config.image_model} 
-                      onChange={(e) => updateEngineConfig(config.name, { image_model: e.target.value })}
-                      className="h-8 text-xs"
-                    />
-                  </div>
-                  
-                  <div className="pt-2 border-t border-white/5 space-y-3">
+          {/* Engine Model Configuration - Simplified with Dropdown */}
+          <Card className="border-primary/20 bg-card/50">
+            <CardHeader className="pb-3 flex flex-row items-center justify-between">
+              <div>
+                <CardTitle className="text-xl flex items-center gap-2">
+                  <Cpu className="h-6 w-6 text-[#00ff88]" />
+                  SalesmanChatbot Engine Config
+                </CardTitle>
+                <CardDescription>Select and configure your branded engines</CardDescription>
+              </div>
+              <div className="w-[280px]">
+                <Select value={selectedEngine} onValueChange={setSelectedEngine}>
+                  <SelectTrigger className="bg-black/40 border-white/10">
+                    <SelectValue placeholder="Select Engine" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="salesmanchatbot-pro">🚀 SalesmanChatbot 2.0 Pro (Google)</SelectItem>
+                    <SelectItem value="salesmanchatbot-flash">⚡ SalesmanChatbot 2.0 Flash (OpenRouter)</SelectItem>
+                    <SelectItem value="salesmanchatbot-lite">☁️ SalesmanChatbot 2.0 Lite (Groq)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {engineConfigs.filter(c => c.name === selectedEngine).map((config) => (
+                <div key={config.id} className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div className="space-y-2">
-                      <Label className="text-[10px] text-muted-foreground uppercase">Voice Provider Override</Label>
+                      <Label className="text-sm font-semibold">Text Model</Label>
+                      <Input 
+                        value={config.text_model} 
+                        onChange={(e) => {
+                          const newConfigs = [...engineConfigs];
+                          const idx = newConfigs.findIndex(c => c.id === config.id);
+                          newConfigs[idx].text_model = e.target.value;
+                          setEngineConfigs(newConfigs);
+                        }}
+                        className="bg-black/40 border-white/10"
+                        placeholder="e.g. gemini-2.0-flash"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm font-semibold">Voice Model</Label>
+                      <Input 
+                        value={config.voice_model} 
+                        onChange={(e) => {
+                          const newConfigs = [...engineConfigs];
+                          const idx = newConfigs.findIndex(c => c.id === config.id);
+                          newConfigs[idx].voice_model = e.target.value;
+                          setEngineConfigs(newConfigs);
+                        }}
+                        className="bg-black/40 border-white/10"
+                        placeholder="e.g. whisper-large-v3"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm font-semibold">Image Model</Label>
+                      <Input 
+                        value={config.image_model} 
+                        onChange={(e) => {
+                          const newConfigs = [...engineConfigs];
+                          const idx = newConfigs.findIndex(c => c.id === config.id);
+                          newConfigs[idx].image_model = e.target.value;
+                          setEngineConfigs(newConfigs);
+                        }}
+                        className="bg-black/40 border-white/10"
+                        placeholder="e.g. llama-3.2-11b-vision"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-white/5">
+                    <div className="space-y-2">
+                      <Label className="text-xs text-muted-foreground uppercase tracking-wider">Voice Provider Override</Label>
                       <Select 
                         value={config.voice_provider_override || "none"} 
-                        onValueChange={(val) => updateEngineConfig(config.name, { voice_provider_override: val === "none" ? null : val })}
+                        onValueChange={(val) => {
+                          const newConfigs = [...engineConfigs];
+                          const idx = newConfigs.findIndex(c => c.id === config.id);
+                          newConfigs[idx].voice_provider_override = val === "none" ? null : val;
+                          setEngineConfigs(newConfigs);
+                        }}
                       >
-                        <SelectTrigger className="h-7 text-[11px]">
+                        <SelectTrigger className="bg-black/40 border-white/10">
                           <SelectValue placeholder="No Override" />
                         </SelectTrigger>
                         <SelectContent>
@@ -1877,12 +1929,17 @@ export default function AdminPage() {
                       </Select>
                     </div>
                     <div className="space-y-2">
-                      <Label className="text-[10px] text-muted-foreground uppercase">Image Provider Override</Label>
+                      <Label className="text-xs text-muted-foreground uppercase tracking-wider">Image Provider Override</Label>
                       <Select 
                         value={config.image_provider_override || "none"} 
-                        onValueChange={(val) => updateEngineConfig(config.name, { image_provider_override: val === "none" ? null : val })}
+                        onValueChange={(val) => {
+                          const newConfigs = [...engineConfigs];
+                          const idx = newConfigs.findIndex(c => c.id === config.id);
+                          newConfigs[idx].image_provider_override = val === "none" ? null : val;
+                          setEngineConfigs(newConfigs);
+                        }}
                       >
-                        <SelectTrigger className="h-7 text-[11px]">
+                        <SelectTrigger className="bg-black/40 border-white/10">
                           <SelectValue placeholder="No Override" />
                         </SelectTrigger>
                         <SelectContent>
@@ -1894,10 +1951,20 @@ export default function AdminPage() {
                       </Select>
                     </div>
                   </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+
+                  <div className="flex justify-end pt-4">
+                    <Button 
+                      onClick={() => updateEngineConfig(config.name, config)}
+                      className="bg-[#00ff88] hover:bg-[#00cc77] text-black font-bold px-10 h-10"
+                    >
+                      <CheckCircle className="mr-2 h-4 w-4" />
+                      Save {selectedEngine.split('-')[1].toUpperCase()} Config
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
 
           {/* Stats Grid */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">

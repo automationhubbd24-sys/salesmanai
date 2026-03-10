@@ -206,94 +206,69 @@ async function refreshGlobalEngineConfigCache(provider = null) {
 }
 
 async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio) {
-    let targetProvider = defaultProvider || 'salesmanchatbot';
-    let targetEngineName = defaultModel || 'salesmanchatbot-pro';
-
-    if (targetEngineName === 'salesmanchatbot-pro') {
-        targetProvider = 'google';
-    } else if (targetEngineName === 'salesmanchatbot-flash') {
-        targetProvider = 'openrouter';
-    } else if (targetEngineName === 'salesmanchatbot-lite') {
-        targetProvider = 'groq';
-    }
-
-    if (targetProvider === 'salesmanchatbot' || targetProvider === 'gemini') {
-        const hasCustomConfig = await getGlobalEngineConfig(targetProvider);
-        if (!hasCustomConfig) {
-            targetProvider = 'google';
-        }
-    }
-
+    // 1. Get Base Engine Config from Provider (google, groq, openrouter, etc.)
+    const targetProvider = defaultProvider || 'google';
     const gConfig = await getGlobalEngineConfig(targetProvider);
 
-    let engineTextModel = targetEngineName;
-    let engineVisionModel = targetEngineName;
-    let engineVoiceModel = targetEngineName;
+    // 2. Extract specific models from config
+    let textModel = gConfig?.text_model || defaultModel || 'gemini-2.0-flash';
+    let visionModel = gConfig?.vision_model || textModel;
+    let voiceModel = gConfig?.voice_model || textModel;
 
-    let textProvider = targetProvider;
-    let visionProvider = targetProvider;
-    let voiceProvider = targetProvider;
+    // 3. Resolve specific providers (with overrides)
+    let textProvider = gConfig?.text_provider_override && gConfig.text_provider_override !== 'default' 
+        ? gConfig.text_provider_override 
+        : targetProvider;
+    
+    let visionProvider = gConfig?.vision_provider_override && gConfig.vision_provider_override !== 'default' 
+        ? gConfig.vision_provider_override 
+        : targetProvider;
+    
+    let voiceProvider = gConfig?.voice_provider_override && gConfig.voice_provider_override !== 'default' 
+        ? gConfig.voice_provider_override 
+        : targetProvider;
 
-    if (gConfig) {
-        engineTextModel = gConfig.text_model || engineTextModel;
-        engineVisionModel = gConfig.vision_model || engineVisionModel;
-        engineVoiceModel = gConfig.voice_model || engineVoiceModel;
-
-        if (gConfig.text_provider_override && gConfig.text_provider_override !== 'default') 
-            textProvider = gConfig.text_provider_override;
-        
-        if (gConfig.vision_provider_override && gConfig.vision_provider_override !== 'default') 
-            visionProvider = gConfig.vision_provider_override;
-        
-        if (gConfig.voice_provider_override && gConfig.voice_provider_override !== 'default') 
-            voiceProvider = gConfig.voice_provider_override;
-
-        if (keyService.setManualLimit) {
-            if (gConfig.text_rpm || gConfig.text_rpd || gConfig.text_rph) 
-                keyService.setManualLimit(engineTextModel, { rpm: gConfig.text_rpm, rpd: gConfig.text_rpd, rph: gConfig.text_rph });
-            if (gConfig.vision_rpm || gConfig.vision_rpd || gConfig.vision_rph) 
-                keyService.setManualLimit(engineVisionModel, { rpm: gConfig.vision_rpm, rpd: gConfig.vision_rpd, rph: gConfig.vision_rph });
-            if (gConfig.voice_rpm || gConfig.voice_rpd || gConfig.voice_rph) 
-                keyService.setManualLimit(engineVoiceModel, { rpm: gConfig.voice_rpm, rpd: gConfig.voice_rpd, rph: gConfig.voice_rph });
-        }
+    // 4. Set Manual Limits (RPM/RPD/RPH)
+    if (keyService.setManualLimit && gConfig) {
+        if (gConfig.text_rpm || gConfig.text_rpd || gConfig.text_rph) 
+            keyService.setManualLimit(textModel, { rpm: gConfig.text_rpm, rpd: gConfig.text_rpd, rph: gConfig.text_rph });
+        if (gConfig.vision_rpm || gConfig.vision_rpd || gConfig.vision_rph) 
+            keyService.setManualLimit(visionModel, { rpm: gConfig.vision_rpm, rpd: gConfig.vision_rpd, rph: gConfig.vision_rph });
+        if (gConfig.voice_rpm || gConfig.voice_rpd || gConfig.voice_rph) 
+            keyService.setManualLimit(voiceModel, { rpm: gConfig.voice_rpm, rpd: gConfig.voice_rpd, rph: gConfig.voice_rph });
     }
 
-    let finalModel = engineTextModel;
+    // 5. Select Final Engine based on current Modality
+    let finalModel = textModel;
     let finalProvider = textProvider;
 
     if (isAudio) {
-        finalModel = engineVoiceModel;
+        finalModel = voiceModel;
         finalProvider = voiceProvider;
-        console.log(`[AI] Smart Routing (Voice): Using ${finalProvider}/${finalModel}`);
     } else if (isVision) {
-        finalModel = engineVisionModel;
+        finalModel = visionModel;
         finalProvider = visionProvider;
-        console.log(`[AI] Smart Routing (Vision): Using ${finalProvider}/${finalModel}`);
-    } else {
-        console.log(`[AI] Smart Routing (Text): Using ${finalProvider}/${finalModel}`);
     }
 
+    // Standardize OpenRouter model format
     if (finalProvider === 'openrouter' && finalModel.includes(',')) {
         finalModel = finalModel.split(',')[0].trim();
     }
 
-    if (isAudio && voiceProvider === 'groq') {
-        finalProvider = 'groq';
+    // --- Branded Model Name Mapping (Fallback if still branded) ---
+    if (finalModel === 'salesmanchatbot-pro') {
+        finalModel = (finalProvider === 'google' || finalProvider === 'gemini') ? 'gemini-2.0-flash' : 'gemini-2.0-flash';
+    } else if (finalModel === 'salesmanchatbot-flash') {
+        finalModel = 'gemini-1.5-flash';
+    } else if (finalModel === 'salesmanchatbot-lite') {
+        finalModel = (finalProvider === 'groq') ? 'llama-3.3-70b-versatile' : 'gemini-1.5-flash';
     }
 
-    console.log(`[AI] Engine Resolved: ${finalProvider}/${finalModel} (Audio: ${isAudio}, Vision: ${isVision})`);
+    console.log(`[AI Engine] Resolved: ${finalProvider}/${finalModel} (Audio: ${isAudio}, Vision: ${isVision})`);
 
     return { 
         finalProvider,
         finalModel,
-        targetProvider,
-        targetEngineName,
-        engineTextModel,
-        engineVisionModel,
-        engineVoiceModel,
-        textProvider,
-        visionProvider,
-        voiceProvider,
         gConfig
     };
 }
@@ -1753,8 +1728,9 @@ ${productContext || "No specific product context provided yet."}
             }
 
             try {
-                const useProxy = (currentProvider.includes('google') || currentProvider.includes('gemini') || currentProvider.includes('groq')) && !currentKey;
-                const proxyAgent = getGeminiProxyAgent(baseURL, useProxy);
+                // User requirement: Always attempt to use proxy for Google/Gemini/Groq if configured
+                const isGoogleOrGroq = currentProvider.includes('google') || currentProvider.includes('gemini') || currentProvider.includes('groq');
+                const proxyAgent = getGeminiProxyAgent(baseURL, isGoogleOrGroq);
                 
                 let modelToUse = pageConfig.chat_model;
                 if (!modelToUse) {
@@ -1969,34 +1945,80 @@ ${productContext || "No specific product context provided yet."}
             }
         }
 
-        console.log(`[AI] Phase 2: Calling SalesmanChatbot AgentLoop (${finalProvider}/${currentModel})...`);
+        if (finalProvider === 'google' || finalProvider === 'gemini') {
+            // Direct Gemini SDK Call (No context cache, consistent with Groq/OpenRouter)
+            console.log(`[AI] Calling Direct Google Gemini SDK (${finalModel})...`);
+            const genAI = new GoogleGenerativeAI(apiKey);
+            const model = genAI.getGenerativeModel({ model: finalModel });
 
-        // Managed engine: use proxy for Gemini/Groq calls
-        let proxyAgent = null;
-        const isManagedEngine = !(pageConfig && (pageConfig.cheap_engine === false || pageConfig.api_key));
-        if (isManagedEngine) {
-            if (finalProvider === 'google' || finalProvider === 'gemini') {
-                proxyAgent = getGeminiProxyAgent(baseURL, true);
-            } else if (finalProvider === 'groq') {
-                proxyAgent = getGroqProxyAgent(true);
+            // Convert OpenAI messages format to Gemini contents format
+            const geminiContents = messages.map(m => {
+                let role = m.role === 'assistant' ? 'model' : 'user';
+                if (m.role === 'system') role = 'user'; // System instructions handled separately or as first user msg
+                
+                return {
+                    role: role,
+                    parts: [{ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }]
+                };
+            });
+
+            // Handle System Prompt if present (Gemini best practice)
+            let systemInstruction = undefined;
+            const systemMsg = messages.find(m => m.role === 'system');
+            if (systemMsg) {
+                systemInstruction = {
+                    parts: [{ text: systemMsg.content }]
+                };
             }
+
+            const result = await model.generateContent({
+                contents: geminiContents.filter(m => messages[messages.indexOf(m)]?.role !== 'system'),
+                systemInstruction: systemInstruction
+            });
+
+            const aiText = result.response.text();
+            const tokenUsage = result.response.usageMetadata ? result.response.usageMetadata.totalTokenCount : 0;
+
+            // Simple Agentic JSON Parser for Gemini
+            try {
+                const cleanJson = aiText.replace(/```json|```/g, '').trim();
+                const structured = JSON.parse(cleanJson);
+                if (structured.reply_text) {
+                    return finalize({ 
+                        reply: structured.reply_text, 
+                        action: structured.action || "NONE",
+                        product_id: structured.product_id || null,
+                        image_urls: Array.isArray(structured.image_urls) ? structured.image_urls : [],
+                        sentiment: 'neutral', 
+                        token_usage: tokenUsage + totalTokenUsage, 
+                        model: finalModel, 
+                        foundProducts 
+                    });
+                }
+            } catch (e) {}
+
+            return finalize({ reply: aiText, sentiment: 'neutral', token_usage: tokenUsage + totalTokenUsage, model: finalModel, foundProducts });
+
+        } else {
+            // OpenAI Compatible Providers (Groq, OpenRouter, etc.)
+            console.log(`[AI] Calling Direct OpenAI Compatible API (${finalProvider}/${finalModel})...`);
+            
+            const result = await runAgentLoop({
+                apiKey: apiKey,
+                baseURL: baseURL,
+                model: finalModel,
+                messages: messages,
+                tools: tools,
+                pageConfig: pageConfig,
+                proxyAgent: proxyAgent,
+                totalTokenUsage: totalTokenUsage,
+                foundProducts: [],
+                userId: userId,
+                temperature: (pageConfig.is_external_api ? 0.7 : 0.2)
+            });
+
+            return finalize({ ...result, sentiment: 'neutral' });
         }
-
-        const result = await runAgentLoop({
-            apiKey: apiKey,
-            baseURL: baseURL,
-            model: currentModel,
-            messages: messages,
-            tools: tools,
-            pageConfig: pageConfig,
-            proxyAgent: proxyAgent,
-            totalTokenUsage: totalTokenUsage,
-            foundProducts: [],
-            userId: userId,
-            temperature: (pageConfig.is_external_api ? 0.7 : 0.2) // Low temp for format adherence
-        });
-
-        return finalize({ ...result, sentiment: 'neutral' });
 
     } catch (err) {
         console.error(`[AI] Phase 2 Logic Failed:`, err);

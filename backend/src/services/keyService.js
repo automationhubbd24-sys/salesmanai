@@ -242,19 +242,31 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
     const today = new Date().toISOString().split('T')[0];
 
     // --- 1. KEY-LEVEL LIMITS (STRICT & UNIFIED) ---
-    // User Requirement: "agula to fronted e select korbo defualt e kono limit takbe na"
-    // Solution: REMOVE DEFAULT LIMITS.
-    // Only enforce limits if explicitly set in DB (keyData.rpd_limit / rpm_limit).
-    // If not set (null/0), assume UNLIMITED.
-    
     // RPD (Requests Per Day) - Unified
     const rpdLimit = parseInt(keyData.rpd_limit); 
     
-    // We use the key's total daily usage (regardless of model)
-    // Only check if rpdLimit is a valid positive number
-    if (rpdLimit > 0 && keyData.last_date_checked === today && (keyData.usage_today || 0) >= rpdLimit) {
-        // console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPD limit (${rpdLimit})`);
-        return false;
+    // 24-HOUR RESET LOGIC (Based on hit time)
+    if (rpdLimit > 0) {
+        // If last_date_checked is NOT today, it's a new day, reset usage_today
+        if (keyData.last_date_checked !== today) {
+            // We only reset if 24 hours have passed since the first hit of the previous limit
+            // Or more simply, if it's a new calendar day.
+            // User requirement: "rdp hit hole tokon teke 24 hours por reset hobe"
+            const lastHit = keyData.last_rpd_hit_at ? new Date(keyData.last_rpd_hit_at).getTime() : 0;
+            if (now - lastHit >= 24 * 60 * 60 * 1000) {
+                keyData.usage_today = 0;
+                keyData.last_date_checked = today;
+            }
+        }
+
+        if ((keyData.usage_today || 0) >= rpdLimit) {
+            // Record hit time if not already set for this cycle
+            if (!keyData.last_rpd_hit_at || (now - new Date(keyData.last_rpd_hit_at).getTime() > 24 * 60 * 60 * 1000)) {
+                keyData.last_rpd_hit_at = new Date().toISOString();
+                pendingUpdates.add(keyData.api);
+            }
+            return false;
+        }
     }
 
     // RPM (Requests Per Minute) - Unified
@@ -367,6 +379,7 @@ async function flushUsageStats() {
             usage_tokens_today: cachedKey.usage_tokens_today,
             last_date_checked: cachedKey.last_date_checked,
             last_used_at: cachedKey.last_used_at,
+            last_rpd_hit_at: cachedKey.last_rpd_hit_at,
             status: cachedKey.status,
             provider: cachedKey.provider, 
             model: cachedKey.model
@@ -382,9 +395,9 @@ async function flushUsageStats() {
         const valuePlaceholders = [];
 
         updates.forEach((u, index) => {
-            const baseIndex = index * 7;
+            const baseIndex = index * 8;
             valuePlaceholders.push(
-                `($${baseIndex + 1}, $${baseIndex + 2}, $${baseIndex + 3}, $${baseIndex + 4}, $${baseIndex + 5}, $${baseIndex + 6}, $${baseIndex + 7})`
+                `($${baseIndex + 1}, $${baseIndex + 2}, $${baseIndex + 3}, $${baseIndex + 4}, $${baseIndex + 5}, $${baseIndex + 6}, $${baseIndex + 7}, $${baseIndex + 8})`
             );
             values.push(
                 u.api,
@@ -392,13 +405,14 @@ async function flushUsageStats() {
                 u.usage_tokens_today,
                 u.last_date_checked,
                 u.last_used_at,
+                u.last_rpd_hit_at,
                 u.status,
                 u.provider
             );
         });
 
         const queryText = `
-            INSERT INTO api_list (api, usage_today, usage_tokens_today, last_date_checked, last_used_at, status, provider)
+            INSERT INTO api_list (api, usage_today, usage_tokens_today, last_date_checked, last_used_at, last_rpd_hit_at, status, provider)
             VALUES ${valuePlaceholders.join(', ')}
             ON CONFLICT (api)
             DO UPDATE SET
@@ -406,6 +420,7 @@ async function flushUsageStats() {
                 usage_tokens_today = EXCLUDED.usage_tokens_today,
                 last_date_checked = EXCLUDED.last_date_checked,
                 last_used_at = EXCLUDED.last_used_at,
+                last_rpd_hit_at = EXCLUDED.last_rpd_hit_at,
                 status = EXCLUDED.status
         `;
 
