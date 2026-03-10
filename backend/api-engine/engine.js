@@ -9,14 +9,24 @@ const { HttpsProxyAgent } = require('https-proxy-agent');
 
 // --- Proxy Helper ---
 function getProxyUrl() {
-    const proxyUrl = process.env.BRIGHT_DATA_PROXY_URL;
-    const user = process.env.BRIGHT_DATA_USER;
-    const pass = process.env.BRIGHT_DATA_PASS;
-    if (!proxyUrl || !user || !pass) return null;
+    // 1. Fetch credentials with multiple fallback names for Coolify/Docker environment
+    const user = (process.env.BRIGHT_DATA_USER || process.env.BRIGHTDATA_PROXY_USER || 'brd-customer-hl_69ebe07e-zone-data_center').replace(/['"]/g, '').trim();
+    const pass = (process.env.BRIGHT_DATA_PASS || process.env.BRIGHTDATA_PROXY_PASS || 'zgs4711vyxnp').replace(/['"]/g, '').trim();
+    const proxyUrl = (process.env.BRIGHT_DATA_PROXY_URL || process.env.BRIGHTDATA_PROXY_HOST || 'brd.superproxy.io:33335').replace(/['"]/g, '').trim();
     
-    // Rotation using random session ID
-    const session = `sess_${Math.floor(Math.random() * 99999)}`;
-    return `http://${user}-session-${session}:${pass}@${proxyUrl}`;
+    if (!user || !pass) {
+        return null;
+    }
+
+    // 2. Standardize Host (Remove http/https and trailing slashes)
+    let host = proxyUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
+    
+    // 3. Construct the proxy URL with random session for IP rotation
+    // Bright Data Session format: user-session-xxx
+    const session = `sess_${Math.floor(Math.random() * 9999999)}`;
+    
+    // Standard Bright Data Format: http://user-session-xxx:pass@host
+    return `http://${user}-session-${session}:${pass}@${host}`;
 }
 
 function parseStreamError(chunk) {
@@ -221,11 +231,14 @@ router.post('/v1/chat/completions', async (req, res) => {
     console.log(`[API Engine] Processing Request: ${provider} / ${model}`);
 
     // Determine Upstream Target
-    let targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+    let targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions';
     if (provider === 'openai') targetUrl = 'https://api.openai.com/v1/chat/completions';
     else if (provider === 'groq') targetUrl = 'https://api.groq.com/openai/v1/chat/completions';
     else if (provider === 'openrouter') targetUrl = 'https://openrouter.ai/api/v1/chat/completions';
     else if (provider === 'mistral') targetUrl = 'https://api.mistral.ai/v1/chat/completions';
+    else if (provider === 'google' || provider === 'gemini') {
+        targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions';
+    }
 
     // Determined Key logic
     const isSystemEngine = req.body.is_system_engine !== false; 
