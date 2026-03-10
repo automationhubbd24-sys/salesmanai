@@ -224,6 +224,17 @@ exports.handleChatCompletion = async (req, res) => {
         );
 
         if (typeof aiResponseObj === 'object' && aiResponseObj !== null) {
+            // If AI service returned an error, return proper HTTP status
+            if (aiResponseObj.error) {
+                const status = aiResponseObj.error.includes('429') ? 429 : 500;
+                return res.status(status).json({ 
+                    error: { 
+                        message: aiResponseObj.reply || aiResponseObj.error, 
+                        type: 'api_error',
+                        code: aiResponseObj.error.includes('429') ? 'rate_limit_exceeded' : 'internal_error'
+                    } 
+                });
+            }
             aiText = aiResponseObj.reply || aiResponseObj.text || JSON.stringify(aiResponseObj);
             totalTokens = aiResponseObj.token_usage || 0;
             responseModelName = aiResponseObj.model || responseModelName;
@@ -283,8 +294,8 @@ exports.handleChatCompletion = async (req, res) => {
                 }
             ],
             usage: {
-                prompt_tokens: 0, 
-                completion_tokens: 0,
+                prompt_tokens: Math.floor(totalTokens * 0.3), 
+                completion_tokens: Math.ceil(totalTokens * 0.7),
                 total_tokens: totalTokens
             }
         });
