@@ -37,6 +37,15 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
     const now = Date.now();
     const today = new Date().toISOString().split('T')[0];
 
+    // --- PERSISTENT QUOTA CHECK (24H BLOCK) ---
+    // If a key was marked as quota exceeded, block it for 24 hours regardless of rpd_limit setting
+    if (keyData.last_rpd_hit_at) {
+        const lastHit = new Date(keyData.last_rpd_hit_at).getTime();
+        if (now - lastHit < 24 * 60 * 60 * 1000) {
+            return false;
+        }
+    }
+
     // --- 1. RPD (Requests Per Day) ---
     const rpdLimit = parseInt(keyData.rpd_limit) || 0;
     if (rpdLimit > 0) {
@@ -303,6 +312,12 @@ function markKeyAsSuspended(key, reason = 'suspended') {
 
 function markKeyAsQuotaExceeded(key) {
     if (!key) return;
+    const cachedKey = keyCacheMap.get(key);
+    if (cachedKey) {
+        cachedKey.last_rpd_hit_at = new Date().toISOString();
+        pendingUpdates.add(key);
+        console.log(`[KeyService] 🚫 Persistent Quota Exceeded for Key: ${key.substring(0, 10)}... (Blocked for 24h)`);
+    }
     markKeyAsDead(key, 86400000 + 3600000, 'quota_exceeded');
 }
 
