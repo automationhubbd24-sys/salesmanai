@@ -1907,7 +1907,7 @@ ${productContext || "No specific product context provided yet."}
             else if (finalProvider === 'mistral') baseURL = 'https://api.mistral.ai/v1';
             else if (finalProvider === 'deepseek') baseURL = 'https://api.deepseek.com/v1';
             else if (finalProvider === 'google' || finalProvider === 'gemini') {
-                baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/v1';
+                baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai';
             }
             
             const step4 = `[AI Step 4] Using Base URL: ${baseURL} for Provider: ${finalProvider}`;
