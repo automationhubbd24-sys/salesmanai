@@ -8,15 +8,19 @@ const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 
 // --- Proxy Helper ---
-function getProxyUrl() {
+function getProxyUrl(modelName = 'default') {
     const proxyUrl = process.env.BRIGHT_DATA_PROXY_URL;
     const user = process.env.BRIGHT_DATA_USER;
     const pass = process.env.BRIGHT_DATA_PASS;
     if (!proxyUrl || !user || !pass) return null;
     
-    // Rotation using random session ID
-    const session = `sess_${Math.floor(Math.random() * 99999)}`;
-    return `http://${user}-session-${session}:${pass}@${proxyUrl}`;
+    // Rotation using random session ID for better stability
+    const session = `sess_${modelName}_${Math.floor(Math.random() * 999999)}`;
+    const url = `http://${user}-session-${session}:${pass}@${proxyUrl}`;
+
+    console.log(`[API Engine Proxy] New Session Created: ${session} for model: ${modelName}`);
+
+    return url;
 }
 
 function parseStreamError(chunk) {
@@ -241,10 +245,14 @@ router.post('/v1/chat/completions', async (req, res) => {
                 // Proxy only for system keys to save costs
                 let agent = undefined;
                 if (isSystemEngine) {
-                    const proxyUrl = getProxyUrl();
+                    const proxyUrl = getProxyUrl(model);
                     agent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
                     if (agent) {
                         console.log(`[API Engine] 🌐 Using Bright Data Proxy for SalesmanChatbot Engine (Model: ${model})`);
+                        // Optional: Log IP for debugging
+                        axios.get('https://api.ip.sb/geoip', { httpsAgent: agent, timeout: 5000 })
+                            .then(res => console.log(`[API Engine IP] IP: ${res.data.ip} | Country: ${res.data.country}`))
+                            .catch(() => {});
                     }
                 }
 
@@ -308,10 +316,14 @@ router.post('/v1/chat/completions', async (req, res) => {
         // Proxy only for system keys to save costs
         let agent = undefined;
         if (isSystemEngine) {
-            const proxyUrl = getProxyUrl();
+            const proxyUrl = getProxyUrl(model);
             agent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
             if (agent) {
                 console.log(`[API Engine] 🌐 Using Bright Data Proxy for SalesmanChatbot Engine (Model: ${model})`);
+                // Optional: Log IP for debugging
+                axios.get('https://api.ip.sb/geoip', { httpsAgent: agent, timeout: 5000 })
+                    .then(res => console.log(`[API Engine IP] IP: ${res.data.ip} | Country: ${res.data.country}`))
+                    .catch(() => {});
             }
         }
 

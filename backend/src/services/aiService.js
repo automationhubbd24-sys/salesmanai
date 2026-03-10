@@ -18,14 +18,14 @@ try {
     ffmpegPath = null;
 }
 
-function getProxyUrl() {
+function getProxyUrl(modelName = 'default') {
     const proxyUrl = process.env.BRIGHT_DATA_PROXY_URL;
     const user = process.env.BRIGHT_DATA_USER;
     const pass = process.env.BRIGHT_DATA_PASS;
     if (!proxyUrl || !user || !pass) return null;
     
     // Rotation using random session ID for better stability
-    const session = `sess_${Math.floor(Math.random() * 99999)}`;
+    const session = `sess_${modelName}_${Math.floor(Math.random() * 999999)}`;
     const url = `http://${user}-session-${session}:${pass}@${proxyUrl}`;
     
     // Validate proxy format (basic check)
@@ -33,28 +33,46 @@ function getProxyUrl() {
         console.warn("[Proxy] Invalid Proxy URL format constructed.");
         return null;
     }
+
+    // Log Proxy Session Info for Debugging (Per User Request)
+    console.log(`[Proxy] New Session Created: ${session} for model: ${modelName}`);
+    
     return url;
 }
 
-function getGeminiProxyAgent(baseURL, useProxy = true) {
+function getGeminiProxyAgent(baseURL, useProxy = true, modelName = 'gemini') {
     if (!useProxy) return null;
-    const proxy = getProxyUrl();
+    const proxy = getProxyUrl(modelName);
     if (!proxy) return null;
     try {
         // HttpsProxyAgent automatically handles http/https protocols
-        return new HttpsProxyAgent(proxy);
+        const agent = new HttpsProxyAgent(proxy);
+        
+        // Log IP Info for Debugging (Non-blocking)
+        axios.get('https://api.ip.sb/geoip', { httpsAgent: agent, timeout: 5000 })
+            .then(res => console.log(`[Proxy IP Details] Session: ${proxy.split('-session-')[1].split(':')[0]} | IP: ${res.data.ip} | Country: ${res.data.country} | Org: ${res.data.organization}`))
+            .catch(e => console.warn(`[Proxy IP Details] Failed to fetch IP info: ${e.message}`));
+
+        return agent;
     } catch (e) {
         console.warn(`[Proxy] Failed to create Gemini Proxy Agent: ${e.message}`);
         return null;
     }
 }
 
-function getGroqProxyAgent(useProxy = true) {
+function getGroqProxyAgent(useProxy = true, modelName = 'groq') {
     if (!useProxy) return null;
-    const proxy = getProxyUrl();
+    const proxy = getProxyUrl(modelName);
     if (!proxy) return null;
     try {
-        return new HttpsProxyAgent(proxy);
+        const agent = new HttpsProxyAgent(proxy);
+        
+        // Log IP Info for Debugging (Non-blocking)
+        axios.get('https://api.ip.sb/geoip', { httpsAgent: agent, timeout: 5000 })
+            .then(res => console.log(`[Proxy IP Details] Session: ${proxy.split('-session-')[1].split(':')[0]} | IP: ${res.data.ip} | Country: ${res.data.country} | Org: ${res.data.organization}`))
+            .catch(e => console.warn(`[Proxy IP Details] Failed to fetch IP info: ${e.message}`));
+
+        return agent;
     } catch (e) {
         console.warn(`[Proxy] Failed to create Groq Proxy Agent: ${e.message}`);
         return null;
@@ -2065,14 +2083,29 @@ ${productContext || "No specific product context provided yet."}
 
         console.log(`[AI] Phase 2: Calling SalesmanChatbot AgentLoop (${finalProvider}/${currentModel})...`);
 
-        // Managed engine: use proxy for Gemini/Groq calls
-        let proxyAgent = null;
+        // Mandatory Proxy for Branded Engines (pro, flash, lite)
+        const isBrandedEngine = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(targetEngineName);
         const isManagedEngine = !(pageConfig && (pageConfig.cheap_engine === false || pageConfig.api_key));
-        if (isManagedEngine) {
+        
+        let proxyAgent = null;
+
+        if (isBrandedEngine) {
+            console.log(`[AI] Mandatory Proxy Rotation for Branded Engine: ${targetEngineName}`);
             if (finalProvider === 'google' || finalProvider === 'gemini') {
-                proxyAgent = getGeminiProxyAgent(baseURL, true);
+                proxyAgent = getGeminiProxyAgent(baseURL, true, targetEngineName);
             } else if (finalProvider === 'groq') {
-                proxyAgent = getGroqProxyAgent(true);
+                proxyAgent = getGroqProxyAgent(true, targetEngineName);
+            } else if (finalProvider === 'openrouter') {
+                // Use Groq proxy logic for OpenRouter as they are both HTTP based
+                const proxy = getProxyUrl(targetEngineName);
+                if (proxy) proxyAgent = new HttpsProxyAgent(proxy);
+            }
+        } else if (isManagedEngine) {
+            // Standard Managed Engine Proxy Logic
+            if (finalProvider === 'google' || finalProvider === 'gemini') {
+                proxyAgent = getGeminiProxyAgent(baseURL, true, 'managed');
+            } else if (finalProvider === 'groq') {
+                proxyAgent = getGroqProxyAgent(true, 'managed');
             }
         }
 
