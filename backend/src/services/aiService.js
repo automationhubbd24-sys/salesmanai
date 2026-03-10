@@ -1872,6 +1872,8 @@ ${productContext || "No specific product context provided yet."}
     let finalProvider = resolved.finalProvider;
     let finalModel = resolved.finalModel;
 
+    console.log(`[AI Step 1] Engine Resolved: ${finalProvider} / ${finalModel}`);
+
     const currentModel = finalModel;
     
     let keyData = null;
@@ -1885,6 +1887,8 @@ ${productContext || "No specific product context provided yet."}
              keyData = await keyService.getSmartKey(finalProvider, 'default');
         }
 
+        console.log(`[AI Step 2] SmartKey Selection: ${keyData ? 'SUCCESS' : 'FAILED'}`);
+
         if (!keyData || !keyData.key) {
             console.warn(`[AI] No valid keys for ${finalProvider}/${currentModel}.`);
             return finalize({ 
@@ -1896,8 +1900,10 @@ ${productContext || "No specific product context provided yet."}
         }
 
         const apiKey = keyData.key;
-        let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
+        let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/v1';
         
+        console.log(`[AI Step 3] Selected Key ID: ${keyData.id} (Masked: ${apiKey.substring(0, 10)}...)`);
+
         // DYNAMIC BASE URL MAPPING
         if (finalProvider === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
         else if (finalProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
@@ -1905,10 +1911,10 @@ ${productContext || "No specific product context provided yet."}
         else if (finalProvider === 'mistral') baseURL = 'https://api.mistral.ai/v1';
         else if (finalProvider === 'deepseek') baseURL = 'https://api.deepseek.com/v1';
         else if (finalProvider === 'google' || finalProvider === 'gemini') {
-            // Use the exact same endpoint format as the rotator project
-            // Updated for 2026 OpenAI Compatibility (Fixed: v1/ is mandatory for some SDKs/Endpoints)
             baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/v1';
         }
+        
+        console.log(`[AI Step 4] Using Base URL: ${baseURL} for Provider: ${finalProvider}`);
         
         let rawContent = '';
         let tokenUsage = 0;
@@ -2006,6 +2012,7 @@ ${productContext || "No specific product context provided yet."}
         const isManagedEngine = !(pageConfig && pageConfig.api_key && pageConfig.api_key !== 'MANAGED_SECRET_KEY');
         
         if (shouldForceProxy || isManagedEngine) {
+            console.log(`[AI Step 5] Enabling Proxy Rotation (Managed: ${isManagedEngine}, Forced: ${shouldForceProxy})`);
             if (finalProvider === 'google' || finalProvider === 'gemini') {
                 proxyAgent = getGeminiProxyAgent(baseURL, true);
             } else if (finalProvider === 'groq') {
@@ -2015,6 +2022,8 @@ ${productContext || "No specific product context provided yet."}
             } else if (finalProvider === 'deepseek') {
                 proxyAgent = getDeepSeekProxyAgent(true);
             }
+        } else {
+            console.log(`[AI Step 5] Proxy Disabled (Using Direct Connection)`);
         }
 
         const result = await runAgentLoop({
