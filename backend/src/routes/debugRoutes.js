@@ -15,11 +15,14 @@ function buildProxyUrlFromHeaders(req) {
 
 router.get('/proxy', async (req, res) => {
     try {
+        // Token check disabled for testing as per user request
+        /*
         const token = req.header('x-debug-token') || req.query.token || '';
         const allowToken = process.env.DEBUG_ADMIN_TOKEN || '';
         if (!allowToken || token !== allowToken) {
             return res.status(403).json({ error: 'Forbidden' });
         }
+        */
 
         const fromHeaders = buildProxyUrlFromHeaders(req);
         let proxyUrl = fromHeaders;
