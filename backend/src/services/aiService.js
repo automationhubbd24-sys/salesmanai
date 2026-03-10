@@ -307,6 +307,19 @@ async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, default
         finalModel = finalModel.split(',')[0].trim();
     }
 
+    // --- FINAL FAILSAFE: Map Branded Models to Real Models ---
+    // This ensures that even if DB config is missing, we never send "salesmanchatbot-xxx" to the provider.
+    if (finalModel === 'salesmanchatbot-pro') {
+        finalModel = 'gemini-2.5-flash';
+        finalProvider = 'google';
+    } else if (finalModel === 'salesmanchatbot-flash') {
+        finalModel = 'gemini-2.5-flash-lite';
+        finalProvider = 'google';
+    } else if (finalModel === 'salesmanchatbot-lite') {
+        finalModel = 'llama-3.3-70b-versatile';
+        finalProvider = 'groq';
+    }
+
     if (isAudio && voiceProvider === 'groq') {
         finalProvider = 'groq';
     }
@@ -1893,8 +1906,8 @@ ${productContext || "No specific product context provided yet."}
         else if (finalProvider === 'deepseek') baseURL = 'https://api.deepseek.com/v1';
         else if (finalProvider === 'google' || finalProvider === 'gemini') {
             // Use the exact same endpoint format as the rotator project
-            // Updated for 2026 OpenAI Compatibility (Fixed: No trailing slash for direct model access)
-            baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/v1';
+            // Updated for 2026 OpenAI Compatibility (Fixed: No v1 at the end for Gemini OpenAI compat)
+            baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai';
         }
         
         let rawContent = '';
@@ -1974,12 +1987,16 @@ ${productContext || "No specific product context provided yet."}
         let shouldForceProxy = false;
         try {
             const pgClient = require('./pgClient');
-            const configResult = await pgClient.query('SELECT use_proxy FROM engine_configs WHERE name = $1 LIMIT 1', [currentModel]);
+            // Check for proxy using both the resolved model and the branded name
+            const configResult = await pgClient.query(
+                'SELECT use_proxy FROM engine_configs WHERE name = $1 OR name = $2 LIMIT 1', 
+                [currentModel, defaultModel]
+            );
             if (configResult.rows.length > 0) {
                 shouldForceProxy = configResult.rows[0].use_proxy === true;
             }
         } catch (e) {
-            console.warn(`[AI Service] Failed to fetch proxy config for ${currentModel}: ${e.message}`);
+            console.warn(`[AI Service] Failed to fetch proxy config for ${currentModel}/${defaultModel}: ${e.message}`);
         }
 
         // Managed engine: use proxy for Gemini/Groq calls

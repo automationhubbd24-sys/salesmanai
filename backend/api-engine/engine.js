@@ -234,27 +234,43 @@ router.delete('/keys/:id', async (req, res) => {
 // --- 3. THE CORE PROXY ENGINE (Compatible with OpenAI Client) ---
 // Endpoint: /v1/chat/completions
 router.post('/v1/chat/completions', async (req, res) => {
-    const { model, messages, stream } = req.body;
+    const { model, messages, stream, provider: bodyProvider } = req.body;
     
     // Auto-Detect Provider if not specified via header (Internal Logic)
-    let provider = 'google';
-    if (model.includes('gpt')) provider = 'openai';
-    else if (model.includes('mistral')) provider = 'mistral';
-    else if (model.includes('deepseek')) provider = 'deepseek';
-    else if (model.includes('llama') || model.includes('mixtral')) provider = 'groq';
-    else if (model.includes('/') || model.includes(':free')) provider = 'openrouter';
+    let provider = bodyProvider;
+    if (!provider) {
+        provider = 'google';
+        if (model.includes('gpt')) provider = 'openai';
+        else if (model.includes('mistral')) provider = 'mistral';
+        else if (model.includes('deepseek')) provider = 'deepseek';
+        else if (model.includes('llama') || model.includes('mixtral')) provider = 'groq';
+        else if (model.includes('/') || model.includes(':free')) provider = 'openrouter';
+    }
 
     console.log(`[API Engine] Processing Request: ${provider} / ${model}`);
 
+    // --- BRANDED MODEL MAPPING ---
+    // Google/Gemini doesn't recognize branded model names. Map them to real models.
+    let upstreamModel = model;
+    if (provider === 'google' || provider === 'gemini') {
+        if (model === 'salesmanchatbot-pro') upstreamModel = 'gemini-2.5-flash';
+        else if (model === 'salesmanchatbot-flash') upstreamModel = 'gemini-2.5-flash-lite';
+        else if (model === 'salesmanchatbot-lite') upstreamModel = 'gemini-2.5-flash-lite';
+    } else if (provider === 'groq' && model === 'salesmanchatbot-lite') {
+        upstreamModel = 'llama-3.3-70b-versatile';
+    }
+    // Update req.body for upstream request
+    req.body.model = upstreamModel;
+
     // Determine Upstream Target
-    let targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions';
+    let targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
     if (provider === 'openai') targetUrl = 'https://api.openai.com/v1/chat/completions';
     else if (provider === 'groq') targetUrl = 'https://api.groq.com/openai/v1/chat/completions';
     else if (provider === 'openrouter') targetUrl = 'https://openrouter.ai/api/v1/chat/completions';
     else if (provider === 'mistral') targetUrl = 'https://api.mistral.ai/v1/chat/completions';
     else if (provider === 'deepseek') targetUrl = 'https://api.deepseek.com/chat/completions';
     else if (provider === 'google' || provider === 'gemini') {
-        targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions';
+        targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
     }
 
     console.log(`[API Engine] Target URL: ${targetUrl}`);
@@ -276,7 +292,7 @@ router.post('/v1/chat/completions', async (req, res) => {
             const maxAttempts = 5;
             let lastError = null;
             for (let attempt = 0; attempt < maxAttempts; attempt++) {
-                const keyData = await keyService.getSmartKey(provider, model);
+                const keyData = await keyService.getSmartKey(provider, upstreamModel);
                 if (!keyData) break;
 
                 // Proxy Logic: Use if forced by DB config OR if it's a system engine request
@@ -285,7 +301,7 @@ router.post('/v1/chat/completions', async (req, res) => {
                     const proxyUrl = getProxyUrl();
                     if (proxyUrl) {
                         agent = new HttpsProxyAgent(proxyUrl);
-                        console.log(`[API Engine] 🌐 Using Bright Data Proxy for Model: ${model} (Forced: ${shouldForceProxy})`);
+                        console.log(`[API Engine] 🌐 Using Bright Data Proxy for Model: ${upstreamModel} (Forced: ${shouldForceProxy})`);
                     }
                 }
 
@@ -334,9 +350,9 @@ router.post('/v1/chat/completions', async (req, res) => {
             return res.status(status).json({ error: lastError || 'stream_failed' });
         }
 
-        const keyData = await keyService.getSmartKey(provider, model);
+        const keyData = await keyService.getSmartKey(provider, upstreamModel);
         if (!keyData) {
-            console.warn(`[API Engine] ⚠️ No keys available for ${provider}/${model}`);
+            console.warn(`[API Engine] ⚠️ No keys available for ${provider}/${upstreamModel}`);
             return res.status(429).json({ 
                 error: { 
                     message: "Engine Overload: All API keys are currently rate limited or exhausted.",
@@ -352,7 +368,7 @@ router.post('/v1/chat/completions', async (req, res) => {
             const proxyUrl = getProxyUrl();
             if (proxyUrl) {
                 agent = new HttpsProxyAgent(proxyUrl);
-                console.log(`[API Engine] 🌐 Using Bright Data Proxy for Model: ${model} (Forced: ${shouldForceProxy})`);
+                console.log(`[API Engine] 🌐 Using Bright Data Proxy for Model: ${upstreamModel} (Forced: ${shouldForceProxy})`);
             }
         }
 
@@ -363,9 +379,9 @@ router.post('/v1/chat/completions', async (req, res) => {
             },
             httpsAgent: agent,
             httpAgent: agent,
-            proxy: false, // Important for HttpsProxyAgent
-            responseType: 'json',
-            timeout: 60000
+            proxy: false,
+            timeout: 60000,
+            validateStatus: () => true
         });
 
         if (response.data?.usage) {
