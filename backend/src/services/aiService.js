@@ -1911,7 +1911,9 @@ ${productContext || "No specific product context provided yet."}
         else if (finalProvider === 'mistral') baseURL = 'https://api.mistral.ai/v1';
         else if (finalProvider === 'deepseek') baseURL = 'https://api.deepseek.com/v1';
         else if (finalProvider === 'google' || finalProvider === 'gemini') {
-            baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/v1';
+            // Use the exact same endpoint format as the rotator project
+            // Updated for 2026 OpenAI Compatibility
+            baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai';
         }
         
         console.log(`[AI Step 4] Using Base URL: ${baseURL} for Provider: ${finalProvider}`);
