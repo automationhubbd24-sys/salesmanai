@@ -310,13 +310,23 @@ function markKeyAsSuspended(key, reason = 'suspended') {
     }
 }
 
-function markKeyAsQuotaExceeded(key) {
+async function markKeyAsQuotaExceeded(key) {
     if (!key) return;
     const cachedKey = keyCacheMap.get(key);
     if (cachedKey) {
-        cachedKey.last_rpd_hit_at = new Date().toISOString();
+        const nowIso = new Date().toISOString();
+        cachedKey.last_rpd_hit_at = nowIso;
         pendingUpdates.add(key);
-        console.log(`[KeyService] 🚫 Persistent Quota Exceeded for Key: ${key.substring(0, 10)}... (Blocked for 24h)`);
+        
+        // --- IMMEDIATE DB UPDATE ---
+        // Ensure it persists across restarts even if flush doesn't happen
+        try {
+            const pgClient = require('./pgClient');
+            await pgClient.query('UPDATE api_list SET last_rpd_hit_at = $1 WHERE api = $2', [nowIso, key]);
+            console.log(`[KeyService] 🚫 DB Updated: Persistent Quota Block for Key: ${key.substring(0, 10)}...`);
+        } catch (err) {
+            console.warn(`[KeyService] Failed to save quota hit to DB:`, err.message);
+        }
     }
     markKeyAsDead(key, 86400000 + 3600000, 'quota_exceeded');
 }

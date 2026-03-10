@@ -333,13 +333,15 @@ router.post('/v1/chat/completions', async (req, res) => {
                     const isQuotaError = status === 429 || errorMsg.includes('quota') || errorMsg.includes('limit');
                     const isAuthError = status === 401 || status === 403;
 
-                    if ((isQuotaError || isAuthError) && attempt < maxAttempts) {
+                    if ((isQuotaError || isAuthError || status === 400) && attempt < maxAttempts) {
                         const rotLog = `[API Engine] 🔄 Key ${keyData.id} failed with ${status}. Rotating...`;
                         console.warn(rotLog);
                         logDebug(rotLog);
 
                         if (isQuotaError) {
-                            keyService.markKeyAsQuotaExceeded(keyData.key);
+                            await keyService.markKeyAsQuotaExceeded(keyData.key);
+                        } else if (status === 400) {
+                            keyService.markKeyAsDead(keyData.key, 10 * 60 * 1000, 'bad_request_400');
                         } else {
                             keyService.markKeyAsDead(keyData.key, 24 * 60 * 60 * 1000, `upstream_stream_${status}`);
                         }
@@ -430,13 +432,15 @@ router.post('/v1/chat/completions', async (req, res) => {
                 const isQuotaError = status === 429 || errorMsg.includes('quota') || errorMsg.includes('limit');
                 const isAuthError = status === 401 || status === 403;
 
-                if ((isQuotaError || isAuthError) && attempt < maxAttempts) {
+                if ((isQuotaError || isAuthError || status === 400) && attempt < maxAttempts) {
                     const rotLog = `[API Engine Chat] 🔄 Key ${keyData.id} failed with ${status}. Rotating...`;
                     console.warn(rotLog);
                     logDebug(rotLog);
 
                     if (isQuotaError) {
-                        keyService.markKeyAsQuotaExceeded(keyData.key);
+                        await keyService.markKeyAsQuotaExceeded(keyData.key);
+                    } else if (status === 400) {
+                        keyService.markKeyAsDead(keyData.key, 10 * 60 * 1000, 'bad_request_400');
                     } else {
                         keyService.markKeyAsDead(keyData.key, 24 * 60 * 60 * 1000, `upstream_chat_${status}`);
                     }

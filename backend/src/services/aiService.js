@@ -1983,21 +1983,25 @@ ${productContext || "No specific product context provided yet."}
             const errorMsg = (err.response?.data?.error?.message || err.message || '').toLowerCase();
             const isQuotaError = status === 429 || errorMsg.includes('quota') || errorMsg.includes('limit') || errorMsg.includes('too many requests');
             const isAuthError = status === 401 || status === 403;
+            const isBadRequest = status === 400;
 
-            if ((isQuotaError || isAuthError) && attempt < maxFallbackAttempts) {
-                const rotationLog = `[AI Rotation] 🔄 Key ${keyData ? keyData.id : 'unknown'} failed with status ${status}. Marking as dead and rotating to next key...`;
+            if ((isQuotaError || isAuthError || isBadRequest) && attempt < maxFallbackAttempts) {
+                const rotationLog = `[AI Rotation] 🔄 Key ${keyData ? keyData.id : 'unknown'} failed with status ${status}. ${isBadRequest ? 'Bad Request (Possibly region or model issue).' : ''} Rotating...`;
                 console.warn(rotationLog);
                 logDebug(rotationLog);
 
                 if (keyData && keyData.key) {
                     if (isQuotaError) {
-                        keyService.markKeyAsQuotaExceeded(keyData.key);
+                        await keyService.markKeyAsQuotaExceeded(keyData.key);
+                    } else if (isBadRequest) {
+                        // For 400, mark as dead for only 10 minutes (it might be a transient region/proxy issue)
+                        keyService.markKeyAsDead(keyData.key, 10 * 60 * 1000, `bad_request_400`);
                     } else {
                         keyService.markKeyAsDead(keyData.key, 24 * 60 * 60 * 1000, `rotation_error_${status}`);
                     }
                 }
                 
-                // Add a small delay before next attempt to avoid slamming the API
+                // Add a small delay before next attempt
                 await new Promise(resolve => setTimeout(resolve, 1000));
                 continue;
             }
