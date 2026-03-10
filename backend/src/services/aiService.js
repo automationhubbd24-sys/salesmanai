@@ -1979,13 +1979,13 @@ ${productContext || "No specific product context provided yet."}
             console.error(`[AI] Attempt ${attempt} failed:`, err.message);
             logDebug(`[AI ERROR] Attempt ${attempt} failed: ${err.message}`);
 
-            const status = err.response?.status || 500;
+            const status = err.status || err.response?.status || (err.message && err.message.includes('429') ? 429 : 500);
             const errorMsg = (err.response?.data?.error?.message || err.message || '').toLowerCase();
             const isQuotaError = status === 429 || errorMsg.includes('quota') || errorMsg.includes('limit') || errorMsg.includes('too many requests');
             const isAuthError = status === 401 || status === 403;
 
             if ((isQuotaError || isAuthError) && attempt < maxFallbackAttempts) {
-                const rotationLog = `[AI Rotation] 🔄 Key ${keyData ? keyData.id : 'unknown'} failed with ${status}. Marking as dead and rotating to next key...`;
+                const rotationLog = `[AI Rotation] 🔄 Key ${keyData ? keyData.id : 'unknown'} failed with status ${status}. Marking as dead and rotating to next key...`;
                 console.warn(rotationLog);
                 logDebug(rotationLog);
 
@@ -1998,7 +1998,7 @@ ${productContext || "No specific product context provided yet."}
                 }
                 
                 // Add a small delay before next attempt to avoid slamming the API
-                await new Promise(resolve => setTimeout(resolve, 500));
+                await new Promise(resolve => setTimeout(resolve, 1000));
                 continue;
             }
 

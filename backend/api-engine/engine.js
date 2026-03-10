@@ -328,18 +328,23 @@ router.post('/v1/chat/completions', async (req, res) => {
                 });
 
                 if (response.status >= 400) {
-                    const status = response.status;
-                    const errorMsg = (response.data?.error?.message || '').toLowerCase();
+                    const status = response.status || 500;
+                    const errorMsg = (response.data?.error?.message || response.statusText || '').toLowerCase();
                     const isQuotaError = status === 429 || errorMsg.includes('quota') || errorMsg.includes('limit');
                     const isAuthError = status === 401 || status === 403;
 
                     if ((isQuotaError || isAuthError) && attempt < maxAttempts) {
+                        const rotLog = `[API Engine] 🔄 Key ${keyData.id} failed with ${status}. Rotating...`;
+                        console.warn(rotLog);
+                        logDebug(rotLog);
+
                         if (isQuotaError) {
                             keyService.markKeyAsQuotaExceeded(keyData.key);
                         } else {
                             keyService.markKeyAsDead(keyData.key, 24 * 60 * 60 * 1000, `upstream_stream_${status}`);
                         }
                         if (response.data && response.data.destroy) response.data.destroy();
+                        await new Promise(r => setTimeout(r, 1000));
                         continue;
                     }
                     
@@ -420,17 +425,22 @@ router.post('/v1/chat/completions', async (req, res) => {
             });
 
             if (response.status >= 400) {
-                const status = response.status;
-                const errorMsg = (response.data?.error?.message || '').toLowerCase();
+                const status = response.status || 500;
+                const errorMsg = (response.data?.error?.message || response.statusText || '').toLowerCase();
                 const isQuotaError = status === 429 || errorMsg.includes('quota') || errorMsg.includes('limit');
                 const isAuthError = status === 401 || status === 403;
 
                 if ((isQuotaError || isAuthError) && attempt < maxAttempts) {
+                    const rotLog = `[API Engine Chat] 🔄 Key ${keyData.id} failed with ${status}. Rotating...`;
+                    console.warn(rotLog);
+                    logDebug(rotLog);
+
                     if (isQuotaError) {
                         keyService.markKeyAsQuotaExceeded(keyData.key);
                     } else {
                         keyService.markKeyAsDead(keyData.key, 24 * 60 * 60 * 1000, `upstream_chat_${status}`);
                     }
+                    await new Promise(r => setTimeout(r, 1000));
                     continue;
                 }
                 
