@@ -24,16 +24,19 @@ function getProxyUrl(modelName = 'default') {
     const pass = process.env.BRIGHT_DATA_PASS;
     if (!proxyUrl || !user || !pass) return null;
     
-    // Some BrightData zones prefer simple alphanumeric session IDs
-    const cleanModelName = modelName.replace(/[^a-zA-Z0-9]/g, '');
-    const session = `${cleanModelName}${Math.floor(Math.random() * 9999)}`;
-    
-    // Format: http://user-session-abc123:pass@host:port
+    // Rotation using random session ID for better stability
+    const session = `sess_${modelName}_${Math.floor(Math.random() * 999999)}`;
     const url = `http://${user}-session-${session}:${pass}@${proxyUrl}`;
     
-    if (!url.startsWith('http://')) return null;
+    // Validate proxy format (basic check)
+    if (!url.startsWith('http://')) {
+        console.warn("[Proxy] Invalid Proxy URL format constructed.");
+        return null;
+    }
 
-    console.log(`[Proxy] Using Session: ${session} for model: ${modelName}`);
+    // Log Proxy Session Info for Debugging (Per User Request)
+    console.log(`[Proxy] New Session Created: ${session} for model: ${modelName}`);
+    
     return url;
 }
 
@@ -438,18 +441,18 @@ const functionTools = [
         type: 'function',
         function: {
             name: 'create_order',
-            description: 'Create order details when user confirms an order. This will trigger the backend to save order information and phone number.',
+            description: 'কাস্টমার অর্ডার-সংক্রান্ত কোনো তথ্য দিলে অর্ডার লিড create বা update করতে হবে। সবচেয়ে জরুরি নিয়ম: ফোন নাম্বার পাওয়া মাত্র একই turn-এ tool call করতেই হবে, অন্য তথ্য না থাকলেও। সম্পূর্ণ তথ্যের জন্য অপেক্ষা করা যাবে না। partial data আগে save হবে, পরে নতুন তথ্য merge হবে। কোনো field আন্দাজ করে save করা যাবে না। এবং আগের বা পরের ( old memory ) তে Image memory থেকে তথ্য নেওয়া যাবে না',
             parameters: {
                 type: 'object',
                 properties: {
-                    product_name: { type: 'string', description: 'Name of the product being ordered' },
-                    phone: { type: 'string', description: 'Customer phone number for the order' },
-                    address: { type: 'string', description: 'Delivery address' },
-                    quantity: { type: 'string', description: 'Quantity of items' },
-                    price: { type: 'string', description: 'Total price or unit price' },
+                    product_name: { type: 'string', description: 'Name of the product. Use EXACT name from [PRODUCT LIST SNAPSHOT].' },
+                    phone: { type: 'string', description: 'কাস্টমারের ফোন নাম্বার। এটি পাওয়া মাত্রই tool call করতে হবে। কাস্টমার বাংলায় কিংবা ইংরেজিতে নাম্বার দিতে পারে যেমন : ০১৩ / ০১৭  / ০১৯  / ০১৮ কিংবা 013  / 019  / 018 / 017 যেভাবেই দিক না কেন নিভূল ভাবে সেটা সেভ করতে হবে নিজের থেকে নাম্বার বানানো কিংবা আন্দাজ করে সেভ করা যাবে না' },
+                    address: { type: 'string', description: 'ডেলিভারির ঠিকানা নাম্বারের আগে বা পরে বা একসাথেও দিতে পারে old memory ব্যবহার করে বা আগের কথাকপোথন ব্যবহার করে তা অবশ্যই সেভ করতে হবে।' },
+                    quantity: { type: 'string', description: 'পন্যের পরিমান আগের বা পরের কথোকপথন থেকে বের করতে সেভ করতে হবে' },
+                    price: { type: 'string', description: 'মোট দাম আগের  বা পরের কথোপকথন থেকে বের করতে হবে' },
                     customer_name: { type: 'string', description: 'Customer name' }
                 },
-                required: ['product_name', 'phone', 'address']
+                required: ['phone']
             }
         }
     }
@@ -1029,31 +1032,30 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null
                 return { status: 'SUCCESS', product_id: productId, in_stock: inStock, stock_count: stock };
             }
 
-            case 'create_order': {
-                // Save order details to database
+            case 'capture_order_lead': {
+                // Save lead/order details to database
                 const dbService = require('./dbService');
                 try {
                     await dbService.saveOrder({
                         page_id: pageId,
                         sender_id: senderId,
-                        product_name: args.product_name,
+                        product_name: args.product_name || 'Pending',
                         phone: args.phone,
-                        address: args.address,
+                        address: args.address || 'Pending',
                         quantity: args.quantity || '1',
                         price: args.price || '0',
                         customer_name: args.customer_name || senderId,
                         platform: platform
                     });
                     
-                    // Also update/save contact phone number if platform is WhatsApp
                     if (platform === 'whatsapp' && args.phone) {
                         await dbService.updateContactPhone(pageId, senderId, args.phone);
                     }
 
-                    return { status: 'SUCCESS', message: "Order details captured and saved successfully. I will now confirm this with the user." };
+                    return { status: 'SUCCESS', message: "Lead captured successfully. I will continue to gather missing info if any." };
                 } catch (saveErr) {
-                    console.error("[AgentLoop] Failed to save order:", saveErr.message);
-                    return { status: 'ERROR', message: `Failed to save order details: ${saveErr.message}` };
+                    console.error("[AgentLoop] Failed to save lead:", saveErr.message);
+                    return { status: 'ERROR', message: `Failed to save lead: ${saveErr.message}` };
                 }
             }
 
@@ -1133,19 +1135,13 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 });
 
                 const response = result.response;
-                const candidate = response.candidates && response.candidates[0];
-                
-                if (!candidate || !candidate.content) {
-                    throw new Error(`Gemini API returned an empty response or was blocked. Safety Ratings: ${JSON.stringify(response.promptFeedback || {})}`);
-                }
-
+                const candidate = response.candidates[0];
                 const content = candidate.content;
-                const parts = content.parts || [];
                 
                 responseMessage = {
                     role: 'assistant',
-                    content: parts.map(p => p.text || '').join(''),
-                    tool_calls: parts
+                    content: content.parts.map(p => p.text || '').join(''),
+                    tool_calls: content.parts
                         .filter(p => p.functionCall)
                         .map((p, idx) => ({
                             id: `call_${Date.now()}_${idx}`,
@@ -1723,10 +1719,16 @@ ${productContext || "No specific product context provided yet."}
 - product_id: UUID of the matched product.
 - image_urls: Array of image URLs to attach.
 
+[LEAD CAPTURE & ORDER TRACKING]
+- CRITICAL: Call 'capture_order_lead' IMMEDIATELY as soon as the user provides a phone number, even if they haven't provided an address or product yet.
+- SMART MERGE: You can call 'capture_order_lead' multiple times. For example, if they give a phone number first, call it. If they give a location later, call it again with the location.
+- PRODUCT ACCURACY: Use EXACT product names from [PRODUCT LIST SNAPSHOT]. Never hallucinate or use names from image memory.
+
 [WORKFLOW]
 1. If the information is already in [PRODUCT CONTEXT], use it directly. 
 2. If not, call 'resolve_product' only when a product is mentioned.
-3. STRICTLY follow the Owner's instructions above for language and behavior.
+3. Call 'capture_order_lead' proactively when any lead info (Phone, Address) is detected.
+4. STRICTLY follow the Owner's instructions above for language and behavior.
 
 [RESPONSE FORMAT]
 {
