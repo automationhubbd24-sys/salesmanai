@@ -230,6 +230,7 @@ async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, default
 
     // 4. Set Manual Limits (RPM/RPD/RPH)
     if (keyService.setManualLimit && gConfig) {
+        // We set limits for the specific models configured for this engine
         if (gConfig.text_rpm || gConfig.text_rpd || gConfig.text_rph) 
             keyService.setManualLimit(textModel, { rpm: gConfig.text_rpm, rpd: gConfig.text_rpd, rph: gConfig.text_rph });
         if (gConfig.vision_rpm || gConfig.vision_rpd || gConfig.vision_rph) 
