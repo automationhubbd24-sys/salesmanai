@@ -1877,204 +1877,144 @@ ${productContext || "No specific product context provided yet."}
     logDebug(step1);
 
     const currentModel = finalModel;
+    const maxFallbackAttempts = 10;
     
-    let keyData = null;
-    try {
-        // Special Handling for Provider Overrides:
-        // If finalProvider changed (e.g. OpenRouter -> Groq for Voice), we must query keys for THAT provider.
-        keyData = await keyService.getSmartKey(finalProvider, currentModel);
-        
-        // Fallback: If specific model key not found, try default key for that provider
-        if (!keyData || !keyData.key) {
-             keyData = await keyService.getSmartKey(finalProvider, 'default');
-        }
+    for (let attempt = 1; attempt <= maxFallbackAttempts; attempt++) {
+        let keyData = null;
+        try {
+            // Special Handling for Provider Overrides:
+            // If finalProvider changed (e.g. OpenRouter -> Groq for Voice), we must query keys for THAT provider.
+            keyData = await keyService.getSmartKey(finalProvider, currentModel);
+            
+            // Fallback: If specific model key not found, try default key for that provider
+            if (!keyData || !keyData.key) {
+                 keyData = await keyService.getSmartKey(finalProvider, 'default');
+            }
 
-        const step2 = `[AI Step 2] SmartKey Selection: ${keyData ? 'SUCCESS' : 'FAILED'}`;
-        console.log(step2);
-        logDebug(step2);
+            const step2 = `[AI Step 2] SmartKey Selection (Attempt ${attempt}/${maxFallbackAttempts}): ${keyData ? 'SUCCESS' : 'FAILED'}`;
+            console.log(step2);
+            logDebug(step2);
 
-        if (!keyData || !keyData.key) {
-            console.warn(`[AI] No valid keys for ${finalProvider}/${currentModel}.`);
+            if (!keyData || !keyData.key) {
+                console.warn(`[AI] No valid keys for ${finalProvider}/${currentModel}.`);
+                return finalize({ 
+                    reply: "দুঃখিত, বর্তমানে এই সার্ভিসে কোনো অ্যাক্টিভ কী নেই। দয়া করে এডমিন প্যানেল থেকে এপিআই কী চেক করুন।", 
+                    error: `No active keys for ${finalProvider}`,
+                    token_usage: 0,
+                    model: currentModel
+                });
+            }
+
+            const apiKey = keyData.key;
+            let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/v1';
+            
+            const step3 = `[AI Step 3] Selected Key ID: ${keyData.id} (Masked: ${apiKey.substring(0, 10)}...)`;
+            console.log(step3);
+            logDebug(step3);
+
+            // DYNAMIC BASE URL MAPPING
+            if (finalProvider === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
+            else if (finalProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
+            else if (finalProvider === 'openai') baseURL = 'https://api.openai.com/v1';
+            else if (finalProvider === 'mistral') baseURL = 'https://api.mistral.ai/v1';
+            else if (finalProvider === 'deepseek') baseURL = 'https://api.deepseek.com/v1';
+            else if (finalProvider === 'google' || finalProvider === 'gemini') {
+                baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/v1';
+            }
+            
+            const step4 = `[AI Step 4] Using Base URL: ${baseURL} for Provider: ${finalProvider}`;
+            console.log(step4);
+            logDebug(step4);
+            
+            // --- NEW: FETCH PROXY CONFIG FROM DB ---
+            let shouldForceProxy = false;
+            try {
+                const pgClient = require('./pgClient');
+                const configResult = await pgClient.query(
+                    'SELECT use_proxy FROM engine_configs WHERE name = $1 OR name = $2 LIMIT 1', 
+                    [currentModel, defaultModel]
+                );
+                if (configResult.rows.length > 0) {
+                    shouldForceProxy = configResult.rows[0].use_proxy === true;
+                }
+            } catch (e) {
+                console.warn(`[AI Service] Failed to fetch proxy config for ${currentModel}/${defaultModel}: ${e.message}`);
+            }
+
+            let proxyAgent = null;
+            const isManagedEngine = !(pageConfig && pageConfig.api_key && pageConfig.api_key !== 'MANAGED_SECRET_KEY');
+            
+            if (shouldForceProxy || isManagedEngine) {
+                const step5 = `[AI Step 5] Enabling Proxy Rotation (Managed: ${isManagedEngine}, Forced: ${shouldForceProxy})`;
+                console.log(step5);
+                logDebug(step5);
+                if (finalProvider === 'google' || finalProvider === 'gemini') {
+                    proxyAgent = getGeminiProxyAgent(baseURL, true);
+                } else if (finalProvider === 'groq') {
+                    proxyAgent = getGroqProxyAgent(true);
+                } else if (finalProvider === 'mistral') {
+                    proxyAgent = getMistralProxyAgent(true);
+                } else if (finalProvider === 'deepseek') {
+                    proxyAgent = getDeepSeekProxyAgent(true);
+                }
+            }
+
+            const result = await runAgentLoop({
+                apiKey: apiKey,
+                baseURL: baseURL,
+                model: currentModel,
+                messages: messages,
+                tools: tools,
+                pageConfig: pageConfig,
+                proxyAgent: proxyAgent,
+                totalTokenUsage: totalTokenUsage,
+                foundProducts: [],
+                userId: userId,
+                temperature: (pageConfig.is_external_api ? 0.7 : 0.2)
+            });
+
+            return finalize({ ...result, sentiment: 'neutral' });
+
+        } catch (err) {
+            console.error(`[AI] Attempt ${attempt} failed:`, err.message);
+            logDebug(`[AI ERROR] Attempt ${attempt} failed: ${err.message}`);
+
+            const status = err.response?.status || 500;
+            const errorMsg = (err.response?.data?.error?.message || err.message || '').toLowerCase();
+            const isQuotaError = status === 429 || errorMsg.includes('quota') || errorMsg.includes('limit') || errorMsg.includes('too many requests');
+            const isAuthError = status === 401 || status === 403;
+
+            if ((isQuotaError || isAuthError) && attempt < maxFallbackAttempts) {
+                const rotationLog = `[AI Rotation] 🔄 Key ${keyData ? keyData.id : 'unknown'} failed with ${status}. Marking as dead and rotating to next key...`;
+                console.warn(rotationLog);
+                logDebug(rotationLog);
+
+                if (keyData && keyData.key) {
+                    if (isQuotaError) {
+                        keyService.markKeyAsQuotaExceeded(keyData.key);
+                    } else {
+                        keyService.markKeyAsDead(keyData.key, 24 * 60 * 60 * 1000, `rotation_error_${status}`);
+                    }
+                }
+                
+                // Add a small delay before next attempt to avoid slamming the API
+                await new Promise(resolve => setTimeout(resolve, 500));
+                continue;
+            }
+
+            // If we reached here, it's either not a rotatable error or we exhausted all attempts
+            const finalError = err.response?.data?.error?.message || 
+                                 err.response?.data?.message || 
+                                 err.message || 
+                                 "Unknown LLM Error";
+
             return finalize({ 
-                reply: "দুঃখিত, বর্তমানে এই সার্ভিসে কোনো অ্যাক্টিভ কী নেই। দয়া করে এডমিন প্যানেল থেকে এপিআই কী চেক করুন।", 
-                error: `No active keys for ${finalProvider}`,
+                reply: finalError, 
+                error: err.message,
                 token_usage: 0,
                 model: currentModel
             });
         }
-
-        const apiKey = keyData.key;
-        let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/v1';
-        
-        const step3 = `[AI Step 3] Selected Key ID: ${keyData.id} (Masked: ${apiKey.substring(0, 10)}...)`;
-        console.log(step3);
-        logDebug(step3);
-
-        // DYNAMIC BASE URL MAPPING
-        if (finalProvider === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
-        else if (finalProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
-        else if (finalProvider === 'openai') baseURL = 'https://api.openai.com/v1';
-        else if (finalProvider === 'mistral') baseURL = 'https://api.mistral.ai/v1';
-        else if (finalProvider === 'deepseek') baseURL = 'https://api.deepseek.com/v1';
-        else if (finalProvider === 'google' || finalProvider === 'gemini') {
-            // Use the exact same endpoint format as the rotator project
-            // Updated for 2026 OpenAI Compatibility (Fixed: v1/ is mandatory for some SDKs/Endpoints)
-            baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/v1';
-        }
-        
-        const step4 = `[AI Step 4] Using Base URL: ${baseURL} for Provider: ${finalProvider}`;
-        console.log(step4);
-        logDebug(step4);
-        
-        let rawContent = '';
-        let tokenUsage = 0;
-        let usedCache = false;
-        const isFreeModel = typeof currentModel === 'string' && currentModel.includes(':free');
-
-        // --- GEMINI CACHING PATH (DISABLED PER USER REQUEST) ---
-        const isUserKey = pageConfig.api_key && pageConfig.api_key !== 'MANAGED_SECRET_KEY' && apiKey === pageConfig.api_key;
-        const shouldUseCache = false; // Disabled to ensure fresh responses during testing
-
-        if (shouldUseCache && messages.length > 0 && messages[0].role === 'system') {
-            const systemContent = messages[0].content;
-            // Only use cache if system prompt is large enough (>2000 chars) to matter
-            // Raised limit to 2000 chars to ensure it's worth the cache creation cost
-            if (systemContent.length > 2000) {
-                const cacheName = await getOrCreateGeminiCache(apiKey, currentModel, systemContent);
-                if (cacheName) {
-                    try {
-                        console.log(`[AI] Using Gemini Cache (User Key): ${cacheName}`);
-                        const genAI = new GoogleGenerativeAI(apiKey);
-                        const model = genAI.getGenerativeModelFromCachedContent(cacheName);
-                        
-                        const geminiHistory = messages.slice(1).map(m => ({
-                            role: m.role === 'assistant' ? 'model' : 'user',
-                            parts: [{ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }]
-                        }));
-
-                        const result = await model.generateContent({
-                            contents: geminiHistory,
-                            generationConfig: { responseMimeType: "application/json" }
-                        });
-
-                        rawContent = result.response.text();
-                        tokenUsage = result.response.usageMetadata ? result.response.usageMetadata.totalTokenCount : 0;
-                        usedCache = true;
-                        console.log(`[AI] Gemini Cache Hit! Tokens: ${tokenUsage}`);
-
-                        // --- AGENTIC JSON PARSER (FOR CACHE) ---
-                        try {
-                            const cleanJson = rawContent.replace(/```json|```/g, '').trim();
-                            const structured = JSON.parse(cleanJson);
-                            
-                            if (structured.reply_text) {
-                                return finalize({ 
-                                    reply: structured.reply_text, 
-                                    action: structured.action || "NONE",
-                                    product_id: structured.product_id || null,
-                                    image_urls: Array.isArray(structured.image_urls) ? structured.image_urls : [],
-                                    sentiment: 'neutral', 
-                                    token_usage: tokenUsage + totalTokenUsage, 
-                                    model: currentModel, 
-                                    foundProducts 
-                                });
-                            }
-                        } catch (parseErr) {
-                            console.warn(`[AI Cache] Cache response not in expected JSON format. Content: ${rawContent.substring(0, 50)}...`);
-                        }
-
-                        return finalize({ 
-                            reply: rawContent, 
-                            sentiment: 'neutral', 
-                            token_usage: tokenUsage + totalTokenUsage, 
-                            model: currentModel, 
-                            foundProducts 
-                        });
-                    } catch (cacheError) {
-                        console.warn(`[AI] Gemini Cache Execution Failed: ${cacheError.message}. Falling back.`);
-                    }
-                }
-            }
-        }
-
-        console.log(`[AI] Phase 2: Calling SalesmanChatbot AgentLoop (${finalProvider}/${currentModel})...`);
-
-        // --- NEW: FETCH PROXY CONFIG FROM DB ---
-        let shouldForceProxy = false;
-        try {
-            const pgClient = require('./pgClient');
-            // Check for proxy using both the resolved model and the branded name
-            const configResult = await pgClient.query(
-                'SELECT use_proxy FROM engine_configs WHERE name = $1 OR name = $2 LIMIT 1', 
-                [currentModel, defaultModel]
-            );
-            if (configResult.rows.length > 0) {
-                shouldForceProxy = configResult.rows[0].use_proxy === true;
-            }
-        } catch (e) {
-            console.warn(`[AI Service] Failed to fetch proxy config for ${currentModel}/${defaultModel}: ${e.message}`);
-        }
-
-        // Managed engine: use proxy for Gemini/Groq calls
-        // FIXED: A request is managed if the user hasn't provided their own API key
-        // External API calls with cheap_engine: false should still use proxy
-        let proxyAgent = null;
-        const isManagedEngine = !(pageConfig && pageConfig.api_key && pageConfig.api_key !== 'MANAGED_SECRET_KEY');
-        
-        if (shouldForceProxy || isManagedEngine) {
-            const step5 = `[AI Step 5] Enabling Proxy Rotation (Managed: ${isManagedEngine}, Forced: ${shouldForceProxy})`;
-            console.log(step5);
-            logDebug(step5);
-            if (finalProvider === 'google' || finalProvider === 'gemini') {
-                proxyAgent = getGeminiProxyAgent(baseURL, true);
-            } else if (finalProvider === 'groq') {
-                proxyAgent = getGroqProxyAgent(true);
-            } else if (finalProvider === 'mistral') {
-                proxyAgent = getMistralProxyAgent(true);
-            } else if (finalProvider === 'deepseek') {
-                proxyAgent = getDeepSeekProxyAgent(true);
-            }
-        } else {
-            const step5 = `[AI Step 5] Proxy Disabled (Using Direct Connection)`;
-            console.log(step5);
-            logDebug(step5);
-        }
-
-        const result = await runAgentLoop({
-            apiKey: apiKey,
-            baseURL: baseURL,
-            model: currentModel,
-            messages: messages,
-            tools: tools,
-            pageConfig: pageConfig,
-            proxyAgent: proxyAgent,
-            totalTokenUsage: totalTokenUsage,
-            foundProducts: [],
-            userId: userId,
-            temperature: (pageConfig.is_external_api ? 0.7 : 0.2) // Low temp for format adherence
-        });
-
-        return finalize({ ...result, sentiment: 'neutral' });
-
-    } catch (err) {
-        console.error(`[AI] Phase 2 Logic Failed:`, err);
-        logDebug(`[AI ERROR] Phase 2 Logic Failed: ${err.message}`);
-        if (err.response) {
-            logDebug(`[AI ERROR DETAIL] Status: ${err.response.status}, Data: ${JSON.stringify(err.response.data)}`);
-        }
-        
-        // --- NEW: RETURN ORIGINAL LLM ERROR MESSAGE ---
-        const originalError = err.response?.data?.error?.message || 
-                             err.response?.data?.message || 
-                             err.message || 
-                             "Unknown LLM Error";
-
-        return finalize({ 
-            reply: originalError, 
-            error: err.message,
-            token_usage: 0,
-            model: currentModel
-        });
     }
 }
 

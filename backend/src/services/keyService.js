@@ -175,6 +175,7 @@ async function getSmartKey(provider, model = 'default') {
             pendingUpdates.add(candidateKey.api);
             
             return {
+                id: candidateKey.id,
                 key: candidateKey.api,
                 provider: candidateKey.provider,
                 model: candidateKey.model || model

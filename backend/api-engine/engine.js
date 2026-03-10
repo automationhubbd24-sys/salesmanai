@@ -292,11 +292,15 @@ router.post('/v1/chat/completions', async (req, res) => {
         }
 
         if (stream) {
-            const maxAttempts = 5;
+            const maxAttempts = 10;
             let lastError = null;
-            for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
                 const keyData = await keyService.getSmartKey(provider, upstreamModel);
                 if (!keyData) break;
+
+                const rotationLog = `[API Engine] 🔄 Attempt ${attempt}/${maxAttempts} for Stream: ${provider}/${upstreamModel} (Key: ${keyData.id})`;
+                console.log(rotationLog);
+                logDebug(rotationLog);
 
                 // Proxy Logic: Use if forced by DB config OR if it's a system engine request
                 let agent = undefined;
@@ -324,19 +328,36 @@ router.post('/v1/chat/completions', async (req, res) => {
                 });
 
                 if (response.status >= 400) {
-                    if ([429, 401, 403].includes(response.status)) {
-                        keyService.markKeyAsDead(keyData.key, 60000, `upstream_${response.status}`);
+                    const status = response.status;
+                    const errorMsg = (response.data?.error?.message || '').toLowerCase();
+                    const isQuotaError = status === 429 || errorMsg.includes('quota') || errorMsg.includes('limit');
+                    const isAuthError = status === 401 || status === 403;
+
+                    if ((isQuotaError || isAuthError) && attempt < maxAttempts) {
+                        if (isQuotaError) {
+                            keyService.markKeyAsQuotaExceeded(keyData.key);
+                        } else {
+                            keyService.markKeyAsDead(keyData.key, 24 * 60 * 60 * 1000, `upstream_stream_${status}`);
+                        }
+                        if (response.data && response.data.destroy) response.data.destroy();
+                        continue;
                     }
+                    
                     lastError = response.data;
                     if (response.data && response.data.destroy) response.data.destroy();
-                    continue;
+                    break;
                 }
 
                 const firstChunk = await readFirstChunk(response.data);
                 if (provider === 'google' || provider === 'gemini') {
                     const streamError = parseStreamError(firstChunk);
                     if (streamError) {
-                        keyService.markKeyAsDead(keyData.key, 60000, 'stream_error');
+                        const isQuota = String(streamError).toLowerCase().includes('quota') || String(streamError).toLowerCase().includes('limit');
+                        if (isQuota) {
+                            keyService.markKeyAsQuotaExceeded(keyData.key);
+                        } else {
+                            keyService.markKeyAsDead(keyData.key, 60000, 'stream_error');
+                        }
                         if (response.data && response.data.destroy) response.data.destroy();
                         lastError = { error: streamError };
                         continue;
@@ -355,47 +376,73 @@ router.post('/v1/chat/completions', async (req, res) => {
             return res.status(status).json({ error: lastError || 'stream_failed' });
         }
 
-        const keyData = await keyService.getSmartKey(provider, upstreamModel);
-        if (!keyData) {
-            console.warn(`[API Engine] ⚠️ No keys available for ${provider}/${upstreamModel}`);
-            return res.status(429).json({ 
-                error: { 
-                    message: "Engine Overload: All API keys are currently rate limited or exhausted.",
-                    type: "insufficient_quota",
-                    code: 429 
-                } 
-            });
-        }
-
-        // Proxy Logic: Use if forced by DB config OR if it's a system engine request
-        let agent = undefined;
-        if (shouldForceProxy || req.body.is_system_engine !== false) {
-            const proxyUrl = getProxyUrl();
-            if (proxyUrl) {
-                agent = new HttpsProxyAgent(proxyUrl);
-                const proxyLogStr = `[API Engine] 🌐 Using Bright Data Proxy for Model: ${upstreamModel} (Forced: ${shouldForceProxy})`;
-                console.log(proxyLogStr);
-                logDebug(proxyLogStr);
+        const maxAttempts = 10;
+        let lastError = null;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            const keyData = await keyService.getSmartKey(provider, upstreamModel);
+            if (!keyData) {
+                console.warn(`[API Engine] ⚠️ No keys available for ${provider}/${upstreamModel}`);
+                return res.status(429).json({ 
+                    error: { 
+                        message: "Engine Overload: All API keys are currently rate limited or exhausted.",
+                        type: "insufficient_quota",
+                        code: 429 
+                    } 
+                });
             }
+
+            const rotationLog = `[API Engine] 🔄 Attempt ${attempt}/${maxAttempts} for Chat: ${provider}/${upstreamModel} (Key: ${keyData.id})`;
+            console.log(rotationLog);
+            logDebug(rotationLog);
+
+            // Proxy Logic: Use if forced by DB config OR if it's a system engine request
+            let agent = undefined;
+            if (shouldForceProxy || req.body.is_system_engine !== false) {
+                const proxyUrl = getProxyUrl();
+                if (proxyUrl) {
+                    agent = new HttpsProxyAgent(proxyUrl);
+                    const proxyLogStr = `[API Engine] 🌐 Using Bright Data Proxy for Model: ${upstreamModel} (Forced: ${shouldForceProxy})`;
+                    console.log(proxyLogStr);
+                    logDebug(proxyLogStr);
+                }
+            }
+
+            const response = await axios.post(targetUrl, req.body, {
+                headers: {
+                    'Authorization': `Bearer ${keyData.key}`,
+                    'Content-Type': 'application/json'
+                },
+                httpsAgent: agent,
+                httpAgent: agent,
+                proxy: false,
+                timeout: 60000,
+                validateStatus: () => true
+            });
+
+            if (response.status >= 400) {
+                const status = response.status;
+                const errorMsg = (response.data?.error?.message || '').toLowerCase();
+                const isQuotaError = status === 429 || errorMsg.includes('quota') || errorMsg.includes('limit');
+                const isAuthError = status === 401 || status === 403;
+
+                if ((isQuotaError || isAuthError) && attempt < maxAttempts) {
+                    if (isQuotaError) {
+                        keyService.markKeyAsQuotaExceeded(keyData.key);
+                    } else {
+                        keyService.markKeyAsDead(keyData.key, 24 * 60 * 60 * 1000, `upstream_chat_${status}`);
+                    }
+                    continue;
+                }
+                
+                return res.status(status).json(response.data || { error: 'request_failed' });
+            }
+
+            if (response.data?.usage) {
+                keyService.recordKeyUsage(keyData.key, response.data.usage.total_tokens);
+            }
+
+            return res.json(response.data);
         }
-
-        const response = await axios.post(targetUrl, req.body, {
-            headers: {
-                'Authorization': `Bearer ${keyData.key}`,
-                'Content-Type': 'application/json'
-            },
-            httpsAgent: agent,
-            httpAgent: agent,
-            proxy: false,
-            timeout: 60000,
-            validateStatus: () => true
-        });
-
-        if (response.data?.usage) {
-            keyService.recordKeyUsage(keyData.key, response.data.usage.total_tokens);
-        }
-
-        res.json(response.data);
 
     } catch (error) {
         // Handle Upstream Errors (Block Bad Keys)
