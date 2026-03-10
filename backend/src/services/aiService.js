@@ -1942,13 +1942,24 @@ ${productContext || "No specific product context provided yet."}
 
         console.log(`[AI] Phase 2: Calling SalesmanChatbot AgentLoop (${finalProvider}/${currentModel})...`);
 
+        // --- NEW: FETCH PROXY CONFIG FROM DB ---
+        let shouldForceProxy = false;
+        try {
+            const configResult = await pgClient.query('SELECT use_proxy FROM engine_configs WHERE name = $1 LIMIT 1', [currentModel]);
+            if (configResult.rows.length > 0) {
+                shouldForceProxy = configResult.rows[0].use_proxy === true;
+            }
+        } catch (e) {
+            console.warn(`[AI Service] Failed to fetch proxy config for ${currentModel}: ${e.message}`);
+        }
+
         // Managed engine: use proxy for Gemini/Groq calls
         // FIXED: A request is managed if the user hasn't provided their own API key
         // External API calls with cheap_engine: false should still use proxy
         let proxyAgent = null;
         const isManagedEngine = !(pageConfig && pageConfig.api_key && pageConfig.api_key !== 'MANAGED_SECRET_KEY');
         
-        if (isManagedEngine) {
+        if (shouldForceProxy || isManagedEngine) {
             if (finalProvider === 'google' || finalProvider === 'gemini') {
                 proxyAgent = getGeminiProxyAgent(baseURL, true);
             } else if (finalProvider === 'groq') {

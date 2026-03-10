@@ -119,7 +119,17 @@ router.get('/config', adminAuthMiddleware, async (req, res) => {
 
 router.post('/config', adminAuthMiddleware, async (req, res) => {
     try {
-        const { name, provider, text_model, voice_model, image_model, voice_provider_override, image_provider_override } = req.body || {};
+        const { 
+            name, 
+            provider, 
+            text_model, 
+            voice_model, 
+            image_model, 
+            voice_provider_override, 
+            image_provider_override,
+            use_proxy 
+        } = req.body || {};
+        
         if (!name) {
             return res.status(400).json({ error: 'name is required' });
         }
@@ -127,8 +137,8 @@ router.post('/config', adminAuthMiddleware, async (req, res) => {
         await pgClient.query(
             `
             INSERT INTO engine_configs 
-                (name, provider, text_model, voice_model, image_model, voice_provider_override, image_provider_override, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+                (name, provider, text_model, voice_model, image_model, voice_provider_override, image_provider_override, use_proxy, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
             ON CONFLICT (name)
             DO UPDATE SET
                 provider = COALESCE(EXCLUDED.provider, engine_configs.provider),
@@ -137,6 +147,7 @@ router.post('/config', adminAuthMiddleware, async (req, res) => {
                 image_model = COALESCE(EXCLUDED.image_model, engine_configs.image_model),
                 voice_provider_override = EXCLUDED.voice_provider_override,
                 image_provider_override = EXCLUDED.image_provider_override,
+                use_proxy = EXCLUDED.use_proxy,
                 updated_at = NOW()
             `,
             [
@@ -146,7 +157,8 @@ router.post('/config', adminAuthMiddleware, async (req, res) => {
                 voice_model !== undefined ? voice_model : null,
                 image_model !== undefined ? image_model : null,
                 voice_provider_override !== undefined ? voice_provider_override : null,
-                image_provider_override !== undefined ? image_provider_override : null
+                image_provider_override !== undefined ? image_provider_override : null,
+                use_proxy !== undefined ? use_proxy : false
             ]
         );
         res.json({ success: true });
@@ -230,20 +242,27 @@ router.post('/v1/chat/completions', async (req, res) => {
 
     console.log(`[API Engine] Processing Request: ${provider} / ${model}`);
 
-    // Determine Upstream Target
-    let targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions';
-    if (provider === 'openai') targetUrl = 'https://api.openai.com/v1/chat/completions';
-    else if (provider === 'groq') targetUrl = 'https://api.groq.com/openai/v1/chat/completions';
-    else if (provider === 'openrouter') targetUrl = 'https://openrouter.ai/api/v1/chat/completions';
-    else if (provider === 'mistral') targetUrl = 'https://api.mistral.ai/v1/chat/completions';
-    else if (provider === 'google' || provider === 'gemini') {
-        targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions';
-    }
+        // Determine Upstream Target
+        let targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions';
+        if (provider === 'openai') targetUrl = 'https://api.openai.com/v1/chat/completions';
+        else if (provider === 'groq') targetUrl = 'https://api.groq.com/openai/v1/chat/completions';
+        else if (provider === 'openrouter') targetUrl = 'https://openrouter.ai/api/v1/chat/completions';
+        else if (provider === 'mistral') targetUrl = 'https://api.mistral.ai/v1/chat/completions';
+        else if (provider === 'google' || provider === 'gemini') {
+            targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions';
+        }
 
-    // Determined Key logic
-    const isSystemEngine = req.body.is_system_engine !== false; 
+        // --- NEW: FETCH PROXY CONFIG FROM DB ---
+        let shouldForceProxy = false;
+        try {
+            const configResult = await pgClient.query('SELECT use_proxy FROM engine_configs WHERE name = $1 LIMIT 1', [model]);
+            if (configResult.rows.length > 0) {
+                shouldForceProxy = configResult.rows[0].use_proxy === true;
+            }
+        } catch (e) {
+            console.warn(`[API Engine] Failed to fetch proxy config for ${model}: ${e.message}`);
+        }
 
-    try {
         if (stream) {
             const maxAttempts = 5;
             let lastError = null;
@@ -251,13 +270,13 @@ router.post('/v1/chat/completions', async (req, res) => {
                 const keyData = await keyService.getSmartKey(provider, model);
                 if (!keyData) break;
 
-                // Proxy logic: Managed engine calls should always use proxy
+                // Proxy Logic: Use if forced by DB config OR if it's a system engine request
                 let agent = undefined;
-                if (isSystemEngine) {
+                if (shouldForceProxy || req.body.is_system_engine !== false) {
                     const proxyUrl = getProxyUrl();
                     if (proxyUrl) {
                         agent = new HttpsProxyAgent(proxyUrl);
-                        console.log(`[API Engine] 🌐 Using Bright Data Proxy for Model: ${model}`);
+                        console.log(`[API Engine] 🌐 Using Bright Data Proxy for Model: ${model} (Forced: ${shouldForceProxy})`);
                     }
                 }
 
@@ -318,14 +337,13 @@ router.post('/v1/chat/completions', async (req, res) => {
             });
         }
 
-        // Proxy logic: Managed engine calls should always use proxy
-        // If it's a system engine request or we are using our own pool keys
+        // Proxy Logic: Use if forced by DB config OR if it's a system engine request
         let agent = undefined;
-        if (isSystemEngine) {
+        if (shouldForceProxy || req.body.is_system_engine !== false) {
             const proxyUrl = getProxyUrl();
             if (proxyUrl) {
                 agent = new HttpsProxyAgent(proxyUrl);
-                console.log(`[API Engine] 🌐 Using Bright Data Proxy for Model: ${model}`);
+                console.log(`[API Engine] 🌐 Using Bright Data Proxy for Model: ${model} (Forced: ${shouldForceProxy})`);
             }
         }
 
