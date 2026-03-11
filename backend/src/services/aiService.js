@@ -531,7 +531,7 @@ const functionTools = [
  {
   type: "function",
   function: {
-    name: "create_order",
+    name: "capture_order_lead",
     description: `
     IMPORTANT ORDER CAPTURE SYSTEM
 
