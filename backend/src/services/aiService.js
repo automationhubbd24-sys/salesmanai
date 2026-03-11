@@ -1176,30 +1176,35 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null
 
             case 'capture_order_lead': {
                 // Save lead/order details to database
-                const dbService = require('./dbService');
-                try {
-                    await dbService.saveOrder({
-                        page_id: pageId,
-                        sender_id: senderId,
-                        product_name: args.product_name || 'Pending',
-                        phone: args.phone,
-                        address: args.address || 'Pending',
-                        quantity: args.quantity || '1',
-                        price: args.price || '0',
-                        customer_name: args.customer_name || senderId,
-                        platform: platform
-                    });
-                    
-                    if (platform === 'whatsapp' && args.phone) {
-                        await dbService.updateContactPhone(pageId, senderId, args.phone);
-                    }
+case 'capture_order_lead': {
+    const dbService = require('./dbService');
+    try {
+        await dbService.saveOrder({
+            page_id: pageId,
+            sender_id: senderId,
+            product_name: args.product_name || 'Pending',
+            phone: args.phone,
+            address: args.address || 'Pending',
+            quantity: typeof args.quantity === 'number' ? args.quantity : 1,
+            price: typeof args.price === 'number' ? args.price : 0,
+            customer_name: args.customer_name || 'Pending',
+            note: args.note || '',
+            platform: platform
+        });
 
-                    return { status: 'SUCCESS', message: "Lead captured successfully. I will continue to gather missing info if any." };
-                } catch (saveErr) {
-                    console.error("[AgentLoop] Failed to save lead:", saveErr.message);
-                    return { status: 'ERROR', message: `Failed to save lead: ${saveErr.message}` };
-                }
-            }
+        if (platform === 'whatsapp' && args.phone) {
+            await dbService.updateContactPhone(pageId, senderId, args.phone);
+        }
+
+        return {
+            status: 'SUCCESS',
+            message: "Lead captured successfully. I will continue to gather missing info if any."
+        };
+    } catch (saveErr) {
+        console.error("[AgentLoop] Failed to save lead:", saveErr.message);
+        return { status: 'ERROR', message: `Failed to save lead: ${saveErr.message}` };
+    }
+}
 
             default:
                 return { status: 'ERROR', message: `Unknown tool: ${name}` };
@@ -1971,8 +1976,10 @@ ${productContext || "No specific product context provided yet."}
 [WORKFLOW]
 1. If the information is already in [PRODUCT CONTEXT], use it directly. 
 2. If not, call 'resolve_product' only when a product is mentioned.
-3. Call 'capture_order_lead' proactively when any lead info (Phone, Address) is detected.
-4. STRICTLY follow the Owner's instructions above for language and behavior.
+3. Call 'capture_order_lead' IMMEDIATELY only when a phone number is detected.
+4. If the customer later provides address, name, quantity, price, or note, call 'capture_order_lead' again with the same phone number to update the existing order.
+5. Never call 'capture_order_lead' with address only if phone number is missing.
+6. STRICTLY follow the Owner's instructions above for language and behavior.
 
 [RESPONSE FORMAT]
 {
