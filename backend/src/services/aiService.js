@@ -1738,6 +1738,8 @@ ${productContext || "No specific product context provided yet."}
 
 [LEAD CAPTURE & ORDER TRACKING]
 - CRITICAL: Call 'capture_order_lead' IMMEDIATELY as soon as the user provides a phone number, even if they haven't provided an address or product yet.
+- PRODUCT NAME SOURCE: Strictly use the product name that the user has mentioned in the text chat or confirmed from the [PRODUCT LIST SNAPSHOT]. 
+- ANTI-HALLUCINATION: DO NOT use product names or details extracted from [Visual Content Description] (Image Memory) for creating orders or leads. Image memory is ONLY for your internal understanding; for orders, you MUST rely on text-based confirmation from the user.
 - SMART MERGE: You can call 'capture_order_lead' multiple times. For example, if they give a phone number first, call it. If they give a location later, call it again with the location.
 - PRODUCT ACCURACY: Use EXACT product names from [PRODUCT LIST SNAPSHOT]. Never hallucinate or use names from image memory.
 
