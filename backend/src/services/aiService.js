@@ -2260,7 +2260,6 @@ ${productContext || "No specific product context provided yet."}
         model: defaultModel
     });
 }
-}
 
 const WAHA_BASE_URL = process.env.WAHA_BASE_URL || 'https://wahubbd.salesmanchatbot.online';
 const WAHA_API_KEY = process.env.WAHA_API_KEY || 'e9457ca133cc4d73854ee0d43cee3bc5';
