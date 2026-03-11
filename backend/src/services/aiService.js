@@ -1193,26 +1193,63 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 const geminiModel = genAI.getGenerativeModel({ model: model });
 
                 // Convert messages to Gemini format
-                // FIX: Ensure messages is an array before calling .map()
+                // FIX: Ensure messages is an array and roles are valid/alternating
                 const safeMessages = Array.isArray(messages) ? messages : [];
-                const contents = safeMessages.map(m => {
+                const contents = [];
+                let lastRole = null;
+
+                for (const m of safeMessages) {
                     let role = m.role === 'assistant' ? 'model' : 'user';
-                    if (m.role === 'system') role = 'user'; // Gemini system prompt handling varies, user is safest fallback for multi-turn
+                    if (m.role === 'system') role = 'user';
                     if (m.role === 'tool') role = 'function';
                     
                     const parts = [];
-                    if (m.content) parts.push({ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) });
-                    if (m.tool_calls) {
-                        m.tool_calls.forEach(tc => {
-                            parts.push({ functionCall: { name: tc.function.name, args: JSON.parse(tc.function.arguments || '{}') } });
-                        });
-                    }
-                    if (m.role === 'tool') {
-                        parts.push({ functionResponse: { name: m.name, response: JSON.parse(m.content || '{}') } });
+                    // Add text content if present
+                    if (m.content) {
+                        parts.push({ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) });
                     }
                     
-                    return { role, parts };
-                });
+                    // Add function calls if present (OpenAI format -> Gemini format)
+                    if (m.tool_calls) {
+                        m.tool_calls.forEach(tc => {
+                            parts.push({ 
+                                functionCall: { 
+                                    name: tc.function.name, 
+                                    args: JSON.parse(tc.function.arguments || '{}') 
+                                } 
+                            });
+                        });
+                        role = 'model'; // Messages with function calls must be 'model' role
+                    }
+                    
+                    // Add function response if present (OpenAI 'tool' role -> Gemini 'function' role)
+                    if (m.role === 'tool') {
+                        parts.push({ 
+                            functionResponse: { 
+                                name: m.name, 
+                                response: JSON.parse(m.content || '{}') 
+                            } 
+                        });
+                        role = 'function';
+                    }
+
+                    // --- CONSECUTIVE ROLE & SEQUENCE FIX ---
+                    // 1. If this is the same role as the previous message, merge parts instead of creating new content
+                    if (role === lastRole && contents.length > 0) {
+                        contents[contents.length - 1].parts.push(...parts);
+                    } else {
+                        // 2. Gemini requires alternating roles (user/model/user...). 
+                        // If we have 'model' but the last one wasn't 'user', we might need an empty user turn?
+                        // Usually merging handles the system+user case.
+                        contents.push({ role, parts });
+                        lastRole = role;
+                    }
+                }
+
+                // Final check: Gemini contents MUST start with 'user' role
+                if (contents.length > 0 && contents[0].role === 'model') {
+                    contents.unshift({ role: 'user', parts: [{ text: "Continue" }] });
+                }
 
                 // Gemini tools format
                 const geminiTools = (Array.isArray(tools) && tools.length > 0) ? [{

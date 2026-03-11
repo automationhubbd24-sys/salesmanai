@@ -346,7 +346,8 @@ CREATE TABLE IF NOT EXISTS fb_order_tracking (
   product_quantity TEXT,
   price TEXT,
   sender_number TEXT,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(page_id, sender_id)
 );
 CREATE INDEX IF NOT EXISTS idx_fb_order_tracking_page_id ON fb_order_tracking(page_id);
 
@@ -360,7 +361,8 @@ CREATE TABLE IF NOT EXISTS whatsapp_order_tracking (
   location TEXT,
   product_quantity TEXT,
   price TEXT,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(session_name, sender_id)
 );
 
 -- 20. OpenRouter Engine Config (For Admin)
