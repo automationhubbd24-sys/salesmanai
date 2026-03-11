@@ -38,8 +38,9 @@ const pendingUpdates = new Set();
 // Function declaration MUST be hoisted or defined before call
 async function updateKeyCache(force = false) {
     const now = Date.now();
-    // Refresh cache ONLY if not exists or forced. Persistence is manual.
-    if (!force && keyCache.length > 0) {
+    // Refresh cache ONLY if not exists, forced, or TTL expired (30 mins).
+    // This is extremely CPU efficient: 1 query every 30 mins.
+    if (!force && keyCache.length > 0 && (now - lastCacheUpdate < CACHE_TTL)) {
         return;
     }
 
@@ -188,8 +189,18 @@ function markKeyAsDead(keyOrObj, duration = DEFAULT_COOLDOWN, reason = 'unknown'
     const key = typeof keyOrObj === 'object' ? keyOrObj.api : keyOrObj;
     if (!key) return;
     const expiry = Date.now() + duration;
-    console.warn(`[KeyService] Blocking key ${key.substring(0, 8)}... for ${(duration/1000).toFixed(1)}s. Reason: ${reason}`);
+    const expiryDate = new Date(expiry);
+    console.warn(`[KeyService] Blocking key ${key.substring(0, 8)}... for ${(duration/1000).toFixed(1)}s. Reason: ${reason} (Until: ${expiryDate.toISOString()})`);
+    
+    // Update In-Memory Map for legacy check
     deadKeys.set(key, { expiry, reason });
+
+    // Update Cache Object for Persistence
+    const cachedKey = keyCacheMap.get(key);
+    if (cachedKey) {
+        cachedKey.cooldown_until = expiryDate.toISOString();
+        pendingUpdates.add(key);
+    }
 }
 
 
@@ -219,15 +230,31 @@ function markKeyAsQuotaExceeded(key) {
 }
 
 function isKeyAlive(key) {
-    if (!deadKeys.has(key)) return true;
-    const entry = deadKeys.get(key);
-    
-    // Check if expired
-    if (Date.now() > entry.expiry) {
-        deadKeys.delete(key); // Cooldown over
-        return true;
+    // 1. Check Legacy In-Memory Map
+    if (deadKeys.has(key)) {
+        const entry = deadKeys.get(key);
+        if (Date.now() > entry.expiry) {
+            deadKeys.delete(key); 
+            // Also clear from cache object if exists
+            const cached = keyCacheMap.get(key);
+            if (cached) cached.cooldown_until = null;
+            return true;
+        }
+        return false;
     }
-    return false;
+
+    // 2. Check Persisted Cooldown (from DB/Cache)
+    const cachedKey = keyCacheMap.get(key);
+    if (cachedKey && cachedKey.cooldown_until) {
+        const cooldownExpiry = new Date(cachedKey.cooldown_until).getTime();
+        if (Date.now() > cooldownExpiry) {
+            cachedKey.cooldown_until = null;
+            return true;
+        }
+        return false;
+    }
+
+    return true;
 }
 
 // 4. Rate Limit Verification (STRICT MODE)
@@ -369,7 +396,8 @@ async function flushUsageStats() {
             last_used_at: cachedKey.last_used_at,
             status: cachedKey.status,
             provider: cachedKey.provider, 
-            model: cachedKey.model
+            model: cachedKey.model,
+            cooldown_until: cachedKey.cooldown_until || null
         };
     }).filter(k => k !== null);
 
@@ -382,9 +410,9 @@ async function flushUsageStats() {
         const valuePlaceholders = [];
 
         updates.forEach((u, index) => {
-            const baseIndex = index * 7;
+            const baseIndex = index * 8;
             valuePlaceholders.push(
-                `($${baseIndex + 1}, $${baseIndex + 2}, $${baseIndex + 3}, $${baseIndex + 4}, $${baseIndex + 5}, $${baseIndex + 6}, $${baseIndex + 7})`
+                `($${baseIndex + 1}, $${baseIndex + 2}, $${baseIndex + 3}, $${baseIndex + 4}, $${baseIndex + 5}, $${baseIndex + 6}, $${baseIndex + 7}, $${baseIndex + 8})`
             );
             values.push(
                 u.api,
@@ -393,12 +421,13 @@ async function flushUsageStats() {
                 u.last_date_checked,
                 u.last_used_at,
                 u.status,
-                u.provider
+                u.provider,
+                u.cooldown_until
             );
         });
 
         const queryText = `
-            INSERT INTO api_list (api, usage_today, usage_tokens_today, last_date_checked, last_used_at, status, provider)
+            INSERT INTO api_list (api, usage_today, usage_tokens_today, last_date_checked, last_used_at, status, provider, cooldown_until)
             VALUES ${valuePlaceholders.join(', ')}
             ON CONFLICT (api)
             DO UPDATE SET
@@ -406,7 +435,8 @@ async function flushUsageStats() {
                 usage_tokens_today = EXCLUDED.usage_tokens_today,
                 last_date_checked = EXCLUDED.last_date_checked,
                 last_used_at = EXCLUDED.last_used_at,
-                status = EXCLUDED.status
+                status = EXCLUDED.status,
+                cooldown_until = EXCLUDED.cooldown_until
         `;
 
         await pgClient.query(queryText, values);

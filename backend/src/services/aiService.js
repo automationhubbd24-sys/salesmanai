@@ -222,21 +222,30 @@ function handleAiError(error, apiKey, model) {
     const responseError = error.response?.data?.error || {};
     const errorCode = `${responseError.code || responseError.type || responseError.status || ''}`.toLowerCase();
     const statusCode = error.status || (error.response ? error.response.status : null);
+    const responseMessage = (responseError.message || '').toLowerCase();
 
     console.error(`[AI Error Handler] Handling error for key ${apiKey.substring(0, 8)}... | Status: ${statusCode} | Msg: ${errorMsg}`);
 
     // 1. Quota / Rate Limit (429)
-    if (statusCode === 429 || errorMsg.includes('429') || errorMsg.includes('limit') || errorMsg.includes('quota') || errorMsg.includes('exhausted')) {
-        console.warn(`[AI] ⛔ Quota Exceeded for key ${apiKey.substring(0, 8)}... marking as EXCEEDED.`);
-        if (keyService.markKeyAsQuotaExceeded) {
-            keyService.markKeyAsQuotaExceeded(apiKey);
+    if (statusCode === 429 || errorMsg.includes('429') || errorMsg.includes('limit') || errorMsg.includes('quota') || errorMsg.includes('exhausted') || errorMsg.includes('too many requests')) {
+        if (errorMsg.includes('quota') || responseMessage.includes('quota')) {
+            console.warn(`[AI] ⛔ Quota Exceeded for key ${apiKey.substring(0, 8)}... marking as EXCEEDED (Midnight Reset).`);
+            if (keyService.markKeyAsQuotaExceeded) {
+                keyService.markKeyAsQuotaExceeded(apiKey);
+            }
+        } else {
+            console.warn(`[AI] 🔒 Rate Limit hit for key ${apiKey.substring(0, 8)}... marking as DEAD (Short cooldown).`);
+            if (keyService.markKeyAsDead) {
+                // Short cooldown for RPM/TPM limits (1 minute)
+                keyService.markKeyAsDead(apiKey, 60 * 1000, `rate_limit_${model}`);
+            }
         }
         return;
     }
 
     // 2. Invalid Key / Auth (401 / 403)
     if (statusCode === 401 || statusCode === 403 || errorMsg.includes('401') || errorMsg.includes('403') || errorMsg.includes('invalid') || errorMsg.includes('key') || errorMsg.includes('authentication')) {
-        if (errorCode.includes('consumer_suspended')) {
+        if (errorCode.includes('consumer_suspended') || responseMessage.includes('suspended')) {
             if (keyService.markKeyAsSuspended) {
                 keyService.markKeyAsSuspended(apiKey, 'consumer_suspended');
             }
@@ -250,9 +259,12 @@ function handleAiError(error, apiKey, model) {
     }
 
     // 3. General API Error (Network, Timeout, 500, etc.)
-    console.warn(`[AI] ⚠️ General API Error for key ${apiKey.substring(0, 8)}... cooldown for 10 minutes.`);
-    if (keyService.markKeyAsDead) {
-        keyService.markKeyAsDead(apiKey, 10 * 60 * 1000, 'api_error'); // 10 minutes cooldown
+    if (statusCode >= 500 || errorMsg.includes('timeout') || errorMsg.includes('network')) {
+        console.warn(`[AI] ⚠️ General API Error for key ${apiKey.substring(0, 8)}... cooldown for 10 minutes.`);
+        if (keyService.markKeyAsDead) {
+            keyService.markKeyAsDead(apiKey, 10 * 60 * 1000, 'api_error'); // 10 minutes cooldown
+        }
+        return;
     }
 }
 
@@ -2025,6 +2037,7 @@ ${productContext || "No specific product context provided yet."}
             [userKeys[i], userKeys[j]] = [userKeys[j], userKeys[i]];
         }
 
+        let lastPhase1Error = null;
         for (const currentKey of userKeys) {
             let currentProvider = defaultProvider;
             
@@ -2078,66 +2091,40 @@ ${productContext || "No specific product context provided yet."}
                 return finalize({ ...result, sentiment: 'neutral' });
 
             } catch (error) {
-                console.warn(`[AI] Phase 1 Key Failed:`, error.message);
+                console.warn(`[AI] Phase 1 Key Attempt Failed:`, error.message);
+                lastPhase1Error = error;
                 
                 // --- TOKEN TRACKING FOR FAILED REQUESTS ---
-                // Even if it failed, we likely consumed input tokens or at least attempted a request.
-                // We should log this as a "failed" attempt but count it towards usage if possible.
-                // Since we don't have exact usage from error, we estimate based on input messages.
                 const estimatedInputTokens = estimateTokenUsage(messages, '', 0);
                 try {
-                    // Record usage with 0 output tokens. Status will be handled by caller if needed.
-                    // We use a special flag or just log it.
-                    // For now, let's just log it to DB so it appears in dashboard.
                     await dbService.saveAIUsageLog({
                         user_id: pageConfig.user_id,
-                        model: modelToUse || 'unknown',
+                        model: pageConfig.chat_model || 'unknown',
                         tokens: estimatedInputTokens,
-                        cost: 0, // Maybe charge for input? For now 0 to be safe.
-                        context: 'failed_attempt'
+                        cost: 0, 
+                        context: 'failed_attempt_phase1'
                     });
                 } catch(e) {}
 
-                // STRICT OWN API LOCK: If we are here, it means the User provided their own API key.
-                // If it fails (invalid key, quota exceeded, etc.), we MUST NOT fallback to our Cloud API.
-                console.error(`[AI] Strict Own API Failed. Blocking Cloud API fallback for security & isolation.`);
-                return finalize({ 
-                    reply: null, // Returning null ensures the controller knows the request failed strictly.
-                    // User Request: Show EXACT reason why failed.
-                    error: `[Strict Own API Error] ${error.message}. Please check your API settings or limits in the dashboard.`,
-                    token_usage: estimatedInputTokens, // Return estimated usage
-                    model: pageConfig.chatmodel || defaultModel 
-                });
-            }
-        }
-    }
-
-    // HELPER: Error Handler for Rate Limits
-    const handleAiError = (error, apiKey, modelName) => {
-        const status = error.status || (error.response ? error.response.status : null);
-        const responseError = error.response?.data?.error || {};
-        const responseMessage = `${responseError.message || ''} ${responseError.status || ''}`.toLowerCase();
-        const rawMessage = `${error.message || ''}`.toLowerCase();
-        const errorCode = `${responseError.code || responseError.type || responseError.status || ''}`.toLowerCase();
-        const isSuspended = errorCode.includes('consumer_suspended') || responseMessage.includes('consumer_suspended') || rawMessage.includes('consumer_suspended');
-        if (status === 429 || rawMessage.includes('429') || rawMessage.includes('quota') || rawMessage.includes('too many requests')) {
-            if (rawMessage.includes('quota')) {
-                keyService.markKeyAsQuotaExceeded(apiKey);
-            } else {
-                keyService.markKeyAsDead(apiKey, 60 * 1000, `rate_limit_${modelName}`);
-            }
-        } else if (status === 401 || status === 403) {
-            if (isSuspended) {
-                keyService.markKeyAsSuspended(apiKey, 'consumer_suspended');
-            } else {
-                keyService.markKeyAsDead(apiKey, 24 * 60 * 60 * 1000, 'auth_error');
-            }
-        } else if (status >= 500) {
-            keyService.markKeyAsDead(apiKey, 60 * 1000, 'server_error');
-        }
-    };
-
-    // PHASE 2: SALESMANCHATBOT ENGINE (SMART ROUTING) ---
+                // If this is the last key and it failed, then we return the error
+                if (currentKey === userKeys[userKeys.length - 1]) {
+                    console.error(`[AI] Strict Own API Failed. All keys exhausted.`);
+                    return finalize({ 
+                        reply: null, 
+                        error: `[Strict Own API Error] ${error.message}. Please check your API settings or limits in the dashboard.`,
+                        token_usage: estimatedInputTokens, 
+                        model: pageConfig.chatmodel || defaultModel 
+                    });
+                }
+                
+                // Otherwise, continue to the next key
+                 console.log(`[AI] Phase 1: Key failed, trying next key...`);
+                 continue;
+             }
+         }
+     }
+ 
+     // PHASE 2: SALESMANCHATBOT ENGINE (SMART ROUTING) ---
     // User Request: If User provided their own key and it was attempted, STOP HERE.
     if (userKeyAttempted) {
         console.warn(`[AI] Phase 1 was attempted but failed or was invalid. Strict Isolation Active: Blocking Cloud API fallback.`);
@@ -2155,6 +2142,9 @@ ${productContext || "No specific product context provided yet."}
     let lastError = null;
 
     while (retryCount <= MAX_RETRIES) {
+        let currentModel = defaultModel;
+        let apiKey = null;
+
         try {
             if (retryCount > 0) {
                 console.log(`[AI] Retry attempt ${retryCount} starting...`);
@@ -2178,7 +2168,7 @@ ${productContext || "No specific product context provided yet."}
                 else if (finalProvider === 'openrouter') finalProvider = 'google';
             }
 
-            const currentModel = finalModel;
+            currentModel = finalModel;
             let keyData = await keyService.getSmartKey(finalProvider, currentModel);
             
             if (!keyData || !keyData.key) {
@@ -2189,7 +2179,7 @@ ${productContext || "No specific product context provided yet."}
                 throw new Error(`No active keys for ${finalProvider}`);
             }
 
-            const apiKey = keyData.key;
+            apiKey = keyData.key;
             let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
             
             if (finalProvider === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
@@ -2239,8 +2229,9 @@ ${productContext || "No specific product context provided yet."}
             lastError = err;
             
             // Mark the failing key as dead so it's not picked up in the next retry
-            if (lastError.apiKey) {
-                handleAiError(lastError, lastError.apiKey, 'retry_fallback');
+            // We use the apiKey that was actually tried in this iteration
+            if (apiKey) {
+                handleAiError(err, apiKey, currentModel);
             }
 
             retryCount++;
