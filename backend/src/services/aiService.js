@@ -1700,11 +1700,12 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     }
 
     if (mediaContext) {
-        // --- FIX: Direct Media Return for External API ---
-        // User request: "analyze result tai patai dibe"
-        // If it's an external API call and the user only sent media (no original text), return result immediately.
-        if (pageConfig.is_external_api && (!userMessage || userMessage.trim().length === 0)) {
-            console.log(`[AI] External API Media-Only detected. Returning direct analysis.`);
+        // --- FIX: Direct Media Return for External API (Cost Optimization) ---
+        // User request: "analyze result tai patai dibe... 2 ta ai call korle to amr loss"
+        // If it's an external API call and we have media, return analysis immediately.
+        // This prevents a second AI call (AgentLoop) and saves API costs.
+        if (pageConfig.is_external_api) {
+            console.log(`[AI] External API Media Detected. Returning analysis directly to save costs.`);
             return finalize({
                 reply: mediaContext.trim(),
                 sentiment: 'neutral',
