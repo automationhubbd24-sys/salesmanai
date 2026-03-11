@@ -2185,7 +2185,10 @@ ${productContext || "No specific product context provided yet."}
             if (finalProvider === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
             else if (finalProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
             else if (finalProvider === 'openai') baseURL = 'https://api.openai.com/v1';
+            else if (finalProvider === 'mistral') baseURL = 'https://api.mistral.ai/v1';
+            else if (finalProvider === 'xai') baseURL = 'https://api.x.ai/v1';
             else if (finalProvider === 'google' || finalProvider === 'gemini') baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
+            else baseURL = 'https://api.openai.com/v1'; // Default to OpenAI compatible for others
             
             const isBrandedEngine = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(resolved.targetEngineName);
             const isManagedEngine = !(pageConfig && (pageConfig.cheap_engine === false || pageConfig.api_key));
