@@ -2149,189 +2149,117 @@ ${productContext || "No specific product context provided yet."}
         });
     }
 
-    // --- FIX: Ensure we NEVER use an audio model for Phase 2 Chat Loop ---
-    // User Request: "model whisper-large-v3 does not support chat completions"
-    // If the default model is whisper, we must force a valid chat model for the loop.
-    if (defaultModel && defaultModel.includes('whisper')) {
-        console.log(`[AI] Detected audio model ${defaultModel} for chat. Forcing salesmanchatbot-pro.`);
-        defaultModel = 'salesmanchatbot-pro';
-        defaultProvider = 'google';
-    }
+    // --- FALLBACK & RETRY LOGIC FOR SYSTEM ENGINES ---
+    let retryCount = 0;
+    const MAX_RETRIES = 2; // Try up to 2 different keys/models
+    let lastError = null;
 
-    console.log(`[AI] Phase 2: SalesmanChatbot Engine Smart Routing...`);
+    while (retryCount <= MAX_RETRIES) {
+        try {
+            if (retryCount > 0) {
+                console.log(`[AI] Retry attempt ${retryCount} starting...`);
+                // On retry, we might want to slightly tweak the model or just let the smart rotation handle it
+                // If it failed once, we clear the specific key cache for this process to get a fresh key
+                if (keyService.clearProcessKeyCache) keyService.clearProcessKeyCache();
+            }
 
-    // 1. Resolve Modality for Chat Engine
-    let isVision = false;
-    // --- FIX: isAudio is always false for AgentLoop ---
-    // Even if user sent audio, it's already transcribed to text above.
-    // We MUST use a Chat/Text engine for the Agentic Loop, not a Voice-only engine like Whisper.
-    let isAudio = false; 
-    if (imageUrls && imageUrls.length > 0) isVision = true;
+            // 1. Resolve Modality for Chat Engine
+            let isVision = false;
+            let isAudio = false; 
+            if (imageUrls && imageUrls.length > 0) isVision = true;
 
-    const resolved = await resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio);
-    let finalProvider = resolved.finalProvider;
-    let finalModel = resolved.finalModel;
+            const resolved = await resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio);
+            let finalProvider = resolved.finalProvider;
+            let finalModel = resolved.finalModel;
 
-    const currentModel = finalModel;
-    
-    let keyData = null;
-    try {
-        // Special Handling for Provider Overrides:
-        // If finalProvider changed (e.g. OpenRouter -> Groq for Voice), we must query keys for THAT provider.
-        keyData = await keyService.getSmartKey(finalProvider, currentModel);
-        
-        // Fallback: If specific model key not found, try default key for that provider
-        if (!keyData || !keyData.key) {
-             keyData = await keyService.getSmartKey(finalProvider, 'default');
-        }
+            // If it's a retry, we might want to fallback from Gemini to OpenRouter or vice-versa
+            if (retryCount > 0) {
+                if (finalProvider === 'google') finalProvider = 'openrouter';
+                else if (finalProvider === 'openrouter') finalProvider = 'google';
+            }
 
-        if (!keyData || !keyData.key) {
-            console.warn(`[AI] No valid keys for ${finalProvider}/${currentModel}.`);
-            return finalize({ 
-                reply: "দুঃখিত, বর্তমানে এই সার্ভিসে কোনো অ্যাক্টিভ কী নেই। দয়া করে এডমিন প্যানেল থেকে এপিআই কী চেক করুন।", 
-                error: `No active keys for ${finalProvider}`,
-                token_usage: 0,
-                model: currentModel
-            });
-        }
+            const currentModel = finalModel;
+            let keyData = await keyService.getSmartKey(finalProvider, currentModel);
+            
+            if (!keyData || !keyData.key) {
+                 keyData = await keyService.getSmartKey(finalProvider, 'default');
+            }
 
-        const apiKey = keyData.key;
-        let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
-        
-        // DYNAMIC BASE URL MAPPING
-        if (finalProvider === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
-        else if (finalProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
-        else if (finalProvider === 'openai') baseURL = 'https://api.openai.com/v1';
-        else if (finalProvider === 'mistral') baseURL = 'https://api.mistral.ai/v1';
-        else if (finalProvider === 'google' || finalProvider === 'gemini') baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
-        
-        let rawContent = '';
-        let tokenUsage = 0;
-        let usedCache = false;
-        const isFreeModel = typeof currentModel === 'string' && currentModel.includes(':free');
+            if (!keyData || !keyData.key) {
+                throw new Error(`No active keys for ${finalProvider}`);
+            }
 
-        // --- GEMINI CACHING PATH (DISABLED PER USER REQUEST) ---
-        const isUserKey = pageConfig.api_key && pageConfig.api_key !== 'MANAGED_SECRET_KEY' && apiKey === pageConfig.api_key;
-        const shouldUseCache = false; // Disabled to ensure fresh responses during testing
-
-        if (shouldUseCache && messages.length > 0 && messages[0].role === 'system') {
-            const systemContent = messages[0].content;
-            // Only use cache if system prompt is large enough (>2000 chars) to matter
-            // Raised limit to 2000 chars to ensure it's worth the cache creation cost
-            if (systemContent.length > 2000) {
-                const cacheName = await getOrCreateGeminiCache(apiKey, currentModel, systemContent);
-                if (cacheName) {
-                    try {
-                        console.log(`[AI] Using Gemini Cache (User Key): ${cacheName}`);
-                        const genAI = new GoogleGenerativeAI(apiKey);
-                        const model = genAI.getGenerativeModelFromCachedContent(cacheName);
-                        
-                        const geminiHistory = messages.slice(1).map(m => ({
-                            role: m.role === 'assistant' ? 'model' : 'user',
-                            parts: [{ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }]
-                        }));
-
-                        const result = await model.generateContent({
-                            contents: geminiHistory,
-                            generationConfig: { responseMimeType: "application/json" }
-                        });
-
-                        rawContent = result.response.text();
-                        tokenUsage = result.response.usageMetadata ? result.response.usageMetadata.totalTokenCount : 0;
-                        usedCache = true;
-                        console.log(`[AI] Gemini Cache Hit! Tokens: ${tokenUsage}`);
-
-                        // --- AGENTIC JSON PARSER (FOR CACHE) ---
-                        try {
-                            const cleanJson = rawContent.replace(/```json|```/g, '').trim();
-                            const structured = JSON.parse(cleanJson);
-                            
-                            if (structured.reply_text) {
-                                return finalize({ 
-                                    reply: structured.reply_text, 
-                                    action: structured.action || "NONE",
-                                    product_id: structured.product_id || null,
-                                    image_urls: Array.isArray(structured.image_urls) ? structured.image_urls : [],
-                                    sentiment: 'neutral', 
-                                    token_usage: tokenUsage + totalTokenUsage, 
-                                    model: currentModel, 
-                                    foundProducts 
-                                });
-                            }
-                        } catch (parseErr) {
-                            console.warn(`[AI Cache] Cache response not in expected JSON format. Content: ${rawContent.substring(0, 50)}...`);
-                        }
-
-                        return finalize({ 
-                            reply: rawContent, 
-                            sentiment: 'neutral', 
-                            token_usage: tokenUsage + totalTokenUsage, 
-                            model: currentModel, 
-                            foundProducts 
-                        });
-                    } catch (cacheError) {
-                        console.warn(`[AI] Gemini Cache Execution Failed: ${cacheError.message}. Falling back.`);
-                    }
+            const apiKey = keyData.key;
+            let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
+            
+            if (finalProvider === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
+            else if (finalProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
+            else if (finalProvider === 'openai') baseURL = 'https://api.openai.com/v1';
+            else if (finalProvider === 'google' || finalProvider === 'gemini') baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
+            
+            const isBrandedEngine = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(resolved.targetEngineName);
+            const isManagedEngine = !(pageConfig && (pageConfig.cheap_engine === false || pageConfig.api_key));
+            
+            let proxyAgent = null;
+            if (isBrandedEngine) {
+                if (finalProvider === 'google' || finalProvider === 'gemini') {
+                    proxyAgent = getGeminiProxyAgent(baseURL, true, resolved.targetEngineName);
+                } else if (finalProvider === 'groq') {
+                    proxyAgent = getGroqProxyAgent(true, resolved.targetEngineName);
+                } else {
+                    const proxy = getProxyUrl(resolved.targetEngineName);
+                    proxyAgent = createProxyAgent(proxy);
+                }
+            } else if (isManagedEngine) {
+                if (finalProvider === 'google' || finalProvider === 'gemini') {
+                    proxyAgent = getGeminiProxyAgent(baseURL, true, 'managed');
+                } else if (finalProvider === 'groq') {
+                    proxyAgent = getGroqProxyAgent(true, 'managed');
                 }
             }
-        }
 
-        console.log(`[AI] Phase 2: Calling SalesmanChatbot AgentLoop (${finalProvider}/${currentModel})...`);
+            const result = await runAgentLoop({
+                apiKey: apiKey,
+                baseURL: baseURL,
+                model: currentModel,
+                messages: messages,
+                tools: tools,
+                pageConfig: pageConfig,
+                proxyAgent: proxyAgent,
+                totalTokenUsage: totalTokenUsage,
+                foundProducts: [],
+                userId: userId,
+                temperature: (pageConfig.is_external_api ? 0.7 : 0.2)
+            });
 
-        // Mandatory Proxy for Branded Engines (pro, flash, lite)
-        const isBrandedEngine = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(resolved.targetEngineName);
-        const isManagedEngine = !(pageConfig && (pageConfig.cheap_engine === false || pageConfig.api_key));
-        
-        let proxyAgent = null;
+            return finalize({ ...result, sentiment: 'neutral' });
 
-        if (isBrandedEngine) {
-            console.log(`[AI] Mandatory Proxy Rotation for Branded Engine: ${resolved.targetEngineName} (Provider: ${finalProvider})`);
-            // Standardize proxy creation for ALL providers when using Branded Engines
-            if (finalProvider === 'google' || finalProvider === 'gemini') {
-                proxyAgent = getGeminiProxyAgent(baseURL, true, resolved.targetEngineName);
-            } else if (finalProvider === 'groq') {
-                proxyAgent = getGroqProxyAgent(true, resolved.targetEngineName);
-            } else {
-                // For OpenRouter, Mistral, OpenAI or any other provider
-                const proxy = getProxyUrl(resolved.targetEngineName);
-                proxyAgent = createProxyAgent(proxy);
+        } catch (err) {
+            console.error(`[AI] Phase 2 Logic Attempt ${retryCount} Failed:`, err.message);
+            lastError = err;
+            
+            // Mark the failing key as dead so it's not picked up in the next retry
+            if (lastError.apiKey) {
+                handleAiError(lastError, lastError.apiKey, 'retry_fallback');
             }
-        } else if (isManagedEngine) {
-            // Standard Managed Engine Proxy Logic
-            if (finalProvider === 'google' || finalProvider === 'gemini') {
-                proxyAgent = getGeminiProxyAgent(baseURL, true, 'managed');
-            } else if (finalProvider === 'groq') {
-                proxyAgent = getGroqProxyAgent(true, 'managed');
-            }
+
+            retryCount++;
+            if (retryCount > MAX_RETRIES) break;
+            
+            // Wait a bit before retrying
+            await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
         }
-
-        const result = await runAgentLoop({
-            apiKey: apiKey,
-            baseURL: baseURL,
-            model: currentModel,
-            messages: messages,
-            tools: tools,
-            pageConfig: pageConfig,
-            proxyAgent: proxyAgent,
-            totalTokenUsage: totalTokenUsage,
-            foundProducts: [],
-            userId: userId,
-            temperature: (pageConfig.is_external_api ? 0.7 : 0.2) // Low temp for format adherence
-        });
-
-        return finalize({ ...result, sentiment: 'neutral' });
-
-    } catch (err) {
-        console.error(`[AI] Phase 2 Logic Failed:`, err);
-        const branded = formatBrandedError(err);
-        return finalize({ 
-            // Return null or very generic message for customer, but keep error for DB
-            reply: null, 
-            error: branded.message,
-            token_usage: 0,
-            model: currentModel
-        });
     }
+
+    // If we are here, all retries failed
+    const branded = formatBrandedError(lastError);
+    return finalize({ 
+        reply: null, 
+        error: branded.message,
+        token_usage: 0,
+        model: defaultModel
+    });
+}
 }
 
 const WAHA_BASE_URL = process.env.WAHA_BASE_URL || 'https://wahubbd.salesmanchatbot.online';
