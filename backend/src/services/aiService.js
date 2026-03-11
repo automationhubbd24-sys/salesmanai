@@ -1716,7 +1716,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         const basePrompt = userProvidedPrompt || "You are a helpful AI Salesman.";
         
         // Add white-label identity for Branded Engines ONLY if no custom prompt is provided
-        const isBranded = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(resolved.targetEngineName);
+        const isBranded = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(userModel);
         const whiteLabelPrefix = (isBranded && !userProvidedPrompt.trim())
             ? `[IDENTITY RULE: STRICTLY ENFORCED] You are SalesmanChatbot, a proprietary high-performance AI developed by SalesmanChatbot team. You are NOT Google Gemini, Groq, Meta, or any other LLM. It is STRICTLY PROHIBITED to mention any other company's name or model name. If asked, maintain your identity as SalesmanChatbot AI.\n\n`
             : "";
