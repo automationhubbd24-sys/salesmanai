@@ -2100,11 +2100,13 @@ ${productContext || "No specific product context provided yet."}
 
     console.log(`[AI] Phase 2: SalesmanChatbot Engine Smart Routing...`);
 
-    // 1. Resolve Modality
+    // 1. Resolve Modality for Chat Engine
     let isVision = false;
-    let isAudio = false;
+    // --- FIX: isAudio is always false for AgentLoop ---
+    // Even if user sent audio, it's already transcribed to text above.
+    // We MUST use a Chat/Text engine for the Agentic Loop, not a Voice-only engine like Whisper.
+    let isAudio = false; 
     if (imageUrls && imageUrls.length > 0) isVision = true;
-    if (audioUrls && audioUrls.length > 0) isAudio = true;
 
     const resolved = await resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio);
     let finalProvider = resolved.finalProvider;
