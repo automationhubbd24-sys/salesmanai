@@ -1193,7 +1193,9 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 const geminiModel = genAI.getGenerativeModel({ model: model });
 
                 // Convert messages to Gemini format
-                const contents = messages.map(m => {
+                // FIX: Ensure messages is an array before calling .map()
+                const safeMessages = Array.isArray(messages) ? messages : [];
+                const contents = safeMessages.map(m => {
                     let role = m.role === 'assistant' ? 'model' : 'user';
                     if (m.role === 'system') role = 'user'; // Gemini system prompt handling varies, user is safest fallback for multi-turn
                     if (m.role === 'tool') role = 'function';
@@ -1213,7 +1215,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 });
 
                 // Gemini tools format
-                const geminiTools = tools ? [{
+                const geminiTools = (Array.isArray(tools) && tools.length > 0) ? [{
                     functionDeclarations: tools.map(t => ({
                         name: t.function.name,
                         description: t.function.description,
@@ -1228,8 +1230,12 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 });
 
                 const response = result.response;
-                const candidate = response.candidates[0];
-                const content = candidate.content;
+                const candidate = response.candidates?.[0];
+                const content = candidate?.content;
+                
+                if (!content || !content.parts) {
+                    throw new Error("Gemini API returned an empty or blocked response. Please check your safety settings or prompt.");
+                }
                 
                 responseMessage = {
                     role: 'assistant',
