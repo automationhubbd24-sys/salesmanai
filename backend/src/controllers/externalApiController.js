@@ -194,24 +194,32 @@ exports.handleChatCompletion = async (req, res) => {
         // 4. ROUTING LOGIC based on Model Name
         let aiText = "";
         let totalTokens = 0;
-        let responseModelName = "salesmanchatbot-pro"; // Default to Pro
+        const requestedModel = model || 'salesmanchatbot-pro';
+        let responseModelName = requestedModel; 
         let billingLabel = "Cheap Engine API Call";
 
         // --- UNIFIED ENGINE CALL (Using Rotation Pool) ---
-        // This handles salesmanchatbot-pro, flash, and lite models through aiService
+        // Ensure Vision requests use a capable model (Gemini 2.0 Flash or 1.5 Flash)
+        let modelToUse = requestedModel;
+        if (imageUrls.length > 0 || audioUrls.length > 0) {
+            // For External API multi-modal requests, force use of a stable vision model
+            // but keep the branding in the final response.
+            modelToUse = 'salesmanchatbot-pro'; 
+        }
+
         const prompts = systemPrompt ? { text_prompt: systemPrompt } : {};
         
         const aiResponseObj = await aiService.generateReply(
             userMessage,
             { 
                 user_id: userConfig.user_id,
-                page_id: externalUser || 'ExternalAPI', // Use 'user' field from request if available for tracking
-                ai_provider: 'salesmanchatbot', // Default to salesmanchatbot for better routing
-                chat_model: model || 'salesmanchatbot-pro', 
+                page_id: externalUser || 'ExternalAPI',
+                ai_provider: 'salesmanchatbot',
+                chat_model: modelToUse, 
                 is_external_api: true,
-                display_model: model || 'salesmanchatbot-pro',
+                display_model: requestedModel,
                 billing_mode: 'request',
-                cheap_engine: false // Disable cheap engine logic for branded API calls
+                cheap_engine: false 
             }, 
             prompts, 
             history,
@@ -226,7 +234,8 @@ exports.handleChatCompletion = async (req, res) => {
         if (typeof aiResponseObj === 'object' && aiResponseObj !== null) {
             aiText = aiResponseObj.reply || aiResponseObj.text || JSON.stringify(aiResponseObj);
             totalTokens = aiResponseObj.token_usage || 0;
-            responseModelName = aiResponseObj.model || responseModelName;
+            // ALWAYS return the branded name the user requested
+            responseModelName = requestedModel; 
         } else {
             aiText = String(aiResponseObj);
         }

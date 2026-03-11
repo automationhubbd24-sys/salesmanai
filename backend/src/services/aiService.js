@@ -441,7 +441,7 @@ const functionTools = [
     {
         type: 'function',
         function: {
-            name: 'create_order',
+            name: 'capture_order_lead',
             description: 'কাস্টমার অর্ডার-সংক্রান্ত কোনো তথ্য দিলে অর্ডার লিড create বা update করতে হবে। সবচেয়ে জরুরি নিয়ম: ফোন নাম্বার পাওয়া মাত্র একই turn-এ tool call করতেই হবে, অন্য তথ্য না থাকলেও। সম্পূর্ণ তথ্যের জন্য অপেক্ষা করা যাবে না। partial data আগে save হবে, পরে নতুন তথ্য merge হবে। কোনো field আন্দাজ করে save করা যাবে না। এবং আগের বা পরের ( old memory ) তে Image memory থেকে তথ্য নেওয়া যাবে না',
             parameters: {
                 type: 'object',
@@ -1678,9 +1678,8 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     let responseFormat = undefined; 
     
     // --- TOOL ENABLING LOGIC ---
-    // External API users (n8n, etc.) usually want a raw LLM experience without our internal tools.
-    const toolsEnabled = !pageConfig.is_external_api;
-    const tools = toolsEnabled ? functionTools : undefined;
+    // User plan: External API should also be branded and powerful (support tools)
+    const tools = functionTools; 
 
     if (pageConfig.is_external_api) {
         // --- EXTERNAL API PATH (n8n, Third-party Servers) ---
