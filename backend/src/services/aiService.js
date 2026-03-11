@@ -2730,13 +2730,20 @@ async function transcribeAudio(audioUrl, config) {
 
     // PHASE 2: SYSTEM KEYS (Cheap Engine / Fallback)
     if (!userKey) {
-        let voiceModel = safeConfig.voice_model || safeConfig.audio_model || safeConfig.chat_model || 'gemini-2.5-flash';
+        // Use the chat model if it's provided, otherwise fallback to default
+        let voiceModel = safeConfig.chat_model || safeConfig.chatmodel || safeConfig.voice_model || safeConfig.audio_model || 'gemini-2.5-flash';
         let provider = safeConfig.ai_provider || safeConfig.ai || safeConfig.operator || 'google';
 
-        // FORCE Gemini 2.5 Flash for 2026/Latest support as requested by user
-        if (!safeConfig.voice_model && !resolved) {
+        // Map SalesmanChatbot branded names to actual models for audio
+        if (voiceModel === 'salesmanchatbot-pro') {
             voiceModel = 'gemini-2.5-flash';
             provider = 'google';
+        } else if (voiceModel === 'salesmanchatbot-flash') {
+            voiceModel = 'gemini-2.5-flash'; // Flash also supports audio natively
+            provider = 'google';
+        } else if (voiceModel === 'salesmanchatbot-lite') {
+            voiceModel = 'whisper-large-v3';
+            provider = 'groq';
         }
 
         if (resolved) {
