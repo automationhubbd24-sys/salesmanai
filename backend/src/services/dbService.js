@@ -1825,94 +1825,44 @@ async function saveOrderTracking(orderData) {
     
     // Robust Product Name Cleaning
     if (product_name) {
-        // Remove internal instruction blocks like Item 1: ... | Price: ... | Image URL: ...
         if (product_name.includes('|')) {
             product_name = product_name.split('|')[0].trim();
         }
-        // Remove common AI markers
         product_name = product_name
             .replace(/Item \d+:/gi, '')
             .replace(/##product/gi, '')
             .replace(/"/g, '')
-            .replace(/\[.*?\]/g, '') // Remove [SAVE_ORDER] or other tags
+            .replace(/\[.*?\]/g, '')
             .trim();
         
-        // If it's still empty or too long/junk, use a fallback
         if (!product_name) product_name = 'Recovered Lead';
     }
 
     console.log(`[Order] Attempting to save/update order for ${sender_id}...`);
 
     try {
-        // 1. Try to find a recent order (last 1 hour) for this user to update missing info (Smart Merge)
-        const recentOrder = await query(
-            `SELECT id, product_name, number, location, product_quantity, price 
-             FROM fb_order_tracking 
-             WHERE page_id = $1 AND sender_id = $2 
-             AND created_at >= NOW() - INTERVAL '1 hour'
-             ORDER BY created_at DESC LIMIT 1`,
-            [page_id, sender_id]
-        );
-
-        if (recentOrder.rows.length > 0) {
-            const existing = recentOrder.rows[0];
-            const updates = [];
-            const values = [];
-            let idx = 1;
-
-            // SMART MERGE: Only update if the new value is NOT empty and either the existing is missing or generic
-            if (product_name && product_name !== 'Recovered Lead' && (!existing.product_name || existing.product_name === 'Recovered Lead')) {
-                updates.push(`product_name = $${idx++}`);
-                values.push(product_name);
-            }
-            if (number && !existing.number) {
-                updates.push(`number = $${idx++}`);
-                values.push(number);
-            }
-            if (location && location !== 'N/A' && (!existing.location || existing.location === 'N/A' || existing.location === '')) {
-                updates.push(`location = $${idx++}`);
-                values.push(location);
-            }
-            if (product_quantity && product_quantity !== '1' && (!existing.product_quantity || existing.product_quantity === '1')) {
-                updates.push(`product_quantity = $${idx++}`);
-                values.push(product_quantity);
-            }
-            if (price && !existing.price) {
-                updates.push(`price = $${idx++}`);
-                values.push(price);
-            }
-
-            if (updates.length > 0) {
-                values.push(existing.id);
-                const updateResult = await query(
-                    `UPDATE fb_order_tracking SET ${updates.join(', ')} WHERE id = $${idx} RETURNING *`,
-                    values
-                );
-                console.log(`[Order] Smart Merged data into existing order ID ${existing.id} for user ${sender_id}`);
-                return updateResult.rows[0];
-            }
-            
-            // If we have a number but it's DIFFERENT from the existing one, 
-            // and the existing one already has a number, we create a NEW row.
-            if (number && existing.number && number !== existing.number) {
-                console.log(`[Order] New number detected for ${sender_id}. Creating new row.`);
-            } else {
-                console.log(`[Order] No new info to merge for ${sender_id}. Skipping duplicate.`);
-                return existing;
-            }
-        }
-
-        // 2. If no recent order found or no updates were needed, perform a new INSERT
-        // But only if we have at least a number or a product name that isn't just "Recovered Lead"
-        if (!number && (!product_name || product_name === 'Recovered Lead')) {
-             console.log(`[Order] Skipping insert: No phone number and no specific product found.`);
-             return null;
-        }
-
+        // --- SMART UPSERT: Always update the SAME row for the same user on the same page ---
+        // This ensures if a user gives a number first, and details later, it all stays in one row.
+        
         const result = await query(
             `INSERT INTO fb_order_tracking
-                (page_id, sender_id, product_name, number, location, product_quantity, price, sender_number)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                (page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+             ON CONFLICT (page_id, sender_id) 
+             DO UPDATE SET
+                product_name = CASE 
+                    WHEN EXCLUDED.product_name IS NOT NULL AND EXCLUDED.product_name <> 'Recovered Lead' THEN EXCLUDED.product_name 
+                    ELSE fb_order_tracking.product_name 
+                END,
+                number = COALESCE(EXCLUDED.number, fb_order_tracking.number),
+                location = CASE 
+                    WHEN EXCLUDED.location IS NOT NULL AND EXCLUDED.location <> 'Pending' AND EXCLUDED.location <> 'N/A' THEN EXCLUDED.location 
+                    ELSE fb_order_tracking.location 
+                END,
+                product_quantity = COALESCE(EXCLUDED.product_quantity, fb_order_tracking.product_quantity),
+                price = COALESCE(EXCLUDED.price, fb_order_tracking.price),
+                sender_number = COALESCE(EXCLUDED.sender_number, fb_order_tracking.sender_number),
+                created_at = NOW()
              RETURNING *`,
             [
                 page_id,
@@ -1925,8 +1875,9 @@ async function saveOrderTracking(orderData) {
                 sender_number
             ]
         );
+
         const row = result.rows[0];
-        console.log(`[Order] New order saved successfully: ID ${row.id}`);
+        console.log(`[Order] Order UPSERT successful for ${sender_id}: ID ${row.id}`);
         return row;
     } catch (error) {
         console.error("[Order] Failed to save/update order:", error.message);

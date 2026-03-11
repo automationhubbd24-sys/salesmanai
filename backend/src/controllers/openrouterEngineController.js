@@ -93,12 +93,12 @@ exports.handleChatCompletion = async (req, res) => {
 
     } catch (error) {
         console.error('[OpenRouter API] Error:', error);
-        const brandedError = aiService.formatBrandedError(error);
-        res.status(brandedError.code).json({
+        const branded = aiService.formatBrandedError(error);
+        res.status(branded.code).json({
             error: {
-                message: brandedError.message,
-                type: brandedError.type,
-                code: brandedError.code
+                message: branded.message,
+                type: branded.type,
+                code: branded.code
             }
         });
     }

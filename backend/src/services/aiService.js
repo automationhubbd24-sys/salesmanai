@@ -1166,6 +1166,19 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
 
     while (loopCount < MAX_LOOP) {
         loopCount++;
+        
+        // --- FIX: Filter out non-chat models from Agentic Loop ---
+        // Whisper is an audio model, it cannot be used for Chat/Agentic Loop.
+        if (model.includes('whisper')) {
+            console.warn(`[AgentLoop] Model ${model} is NOT a chat model. Skipping loop.`);
+            return { 
+                reply: null, 
+                error: "ChatModel Error: Invalid chat model selected.",
+                token_usage: totalTokensInLoop,
+                model: model
+            };
+        }
+
         console.log(`[AgentLoop] Starting iteration ${loopCount} with ${model} (Temp: ${temperature})...`);
 
         try {
@@ -1426,6 +1439,13 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                 ? dbService.calculateRequestCost(displayModel, 1)
                 : dbService.calculateCost(displayModel, usageTokens);
             
+            // --- FIX: Branded Error Message for UI ---
+            // If there's an error, we only show the branded error message to the user
+            let uiError = result.error || null;
+            if (uiError && uiError.includes('400')) {
+                uiError = "ChatModel Error: Invalid model configuration.";
+            }
+
             const logData = {
                 user_id: pageConfig.user_id,
                 page_id: pageConfig.page_id,
@@ -1435,10 +1455,10 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                 total_tokens: usageTokens,
                 cost: cost,
                 status: result.error ? 'error' : 'success',
-                error_message: result.error || null,
+                error_message: result.error || null, // Keep original error in DB logs
                 sender_name: senderName || 'Customer',
                 user_message: userMessage || '',
-                ai_reply: result.reply || (result.error ? `Error: ${result.error}` : null)
+                ai_reply: result.reply || (uiError ? `Error: ${uiError}` : null)
             };
             
             // Call dbService to log this. (Fire and forget, but with internal catch)
@@ -1448,6 +1468,11 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                 });
             } else {
                 console.warn("[AI Logger] dbService.logAiUsage is not defined!");
+            }
+
+            // Update result for final return (Branding)
+            if (result.error) {
+                result.error = uiError;
             }
         } catch (err) {
             console.warn("[AI Logger] Error preparing logData:", err.message);

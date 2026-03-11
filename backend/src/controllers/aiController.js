@@ -44,7 +44,8 @@ async function ingestKnowledge(req, res) {
         const brandedError = aiService.formatBrandedError(error);
         return res.status(brandedError.code).json({ 
             error: brandedError.message,
-            type: brandedError.type
+            type: brandedError.type,
+            details: error.message 
         });
     }
 }

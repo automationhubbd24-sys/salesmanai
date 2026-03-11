@@ -301,13 +301,13 @@ exports.handleChatCompletion = async (req, res) => {
 
     } catch (error) {
         console.error('[ExternalAPI] Error:', error);
-        const brandedError = aiService.formatBrandedError(error);
-        return res.status(brandedError.code).json({
-            error: {
-                message: brandedError.message,
-                type: brandedError.type,
-                code: brandedError.code
-            }
+        const branded = aiService.formatBrandedError(error);
+        return res.status(branded.code).json({ 
+            error: { 
+                message: branded.message, 
+                type: branded.type, 
+                code: branded.code 
+            } 
         });
     }
 };
