@@ -1,5 +1,6 @@
 const openrouterEngineService = require('../services/openrouterEngineService');
 const dbService = require('../services/dbService');
+const aiService = require('../services/aiService');
 const crypto = require('crypto');
 
 // Cost per Token
@@ -92,7 +93,14 @@ exports.handleChatCompletion = async (req, res) => {
 
     } catch (error) {
         console.error('[OpenRouter API] Error:', error);
-        res.status(500).json({ error: { message: error.message } });
+        const brandedError = aiService.formatBrandedError(error);
+        res.status(brandedError.code).json({
+            error: {
+                message: brandedError.message,
+                type: brandedError.type,
+                code: brandedError.code
+            }
+        });
     }
 };
 

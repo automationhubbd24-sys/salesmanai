@@ -219,7 +219,8 @@ exports.handleChatCompletion = async (req, res) => {
                 is_external_api: true,
                 display_model: requestedModel,
                 billing_mode: 'request',
-                cheap_engine: false 
+                cheap_engine: false,
+                platform: 'external_api'
             }, 
             prompts, 
             history,
@@ -300,7 +301,14 @@ exports.handleChatCompletion = async (req, res) => {
 
     } catch (error) {
         console.error('[ExternalAPI] Error:', error);
-        return res.status(500).json({ error: { message: 'Internal Server Error', type: 'api_error' } });
+        const brandedError = aiService.formatBrandedError(error);
+        return res.status(brandedError.code).json({
+            error: {
+                message: brandedError.message,
+                type: brandedError.type,
+                code: brandedError.code
+            }
+        });
     }
 };
 
@@ -320,8 +328,15 @@ exports.listModels = async (req, res) => {
             ]
         });
     } catch (error) {
-        console.error('[ExternalAPI] Models Error:', error);
-        return res.status(500).json({ error: { message: 'Internal Server Error', type: 'api_error' } });
+        console.error('[ExternalAPI] Error:', error);
+        const branded = aiService.formatBrandedError(error);
+        return res.status(branded.code).json({ 
+            error: { 
+                message: branded.message, 
+                type: branded.type, 
+                code: branded.code 
+            } 
+        });
     }
 };
 
@@ -360,13 +375,20 @@ exports.transcribeAudio = async (req, res) => {
         await dbService.deductUserBalance(userConfig.user_id, cost, `Audio Transcription`);
         
         // Log Usage
-        await dbService.logApiUsage(userConfig.user_id, 'salesmanchatbot-lite', 1, cost);
+        await dbService.logApiUsage(userConfig.user_id, 'salesmanchatbot-lite', 1, cost, 'external_api');
 
         res.json({ text: transcription });
 
     } catch (error) {
         console.error('[ExternalAPI] Audio Error:', error);
-        res.status(500).json({ error: { message: 'Internal Server Error' } });
+        const branded = aiService.formatBrandedError(error);
+        return res.status(branded.code).json({ 
+            error: { 
+                message: branded.message, 
+                type: branded.type, 
+                code: branded.code 
+            } 
+        });
     }
 };
 

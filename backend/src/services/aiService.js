@@ -130,6 +130,84 @@ function releaseAiSlot() {
 }
 // -------------------------------
 
+/**
+ * Formats an error into a branded, user-friendly message for ChatModel.
+ */
+function formatBrandedError(error, brandName = 'ChatModel') {
+    const errorMsg = (error.message || (typeof error === 'string' ? error : '')).toLowerCase();
+    const statusCode = error.status || (error.response ? error.response.status : (error.code || 500));
+    
+    let brandedMessage = `${brandName} Error: ${error.message || error}`;
+    let code = statusCode;
+    let type = 'api_error';
+
+    // 0. Model Not Found / Invalid Model (404)
+    if (statusCode === 404 || errorMsg.includes('not found') || errorMsg.includes('model')) {
+        brandedMessage = `${brandName} Model Configuration Error. The selected model is unavailable or incorrectly named.`;
+        code = 404;
+        type = 'model_error';
+    }
+    // 1. Quota / Rate Limit (429)
+    else if (statusCode === 429 || errorMsg.includes('429') || errorMsg.includes('limit') || errorMsg.includes('quota') || errorMsg.includes('exhausted')) {
+        brandedMessage = `${brandName} Rate Limit High. Please slow down and try again later.`;
+        code = 429;
+        type = 'rate_limit_error';
+    } 
+    // 2. Invalid Content (400)
+    else if (statusCode === 400 || errorMsg.includes('400') || errorMsg.includes('invalid')) {
+        brandedMessage = `${brandName} Invalid Content. Please check your input parameters.`;
+        code = 400;
+        type = 'invalid_request_error';
+    } 
+    // 3. Auth Issues (401/403)
+    else if (statusCode === 401 || statusCode === 403 || errorMsg.includes('key')) {
+        brandedMessage = `${brandName} Authentication Failed. Your access key is invalid or expired.`;
+        code = 401;
+        type = 'authentication_error';
+    }
+
+    return { message: brandedMessage, code, type };
+}
+
+/**
+ * Formats an error into a branded, user-friendly message for ChatModel.
+ */
+function formatBrandedError(error, brandName = 'ChatModel') {
+    const errorMsg = (error.message || (typeof error === 'string' ? error : '')).toLowerCase();
+    const statusCode = error.status || (error.response ? error.response.status : (error.code || 500));
+    
+    let brandedMessage = `${brandName} Error: ${error.message || error}`;
+    let code = statusCode;
+    let type = 'api_error';
+
+    // 0. Model Not Found / Invalid Model (404)
+    if (statusCode === 404 || errorMsg.includes('not found') || errorMsg.includes('model')) {
+        brandedMessage = `${brandName} Model Configuration Error. The selected model is unavailable or incorrectly named.`;
+        code = 404;
+        type = 'model_error';
+    }
+    // 1. Quota / Rate Limit (429)
+    else if (statusCode === 429 || errorMsg.includes('429') || errorMsg.includes('limit') || errorMsg.includes('quota') || errorMsg.includes('exhausted')) {
+        brandedMessage = `${brandName} Rate Limit High. Please slow down and try again later.`;
+        code = 429;
+        type = 'rate_limit_error';
+    } 
+    // 2. Invalid Content (400)
+    else if (statusCode === 400 || errorMsg.includes('400') || errorMsg.includes('invalid')) {
+        brandedMessage = `${brandName} Invalid Content. Please check your input parameters.`;
+        code = 400;
+        type = 'invalid_request_error';
+    } 
+    // 3. Auth Issues (401/403)
+    else if (statusCode === 401 || statusCode === 403 || errorMsg.includes('key')) {
+        brandedMessage = `${brandName} Authentication Failed. Your access key is invalid or expired.`;
+        code = 401;
+        type = 'authentication_error';
+    }
+
+    return { message: brandedMessage, code, type };
+}
+
 // --- NEW: AUTOMATIC KEY FAILURE HANDLING ---
 /**
  * Handles API errors by marking keys as dead or quota exceeded.
@@ -1082,6 +1160,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
     let loopCount = 0;
     const MAX_LOOP = 3;
     let totalTokensInLoop = totalTokenUsage;
+    const platform = pageConfig?.platform || 'external_api';
 
     const isGoogle = baseURL && (baseURL.includes('generativelanguage.googleapis.com') || baseURL.includes('google'));
 
@@ -2151,10 +2230,11 @@ ${productContext || "No specific product context provided yet."}
 
     } catch (err) {
         console.error(`[AI] Phase 2 Logic Failed:`, err);
+        const branded = formatBrandedError(err);
         return finalize({ 
             // Return null or very generic message for customer, but keep error for DB
             reply: null, 
-            error: `Phase 2 Logic Failed: ${err.message}`,
+            error: branded.message,
             token_usage: 0,
             model: currentModel
         });
@@ -2855,6 +2935,9 @@ async function transcribeAudio(audioUrl, config) {
 module.exports = {
     generateReply,
     generateResponse,
+    getEmbedding,
+    handleAiError,
+    formatBrandedError,
     fetchOgImage,
     processImageWithVision,
     transcribeAudio,

@@ -1,5 +1,6 @@
 const liteEngineService = require('../services/liteEngineService');
 const dbService = require('../services/dbService');
+const aiService = require('../services/aiService');
 const crypto = require('crypto');
 
 // Cost per Token (Configurable, using same as external for now)
@@ -105,11 +106,12 @@ exports.handleChatCompletion = async (req, res) => {
 
     } catch (error) {
         console.error('[LiteEngine API] Error:', error);
-        res.status(500).json({
+        const branded = aiService.formatBrandedError(error);
+        res.status(branded.code).json({
             error: {
-                message: error.message || "Internal Server Error",
-                type: error.name,
-                code: error.status || 500
+                message: branded.message,
+                type: branded.type,
+                code: branded.code
             }
         });
     }

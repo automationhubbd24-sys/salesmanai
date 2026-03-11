@@ -17,8 +17,10 @@ async function optimizePrompt(req, res) {
 
     } catch (error) {
         console.error("Optimization Controller Error:", error);
-        return res.status(500).json({ 
-            error: "Failed to optimize prompt",
+        const brandedError = aiService.formatBrandedError(error);
+        return res.status(brandedError.code).json({ 
+            error: brandedError.message,
+            type: brandedError.type,
             details: error.message 
         });
     }
@@ -39,7 +41,11 @@ async function ingestKnowledge(req, res) {
 
     } catch (error) {
         console.error("Ingestion Controller Error:", error);
-        return res.status(500).json({ error: "Failed to start ingestion" });
+        const brandedError = aiService.formatBrandedError(error);
+        return res.status(brandedError.code).json({ 
+            error: brandedError.message,
+            type: brandedError.type
+        });
     }
 }
 
