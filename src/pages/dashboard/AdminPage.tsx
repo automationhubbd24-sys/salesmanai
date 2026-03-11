@@ -88,6 +88,9 @@ type Coupon = {
   value: number;
   type: string;
   status: string;
+  usage_limit: number;
+  current_usage: number;
+  per_user_limit: number;
   created_at: string;
 };
 
@@ -135,6 +138,9 @@ export default function AdminPage() {
   // Coupon Form
   const [couponCode, setCouponCode] = useState("");
   const [couponValue, setCouponValue] = useState("");
+  const [couponType, setCouponType] = useState("balance");
+  const [couponUsageLimit, setCouponUsageLimit] = useState("1");
+  const [couponPerUserLimit, setCouponPerUserLimit] = useState("1");
 
   // Manual Topup
   const [topupEmail, setTopupEmail] = useState("");
@@ -1182,6 +1188,9 @@ export default function AdminPage() {
         body: JSON.stringify({
           code: couponCode,
           value: Number(couponValue),
+          type: couponType,
+          usage_limit: Number(couponUsageLimit),
+          per_user_limit: Number(couponPerUserLimit),
         }),
       });
 
@@ -1649,8 +1658,30 @@ export default function AdminPage() {
                   <Input placeholder="e.g. WELCOME500" value={couponCode} onChange={(e) => setCouponCode(e.target.value)} />
                 </div>
                 <div className="space-y-2">
-                  <Label>Value (BDT)</Label>
+                  <Label>Value (BDT / Credits)</Label>
                   <Input type="number" placeholder="500" value={couponValue} onChange={(e) => setCouponValue(e.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Coupon Type</Label>
+                  <Select value={couponType} onValueChange={setCouponType}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="balance">Balance (BDT)</SelectItem>
+                      <SelectItem value="credit">Message Credits</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Total Usage Limit</Label>
+                    <Input type="number" value={couponUsageLimit} onChange={(e) => setCouponUsageLimit(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Per User Limit</Label>
+                    <Input type="number" value={couponPerUserLimit} onChange={(e) => setCouponPerUserLimit(e.target.value)} />
+                  </div>
                 </div>
                 <Button className="w-full" onClick={handleCreateCoupon}>Create Code</Button>
               </CardContent>
@@ -1666,17 +1697,23 @@ export default function AdminPage() {
                     <TableRow>
                       <TableHead>Code</TableHead>
                       <TableHead>Value</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Usage (Used/Total)</TableHead>
+                      <TableHead>Per User</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="text-right">Action</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {loadingCoupons ? (
-                         <TableRow><TableCell colSpan={4}>Loading...</TableCell></TableRow>
+                         <TableRow><TableCell colSpan={7}>Loading...</TableCell></TableRow>
                     ) : coupons.map((c) => (
                       <TableRow key={c.id}>
                         <TableCell className="font-mono font-bold">{c.code}</TableCell>
-                        <TableCell>৳{c.value}</TableCell>
+                        <TableCell>{c.type === 'credit' ? `${c.value} Credits` : `৳${c.value}`}</TableCell>
+                        <TableCell className="capitalize">{c.type}</TableCell>
+                        <TableCell>{c.current_usage} / {c.usage_limit === 0 ? '∞' : c.usage_limit}</TableCell>
+                        <TableCell>{c.per_user_limit === 0 ? '∞' : c.per_user_limit}</TableCell>
                         <TableCell>
                           <Badge variant={c.status === 'active' ? 'default' : 'secondary'}>{c.status}</Badge>
                         </TableCell>
