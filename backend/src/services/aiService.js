@@ -1174,8 +1174,7 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null
                 return { status: 'SUCCESS', product_id: productId, in_stock: inStock, stock_count: stock };
             }
 
-            case 'capture_order_lead': {
-                // Save lead/order details to database
+        
 case 'capture_order_lead': {
     const dbService = require('./dbService');
     try {
