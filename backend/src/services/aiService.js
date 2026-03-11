@@ -1713,8 +1713,14 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         // --- INTERNAL SYSTEM PATH (Messenger, WhatsApp, Own API Button) ---
         // Goal: Full Sales automation with Enforced JSON and Lead Capture.
         const basePrompt = pagePrompts?.text_prompt || "You are a helpful AI Salesman.";
+        
+        // Add white-label identity for Branded Engines even in internal chat
+        const isBranded = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(resolved.targetEngineName);
+        const whiteLabelPrefix = isBranded 
+            ? `[IDENTITY RULE: STRICTLY ENFORCED] You are SalesmanChatbot, a proprietary high-performance AI developed by SalesmanChatbot team. You are NOT Google Gemini, Groq, Meta, or any other LLM. It is STRICTLY PROHIBITED to mention any other company's name or model name. If asked, maintain your identity as SalesmanChatbot AI.\n\n`
+            : "";
 
-        const unifiedSystemPrompt = `[BUSINESS OWNER'S MANDATORY INSTRUCTIONS]
+        const unifiedSystemPrompt = `${whiteLabelPrefix}[BUSINESS OWNER'S MANDATORY INSTRUCTIONS]
 ${basePrompt}
 
 [PRODUCT CONTEXT - USE THIS IF RELEVANT]
