@@ -24,8 +24,9 @@ function getProxyUrl(modelName = 'default') {
     const pass = process.env.BRIGHT_DATA_PASS;
     if (!proxyUrl || !user || !pass) return null;
     
-    // Rotation using random session ID for better stability
-    const session = `sess_${modelName}_${Math.floor(Math.random() * 999999)}`;
+    // Some BrightData zones prefer simple alphanumeric session IDs to avoid 407 errors
+    const cleanModelName = modelName.replace(/[^a-zA-Z0-9]/g, '');
+    const session = `${cleanModelName}${Math.floor(Math.random() * 9999)}`;
     const url = `http://${user}-session-${session}:${pass}@${proxyUrl}`;
     
     // Validate proxy format (basic check)
@@ -35,7 +36,7 @@ function getProxyUrl(modelName = 'default') {
     }
 
     // Log Proxy Session Info for Debugging (Per User Request)
-    console.log(`[Proxy] New Session Created: ${session} for model: ${modelName}`);
+    console.log(`[Proxy] Using Session: ${session} for model: ${modelName}`);
     
     return url;
 }
@@ -2104,13 +2105,14 @@ ${productContext || "No specific product context provided yet."}
         let proxyAgent = null;
 
         if (isBrandedEngine) {
-            console.log(`[AI] Mandatory Proxy Rotation for Branded Engine: ${resolved.targetEngineName}`);
+            console.log(`[AI] Mandatory Proxy Rotation for Branded Engine: ${resolved.targetEngineName} (Provider: ${finalProvider})`);
+            // Standardize proxy creation for ALL providers when using Branded Engines
             if (finalProvider === 'google' || finalProvider === 'gemini') {
                 proxyAgent = getGeminiProxyAgent(baseURL, true, resolved.targetEngineName);
             } else if (finalProvider === 'groq') {
                 proxyAgent = getGroqProxyAgent(true, resolved.targetEngineName);
-            } else if (finalProvider === 'openrouter') {
-                // Use the centralized proxy agent creation for OpenRouter
+            } else {
+                // For OpenRouter, Mistral, OpenAI or any other provider
                 const proxy = getProxyUrl(resolved.targetEngineName);
                 proxyAgent = createProxyAgent(proxy);
             }
