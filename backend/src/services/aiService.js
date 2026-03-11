@@ -1700,6 +1700,19 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     }
 
     if (mediaContext) {
+        // --- FIX: Direct Media Return for External API ---
+        // User request: "analyze result tai patai dibe"
+        // If it's an external API call and the user only sent media (no original text), return result immediately.
+        if (pageConfig.is_external_api && (!userMessage || userMessage.trim().length === 0)) {
+            console.log(`[AI] External API Media-Only detected. Returning direct analysis.`);
+            return finalize({
+                reply: mediaContext.trim(),
+                sentiment: 'neutral',
+                token_usage: totalTokenUsage,
+                model: 'media-processor'
+            });
+        }
+
         cleanUserMessage += "\n" + mediaContext;
         console.log(`[AI] Added media context to user message. Total Tokens so far: ${totalTokenUsage}`);
     }
