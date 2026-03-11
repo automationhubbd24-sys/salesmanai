@@ -2103,14 +2103,21 @@ ${productContext || "No specific product context provided yet."}
     // User Request: If User provided their own key and it was attempted, STOP HERE.
     if (userKeyAttempted) {
         console.warn(`[AI] Phase 1 was attempted but failed or was invalid. Strict Isolation Active: Blocking Cloud API fallback.`);
-        // Revert to Strict Error Mode as requested by user.
-        // User wants to see the EXACT reason why their key failed, not a silent fallback.
         return finalize({ 
             reply: null, 
             error: "আপনার দেওয়া এপিআই কী-তে সমস্যা দেখা দিয়েছে অথবা লিমিট শেষ হয়ে গেছে। দয়া করে ড্যাশবোর্ড থেকে আপনার কী চেক করুন।",
             token_usage: 0,
             model: pageConfig.chat_model || defaultModel
         });
+    }
+
+    // --- FIX: Ensure we NEVER use an audio model for Phase 2 Chat Loop ---
+    // User Request: "model whisper-large-v3 does not support chat completions"
+    // If the default model is whisper, we must force a valid chat model for the loop.
+    if (defaultModel && defaultModel.includes('whisper')) {
+        console.log(`[AI] Detected audio model ${defaultModel} for chat. Forcing salesmanchatbot-pro.`);
+        defaultModel = 'salesmanchatbot-pro';
+        defaultProvider = 'google';
     }
 
     console.log(`[AI] Phase 2: SalesmanChatbot Engine Smart Routing...`);
