@@ -170,7 +170,7 @@ exports.rejectTransaction = async (req, res) => {
 exports.listCoupons = async (req, res) => {
     try {
         const { rows } = await pgClient.query(
-            'SELECT id, code, value, type, status, created_at FROM referral_codes ORDER BY created_at DESC'
+            'SELECT id, code, value, type, status, usage_limit, current_usage, per_user_limit, created_at FROM referral_codes ORDER BY created_at DESC'
         );
         res.json({ coupons: rows });
     } catch (error) {
@@ -181,18 +181,22 @@ exports.listCoupons = async (req, res) => {
 
 exports.createCoupon = async (req, res) => {
     try {
-        const { code, value } = req.body;
+        const { code, value, type, usage_limit, per_user_limit } = req.body;
         if (!code || !value) {
             return res.status(400).json({ error: 'code and value are required' });
         }
 
+        const couponType = type || 'balance'; // balance or credit
+        const limit = parseInt(usage_limit) || 1; // Default 1 use
+        const userLimit = parseInt(per_user_limit) || 1; // Default 1 per user
+
         const { rows } = await pgClient.query(
             `
-            INSERT INTO referral_codes (code, value, type, status)
-            VALUES ($1, $2, 'balance', 'active')
-            RETURNING id, code, value, type, status, created_at
+            INSERT INTO referral_codes (code, value, type, status, usage_limit, per_user_limit)
+            VALUES ($1, $2, $3, 'active', $4, $5)
+            RETURNING id, code, value, type, status, usage_limit, per_user_limit, created_at
             `,
-            [code, value]
+            [code, value, couponType, limit, userLimit]
         );
 
         res.json(rows[0]);
@@ -566,54 +570,96 @@ exports.redeemCoupon = async (req, res) => {
         }
 
         const couponResult = await pgClient.query(
-            `
-            SELECT *
-            FROM referral_codes
-            WHERE code = $1
-              AND status = 'active'
-            LIMIT 1
-            `,
-            [code]
+            'SELECT id, code, value, type, status, usage_limit, current_usage, per_user_limit FROM referral_codes WHERE code = $1 AND status = $2',
+            [code, 'active']
         );
 
         if (couponResult.rows.length === 0) {
-            return res.status(400).json({ error: 'Invalid or inactive code' });
+            return res.status(400).json({ error: 'Invalid or expired coupon' });
         }
 
         const coupon = couponResult.rows[0];
-        if (coupon.type !== 'balance') {
-            return res.status(400).json({ error: 'This code is not for balance topup' });
+        const amount = Number(coupon.value) || 0;
+
+        // Check global usage limit
+        if (coupon.usage_limit > 0 && coupon.current_usage >= coupon.usage_limit) {
+            return res.status(400).json({ error: 'Coupon usage limit reached' });
         }
 
-        const amount = Number(coupon.value);
-        if (!amount || amount <= 0) {
-            return res.status(400).json({ error: 'Invalid coupon value' });
+        // Check per-user usage limit
+        const usageCheck = await pgClient.query(
+            'SELECT count(*) FROM coupon_usage WHERE user_id = $1 AND coupon_id = $2',
+            [userId, coupon.id]
+        );
+        const userUsageCount = parseInt(usageCheck.rows[0].count);
+        if (coupon.per_user_limit > 0 && userUsageCount >= coupon.per_user_limit) {
+            return res.status(400).json({ error: 'You have already used this coupon' });
         }
 
         const configResult = await pgClient.query(
-            'SELECT id, balance FROM user_configs WHERE user_id = $1::uuid LIMIT 1',
+            'SELECT balance, message_credit FROM user_configs WHERE user_id = $1::uuid',
             [userId]
         );
 
-        let newBalance = amount;
+        let newBalance = 0;
+        let newMessageCredit = 0;
+
         if (configResult.rows.length > 0) {
             const currentBalance = Number(configResult.rows[0].balance) || 0;
-            newBalance = currentBalance + amount;
-            await pgClient.query(
-                'UPDATE user_configs SET balance = $1 WHERE user_id = $2::uuid',
-                [newBalance, userId]
-            );
+            const currentCredits = Number(configResult.rows[0].message_credit) || 0;
+            
+            if (coupon.type === 'credit') {
+                newMessageCredit = currentCredits + amount;
+                await pgClient.query(
+                    'UPDATE user_configs SET message_credit = $1 WHERE user_id = $2::uuid',
+                    [newMessageCredit, userId]
+                );
+                newBalance = currentBalance;
+            } else {
+                newBalance = currentBalance + amount;
+                await pgClient.query(
+                    'UPDATE user_configs SET balance = $1 WHERE user_id = $2::uuid',
+                    [newBalance, userId]
+                );
+                newMessageCredit = currentCredits;
+            }
         } else {
-            await pgClient.query(
-                'INSERT INTO user_configs (user_id, email, balance) VALUES ($1::uuid, $2, $3)',
-                [userId, email, newBalance]
-            );
+            if (coupon.type === 'credit') {
+                newMessageCredit = amount;
+                newBalance = 0;
+                await pgClient.query(
+                    'INSERT INTO user_configs (user_id, email, message_credit, balance) VALUES ($1::uuid, $2, $3, $4)',
+                    [userId, email, newMessageCredit, 0]
+                );
+            } else {
+                newBalance = amount;
+                newMessageCredit = 0;
+                await pgClient.query(
+                    'INSERT INTO user_configs (user_id, email, balance, message_credit) VALUES ($1::uuid, $2, $3, $4)',
+                    [userId, email, newBalance, 0]
+                );
+            }
         }
 
+        // Log usage
         await pgClient.query(
-            'UPDATE referral_codes SET status = $1 WHERE id = $2',
-            ['inactive', coupon.id]
+            'INSERT INTO coupon_usage (user_id, coupon_id) VALUES ($1, $2)',
+            [userId, coupon.id]
         );
+
+        // Update coupon stats
+        await pgClient.query(
+            'UPDATE referral_codes SET current_usage = current_usage + 1 WHERE id = $1',
+            [coupon.id]
+        );
+
+        // If it was a single-use global coupon and limit reached, deactivate it
+        if (coupon.usage_limit > 0 && (coupon.current_usage + 1) >= coupon.usage_limit) {
+            await pgClient.query(
+                'UPDATE referral_codes SET status = $1 WHERE id = $2',
+                ['inactive', coupon.id]
+            );
+        }
 
         await pgClient.query(
             `
@@ -623,9 +669,65 @@ exports.redeemCoupon = async (req, res) => {
             [email, amount, 'coupon', 'completed', `COUPON-${code}`, 'System']
         );
 
-        res.json({ success: true, balance: newBalance });
+        res.json({ success: true, balance: newBalance, message_credit: newMessageCredit });
     } catch (error) {
         console.error('redeemCoupon error:', error);
         res.status(500).json({ error: 'Redemption failed' });
+    }
+};
+
+exports.buyCredits = async (req, res) => {
+    try {
+        const userId = req.user && req.user.id;
+        const email = req.user && req.user.email;
+        if (!userId || !email) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+
+        const { amount } = req.body;
+        
+        if (!amount || amount <= 0) {
+            return res.status(400).json({ error: 'Invalid amount' });
+        }
+
+        const pricePerCredit = 0.1;
+        const totalCost = amount * pricePerCredit;
+
+        const configResult = await pgClient.query(
+            'SELECT balance, message_credit FROM user_configs WHERE user_id = $1::uuid',
+            [userId]
+        );
+
+        if (configResult.rows.length === 0) {
+            return res.status(404).json({ error: 'User config not found' });
+        }
+
+        const userConfig = configResult.rows[0];
+        const currentBalance = Number(userConfig.balance) || 0;
+
+        if (currentBalance < totalCost) {
+            return res.status(400).json({ error: `Insufficient balance. You need ${totalCost} TK to buy ${amount} credits.` });
+        }
+
+        const newBalance = currentBalance - totalCost;
+        const newCredits = (Number(userConfig.message_credit) || 0) + amount;
+
+        await pgClient.query(
+            'UPDATE user_configs SET balance = $1, message_credit = $2 WHERE user_id = $3::uuid',
+            [newBalance, newCredits, userId]
+        );
+
+        await pgClient.query(
+            `
+            INSERT INTO payment_transactions (user_email, amount, method, status, trx_id, sender_number)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            `,
+            [email, totalCost, 'credit_purchase', 'completed', `BUY-${Date.now()}`, 'System']
+        );
+
+        res.json({ success: true, balance: newBalance, message_credit: newCredits });
+    } catch (error) {
+        console.error('buyCredits error:', error);
+        res.status(500).json({ error: 'Credit purchase failed' });
     }
 };

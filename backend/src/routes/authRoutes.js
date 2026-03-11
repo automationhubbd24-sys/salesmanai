@@ -27,5 +27,6 @@ router.post('/password/change', authMiddleware, authController.changePassword);
 router.get('/payments/me', authMiddleware, authController.getMyPayments);
 router.post('/payments/deposit', authMiddleware, authController.createDepositRequest);
 router.post('/payments/redeem', authMiddleware, authController.redeemCoupon);
+router.post('/payments/buy-credits', authMiddleware, authController.buyCredits);
 
 module.exports = router;
