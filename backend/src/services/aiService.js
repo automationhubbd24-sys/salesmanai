@@ -528,25 +528,76 @@ const functionTools = [
             }
         }
     },
-    {
-        type: 'function',
-        function: {
-            name: 'capture_order_lead',
-            description: 'কাস্টমার অর্ডার-সংক্রান্ত কোনো তথ্য দিলে অর্ডার লিড create বা update করতে হবে। সবচেয়ে জরুরি নিয়ম: ফোন নাম্বার পাওয়া মাত্র একই turn-এ tool call করতেই হবে, অন্য তথ্য না থাকলেও। সম্পূর্ণ তথ্যের জন্য অপেক্ষা করা যাবে না। partial data আগে save হবে, পরে নতুন তথ্য merge হবে। কোনো field আন্দাজ করে save করা যাবে না। এবং আগের বা পরের ( old memory ) তে Image memory থেকে তথ্য নেওয়া যাবে না',
-            parameters: {
-                type: 'object',
-                properties: {
-                    product_name: { type: 'string', description: 'Name of the product. Use EXACT name from [PRODUCT LIST SNAPSHOT].' },
-                    phone: { type: 'string', description: 'কাস্টমারের ফোন নাম্বার। এটি পাওয়া মাত্রই tool call করতে হবে। কাস্টমার বাংলায় কিংবা ইংরেজিতে নাম্বার দিতে পারে যেমন : ০১৩ / ০১৭  / ০১৯  / ০১৮ কিংবা 013  / 019  / 018 / 017 যেভাবেই দিক না কেন নিভূল ভাবে সেটা সেভ করতে হবে নিজের থেকে নাম্বার বানানো কিংবা আন্দাজ করে সেভ করা যাবে না' },
-                    address: { type: 'string', description: 'ডেলিভারির ঠিকানা নাম্বারের আগে বা পরে বা একসাথেও দিতে পারে old memory ব্যবহার করে বা আগের কথাকপোথন ব্যবহার করে তা অবশ্যই সেভ করতে হবে।' },
-                    quantity: { type: 'string', description: 'পন্যের পরিমান আগের বা পরের কথোকপথন থেকে বের করতে সেভ করতে হবে' },
-                    price: { type: 'string', description: 'মোট দাম আগের  বা পরের কথোপকথন থেকে বের করতে হবে' },
-                    customer_name: { type: 'string', description: 'Customer name' }
-                },
-                required: ['phone']
-            }
+ {
+  type: "function",
+  function: {
+    name: "create_order",
+    description: `
+    IMPORTANT ORDER CAPTURE SYSTEM
+
+    You MUST call this tool immediately whenever a phone number appears in the chat.
+
+    Rules:
+    1. If a phone number is detected → create order instantly.
+    2. If customer later provides name, address, quantity → update the same order.
+    3. Extract information from previous chat messages if available.
+    4. Always merge new data with existing order.
+    5. If two phone numbers appear → use the LAST one.
+    6. Treat phone number as the unique order ID.
+
+    Phone detection examples:
+    017XXXXXXXX
+    +88017XXXXXXXX
+    88017XXXXXXXX
+
+    Even if ONLY phone number is provided → still create order.
+
+    Example conversation:
+    Customer: 01712345678
+    → create order immediately
+
+    Customer: আমার নাম রহিম
+    → update customer_name
+
+    Customer: ঠিকানা গাজীপুর
+    → update address
+    `,
+    parameters: {
+      type: "object",
+      properties: {
+        phone: {
+          type: "string",
+          description: "Customer phone number (unique identifier)"
+        },
+        customer_name: {
+          type: "string",
+          description: "Customer name if mentioned"
+        },
+        product_name: {
+          type: "string",
+          description: "Product name from product list"
+        },
+        quantity: {
+          type: "number",
+          description: "Number of items ordered"
+        },
+        price: {
+          type: "number",
+          description: "Total order price"
+        },
+        address: {
+          type: "string",
+          description: "Delivery address"
+        },
+        note: {
+          type: "string",
+          description: "Extra instructions or notes"
         }
+      },
+      required: ["phone"]
     }
+  }
+}
 ];
 
 const normalizeText = (value) => (value || '').toString().toLowerCase().trim();
