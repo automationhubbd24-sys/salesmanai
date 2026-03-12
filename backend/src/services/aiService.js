@@ -1396,7 +1396,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
 
                 // If AI already gave us a reply_text in this first turn, RETURN IT NOW.
                 // This saves 1 full API call cost.
-                if (structured && structured.reply_text) {
+                if (structured && structured.reply_text && structured.reply_text.trim().length > 0) {
                     console.log(`[AgentLoop] Single-Call Success: Returning reply and executing tools in background.`);
                     return { 
                         reply: structured.reply_text, 
@@ -1410,6 +1410,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 }
                 
                 // If NO reply_text was provided, we MUST continue to get one (rare for good models)
+                console.log(`[AgentLoop] No reply_text in tool call. Continuing loop for assistant response...`);
                 totalTokensInLoop += (completionUsage?.total_tokens || 0);
                 continue;
             }
