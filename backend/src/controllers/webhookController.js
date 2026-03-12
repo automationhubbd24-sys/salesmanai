@@ -34,26 +34,49 @@ setInterval(refreshAllowedPages, CACHE_TTL);
 const configCache = new Map(); // Key: pageId, Value: { config, prompts, timestamp }
 const recentBotReplies = new Map(); // Key: senderId, Value: Array of { text, timestamp }
 
-// Helper to get cached page data (Fast Path)
+// Helper to get cached page data (Fast Path with Strict Validation)
 async function getCachedPageData(pageId) {
-    const now = Date.now();
-    const cached = configCache.get(pageId);
+    if (!pageId) return { config: null, prompts: null };
     
-    // Refresh cache ONLY if not exists. Persistence is manual.
-    if (!cached) {
+    const now = Date.now();
+    const cached = configCache.get(String(pageId));
+    
+    // Refresh cache ONLY if not exists or TTL expired (e.g. 10 minutes)
+    // To prevent prompt leakage, we ensure the cached data strictly belongs to the requested pageId
+    if (!cached || (now - cached.timestamp > 10 * 60 * 1000)) {
         try {
+            // console.log(`[Cache Miss] Fetching fresh data for Page: ${pageId}`);
             const [config, prompts] = await Promise.all([
                 dbService.getPageConfig(pageId),
                 dbService.getPagePrompts(pageId)
             ]);
+            
             if (config) {
-                configCache.set(pageId, { config, prompts, timestamp: now });
-                return { config, prompts };
+                // Ensure data belongs to THIS pageId before caching
+                const validatedConfig = String(config.page_id) === String(pageId) ? config : null;
+                const validatedPrompts = prompts && String(prompts.page_id) === String(pageId) ? prompts : prompts;
+
+                if (validatedConfig) {
+                    configCache.set(String(pageId), { 
+                        config: validatedConfig, 
+                        prompts: validatedPrompts, 
+                        timestamp: now 
+                    });
+                    return { config: validatedConfig, prompts: validatedPrompts };
+                }
             }
         } catch (e) {
-            console.warn(`[Cache] Failed to fetch data for ${pageId}:`, e.message);
+            console.warn(`[Cache] Critical failure for ${pageId}:`, e.message);
         }
     }
+    
+    // Extra safety check on returned cached data
+    if (cached && cached.config && String(cached.config.page_id) !== String(pageId)) {
+        console.error(`[Security Alert] Cache mismatch detected for ${pageId}! Purging invalid entry.`);
+        configCache.delete(String(pageId));
+        return { config: null, prompts: null };
+    }
+
     return cached || { config: null, prompts: null };
 }
 
