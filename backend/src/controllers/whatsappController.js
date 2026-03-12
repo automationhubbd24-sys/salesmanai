@@ -1525,7 +1525,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
     try {
         const latestLabels = await whatsappService.getLabels(sessionName, senderId);
         if (latestLabels && Array.isArray(latestLabels)) {
-            const isHardcodedStop = ['adminhandle', 'admincall', 'ordertrack'].includes(labelName);
+            const hardcodedStops = ['adminhandle', 'admincall', 'ordertrack'];
             const shouldStop = latestLabels.some(l => {
                 const name = (typeof l === 'string' ? l : l.name || '').toLowerCase();
                 return hardcodedStops.includes(name);
