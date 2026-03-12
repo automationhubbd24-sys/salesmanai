@@ -1452,37 +1452,37 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
             }
 
             // No more tool calls -> Final Answer
-            const aiText = responseMessage.content || "";
-            const tokenUsage = (completionUsage && completionUsage.total_tokens) ? completionUsage.total_tokens : estimateTokenUsage(messages, aiText, 0);
+            const aiTextFinal = responseMessage.content || "";
+            const tokenUsage = (completionUsage && completionUsage.total_tokens) ? completionUsage.total_tokens : estimateTokenUsage(messages, aiTextFinal, 0);
             
             // --- AGENTIC JSON PARSER ---
             try {
                 // More robust cleaning: find the first { and last }
-                const firstBrace = aiText.indexOf('{');
-                const lastBrace = aiText.lastIndexOf('}');
+                const firstBrace = aiTextFinal.indexOf('{');
+                const lastBrace = aiTextFinal.lastIndexOf('}');
                 
                 if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-                    const potentialJson = aiText.substring(firstBrace, lastBrace + 1);
-                    const structured = JSON.parse(potentialJson);
+                    const potentialJson = aiTextFinal.substring(firstBrace, lastBrace + 1);
+                    const structuredFinal = JSON.parse(potentialJson);
                     
-                    if (structured.reply_text) {
+                    if (structuredFinal.reply_text) {
                         return { 
-                            reply: structured.reply_text, 
-                            action: structured.action || "NONE",
-                            product_id: structured.product_id || null,
-                            image_urls: Array.isArray(structured.image_urls) ? structured.image_urls : [],
+                            reply: structuredFinal.reply_text, 
+                            action: structuredFinal.action || "NONE",
+                            product_id: structuredFinal.product_id || null,
+                            image_urls: Array.isArray(structuredFinal.image_urls) ? structuredFinal.image_urls : [],
                             token_usage: tokenUsage + totalTokensInLoop, 
                             model: model, 
                             foundProducts 
                         };
                     }
-                } else if (aiText.trim().length > 0) {
+                } else if (aiTextFinal.trim().length > 0) {
                     // LLM sent a plain text response instead of JSON. 
                     // This happens if it forgets the JSON rule or thinks a direct answer is better.
                     // We treat it as a valid reply but with action NONE.
                     console.log(`[AgentLoop] LLM sent plain text instead of JSON. Using as reply_text.`);
                     return {
-                        reply: aiText.trim(),
+                        reply: aiTextFinal.trim(),
                         action: "NONE",
                         product_id: null,
                         token_usage: tokenUsage + totalTokensInLoop,
@@ -1496,7 +1496,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
             }
 
             return { 
-                reply: aiText, 
+                reply: aiTextFinal, 
                 token_usage: tokenUsage + totalTokensInLoop, 
                 model: model, 
                 foundProducts 
