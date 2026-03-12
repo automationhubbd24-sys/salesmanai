@@ -1225,8 +1225,6 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
             let completionUsage;
 
             if (isGoogle) {
-                // --- NATIVE GEMINI PATH ---
-                // Native SDK is more reliable for newest models like Gemini 2.5
                 // --- NEW: ROBUST GEMINI MESSAGE FORMATTER ---
                 const contents = [];
                 const safeMessages = Array.isArray(messages) ? messages : [];
@@ -1280,10 +1278,6 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                             last.parts.push(...parts);
                             continue;
                         }
-                        
-                        // Gemini Constraint: 'user' role MUST follow 'function' (if any) or 'model'
-                        // If we have 'user' after 'model' that HAD function calls, we must ensure 'function' response was in between.
-                        // If missing, we merge it.
                     }
                     
                     contents.push({ role, parts });
@@ -1315,6 +1309,9 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                         parameters: t.function.parameters
                     }))
                 }] : [];
+
+                const genAI = new GoogleGenerativeAI(apiKey);
+                const geminiModel = genAI.getGenerativeModel({ model: model });
 
                 const result = await geminiModel.generateContent({
                     contents: finalContents,
@@ -1729,6 +1726,20 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         } else {
             processedHistory.push(msg);
         }
+    }
+
+    // MANDATORY RE-INJECTION: Add System Prompt and Product Snapshot to the END of history
+    // This ensures Gemini doesn't "forget" the core rules and products during long chats.
+    const mandatoryReinjection = `[REMINDER: MANDATORY RULES]
+1. IDENTITY: You are SalesmanChatbot.
+2. PRODUCTS: Use only names from the snapshot.
+3. ORDERS: Save phone/address via 'capture_order_lead'.
+4. CONTEXT: Follow the shop rules from the initial system prompt.
+
+${productContext}`;
+
+    if (mandatoryReinjection) {
+        pendingSystemNotes.push(mandatoryReinjection);
     }
 
     // --- MULTI-TENANCY SAFETY CHECK ---
