@@ -1929,7 +1929,8 @@ ${productContext || "No specific product context provided yet."}
 - image_urls: Array of image URLs to attach.
 
 [SALES WORKFLOW]
-- MANDATORY: Always include your confirmation 'reply_text' in the SAME turn you call 'capture_order_lead'. DO NOT wait for a second turn.
+- CRITICAL RULE: When you call a tool like 'capture_order_lead', you MUST ALSO provide the 'reply_text' in the SAME JSON response. This is a single-step action. DO NOT wait for a second turn.
+- EXAMPLE: If the user gives their phone number, your response MUST be a JSON object containing BOTH the tool_call for 'capture_order_lead' AND the 'reply_text' like "ধন্যবাদ, আপনার অর্ডারটি কনফার্ম করতে দ্রুতই যোগাযোগ করা হবে।".
 - If a phone number or location is provided, call 'capture_order_lead'.
 - SMART UPDATE: If the customer provides missing info (like location after number), call 'capture_order_lead' again with ALL known info. The system will automatically update the existing row.
 - NO TEMPLATES: Never include template instructions like "(জেলা, থানা...)" or "নাম: ঠিকানা:" in the 'location' or 'number' fields of 'capture_order_lead'. Only save the actual user data.

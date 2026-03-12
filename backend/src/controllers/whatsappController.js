@@ -1522,7 +1522,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
     try {
         const latestLabels = await whatsappService.getLabels(sessionName, senderId);
         if (latestLabels && Array.isArray(latestLabels)) {
-            const hardcodedStops = ['adminhandle', 'admincall', 'ordertrack'];
+            const hardcodedStops = ['adminhandle', 'admincall'];
             const shouldStop = latestLabels.some(l => {
                 const name = (typeof l === 'string' ? l : l.name || '').toLowerCase();
                 return hardcodedStops.includes(name);
@@ -2594,7 +2594,7 @@ STRICT RULES:
                 // This prevents AI from replying to its own label action in next loop if user replies fast
                 const labelActions = pageConfig.label_actions || [];
                 const actionConfig = labelActions.find(la => la.label_name.toLowerCase() === labelName);
-                const isHardcodedStop = ['adminhandle', 'admincall', 'ordertrack'].includes(labelName);
+                const isHardcodedStop = ['adminhandle', 'admincall'].includes(labelName);
                 
                 if (isHardcodedStop || (actionConfig && actionConfig.ai_action === 'stop')) {
                      console.log(`[WA] Blocking Label applied (${labelName}). Locking conversation.`);
