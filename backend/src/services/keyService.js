@@ -445,7 +445,7 @@ async function flushUsageStats() {
         updates.forEach((u, index) => {
             const baseIndex = index * 7;
             valuePlaceholders.push(
-                `($${baseIndex + 1}, $${baseIndex + 2}::bigint, $${baseIndex + 3}::bigint, $${baseIndex + 4}, $${baseIndex + 5}::timestamp, $${baseIndex + 6}, $${baseIndex + 7}::timestamp)`
+                `($${baseIndex + 1}, $${baseIndex + 2}::bigint, $${baseIndex + 3}::bigint, $${baseIndex + 4}::date, $${baseIndex + 5}::timestamp, $${baseIndex + 6}, $${baseIndex + 7}::timestamp)`
             );
             values.push(
                 u.api,
