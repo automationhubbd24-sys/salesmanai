@@ -929,11 +929,14 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         // -----------------------------------------------------------------
 
         // --- FAILURE LOCK CHECK ---
+        // User Requirement: Lead save korar poreo jeno kotha bole.
+        // Handover lock should ONLY block if it was manually set by admin or emoji, 
+        // NOT just because a lead was captured.
         const isLocked = await dbService.checkFbLockStatus(pageId, senderId);
         if (isLocked) {
             const logMsg = `[Handover Lock] AI is permanently disabled for ${senderId} on Page ${pageId}.`;
             console.log(logMsg);
-            logToFile(logMsg);
+            if (typeof logToFile === 'function') logToFile(logMsg);
             return;
         }
         // --------------------------
@@ -1790,9 +1793,9 @@ STRICT RULES:
             
             // If we also have no images, this is a SILENT event.
             if (!aiResponse.images || aiResponse.images.length === 0) {
-                 const silentMsg = `[AI Silence] No text and no images. Staying silent for Sender: ${senderId}. Last Msg: ${messageText.substring(0, 50)}...`;
+                 const silentMsg = `[AI Silence] No text and no images. Staying silent for Sender: ${senderId}.`;
                  console.log(silentMsg);
-                 logToFile(silentMsg);
+                 if (typeof logToFile === 'function') logToFile(silentMsg);
                  return; // STOP HERE. Do not send anything to FB.
             }
         }
@@ -2051,8 +2054,13 @@ STRICT RULES:
                 // Track bot reply in memory BEFORE sending to block the echo
                 trackBotReply(senderId, replyText);
                 
-                const sendResult = await facebookService.sendMessage(pageId, senderId, replyText, pageConfig.page_access_token);
-                botMessageId = sendResult?.message_id || botMessageId;
+                try {
+                    const sendResult = await facebookService.sendMessage(pageId, senderId, replyText, pageConfig.page_access_token);
+                    botMessageId = sendResult?.message_id || botMessageId;
+                } catch (sendErr) {
+                    console.error(`[FB Send Error] Failed to send message to ${senderId}:`, sendErr.message);
+                    if (typeof logToFile === 'function') logToFile(`[FB Send Error] ${sendErr.message}`);
+                }
             } else {
                 console.log(`[AI Silence] Detected "no reply". Saving to DB but skipping Facebook send.`);
             }
