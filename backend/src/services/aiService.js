@@ -1370,35 +1370,47 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
             // Add AI's response to history
             messages.push(responseMessage);
 
+            // --- OPTIMIZATION: SINGLE CALL AGENT LOGIC ---
+            // User Request: Reduce cost by avoiding 2nd API call for tool results.
+            // Strategy: If the AI provided a 'reply_text' AND tool calls in the same turn, 
+            // we execute the tools in background and return the reply IMMEDIATELY.
+            
+            const aiText = responseMessage.content || "";
+            let structured = null;
+            try {
+                const firstBrace = aiText.indexOf('{');
+                const lastBrace = aiText.lastIndexOf('}');
+                if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+                    structured = JSON.parse(aiText.substring(firstBrace, lastBrace + 1));
+                }
+            } catch (e) {}
+
             if (toolCalls && toolCalls.length > 0) {
                 console.log(`[AgentLoop] AI requested ${toolCalls.length} tool calls.`);
                 
+                // Execute tools in background (don't wait for 2nd LLM call if we have a reply)
                 for (const toolCall of toolCalls) {
                     const result = await executeTool(toolCall, pageConfig, userId, platform);
-                    
-                    // Push tool result back to context
-                    messages.push({
-                        tool_call_id: toolCall.id,
-                        role: 'tool',
-                        name: toolCall.function.name,
-                        content: JSON.stringify(result)
-                    });
+                    if (result.product) foundProducts.push(result.product);
+                }
 
-                    // Keep track of found products for finalize()
-                    if (result.product) {
-                        foundProducts.push(result.product);
-                        // Store last resolved ID in context if not already there
-                        const pid = result.product.id || result.product_id;
-                        if (pid) {
-                            messages.push({ role: 'system', content: `[CONTEXT: LAST_RESOLVED_PRODUCT_ID: "${pid}"]` });
-                        }
-                    }
+                // If AI already gave us a reply_text in this first turn, RETURN IT NOW.
+                // This saves 1 full API call cost.
+                if (structured && structured.reply_text) {
+                    console.log(`[AgentLoop] Single-Call Success: Returning reply and executing tools in background.`);
+                    return { 
+                        reply: structured.reply_text, 
+                        action: structured.action || "NONE",
+                        product_id: structured.product_id || null,
+                        image_urls: Array.isArray(structured.image_urls) ? structured.image_urls : [],
+                        token_usage: (completionUsage?.total_tokens || 0) + totalTokensInLoop, 
+                        model: model, 
+                        foundProducts 
+                    };
                 }
                 
-                // Track tokens
-                totalTokensInLoop += (completionUsage && completionUsage.total_tokens) ? completionUsage.total_tokens : estimateTokenUsage(messages, responseMessage.content, 0);
-                
-                // Continue loop to let AI process tool results
+                // If NO reply_text was provided, we MUST continue to get one (rare for good models)
+                totalTokensInLoop += (completionUsage?.total_tokens || 0);
                 continue;
             }
 
@@ -1963,6 +1975,7 @@ ${productContext || "No specific product context provided yet."}
 - image_urls: Array of image URLs to attach.
 
 [SALES WORKFLOW]
+- MANDATORY: Always include your confirmation 'reply_text' in the SAME turn you call 'capture_order_lead'. DO NOT wait for a second turn.
 - If a phone number or location is provided, call 'capture_order_lead'.
 - SMART UPDATE: If the customer provides missing info (like location after number), call 'capture_order_lead' again with ALL known info. The system will automatically update the existing row.
 - NO TEMPLATES: Never include template instructions like "(জেলা, থানা...)" or "নাম: ঠিকানা:" in the 'location' or 'number' fields of 'capture_order_lead'. Only save the actual user data.
