@@ -2008,8 +2008,9 @@ STRICT RULES:
         });
 
         const promptMode = decisionMode || detectImageMode(pagePrompts?.text_prompt);
-        // FIX: If strictly requested 'image_only', wipe out text regardless of length.
-        if (promptMode === 'image_only' && aiResponse.images.length > 0) {
+        // REFINED: If AI sends a follow-up question (>5 chars), we keep it even in 'image_only' mode.
+        // This allows AI to follow specific prompt rules like "send image AND ask grade".
+        if (promptMode === 'image_only' && aiResponse.images.length > 0 && (!replyText || replyText.length < 5)) {
             replyText = '';
         } else if (promptMode === 'image_title' && aiResponse.images.length > 0 && (!replyText || replyText.length < 5)) {
             const titles = aiResponse.images.map(img => img.title).filter(Boolean);
