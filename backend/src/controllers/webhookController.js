@@ -1785,14 +1785,14 @@ STRICT RULES:
         }
 
         // 3. Final Empty Check
-        if (!replyText || replyText.trim() === '' || replyText === 'null') {
+        if (!replyText || replyText.trim() === '' || replyText === 'null' || replyText.toLowerCase() === 'no reply') {
             replyText = ''; // Ensure it's empty string
             
             // If we also have no images, this is a SILENT event.
             if (!aiResponse.images || aiResponse.images.length === 0) {
-                 console.log(`[AI Silence] No text and no images. Staying silent.`);
-                 // We already logged the error above if it was a block. 
-                 // If it was just natural silence (function call), we do nothing.
+                 const silentMsg = `[AI Silence] No text and no images. Staying silent for Sender: ${senderId}. Last Msg: ${messageText.substring(0, 50)}...`;
+                 console.log(silentMsg);
+                 logToFile(silentMsg);
                  return; // STOP HERE. Do not send anything to FB.
             }
         }
@@ -2225,26 +2225,13 @@ STRICT RULES:
             }
 
             if (relevantProducts.length > 0) {
-                 const productDetails = relevantProducts.map(p => {
-                     const desc = p.description ? ` | Description: ${p.description.substring(0, 300)}` : '';
-                     return `${p.name}${desc}`;
-                 }).join(' || ');
-                 const summary = aiResponse.images.map(img => typeof img === 'string' ? img : img.url).join(' ; ');
-                 memoryNote = `[SYSTEM MEMORY: Sent product images for: [${productDetails}]. Images: ${summary}. The user is now looking at these products.]`;
+                 const productNames = relevantProducts.map(p => p.name).join(', ');
+                 memoryNote = `[SYSTEM MEMORY: Sent images for ${productNames}. The user is now looking at these specific products. If they haven't provided their NAME and ADDRESS, ask for them now to finalize the order.]`;
             } else {
-                 const summary = aiResponse.images
-                    .map(img => {
-                        if (typeof img === 'string') return img;
-                        const titlePart = img.title ? `${img.title}` : 'Image';
-                        const descPart = img.description ? ` (Desc: ${img.description.substring(0, 300)})` : '';
-                        return `${titlePart}${descPart} | ${img.url}`;
-                    })
-                    .join(' ; ');
-                 memoryNote = `[SYSTEM MEMORY: Sent product images in this reply: ${summary}. The user is now looking at these images.]`;
+                 memoryNote = `[SYSTEM MEMORY: Sent images to user. Continue with the sales flow and ensure you ask for their NAME and FULL ADDRESS.]`;
             }
             
             // MERGE MEMORY INTO ASSISTANT MESSAGE to preserve context flow
-            // This is better for context than a separate 'system' message which some models ignore.
             historyReplyText += `\n\n${memoryNote}`;
 
             // Save to fb_chats (for Audit/Debugging & User Requirement)
