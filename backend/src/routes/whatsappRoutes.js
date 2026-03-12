@@ -1120,4 +1120,37 @@ router.post('/toggle-lock', async (req, res) => {
     }
 });
 
+router.get('/download-conversation', authMiddleware, async (req, res) => {
+    try {
+        const sessionName = String(req.query.session_name || '').trim();
+        const senderId = String(req.query.sender_id || '').trim();
+
+        if (!sessionName || !senderId) {
+            return res.status(400).json({ error: 'session_name and sender_id are required' });
+        }
+
+        const conversationHistory = await pgClient.query(
+            `SELECT timestamp, reply_by, text, model_used FROM whatsapp_chats WHERE session_name = $1 AND sender_id = $2 ORDER BY timestamp ASC`,
+            [sessionName, senderId]
+        );
+
+        let formattedConversation = 'Conversation History:\n\n';
+        conversationHistory.rows.forEach(message => {
+            const timestamp = new Date(message.timestamp).toLocaleString();
+            const sender = message.reply_by === 'bot' ? 'Bot' : 'User';
+            formattedConversation += `[${timestamp}] ${sender}: ${message.text}\n`;
+        });
+
+        res.setHeader('Content-disposition', `attachment; filename=conversation_${senderId}.txt`);
+        res.setHeader('Content-type', 'text/plain');
+        res.charset = 'UTF-8';
+        res.write(formattedConversation);
+        res.end();
+
+    } catch (err) {
+        console.error('Error downloading conversation:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 module.exports = router;
