@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { MessageSquare, RefreshCw, AlertCircle, Calendar as CalendarIcon, Zap, Lock, Unlock } from "lucide-react";
+import { MessageSquare, RefreshCw, AlertCircle, Calendar as CalendarIcon, Zap, Lock, Unlock, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Link } from "react-router-dom";
@@ -46,6 +46,7 @@ export default function WhatsAppConversionPage() {
     model_used?: string;
   };
   const [messages, setMessages] = useState<WaChat[]>([]);
+  const [groupedMessages, setGroupedMessages] = useState<Record<string, WaChat[]>>({});
   const [loading, setLoading] = useState(false);
   const [filteredBotReplyCount, setFilteredBotReplyCount] = useState(0);
   const [allTimeBotReplies, setAllTimeBotReplies] = useState(0);
@@ -81,6 +82,38 @@ export default function WhatsAppConversionPage() {
       setLockedContacts(map);
     } catch (e) {
       console.error("Error fetching contacts:", e);
+    }
+  };
+
+  const handleDownload = async (senderId: string) => {
+    if (!activeSessionName) {
+      toast.error("No active session selected.");
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("auth_token");
+      const response = await fetch(`${BACKEND_URL}/api/whatsapp/download-conversation?session_name=${activeSessionName}&sender_id=${senderId}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `conversation_${senderId}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } else {
+        toast.error("Failed to download conversation.");
+      }
+    } catch (error) {
+      console.error("Download error:", error);
+      toast.error("An error occurred while downloading.");
     }
   };
 
@@ -165,6 +198,18 @@ export default function WhatsAppConversionPage() {
         fetchContacts(activeSessionName);
     }
   }, [activeSessionName, date]);
+
+  useEffect(() => {
+    const groups: Record<string, WaChat[]> = {};
+    messages.forEach((msg) => {
+      const senderId = msg.sender_id.split('@')[0];
+      if (!groups[senderId]) {
+        groups[senderId] = [];
+      }
+      groups[senderId].push(msg);
+    });
+    setGroupedMessages(groups);
+  }, [messages]);
 
   const fetchMessages = async (sessionName: string, from: Date, to: Date) => {
     setLoading(true);
@@ -425,7 +470,6 @@ export default function WhatsAppConversionPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Time</TableHead>
-                <TableHead>Sender ID</TableHead>
                 <TableHead>Message</TableHead>
                 <TableHead>Reply By</TableHead>
                 <TableHead>Usage (Tokens/Model)</TableHead>
@@ -443,82 +487,93 @@ export default function WhatsAppConversionPage() {
                   <TableCell colSpan={6} className="text-center">No messages found for this session</TableCell>
                 </TableRow>
               ) : (
-                messages.map((msg) => (
-                  <TableRow key={msg.id || msg.message_id}>
-                    <TableCell>{formatTimestamp(msg.timestamp)}</TableCell>
-                    <TableCell className="font-mono text-xs">{msg.sender_id}</TableCell>
-                    <TableCell
-                      className={`max-w-[300px] cursor-pointer transition-all text-primary hover:text-primary/80 hover:underline ${
-                        expandedMessageIds.has(msg.id || msg.message_id || 'unknown')
-                          ? 'whitespace-pre-wrap break-words'
-                          : 'truncate'
-                      }`}
-                      title="Click to expand"
-                      onClick={() => toggleExpand(msg.id || msg.message_id || 'unknown')}
-                    >
-                      {msg.text}
-                      {expandedMessageIds.has(msg.id || msg.message_id || 'unknown') && msg.model_used && (
-                        <div className="text-[10px] text-muted-foreground mt-1">
-                          {msg.model_used}
-                        </div>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <span
-                        className={`px-2 py-1 rounded-full text-xs border ${
-                          msg.reply_by === 'bot'
-                            ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/40'
-                            : 'bg-white/5 text-white/80 border-white/20'
-                        }`}
-                      >
-                        {msg.reply_by || 'Unknown'}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-col">
-                        <span className="font-bold">{msg.token_usage || 0}</span>
-                        <span
-                          className="text-[10px] text-muted-foreground truncate max-w-[150px]"
-                          title={msg.model_used}
+                Object.entries(groupedMessages).map(([senderId, messages]) => (
+                  <>
+                    <TableRow key={senderId} className="bg-muted/50">
+                      <TableCell colSpan={5} className="font-bold">User: {senderId}</TableCell>
+                      <TableCell className="text-right">
+                        <Button onClick={() => handleDownload(senderId)} variant="ghost" size="icon">
+                          <Download className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                    {messages.map((msg) => (
+                      <TableRow key={msg.id || msg.message_id}>
+                        <TableCell>{formatTimestamp(msg.timestamp)}</TableCell>
+                        <TableCell
+                          className={`max-w-[300px] cursor-pointer transition-all text-primary hover:text-primary/80 hover:underline ${
+                            expandedMessageIds.has(msg.id || msg.message_id || 'unknown')
+                              ? 'whitespace-pre-wrap break-words'
+                              : 'truncate'
+                          }`}
+                          title="Click to expand"
+                          onClick={() => toggleExpand(msg.id || msg.message_id || 'unknown')}
                         >
-                          {msg.model_used || '-'}
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <span
-                        className={`px-2 py-1 rounded-full text-xs border ${
-                          msg.status === 'sent'
-                            ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/40'
-                            : 'bg-yellow-500/10 text-yellow-300 border-yellow-500/40'
-                        }`}
-                      >
-                        {msg.status}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                        {(() => {
-                            const contactId = msg.reply_by === 'user' ? msg.sender_id : msg.recipient_id;
-                            if (!contactId || contactId === activeSessionName) return null;
-                            const isLocked = !!lockedContacts[contactId];
-                            
-                            return (
-                                <Button 
-                                    variant="ghost" 
-                                    size="sm" 
-                                    onClick={() => handleToggleLock(contactId)}
-                                    className="h-8 w-8 p-0"
-                                    title={isLocked ? "Unlock AI" : "Lock AI (Handover)"}
-                                >
-                                    {isLocked ? 
-                                        <Lock className="h-4 w-4 text-red-500" /> : 
-                                        <Unlock className="h-4 w-4 text-green-500" />
-                                    }
-                                </Button>
-                            );
-                        })()}
-                    </TableCell>
-                  </TableRow>
+                          {msg.text}
+                          {expandedMessageIds.has(msg.id || msg.message_id || 'unknown') && msg.model_used && (
+                            <div className="text-[10px] text-muted-foreground mt-1">
+                              {msg.model_used}
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <span
+                            className={`px-2 py-1 rounded-full text-xs border ${
+                              msg.reply_by === 'bot'
+                                ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/40'
+                                : 'bg-white/5 text-white/80 border-white/20'
+                            }`}
+                          >
+                            {msg.reply_by || 'Unknown'}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col">
+                            <span className="font-bold">{msg.token_usage || 0}</span>
+                            <span
+                              className="text-[10px] text-muted-foreground truncate max-w-[150px]"
+                              title={msg.model_used}
+                            >
+                              {msg.model_used || '-'}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <span
+                            className={`px-2 py-1 rounded-full text-xs border ${
+                              msg.status === 'sent'
+                                ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/40'
+                                : 'bg-yellow-500/10 text-yellow-300 border-yellow-500/40'
+                            }`}
+                          >
+                            {msg.status}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                            {(() => {
+                                const contactId = msg.reply_by === 'user' ? msg.sender_id : msg.recipient_id;
+                                if (!contactId || contactId === activeSessionName) return null;
+                                const isLocked = !!lockedContacts[contactId];
+                                
+                                return (
+                                    <Button 
+                                        variant="ghost" 
+                                        size="sm" 
+                                        onClick={() => handleToggleLock(contactId)}
+                                        className="h-8 w-8 p-0"
+                                        title={isLocked ? "Unlock AI" : "Lock AI (Handover)"}
+                                    >
+                                        {isLocked ? 
+                                            <Lock className="h-4 w-4 text-red-500" /> : 
+                                            <Unlock className="h-4 w-4 text-green-500" />
+                                        }
+                                    </Button>
+                                );
+                            })()}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </>
                 ))
               )}
             </TableBody>
