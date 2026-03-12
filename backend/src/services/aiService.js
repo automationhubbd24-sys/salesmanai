@@ -1396,7 +1396,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
 
                 // If AI already gave us a reply_text in this first turn, RETURN IT NOW.
                 // This saves 1 full API call cost.
-                if (structured && structured.reply_text && structured.reply_text.trim().length > 0) {
+                if (structured && structured.reply_text) {
                     console.log(`[AgentLoop] Single-Call Success: Returning reply and executing tools in background.`);
                     return { 
                         reply: structured.reply_text, 
@@ -1410,7 +1410,6 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 }
                 
                 // If NO reply_text was provided, we MUST continue to get one (rare for good models)
-                console.log(`[AgentLoop] No reply_text in tool call. Continuing loop for assistant response...`);
                 totalTokensInLoop += (completionUsage?.total_tokens || 0);
                 continue;
             }
@@ -1930,14 +1929,12 @@ ${productContext || "No specific product context provided yet."}
 - image_urls: Array of image URLs to attach.
 
 [SALES WORKFLOW]
-- PRIORITY: Always prioritize the Customer's Prompt instructions for order taking.
-- MANDATORY DATA: To successfully save an order in our database, we need the customer's NAME, PHONE NUMBER, and FULL ADDRESS (District, Thana, Area).
-- ACTION: If any of these 3 items are missing, you MUST ask for them politely before sending the "Final Confirmation Message".
-- TOOL CALL: Call 'capture_order_lead' as soon as you get a Phone Number or Address. You can call it multiple times to update info.
-- FINAL CONFIRMATION: Only send the "Order Confirmed" message once you have all the required info (Name, Number, Address).
-- REPEAT PREVENTION: Check Chat History. If you already asked for a name, don't ask again. Move to the next missing item.
-- SYSTEM MEMORY: Ignore text like '[SYSTEM MEMORY]' or 'Product Image' when identifying product names. Use names from [PRODUCT LIST SNAPSHOT].
-- RESPONSE: Always provide a 'reply_text' when calling a tool. Never return an empty response when a customer is trying to order.
+- PRIORITY: Always follow the Customer's Prompt first.
+- LEAD CAPTURE: If the Customer's Prompt doesn't specify what to ask, you MUST ensure you collect the customer's NAME, PHONE NUMBER, and FULL ADDRESS to complete the order.
+- CRITICAL: When a phone number is detected, call 'capture_order_lead' immediately.
+- MISSING INFO: If any mandatory info (Phone or Address) is missing, politely ask for it to finalize the order.
+- PRODUCT SOURCE: Use exact product names from the [PRODUCT LIST SNAPSHOT]. IGNORE any text starting with '[SYSTEM MEMORY]' or 'Product Image' when identifying product names for 'capture_order_lead'.
+- ONE-STEP ACTION: Call tools and provide 'reply_text' in the same JSON response. Do not wait for a second turn.
 
 [RESPONSE FORMAT]
 {
