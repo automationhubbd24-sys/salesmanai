@@ -1,0 +1,17 @@
+{
+  "name": "mcp-server",
+  "version": "1.0.0",
+  "description": "Unified MCP Server for Postgres, Coolify, and Hostinger",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.6.0",
+    "pg": "^8.11.3",
+    "axios": "^1.6.2",
+    "ssh2": "^1.15.0",
+    "dotenv": "^16.3.1"
+  }
+}
