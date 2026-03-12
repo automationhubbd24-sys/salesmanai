@@ -1414,43 +1414,6 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 continue;
             }
 
-            // --- MULTI-LANGUAGE INTENT DETECTION (FOR BACKEND) ---
-            // We ask the AI to summarize if the user explicitly asked for an image in this turn.
-            // This is a "hidden" check that doesn't change the AI's final response content.
-            let intentJson = { wants_photo: false };
-            try {
-                if (isGoogle) {
-                    const genAI = new GoogleGenerativeAI(apiKey);
-                    const geminiModel = genAI.getGenerativeModel({ model: model });
-                    const checkResult = await geminiModel.generateContent({
-                        contents: [
-                            { role: 'user', parts: [{ text: 'Output JSON only: {"wants_photo": true/false}. Based on the last user message, did they explicitly ask to see a photo, image, or link for a product?' }] },
-                            { role: 'model', parts: [{ text: '{"wants_photo":' }] }, // Prefill to guide
-                            { role: 'user', parts: [{ text: messages[messages.length - 2].content || "" }] }
-                        ],
-                        generationConfig: { responseMimeType: "application/json" }
-                    });
-                    intentJson = JSON.parse(checkResult.response.text() || '{"wants_photo":false}');
-                } else {
-                    const openai = new OpenAI({ apiKey: apiKey, baseURL: baseURL });
-                    const intentCheck = await openai.chat.completions.create({
-                        model: model,
-                        messages: [
-                            { role: 'system', content: 'Output JSON only: {"wants_photo": true/false}. Based on the last user message, did they explicitly ask to see a photo, image, or link for a product?' },
-                            { role: 'user', content: messages[messages.length - 2].content || "" } // The actual user message
-                        ],
-                        response_format: { type: 'json_object' }
-                    });
-                    intentJson = JSON.parse(intentCheck.choices[0].message.content || '{"wants_photo":false}');
-                }
-            } catch (e) {
-                console.warn("[AI Intent] Detection failed:", e.message);
-            }
-            
-            if (intentJson.wants_photo) {
-                messages.push({ role: 'system', content: '[INTENT_DETECTED: USER_REQUESTED_PHOTO]' });
-            }
-
             // No more tool calls -> Final Answer
             const aiTextFinal = responseMessage.content || "";
             const tokenUsage = (completionUsage && completionUsage.total_tokens) ? completionUsage.total_tokens : estimateTokenUsage(messages, aiTextFinal, 0);
@@ -1970,6 +1933,7 @@ ${productContext || "No specific product context provided yet."}
 - You are an AI Salesman for "${ownerName}".
 - Output MUST be a valid JSON object only. No plain text.
 - reply_text: Human-like response. Follow the Owner's tone and language strictly.
+- PHOTO INTENT: If the user asks for a photo/image, set "action": "SEND_PHOTO" and provide the product_id.
 - action: ["NONE", "SEND_DETAILS", "SEND_PHOTO", "SEND_BOTH"]
 - product_id: UUID of the matched product.
 - image_urls: Array of image URLs to attach.
