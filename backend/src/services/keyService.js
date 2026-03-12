@@ -445,7 +445,7 @@ async function flushUsageStats() {
         updates.forEach((u, index) => {
             const baseIndex = index * 7;
             valuePlaceholders.push(
-                `($${baseIndex + 1}, $${baseIndex + 2}, $${baseIndex + 3}, $${baseIndex + 4}, $${baseIndex + 5}, $${baseIndex + 6}, $${baseIndex + 7})`
+                `($${baseIndex + 1}, $${baseIndex + 2}::bigint, $${baseIndex + 3}::bigint, $${baseIndex + 4}, $${baseIndex + 5}::timestamp, $${baseIndex + 6}, $${baseIndex + 7}::timestamp)`
             );
             values.push(
                 u.api,
@@ -459,27 +459,26 @@ async function flushUsageStats() {
         });
 
         const queryText = `
-            INSERT INTO api_list (api, usage_today, usage_tokens_today, last_date_checked, last_used_at, status, cooldown_until)
-            VALUES ${valuePlaceholders.join(', ')}
-            ON CONFLICT (api)
-            DO UPDATE SET
+            UPDATE api_list AS a SET
                 usage_today = CASE 
-                    WHEN api_list.last_date_checked = EXCLUDED.last_date_checked THEN api_list.usage_today + EXCLUDED.usage_today 
-                    ELSE EXCLUDED.usage_today 
+                    WHEN a.last_date_checked = v.last_date_checked THEN a.usage_today + v.usage_delta 
+                    ELSE v.usage_delta 
                 END,
                 usage_tokens_today = CASE 
-                    WHEN api_list.last_date_checked = EXCLUDED.last_date_checked THEN api_list.usage_tokens_today + EXCLUDED.usage_tokens_today 
-                    ELSE EXCLUDED.usage_tokens_today 
+                    WHEN a.last_date_checked = v.last_date_checked THEN a.usage_tokens_today + v.token_delta 
+                    ELSE v.token_delta 
                 END,
-                last_date_checked = EXCLUDED.last_date_checked,
-                last_used_at = EXCLUDED.last_used_at,
-                status = COALESCE(EXCLUDED.status, api_list.status),
-                cooldown_until = COALESCE(EXCLUDED.cooldown_until, api_list.cooldown_until)
+                last_date_checked = v.last_date_checked,
+                last_used_at = v.last_used_at,
+                status = COALESCE(v.status, a.status),
+                cooldown_until = COALESCE(v.cooldown_until, a.cooldown_until)
+            FROM (VALUES ${valuePlaceholders.join(', ')}) AS v(api, usage_delta, token_delta, last_date_checked, last_used_at, status, cooldown_until)
+            WHERE a.api = v.api
         `;
 
         await pgClient.query(queryText, values);
     } catch (err) {
-        console.error(`[KeyService] Failed to flush stats`, err.message);
+        console.error(`[KeyService] Failed to flush stats:`, err.message);
     }
 }
 
