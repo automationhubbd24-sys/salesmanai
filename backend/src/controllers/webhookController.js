@@ -1766,6 +1766,30 @@ STRICT RULES:
         ];
 
         if (replyText) {
+            let trimmed = replyText.trim();
+            // IMPROVEMENT: If the reply is a JSON string, try to parse it and extract reply_text
+            // This prevents "Blocked Internal Error" for valid JSON responses from models
+            if ((trimmed.startsWith('{') && trimmed.endsWith('}'))) {
+                try {
+                    const parsed = JSON.parse(trimmed);
+                    if (parsed.reply_text) {
+                        replyText = parsed.reply_text;
+                        trimmed = replyText.trim();
+                        // Re-evaluate images/actions if they were in the JSON
+                        if (parsed.image_urls && Array.isArray(parsed.image_urls)) {
+                            if (!aiResponse.images) aiResponse.images = [];
+                            parsed.image_urls.forEach(url => {
+                                if (!aiResponse.images.some(img => (typeof img === 'string' ? img : img.url) === url)) {
+                                    aiResponse.images.push({ url: url, title: parsed.product_id || 'Product' });
+                                }
+                            });
+                        }
+                    }
+                } catch (e) {
+                    // Not valid JSON or missing reply_text, continue with normal flow
+                }
+            }
+
             for (const pattern of forbiddenPatterns) {
                 try {
                     const regex = new RegExp(pattern, 'i');
