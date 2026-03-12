@@ -2380,7 +2380,20 @@ STRICT RULES:
             finalReplyText = decision.cleaned;
         }
 
-        const promptMode = decisionMode || detectImageMode(pageConfig.page_prompts?.text_prompt);
+        // NEW SMART TAG DETECTION
+        let promptMode = decisionMode;
+        const sendModeMatch = finalReplyText && typeof finalReplyText === 'string' ? finalReplyText.match(/\[SEND_MODE:\s*(image_only|text_and_image|text_only)\]/i) : null;
+        
+        if (sendModeMatch) {
+            promptMode = sendModeMatch[1].toLowerCase();
+            // STRIP THE TAG FROM finalReplyText SO USER NEVER SEES IT
+            finalReplyText = finalReplyText.replace(/\[SEND_MODE:\s*(image_only|text_and_image|text_only)\]/i, '').trim();
+            console.log(`[WA Smart Tag] Detected Mode: ${promptMode}. Tag stripped from message.`);
+        } else {
+            promptMode = promptMode || detectImageMode(pageConfig.page_prompts?.text_prompt);
+        }
+
+        // REFINED: Strictly follow image_only if explicitly tagged or detected.
         if (promptMode === 'image_only' && Array.isArray(aiResponse.images) && aiResponse.images.length > 0) {
             finalReplyText = '';
         } else if (promptMode === 'image_title' && Array.isArray(aiResponse.images) && aiResponse.images.length > 0) {

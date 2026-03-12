@@ -2007,10 +2007,21 @@ STRICT RULES:
             return true;
         });
 
-        const promptMode = decisionMode || detectImageMode(pagePrompts?.text_prompt);
-        // REFINED: If AI sends a follow-up question (>5 chars), we keep it even in 'image_only' mode.
-        // This allows AI to follow specific prompt rules like "send image AND ask grade".
-        if (promptMode === 'image_only' && aiResponse.images.length > 0 && (!replyText || replyText.length < 5)) {
+        // NEW SMART TAG DETECTION
+        let promptMode = decisionMode;
+        const sendModeMatch = replyText ? replyText.match(/\[SEND_MODE:\s*(image_only|text_and_image|text_only)\]/i) : null;
+        
+        if (sendModeMatch) {
+            promptMode = sendModeMatch[1].toLowerCase();
+            // STRIP THE TAG FROM replyText SO USER NEVER SEES IT
+            replyText = replyText.replace(/\[SEND_MODE:\s*(image_only|text_and_image|text_only)\]/i, '').trim();
+            console.log(`[Smart Tag] Detected Mode: ${promptMode}. Tag stripped from message.`);
+        } else {
+            promptMode = promptMode || detectImageMode(pagePrompts?.text_prompt);
+        }
+
+        // REFINED: Strictly follow image_only if explicitly tagged or detected.
+        if (promptMode === 'image_only' && aiResponse.images.length > 0) {
             replyText = '';
         } else if (promptMode === 'image_title' && aiResponse.images.length > 0 && (!replyText || replyText.length < 5)) {
             const titles = aiResponse.images.map(img => img.title).filter(Boolean);
