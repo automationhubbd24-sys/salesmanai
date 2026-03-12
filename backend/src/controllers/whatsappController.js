@@ -101,12 +101,15 @@ const getHistoryText = (historyList) => {
             
             if (!content) return '';
 
+            // --- IGNORE SYSTEM MEMORY POLLUTION ---
+            if (content.includes('[SYSTEM MEMORY]')) return '';
+
             return content
-                .replace(/Image URL: https?:\/\/[^\s|]+/gi, '(Image)') 
-                .replace(/Desc: [\s\S]*?(?=\||\[End|$)/gi, '') 
-                .replace(/\[Instruction Products\]/gi, '') 
-                .replace(/\[End of Instruction Products\]/gi, '') 
-                .replace(/\[SAVE_ORDER:[\s\S]*?\]/gi, '') 
+                .replace(/Image URL: https?:\/\/[^\s|]+/gi, '(Image)')
+                .replace(/Desc: [\s\S]*?(?=\||\[End|$)/gi, '')
+                .replace(/\[Instruction Products\]/gi, '')
+                .replace(/\[End of Instruction Products\]/gi, '')
+                .replace(/\[SAVE_ORDER:[\s\S]*?\]/gi, '')
                 .replace(/##product/gi, '')
                 .trim();
         })

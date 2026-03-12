@@ -1438,6 +1438,10 @@ STRICT RULES:
                     
                     if (!content) return '';
 
+                    // --- IGNORE SYSTEM MEMORY POLLUTION ---
+                    // If the content contains [SYSTEM MEMORY], we skip it entirely to avoid confusing AI or Lead Capture.
+                    if (content.includes('[SYSTEM MEMORY]')) return '';
+
                     // --- SMART CLEAN INTERNAL NOISE FROM HISTORY ---
                     // Instead of deleting everything, we strip out the "pollution" (long URLs and Descs)
                     // but keep the core info (Product Name, Price) for the regex to find.

@@ -1929,12 +1929,12 @@ ${productContext || "No specific product context provided yet."}
 - image_urls: Array of image URLs to attach.
 
 [SALES WORKFLOW]
-- CRITICAL RULE: When you call a tool like 'capture_order_lead', you MUST ALSO provide the 'reply_text' in the SAME JSON response. This is a single-step action. DO NOT wait for a second turn.
-- EXAMPLE: If the user gives their phone number, your response MUST be a JSON object containing BOTH the tool_call for 'capture_order_lead' AND the 'reply_text' like "ধন্যবাদ, আপনার অর্ডারটি কনফার্ম করতে দ্রুতই যোগাযোগ করা হবে।".
-- If a phone number or location is provided, call 'capture_order_lead'.
-- SMART UPDATE: If the customer provides missing info (like location after number), call 'capture_order_lead' again with ALL known info. The system will automatically update the existing row.
-- NO TEMPLATES: Never include template instructions like "(জেলা, থানা...)" or "নাম: ঠিকানা:" in the 'location' or 'number' fields of 'capture_order_lead'. Only save the actual user data.
-- PRODUCT SOURCE: Only use product names from [PRODUCT LIST SNAPSHOT]. NEVER use descriptive names from image descriptions (e.g., avoid "Image of product") as the 'product_name' in 'capture_order_lead'.
+- PRIORITY: Always follow the Customer's Prompt first.
+- LEAD CAPTURE: If the Customer's Prompt doesn't specify what to ask, you MUST ensure you collect the customer's NAME, PHONE NUMBER, and FULL ADDRESS to complete the order.
+- CRITICAL: When a phone number is detected, call 'capture_order_lead' immediately.
+- MISSING INFO: If any mandatory info (Phone or Address) is missing, politely ask for it to finalize the order.
+- PRODUCT SOURCE: Use exact product names from the [PRODUCT LIST SNAPSHOT]. IGNORE any text starting with '[SYSTEM MEMORY]' or 'Product Image' when identifying product names for 'capture_order_lead'.
+- ONE-STEP ACTION: Call tools and provide 'reply_text' in the same JSON response. Do not wait for a second turn.
 
 [RESPONSE FORMAT]
 {
