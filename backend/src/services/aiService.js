@@ -1242,12 +1242,10 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                     if (m.role === 'tool') role = 'function';
                     
                     const parts = [];
-                    // Add text content if present
                     if (m.content) {
                         parts.push({ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) });
                     }
                     
-                    // Add function calls if present (OpenAI format -> Gemini format)
                     if (m.tool_calls) {
                         m.tool_calls.forEach(tc => {
                             parts.push({ 
@@ -1257,10 +1255,9 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                                 } 
                             });
                         });
-                        role = 'model'; // Messages with function calls must be 'model' role
+                        role = 'model';
                     }
                     
-                    // Add function response if present (OpenAI 'tool' role -> Gemini 'function' role)
                     if (m.role === 'tool') {
                         parts.push({ 
                             functionResponse: { 
@@ -1271,22 +1268,56 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                         role = 'function';
                     }
 
-                    // --- CONSECUTIVE ROLE & SEQUENCE FIX ---
-                    // 1. If this is the same role as the previous message, merge parts instead of creating new content
-                    if (role === lastRole && contents.length > 0) {
-                        contents[contents.length - 1].parts.push(...parts);
-                    } else {
-                        // 2. Gemini requires alternating roles (user/model/user...). 
-                        // If we have 'model' but the last one wasn't 'user', we might need an empty user turn?
-                        // Usually merging handles the system+user case.
-                        contents.push({ role, parts });
-                        lastRole = role;
+                    // --- STRICT ALTERNATING ROLE LOGIC ---
+                    if (contents.length > 0) {
+                        const lastEntry = contents[contents.length - 1];
+                        
+                        // Rule 1: Merge consecutive messages of the same role
+                        if (role === lastEntry.role) {
+                            lastEntry.parts.push(...parts);
+                            continue;
+                        }
+                        
+                        // Rule 2: Gemini sequence must be: user -> model -> function -> user -> ...
+                        // A 'function' role MUST follow a 'model' role.
+                        // If we have 'user' role but the last was 'model' (with function calls), 
+                        // we need to check if there are 'function' responses in between.
+                        // Actually, the simplest fix is to merge 'function' into 'model' or keep them alternating correctly.
+                        // Gemini's SDK expects: model (call) -> function (response) -> user (next).
                     }
+
+                    contents.push({ role, parts });
                 }
 
-                // Final check: Gemini contents MUST start with 'user' role
-                if (contents.length > 0 && contents[0].role === 'model') {
-                    contents.unshift({ role: 'user', parts: [{ text: "Continue" }] });
+                // Final Cleanup for Gemini:
+                // 1. Must start with 'user'
+                if (contents.length > 0 && contents[0].role !== 'user') {
+                    contents.unshift({ role: 'user', parts: [{ text: "Hello" }] });
+                }
+                
+                // 2. Ensure alternating roles (user/model/user/model...)
+                // Note: 'function' role is special and must follow 'model'.
+                const finalContents = [];
+                for (let i = 0; i < contents.length; i++) {
+                    const current = contents[i];
+                    if (finalContents.length > 0) {
+                        const last = finalContents[finalContents.length - 1];
+                        
+                        if (current.role === last.role) {
+                            last.parts.push(...current.parts);
+                            continue;
+                        }
+                        
+                        // If current is 'user' and last was 'model' (without a 'function' response in between), that's fine.
+                        // If current is 'model' and last was 'user', that's fine.
+                        // If current is 'function' and last was NOT 'model', that's an error -> change role or merge.
+                        if (current.role === 'function' && last.role !== 'model') {
+                            // Merge into user or change to user? Let's just merge parts into last.
+                            last.parts.push(...current.parts);
+                            continue;
+                        }
+                    }
+                    finalContents.push(current);
                 }
 
                 // Gemini tools format
@@ -1299,7 +1330,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 }] : [];
 
                 const result = await geminiModel.generateContent({
-                    contents: contents,
+                    contents: finalContents,
                     tools: geminiTools,
                     generationConfig: { temperature: temperature }
                 });

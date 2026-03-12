@@ -1911,21 +1911,6 @@ async function saveOrderTracking(orderData) {
             `INSERT INTO fb_order_tracking
                 (page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, created_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-             ON CONFLICT (page_id, sender_id) 
-             DO UPDATE SET
-                product_name = CASE 
-                    WHEN EXCLUDED.product_name IS NOT NULL AND EXCLUDED.product_name <> 'Recovered Lead' AND EXCLUDED.product_name <> 'Pending' THEN EXCLUDED.product_name 
-                    ELSE fb_order_tracking.product_name 
-                END,
-                number = COALESCE(NULLIF(EXCLUDED.number, 'Pending'), fb_order_tracking.number),
-                location = CASE 
-                    WHEN EXCLUDED.location IS NOT NULL AND EXCLUDED.location <> 'Pending' AND EXCLUDED.location <> 'N/A' THEN EXCLUDED.location 
-                    ELSE fb_order_tracking.location 
-                END,
-                product_quantity = COALESCE(NULLIF(EXCLUDED.product_quantity, '1'), fb_order_tracking.product_quantity),
-                price = COALESCE(NULLIF(EXCLUDED.price, '0'), fb_order_tracking.price),
-                sender_number = COALESCE(NULLIF(EXCLUDED.sender_number, 'Pending'), fb_order_tracking.sender_number),
-                created_at = NOW()
              RETURNING *`,
             [
                 page_id,
@@ -1970,14 +1955,6 @@ async function ensureFbOrderTrackingTable() {
             sender_number TEXT,
             created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         );
-        
-        -- Explicitly add unique constraint if it doesn't exist
-        DO $$ 
-        BEGIN 
-            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fb_order_tracking_page_sender_key') THEN
-                ALTER TABLE fb_order_tracking ADD CONSTRAINT fb_order_tracking_page_sender_key UNIQUE (page_id, sender_id);
-            END IF;
-        END $$;
     `);
 }
 
