@@ -1676,6 +1676,50 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     // --- 3. ACQUIRE AI SLOT (Only for actual LLM calls) ---
     await acquireAiSlot();
 
+    // --- PRODUCT SNAPSHOT INJECTION (Prompt-Only Mode) ---
+    let productContext = "";
+    let foundProducts = [];
+
+    if (pageConfig.user_id && cleanUserMessage) {
+        try {
+            const normalizeUrl = (url) => {
+                if (!url || url === 'N/A') return 'N/A';
+                if (url.startsWith('http')) return url;
+                const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
+                const cleanPath = url.startsWith('/') ? url : `/${url}`;
+                return `${baseUrl}${cleanPath}`;
+            };
+
+            const candidates = await dbService.searchProducts(pageConfig.user_id, cleanUserMessage, pageConfig.page_id);
+            if (candidates && candidates.length > 0) {
+                const topCandidates = candidates.slice(0, 5);
+                productContext = "[PRODUCT LIST SNAPSHOT - FROM PRODUCT ENTRY]\n";
+                topCandidates.forEach((p, idx) => {
+                    const priceValue = p.price ? `${p.price} ${p.currency || ''}`.trim() : 'Ask for Price';
+                    const comboNote = p.is_combo ? " [COMBO PACKAGE - Contains multiple items]" : "";
+                    productContext += `${idx + 1}) ${p.name}${comboNote}\n`;
+                    productContext += `   ID: ${p.id}\n`;
+                    productContext += `   Price: ${priceValue}\n`;
+                    // Check 'allow_description' switch (default true for safety)
+                    if (p.allow_description !== false && p.description) {
+                        productContext += `   Description: ${p.description}\n`;
+                        if (p.is_combo) {
+                            productContext += `   Note: This is a combo. Check the description for individual item details or partial pricing if the user asks.\n`;
+                        }
+                    }
+                    if (p.image_url) productContext += `   Image: ${normalizeUrl(p.image_url)}\n`;
+                    if (Array.isArray(p.additional_images) && p.additional_images.length > 0) {
+                        productContext += `   More Images: ${p.additional_images.map(normalizeUrl).join(', ')}\n`;
+                    }
+                });
+                productContext += "\n";
+                console.log(`[AI] Injected ${topCandidates.length} product snapshot items for query.`);
+            }
+        } catch (err) {
+            console.warn("[AI] Product snapshot injection failed:", err.message);
+        }
+    }
+
     // --- SMART HISTORY PROCESSOR ---
     // User Requirement: "system memory ta read korte partese na"
     // Solution: Many providers (Gemini) ignore 'system' roles in middle of history.
@@ -1687,6 +1731,16 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     if (lastProductContext) {
         pendingSystemNotes.push(lastProductContext);
     }
+
+    // MANDATORY RE-INJECTION: Add System Prompt and Product Snapshot to the END of history
+    // This ensures Gemini doesn't "forget" the core rules and products during long chats.
+    const mandatoryReinjection = `[REMINDER: MANDATORY RULES]
+1. IDENTITY: You are SalesmanChatbot.
+2. PRODUCTS: Use only names from the snapshot.
+3. ORDERS: Save phone/address via 'capture_order_lead'.
+4. CONTEXT: Follow the shop rules from the initial system prompt.
+
+${productContext}`;
 
     for (const msg of (history || [])) {
         if (msg.role === 'system') {
@@ -1703,19 +1757,32 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         }
     }
 
-    // MANDATORY RE-INJECTION: Add System Prompt and Product Snapshot to the END of history
-    // This ensures Gemini doesn't "forget" the core rules and products during long chats.
-    const mandatoryReinjection = `[REMINDER: MANDATORY RULES]
-1. IDENTITY: You are SalesmanChatbot.
-2. PRODUCTS: Use only names from the snapshot.
-3. ORDERS: Save phone/address via 'capture_order_lead'.
-4. CONTEXT: Follow the shop rules from the initial system prompt.
-
-${productContext}`;
-
     if (mandatoryReinjection) {
         pendingSystemNotes.push(mandatoryReinjection);
     }
+
+    // 1. Prepare Configuration
+    // User Request: "vaii tumi defult keno add dicco ? ami fronted e save kore dibo best model ta amr motabek kono engine e nijer teke defult e work korbe na"
+    // Solution: REMOVE ALL FALLBACKS.
+    // If frontend config is missing, THROW ERROR.
+
+    const userProvider = pageConfig.ai || pageConfig.operator || pageConfig.ai_provider; 
+    let userModel = (pageConfig.chat_model && pageConfig.chat_model !== 'default') ? pageConfig.chat_model.trim() : null;
+
+    if (!userProvider) {
+         console.error("[AI] Fatal: No AI Provider selected in pageConfig.");
+         throw new Error("AI Provider not configured. Please select a provider in settings.");
+    }
+
+    if (!userModel) {
+         console.error("[AI] Fatal: No Chat Model selected in pageConfig.");
+         throw new Error("Chat Model not configured. Please select a model in settings.");
+    }
+
+    let defaultProvider = userProvider;
+    let defaultModel = userModel;
+
+    console.log(`[AI] Engine Config (Strict): Provider=${defaultProvider}, Model=${defaultModel}`);
 
     // --- MULTI-TENANCY SAFETY CHECK ---
     const pageId = pageConfig.page_id;
@@ -1800,83 +1867,6 @@ ${productContext}`;
         console.log(`[AI] Added media context to user message. Total Tokens so far: ${totalTokenUsage}`);
     }
 
-    // --- PRODUCT SNAPSHOT INJECTION (Prompt-Only Mode) ---
-    let productContext = "";
-    let foundProducts = [];
-
-    if (pageConfig.user_id && cleanUserMessage) {
-        try {
-            const normalizeUrl = (url) => {
-                if (!url || url === 'N/A') return 'N/A';
-                if (url.startsWith('http')) return url;
-                const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
-                const cleanPath = url.startsWith('/') ? url : `/${url}`;
-                return `${baseUrl}${cleanPath}`;
-            };
-
-            const candidates = await dbService.searchProducts(pageConfig.user_id, cleanUserMessage, pageConfig.page_id);
-            if (candidates && candidates.length > 0) {
-                const topCandidates = candidates.slice(0, 5);
-                productContext = "[PRODUCT LIST SNAPSHOT - FROM PRODUCT ENTRY]\n";
-                topCandidates.forEach((p, idx) => {
-                    const priceValue = p.price ? `${p.price} ${p.currency || ''}`.trim() : 'Ask for Price';
-                    const comboNote = p.is_combo ? " [COMBO PACKAGE - Contains multiple items]" : "";
-                    productContext += `${idx + 1}) ${p.name}${comboNote}\n`;
-                    productContext += `   ID: ${p.id}\n`;
-                    productContext += `   Price: ${priceValue}\n`;
-                    // Check 'allow_description' switch (default true for safety)
-                    if (p.allow_description !== false && p.description) {
-                        productContext += `   Description: ${p.description}\n`;
-                        if (p.is_combo) {
-                            productContext += `   Note: This is a combo. Check the description for individual item details or partial pricing if the user asks.\n`;
-                        }
-                    }
-                    if (p.image_url) productContext += `   Image: ${normalizeUrl(p.image_url)}\n`;
-                    if (Array.isArray(p.additional_images) && p.additional_images.length > 0) {
-                        productContext += `   More Images: ${p.additional_images.map(normalizeUrl).join(', ')}\n`;
-                    }
-                });
-                productContext += "\n";
-                console.log(`[AI] Injected ${topCandidates.length} product snapshot items for query.`);
-            }
-        } catch (err) {
-            console.warn("[AI] Product snapshot injection failed:", err.message);
-        }
-    }
-    // ----------------------------------------------------
-
-    // 1. Prepare Configuration
-    // User Request: "vaii tumi defult keno add dicco ? ami fronted e save kore dibo best model ta amr motabek kono engine e nijer teke defult e work korbe na"
-    // Solution: REMOVE ALL FALLBACKS.
-    // If frontend config is missing, THROW ERROR.
-
-    const userProvider = pageConfig.ai || pageConfig.operator || pageConfig.ai_provider; 
-    let userModel = (pageConfig.chat_model && pageConfig.chat_model !== 'default') ? pageConfig.chat_model.trim() : null;
-
-    if (!userProvider) {
-         console.error("[AI] Fatal: No AI Provider selected in pageConfig.");
-         throw new Error("AI Provider not configured. Please select a provider in settings.");
-    }
-
-    if (!userModel) {
-         console.error("[AI] Fatal: No Chat Model selected in pageConfig.");
-         throw new Error("Chat Model not configured. Please select a model in settings.");
-    }
-
-    let defaultProvider = userProvider;
-    let defaultModel = userModel;
-
-    console.log(`[AI] Engine Config (Strict): Provider=${defaultProvider}, Model=${defaultModel}`);
-
-    // --- MODEL NAME NORMALIZATION & ALIASES ---
-    // User Request: REMOVED ALL HARDCODED MAPPINGS.
-    // Use exactly what is provided by the configuration.
-    
-    // --- DYNAMIC BEST MODEL LOGIC REMOVED ---
-    // User Request: "salesmanchatbot flash and lite eo same" (No fallbacks)
-    
-    // -------------------------------------------------
-    
     // --- MEDIA HANDLING COMPLETED ABOVE ---
     // (Consolidated into Pre-process Media step to ensure correct token tracking)
     // ----------------------------------------
