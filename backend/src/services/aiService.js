@@ -1227,26 +1227,23 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
             if (isGoogle) {
                 // --- NATIVE GEMINI PATH ---
                 // Native SDK is more reliable for newest models like Gemini 2.5
-                const genAI = new GoogleGenerativeAI(apiKey);
-                const geminiModel = genAI.getGenerativeModel({ model: model });
-
-                // Convert messages to Gemini format
-                // FIX: Ensure messages is an array and roles are valid/alternating
-                const safeMessages = Array.isArray(messages) ? messages : [];
+                // --- NEW: ROBUST GEMINI MESSAGE FORMATTER ---
                 const contents = [];
-                let lastRole = null;
+                const safeMessages = Array.isArray(messages) ? messages : [];
 
-                for (const m of safeMessages) {
+                for (let i = 0; i < safeMessages.length; i++) {
+                    const m = safeMessages[i];
                     let role = m.role === 'assistant' ? 'model' : 'user';
                     if (m.role === 'system') role = 'user';
-                    if (m.role === 'tool') role = 'function';
                     
                     const parts = [];
                     if (m.content) {
                         parts.push({ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) });
                     }
-                    
+
+                    // Handle Tool Calls (OpenAI format -> Gemini format)
                     if (m.tool_calls) {
+                        role = 'model';
                         m.tool_calls.forEach(tc => {
                             parts.push({ 
                                 functionCall: { 
@@ -1255,69 +1252,59 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                                 } 
                             });
                         });
-                        role = 'model';
                     }
-                    
+
+                    // Handle Tool Responses (OpenAI 'tool' role -> Gemini 'function' role)
                     if (m.role === 'tool') {
+                        role = 'function';
                         parts.push({ 
                             functionResponse: { 
                                 name: m.name, 
                                 response: JSON.parse(m.content || '{}') 
                             } 
                         });
-                        role = 'function';
                     }
 
-                    // --- STRICT ALTERNATING ROLE LOGIC ---
+                    // --- MERGE LOGIC ---
                     if (contents.length > 0) {
-                        const lastEntry = contents[contents.length - 1];
+                        const last = contents[contents.length - 1];
                         
-                        // Rule 1: Merge consecutive messages of the same role
-                        if (role === lastEntry.role) {
-                            lastEntry.parts.push(...parts);
+                        // Merge consecutive same-role messages
+                        if (role === last.role) {
+                            last.parts.push(...parts);
+                            continue;
+                        }
+
+                        // Gemini Constraint: 'function' role MUST follow a 'model' role (with functionCall)
+                        if (role === 'function' && last.role !== 'model') {
+                            last.parts.push(...parts);
                             continue;
                         }
                         
-                        // Rule 2: Gemini sequence must be: user -> model -> function -> user -> ...
-                        // A 'function' role MUST follow a 'model' role.
-                        // If we have 'user' role but the last was 'model' (with function calls), 
-                        // we need to check if there are 'function' responses in between.
-                        // Actually, the simplest fix is to merge 'function' into 'model' or keep them alternating correctly.
-                        // Gemini's SDK expects: model (call) -> function (response) -> user (next).
+                        // Gemini Constraint: 'user' role MUST follow 'function' (if any) or 'model'
+                        // If we have 'user' after 'model' that HAD function calls, we must ensure 'function' response was in between.
+                        // If missing, we merge it.
                     }
-
+                    
                     contents.push({ role, parts });
                 }
 
-                // Final Cleanup for Gemini:
-                // 1. Must start with 'user'
-                if (contents.length > 0 && contents[0].role !== 'user') {
-                    contents.unshift({ role: 'user', parts: [{ text: "Hello" }] });
-                }
-                
-                // 2. Ensure alternating roles (user/model/user/model...)
-                // Note: 'function' role is special and must follow 'model'.
+                // Final Pass: Ensure alternating user/model
                 const finalContents = [];
-                for (let i = 0; i < contents.length; i++) {
-                    const current = contents[i];
+                for (const content of contents) {
                     if (finalContents.length > 0) {
                         const last = finalContents[finalContents.length - 1];
-                        
-                        if (current.role === last.role) {
-                            last.parts.push(...current.parts);
-                            continue;
-                        }
-                        
-                        // If current is 'user' and last was 'model' (without a 'function' response in between), that's fine.
-                        // If current is 'model' and last was 'user', that's fine.
-                        // If current is 'function' and last was NOT 'model', that's an error -> change role or merge.
-                        if (current.role === 'function' && last.role !== 'model') {
-                            // Merge into user or change to user? Let's just merge parts into last.
-                            last.parts.push(...current.parts);
+                        if (content.role === last.role) {
+                            last.parts.push(...content.parts);
                             continue;
                         }
                     }
-                    finalContents.push(current);
+                    finalContents.push(content);
+                }
+
+                // Ensure it starts with 'user'
+                if (finalContents.length > 0 && finalContents[0].role !== 'user') {
+                    finalContents.unshift({ role: 'user', parts: [{ text: "Hello" }] });
                 }
 
                 // Gemini tools format
