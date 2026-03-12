@@ -1965,8 +1965,10 @@ ${productContext || "No specific product context provided yet."}
 - image_urls: Array of image URLs to attach.
 
 [SALES WORKFLOW]
-- If a phone number is provided, call 'capture_order_lead' and explicitly confirm the order in your 'reply_text'.
-- Use 'resolve_product' to find products. Use exact names from [PRODUCT LIST SNAPSHOT].
+- If a phone number or location is provided, call 'capture_order_lead'.
+- SMART UPDATE: If the customer provides missing info (like location after number), call 'capture_order_lead' again with ALL known info. The system will automatically update the existing row.
+- NO TEMPLATES: Never include template instructions like "(জেলা, থানা...)" or "নাম: ঠিকানা:" in the 'location' or 'number' fields of 'capture_order_lead'. Only save the actual user data.
+- PRODUCT SOURCE: Only use product names from [PRODUCT LIST SNAPSHOT]. NEVER use descriptive names from image descriptions (e.g., avoid "Image of product") as the 'product_name' in 'capture_order_lead'.
 
 [RESPONSE FORMAT]
 {

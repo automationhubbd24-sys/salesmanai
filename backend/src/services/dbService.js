@@ -1889,53 +1889,77 @@ async function updateContactPhone(pageId, senderId, phone) {
 async function saveOrderTracking(orderData) {
     let { page_id, sender_id, product_name, number, location, product_quantity, price, sender_number } = orderData;
     
-    // Robust Product Name Cleaning
+    // --- 1. SMART DATA CLEANING (Filter out templates like "নাম: ঠিকানা:") ---
+    const cleanValue = (val) => {
+        if (!val || typeof val !== 'string') return val;
+        // Remove common prompt templates like (জেলা, থানা...) or নাম: ঠিকানা:
+        let cleaned = val
+            .replace(/\(.*?\)/g, '') // Remove everything in brackets
+            .replace(/(নাম|ঠিকানা|ফোন|মোবাইল|নাম্বার|জেলা|থানা|উপজেলা|বাজার|এলাকা|ফুল ঠিকানা|পূর্ণাঙ্গ ঠিকানা)\s*[:：-]\s*/gi, '')
+            .replace(/\|/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+        return cleaned || val; // Fallback to original if cleaning results in empty
+    };
+
     if (product_name) {
-        if (product_name.includes('|')) {
-            product_name = product_name.split('|')[0].trim();
-        }
-        product_name = product_name
+        product_name = cleanValue(product_name)
             .replace(/Item \d+:/gi, '')
             .replace(/##product/gi, '')
             .replace(/"/g, '')
-            .replace(/\[.*?\]/g, '')
             .trim();
-        
-        if (!product_name) product_name = 'Recovered Lead';
+        if (!product_name || product_name.toLowerCase() === 'pending') product_name = 'Recovered Lead';
     }
+    
+    location = cleanValue(location);
+    number = cleanValue(number);
+    sender_number = cleanValue(sender_number);
 
-    console.log(`[Order] Attempting to save/update order for ${sender_id}...`);
+    console.log(`[Order] Smart Update/Save for ${sender_id}...`);
 
-    const run = async () => {
+    try {
+        // --- 2. SMART AGENT DECISION (Merge into existing incomplete order) ---
+        // Look for a recent order (last 2 hours) from this sender that is "Incomplete"
+        // An order is incomplete if location or number is 'Pending' or empty
+        const recentOrder = await query(
+            `SELECT id FROM fb_order_tracking 
+             WHERE page_id = $1 AND sender_id = $2 
+             AND created_at > NOW() - INTERVAL '2 hours'
+             ORDER BY created_at DESC LIMIT 1`,
+            [page_id, sender_id]
+        );
+
+        if (recentOrder.rows.length > 0) {
+            const orderId = recentOrder.rows[0].id;
+            console.log(`[Order] Found recent order (${orderId}). Updating existing row...`);
+            
+            await query(
+                `UPDATE fb_order_tracking SET
+                    product_name = CASE WHEN $1 <> 'Pending' AND $1 <> 'Recovered Lead' THEN $1 ELSE product_name END,
+                    number = CASE WHEN $2 <> 'Pending' THEN $2 ELSE number END,
+                    location = CASE WHEN $3 <> 'Pending' THEN $3 ELSE location END,
+                    product_quantity = CASE WHEN $4 <> '1' THEN $4 ELSE product_quantity END,
+                    price = CASE WHEN $5 <> '0' THEN $5 ELSE price END,
+                    sender_number = CASE WHEN $6 <> 'Pending' THEN $6 ELSE sender_number END,
+                    created_at = NOW()
+                 WHERE id = $7`,
+                [product_name, number, location, product_quantity, price, sender_number, orderId]
+            );
+            return { id: orderId, status: 'updated' };
+        }
+
+        // --- 3. NEW ORDER (If no recent order or it's a fresh intent) ---
         const result = await query(
             `INSERT INTO fb_order_tracking
                 (page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, created_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
              RETURNING *`,
-            [
-                page_id,
-                sender_id,
-                product_name,
-                number,
-                location,
-                product_quantity,
-                price,
-                sender_number
-            ]
+            [page_id, sender_id, product_name, number, location, product_quantity, price, sender_number]
         );
         return result.rows[0];
-    };
 
-    try {
-        return await run();
     } catch (error) {
-        if (error.message.includes('no unique or exclusion constraint') || error.code === '42P01') {
-            console.log("[DB] fb_order_tracking table or constraint missing. Ensuring...");
-            await ensureFbOrderTrackingTable();
-            return await run();
-        } else {
-            console.error("[Order] Failed to save/update order:", error.message);
-        }
+        console.error("[Order] Smart Save Error:", error.message);
         return null;
     }
 }
