@@ -1123,25 +1123,32 @@ router.post('/toggle-lock', async (req, res) => {
 router.get('/download-conversation', authMiddleware, async (req, res) => {
     try {
         const sessionName = String(req.query.session_name || '').trim();
-        const senderId = String(req.query.sender_id || '').trim();
+        const from = req.query.from ? new Date(req.query.from) : null;
+        const to = req.query.to ? new Date(req.query.to) : null;
 
-        if (!sessionName || !senderId) {
-            return res.status(400).json({ error: 'session_name and sender_id are required' });
+        if (!sessionName || !from || !to) {
+            return res.status(400).json({ error: 'session_name, from, and to are required' });
         }
 
         const conversationHistory = await pgClient.query(
-            `SELECT timestamp, reply_by, text, model_used FROM whatsapp_chats WHERE session_name = $1 AND sender_id = $2 ORDER BY timestamp ASC`,
-            [sessionName, senderId]
+            `SELECT timestamp, reply_by, text, sender_id FROM whatsapp_chats WHERE session_name = $1 AND timestamp >= $2 AND timestamp <= $3 ORDER BY sender_id, timestamp ASC`,
+            [sessionName, from, to]
         );
 
         let formattedConversation = 'Conversation History:\n\n';
+        let currentSenderId = null;
+
         conversationHistory.rows.forEach(message => {
+            if (message.sender_id !== currentSenderId) {
+                currentSenderId = message.sender_id;
+                formattedConversation += `\n--- User: ${currentSenderId} ---\n\n`;
+            }
             const timestamp = new Date(message.timestamp).toLocaleString();
             const sender = message.reply_by === 'bot' ? 'Bot' : 'User';
             formattedConversation += `[${timestamp}] ${sender}: ${message.text}\n`;
         });
 
-        res.setHeader('Content-disposition', `attachment; filename=conversation_${senderId}.txt`);
+        res.setHeader('Content-disposition', `attachment; filename=conversation_${sessionName}.txt`);
         res.setHeader('Content-type', 'text/plain');
         res.charset = 'UTF-8';
         res.write(formattedConversation);

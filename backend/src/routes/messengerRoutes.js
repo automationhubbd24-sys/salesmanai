@@ -832,25 +832,32 @@ router.get('/stats', authMiddleware, async (req, res) => {
 router.get('/download-conversation', authMiddleware, async (req, res) => {
     try {
         const pageId = String(req.query.page_id || '').trim();
-        const senderId = String(req.query.sender_id || '').trim();
+        const from = req.query.from ? new Date(req.query.from) : null;
+        const to = req.query.to ? new Date(req.query.to) : null;
 
-        if (!pageId || !senderId) {
-            return res.status(400).json({ error: 'page_id and sender_id are required' });
+        if (!pageId || !from || !to) {
+            return res.status(400).json({ error: 'page_id, from, and to are required' });
         }
 
         const conversationHistory = await pgClient.query(
-            `SELECT created_at, reply_by, text, ai_model FROM fb_chats WHERE page_id = $1 AND sender_id = $2 ORDER BY created_at ASC`,
-            [pageId, senderId]
+            `SELECT created_at, reply_by, text, sender_id FROM fb_chats WHERE page_id = $1 AND created_at >= $2 AND created_at <= $3 ORDER BY sender_id, created_at ASC`,
+            [pageId, from, to]
         );
 
         let formattedConversation = 'Conversation History:\n\n';
+        let currentSenderId = null;
+
         conversationHistory.rows.forEach(message => {
+            if (message.sender_id !== currentSenderId) {
+                currentSenderId = message.sender_id;
+                formattedConversation += `\n--- User: ${currentSenderId} ---\n\n`;
+            }
             const timestamp = new Date(message.created_at).toLocaleString();
             const sender = message.reply_by === 'bot' ? 'Bot' : 'User';
             formattedConversation += `[${timestamp}] ${sender}: ${message.text}\n`;
         });
 
-        res.setHeader('Content-disposition', `attachment; filename=conversation_${senderId}.txt`);
+        res.setHeader('Content-disposition', `attachment; filename=conversation_${pageId}.txt`);
         res.setHeader('Content-type', 'text/plain');
         res.charset = 'UTF-8';
         res.write(formattedConversation);

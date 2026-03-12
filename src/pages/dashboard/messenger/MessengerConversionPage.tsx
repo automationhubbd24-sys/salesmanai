@@ -183,15 +183,20 @@ export default function MessengerConversionPage() {
     }
   };
 
-  const handleDownload = async (senderId: string) => {
-    if (!activePageId) {
-      toast.error("No active page selected.");
+  const handleDownload = async () => {
+    if (!activePageId || !date?.from || !date?.to) {
+      toast.error("Please select a page and a date range.");
       return;
     }
 
     try {
       const token = localStorage.getItem("auth_token");
-      const response = await fetch(`${BACKEND_URL}/api/messenger/download-conversation?page_id=${activePageId}&sender_id=${senderId}`, {
+      const params = new URLSearchParams();
+      params.set("page_id", activePageId);
+      params.set("from", date.from.toISOString());
+      params.set("to", date.to.toISOString());
+
+      const response = await fetch(`${BACKEND_URL}/api/messenger/download-conversation?${params.toString()}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -202,7 +207,7 @@ export default function MessengerConversionPage() {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `conversation_${senderId}.txt`;
+        a.download = `conversation_${activePageId}_${format(date.from, "yyyy-MM-dd")}_to_${format(date.to, "yyyy-MM-dd")}.txt`;
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -309,6 +314,9 @@ export default function MessengerConversionPage() {
                 <Button onClick={handleRefresh} disabled={loading} variant="outline" size="icon">
                     <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
                 </Button>
+                <Button onClick={handleDownload} disabled={loading} variant="outline" size="icon">
+                    <Download className="h-4 w-4" />
+                </Button>
             </div>
         </div>
       </div>
@@ -387,13 +395,11 @@ export default function MessengerConversionPage() {
       </div>
 
       <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10 shadow-[0_18px_40px_rgba(0,0,0,0.35)]">
-        <CardHeader className="flex flex-row items-center justify-between">
-          <div>
-            <CardTitle>Message History</CardTitle>
-            <CardDescription>
-              Recent messages from users and bot replies.
-            </CardDescription>
-          </div>
+        <CardHeader>
+          <CardTitle>Message History</CardTitle>
+          <CardDescription>
+            Recent messages from users and bot replies.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
@@ -417,60 +423,48 @@ export default function MessengerConversionPage() {
                   <TableCell colSpan={6} className="text-center">No messages found for this page</TableCell>
                 </TableRow>
               ) : (
-                Object.entries(groupedMessages).map(([senderId, messages]) => (
-                  <>
-                    <TableRow key={senderId} className="bg-muted/50">
-                      <TableCell colSpan={5} className="font-bold">User: {senderId}</TableCell>
-                      <TableCell className="text-right">
-                        <Button onClick={() => handleDownload(senderId)} variant="ghost" size="icon">
-                          <Download className="h-4 w-4" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                    {messages.map((msg) => (
-                      <TableRow key={msg.id}>
-                        <TableCell>{new Date(msg.created_at).toLocaleString()}</TableCell>
-                        <TableCell className="max-w-[300px] truncate" title={msg.text}>{msg.text}</TableCell>
-                        <TableCell>
-                          <span
-                            className={`px-2 py-1 rounded-full text-xs border ${
-                              msg.reply_by === 'bot'
-                                ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/40'
-                                : 'bg-white/5 text-white/80 border-white/20'
-                            }`}
-                          >
-                            {msg.reply_by || 'Unknown'}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          {msg.token ? (
-                            <div className="flex flex-col">
-                              <span className="font-bold">{msg.token}</span>
-                              {msg.ai_model && (
-                                <span className="text-[10px] text-muted-foreground">
-                                  {msg.ai_model}
-                                </span>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="text-muted-foreground">-</span>
+                messages.map((msg) => (
+                  <TableRow key={msg.id}>
+                    <TableCell>{new Date(msg.created_at).toLocaleString()}</TableCell>
+                    <TableCell className="font-mono text-xs">{msg.sender_id}</TableCell>
+                    <TableCell className="max-w-[300px] truncate" title={msg.text}>{msg.text}</TableCell>
+                    <TableCell>
+                      <span
+                        className={`px-2 py-1 rounded-full text-xs border ${
+                          msg.reply_by === 'bot'
+                            ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/40'
+                            : 'bg-white/5 text-white/80 border-white/20'
+                        }`}
+                      >
+                        {msg.reply_by || 'Unknown'}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      {msg.token ? (
+                        <div className="flex flex-col">
+                          <span className="font-bold">{msg.token}</span>
+                          {msg.ai_model && (
+                            <span className="text-[10px] text-muted-foreground">
+                              {msg.ai_model}
+                            </span>
                           )}
-                        </TableCell>
-                        <TableCell>
-                          <span
-                            className={`px-2 py-1 rounded-full text-xs border ${
-                              msg.status === 'sent'
-                                ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/40'
-                                : 'bg-yellow-500/10 text-yellow-300 border-yellow-500/40'
-                            }`}
-                          >
-                            {msg.status}
-                          </span>
-                        </TableCell>
-                        <TableCell></TableCell> {/* Empty cell for the actions column */}
-                      </TableRow>
-                    ))}
-                  </>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <span
+                        className={`px-2 py-1 rounded-full text-xs border ${
+                          msg.status === 'sent'
+                            ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/40'
+                            : 'bg-yellow-500/10 text-yellow-300 border-yellow-500/40'
+                        }`}
+                      >
+                        {msg.status}
+                      </span>
+                    </TableCell>
+                  </TableRow>
                 ))
               )}
             </TableBody>

@@ -85,15 +85,20 @@ export default function WhatsAppConversionPage() {
     }
   };
 
-  const handleDownload = async (senderId: string) => {
-    if (!activeSessionName) {
-      toast.error("No active session selected.");
+  const handleDownload = async () => {
+    if (!activeSessionName || !date?.from || !date?.to) {
+      toast.error("Please select a session and a date range.");
       return;
     }
 
     try {
       const token = localStorage.getItem("auth_token");
-      const response = await fetch(`${BACKEND_URL}/api/whatsapp/download-conversation?session_name=${activeSessionName}&sender_id=${senderId}`, {
+      const params = new URLSearchParams();
+      params.set("session_name", activeSessionName);
+      params.set("from", date.from.toISOString());
+      params.set("to", date.to.toISOString());
+
+      const response = await fetch(`${BACKEND_URL}/api/whatsapp/download-conversation?${params.toString()}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -104,7 +109,7 @@ export default function WhatsAppConversionPage() {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `conversation_${senderId}.txt`;
+        a.download = `conversation_${activeSessionName}_${format(date.from, "yyyy-MM-dd")}_to_${format(date.to, "yyyy-MM-dd")}.txt`;
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -404,6 +409,9 @@ export default function WhatsAppConversionPage() {
                 <Button variant="outline" size="icon" onClick={handleRefresh}>
                     <RefreshCw className="h-4 w-4" />
                 </Button>
+                <Button onClick={handleDownload} disabled={loading} variant="outline" size="icon">
+                    <Download className="h-4 w-4" />
+                </Button>
             </div>
         </div>
 
@@ -487,93 +495,82 @@ export default function WhatsAppConversionPage() {
                   <TableCell colSpan={6} className="text-center">No messages found for this session</TableCell>
                 </TableRow>
               ) : (
-                Object.entries(groupedMessages).map(([senderId, messages]) => (
-                  <>
-                    <TableRow key={senderId} className="bg-muted/50">
-                      <TableCell colSpan={5} className="font-bold">User: {senderId}</TableCell>
-                      <TableCell className="text-right">
-                        <Button onClick={() => handleDownload(senderId)} variant="ghost" size="icon">
-                          <Download className="h-4 w-4" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                    {messages.map((msg) => (
-                      <TableRow key={msg.id || msg.message_id}>
-                        <TableCell>{formatTimestamp(msg.timestamp)}</TableCell>
-                        <TableCell
-                          className={`max-w-[300px] cursor-pointer transition-all text-primary hover:text-primary/80 hover:underline ${
-                            expandedMessageIds.has(msg.id || msg.message_id || 'unknown')
-                              ? 'whitespace-pre-wrap break-words'
-                              : 'truncate'
-                          }`}
-                          title="Click to expand"
-                          onClick={() => toggleExpand(msg.id || msg.message_id || 'unknown')}
+                messages.map((msg) => (
+                  <TableRow key={msg.id || msg.message_id}>
+                    <TableCell>{formatTimestamp(msg.timestamp)}</TableCell>
+                    <TableCell className="font-mono text-xs">{msg.sender_id}</TableCell>
+                    <TableCell
+                      className={`max-w-[300px] cursor-pointer transition-all text-primary hover:text-primary/80 hover:underline ${
+                        expandedMessageIds.has(msg.id || msg.message_id || 'unknown')
+                          ? 'whitespace-pre-wrap break-words'
+                          : 'truncate'
+                      }`}
+                      title="Click to expand"
+                      onClick={() => toggleExpand(msg.id || msg.message_id || 'unknown')}
+                    >
+                      {msg.text}
+                      {expandedMessageIds.has(msg.id || msg.message_id || 'unknown') && msg.model_used && (
+                        <div className="text-[10px] text-muted-foreground mt-1">
+                          {msg.model_used}
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <span
+                        className={`px-2 py-1 rounded-full text-xs border ${
+                          msg.reply_by === 'bot'
+                            ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/40'
+                            : 'bg-white/5 text-white/80 border-white/20'
+                        }`}
+                      >
+                        {msg.reply_by || 'Unknown'}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-col">
+                        <span className="font-bold">{msg.token_usage || 0}</span>
+                        <span
+                          className="text-[10px] text-muted-foreground truncate max-w-[150px]"
+                          title={msg.model_used}
                         >
-                          {msg.text}
-                          {expandedMessageIds.has(msg.id || msg.message_id || 'unknown') && msg.model_used && (
-                            <div className="text-[10px] text-muted-foreground mt-1">
-                              {msg.model_used}
-                            </div>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <span
-                            className={`px-2 py-1 rounded-full text-xs border ${
-                              msg.reply_by === 'bot'
-                                ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/40'
-                                : 'bg-white/5 text-white/80 border-white/20'
-                            }`}
-                          >
-                            {msg.reply_by || 'Unknown'}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex flex-col">
-                            <span className="font-bold">{msg.token_usage || 0}</span>
-                            <span
-                              className="text-[10px] text-muted-foreground truncate max-w-[150px]"
-                              title={msg.model_used}
-                            >
-                              {msg.model_used || '-'}
-                            </span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <span
-                            className={`px-2 py-1 rounded-full text-xs border ${
-                              msg.status === 'sent'
-                                ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/40'
-                                : 'bg-yellow-500/10 text-yellow-300 border-yellow-500/40'
-                            }`}
-                          >
-                            {msg.status}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                            {(() => {
-                                const contactId = msg.reply_by === 'user' ? msg.sender_id : msg.recipient_id;
-                                if (!contactId || contactId === activeSessionName) return null;
-                                const isLocked = !!lockedContacts[contactId];
-                                
-                                return (
-                                    <Button 
-                                        variant="ghost" 
-                                        size="sm" 
-                                        onClick={() => handleToggleLock(contactId)}
-                                        className="h-8 w-8 p-0"
-                                        title={isLocked ? "Unlock AI" : "Lock AI (Handover)"}
-                                    >
-                                        {isLocked ? 
-                                            <Lock className="h-4 w-4 text-red-500" /> : 
-                                            <Unlock className="h-4 w-4 text-green-500" />
-                                        }
-                                    </Button>
-                                );
-                            })()}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </>
+                          {msg.model_used || '-'}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <span
+                        className={`px-2 py-1 rounded-full text-xs border ${
+                          msg.status === 'sent'
+                            ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/40'
+                            : 'bg-yellow-500/10 text-yellow-300 border-yellow-500/40'
+                        }`}
+                      >
+                        {msg.status}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                        {(() => {
+                            const contactId = msg.reply_by === 'user' ? msg.sender_id : msg.recipient_id;
+                            if (!contactId || contactId === activeSessionName) return null;
+                            const isLocked = !!lockedContacts[contactId];
+                            
+                            return (
+                                <Button 
+                                    variant="ghost" 
+                                    size="sm" 
+                                    onClick={() => handleToggleLock(contactId)}
+                                    className="h-8 w-8 p-0"
+                                    title={isLocked ? "Unlock AI" : "Lock AI (Handover)"}
+                                >
+                                    {isLocked ? 
+                                        <Lock className="h-4 w-4 text-red-500" /> : 
+                                        <Unlock className="h-4 w-4 text-green-500" />
+                                    }
+                                </Button>
+                            );
+                        })()}
+                    </TableCell>
+                  </TableRow>
                 ))
               )}
             </TableBody>
