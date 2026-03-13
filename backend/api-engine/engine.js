@@ -250,6 +250,10 @@ router.delete('/keys/:id', async (req, res) => {
 
 // --- 3. THE CORE PROXY ENGINE (Compatible with OpenAI Client) ---
 // Endpoint: /v1/chat/completions
+router.get('/v1', async (req, res) => {
+    res.json({ status: "online", message: "SalesmanChatbot API Engine v1 is running." });
+});
+
 router.get('/v1/models', async (req, res) => {
     const { error } = await validateUserApiKey(req);
     if (error) return res.status(error.status).json({ error: error.message });
@@ -281,13 +285,13 @@ router.post('/v1/chat/completions', async (req, res) => {
 
     if (model === 'salesmanchatbot-pro') {
         provider = 'google';
-        modelToUse = 'gemini-1.5-flash'; // Default for Pro
+        modelToUse = 'gemini-1.5-flash'; // Optimized for Pro Engine
     } else if (model === 'salesmanchatbot-flash') {
         provider = 'openrouter';
-        modelToUse = 'google/gemini-2.0-flash-001'; // Default for Flash
+        modelToUse = 'google/gemini-2.0-flash-001'; 
     } else if (model === 'salesmanchatbot-lite') {
         provider = 'groq';
-        modelToUse = 'llama-3.3-70b-versatile'; // Default for Lite
+        modelToUse = 'llama-3.3-70b-versatile'; 
     } else if (model.includes('gpt')) {
         provider = 'openai';
     } else if (model.includes('mistral')) {
@@ -306,6 +310,7 @@ router.post('/v1/chat/completions', async (req, res) => {
     else if (provider === 'groq') targetUrl = 'https://api.groq.com/openai/v1/chat/completions';
     else if (provider === 'openrouter') targetUrl = 'https://openrouter.ai/api/v1/chat/completions';
     else if (provider === 'mistral') targetUrl = 'https://api.mistral.ai/v1/chat/completions';
+    else if (provider === 'google' || provider === 'gemini') targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
 
     // Update body with resolved model
     req.body.model = modelToUse;
