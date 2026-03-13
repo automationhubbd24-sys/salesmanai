@@ -2649,7 +2649,7 @@ STRICT RULES:
         }
 
         // Final scrub of any remaining "IMAGE:" tags (More aggressive to prevent leaking)
-        finalReplyText = finalReplyText.replace(/IMAGE:\s*[^|\n]*\s*\|?[^\n]*/gi, '').trim();
+        finalReplyText = finalReplyText.replace(/IMAGE:\s*[^|\n]*\s*\|?\s*https?:\/\/[^\s,]+/gi, '').trim();
         finalReplyText = finalReplyText.replace(/^IMAGE:\s*/i, '').replace(/\nIMAGE:\s*/gi, '\n').trim();
 
         // --- NEW: AUTO-EXTRACT PRODUCT LINKS WITHOUT LABELS ---

@@ -2021,6 +2021,13 @@ STRICT RULES:
         } catch (e) {}
 
         let botMessageId = `bot_${Date.now()}`;
+
+        // Final Scrub of any remaining "IMAGE:" tags (to prevent leaking to user)
+        if (replyText) {
+             replyText = replyText.replace(/IMAGE:\s*[^|\n]*\s*\|?\s*https?:\/\/[^\s,]+/gi, '').trim();
+             replyText = replyText.replace(/^IMAGE:\s*/i, '').replace(/\nIMAGE:\s*/gi, '\n').trim();
+        }
+
         if (replyText && replyText.length > 0) {
             // FIX: If AI says "no reply", we skip sending it to Facebook but still save it to our DB for history/tracking.
             const isNoReply = replyText.toLowerCase().trim() === 'no reply';
