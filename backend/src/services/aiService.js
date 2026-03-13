@@ -382,8 +382,14 @@ async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, default
         console.log(`[AI] Smart Routing (Text): Using ${finalProvider}/${finalModel}`);
     }
 
-    if (finalProvider === 'openrouter' && finalModel.includes(',')) {
-        finalModel = finalModel.split(',')[0].trim();
+    if (finalProvider === 'openrouter') {
+        if (finalModel.includes(',')) {
+            finalModel = finalModel.split(',')[0].trim();
+        }
+        // Ensure Google models have 'google/' prefix for OpenRouter
+        if (finalModel.toLowerCase().startsWith('gemini-') && !finalModel.includes('/')) {
+            finalModel = `google/${finalModel}`;
+        }
     }
 
     if (isAudio && voiceProvider === 'groq') {
@@ -2171,7 +2177,7 @@ ${productContext || "No specific product context provided yet."}
             let isAudio = false; 
             if (imageUrls && imageUrls.length > 0) isVision = true;
 
-            const resolved = await resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio);
+            let resolved = await resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio);
             let finalProvider = resolved.finalProvider;
             let finalModel = resolved.finalModel;
 
@@ -2190,10 +2196,11 @@ ${productContext || "No specific product context provided yet."}
                     else if (finalProvider === 'openrouter') finalProvider = 'google';
                 }
                 
-                currentModel = resolved.finalModel;
+                finalModel = resolved.finalModel;
                 finalProvider = resolved.finalProvider;
             }
 
+            currentModel = finalModel;
             let keyData = await keyService.getSmartKey(finalProvider, currentModel);
             
             if (!keyData || !keyData.key) {
