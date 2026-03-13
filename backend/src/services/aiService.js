@@ -1176,12 +1176,17 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null
 case 'capture_order_lead': {
     const dbService = require('./dbService');
     try {
-        await dbService.saveOrder({
+        console.log(`[Tool: capture_order_lead] Called with args:`, JSON.stringify(args));
+        
+        const rawPhone = args.phone || args.number || args.mobile;
+        const rawAddress = args.address || args.location;
+
+        const order = await dbService.saveOrder({
             page_id: pageId,
             sender_id: senderId,
             product_name: args.product_name || null,
-            phone: args.phone || null,
-            address: args.address || null,
+            phone: rawPhone || null,
+            address: rawAddress || null,
             quantity: typeof args.quantity === 'number' ? args.quantity : null,
             price: typeof args.price === 'number' ? args.price : null,
             customer_name: args.customer_name || null,
@@ -1189,13 +1194,41 @@ case 'capture_order_lead': {
             platform: platform
         });
 
-        if (platform === 'whatsapp' && args.phone) {
-            await dbService.updateContactPhone(pageId, senderId, args.phone);
+        if (!order) {
+            console.error(`[Tool: capture_order_lead] Database save returned null.`);
+            return { status: 'ERROR', message: "Failed to save order information to database." };
         }
+
+        console.log(`[Tool: capture_order_lead] Order saved/updated:`, JSON.stringify(order));
+
+        if (platform === 'whatsapp' && rawPhone) {
+            await dbService.updateContactPhone(pageId, senderId, rawPhone);
+        }
+
+        // --- NEW: Inject Current Order Status back to AI ---
+        const missing = [];
+        const isProductNameEmpty = !order.product_name || order.product_name === 'Recovered Lead' || order.product_name === 'Pending';
+        const isPhoneEmpty = !order.number || order.number === 'Pending';
+        const isAddressEmpty = !order.location || order.location === 'Pending' || order.location === 'N/A';
+
+        if (isProductNameEmpty) missing.push("Product Name");
+        if (isPhoneEmpty) missing.push("Phone Number");
+        if (isAddressEmpty) missing.push("Full Address");
+
+        const statusMessage = missing.length > 0 
+            ? `Information captured. STILL MISSING: ${missing.join(', ')}. Current Phone: ${order.number || 'Missing'}. Current Address: ${order.location || 'Missing'}.`
+            : "Order is now COMPLETE. You have Phone, Address, and Product. Thank the customer and finalize.";
 
         return {
             status: 'SUCCESS',
-            message: "Information captured successfully. If any mandatory info (Phone, Address, Product) is still missing, I will ask for it."
+            current_order_state: {
+                product: order.product_name,
+                phone: order.number,
+                address: order.location,
+                quantity: order.product_quantity,
+                price: order.price
+            },
+            message: statusMessage
         };
     } catch (saveErr) {
         console.error("[AgentLoop] Failed to save lead:", saveErr.message);
