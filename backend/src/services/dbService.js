@@ -1401,55 +1401,29 @@ async function saveWhatsAppOrderTracking(orderData) {
         );
 
         if (recentOrder.rows.length > 0) {
-            const existing = recentOrder.rows[0];
-            const updates = [];
-            const values = [];
-            let idx = 1;
-
-            if (product_name && product_name !== 'Recovered Lead' && product_name !== 'Pending') {
-                updates.push(`product_name = $${idx++}`);
-                values.push(product_name);
-            }
-            if (number && number !== 'Pending') {
-                updates.push(`number = $${idx++}`);
-                values.push(number);
-            }
-            if (location && location !== 'N/A' && location !== 'Pending' && location !== '') {
-                updates.push(`location = $${idx++}`);
-                values.push(location);
-            }
-            if (product_quantity && product_quantity !== '1') {
-                updates.push(`product_quantity = $${idx++}`);
-                values.push(product_quantity);
-            }
-            if (price && price !== '0') {
-                updates.push(`price = $${idx++}`);
-                values.push(price);
-            }
-
-            if (updates.length > 0) {
-                values.push(existing.id);
-                const updateResult = await query(
-                    `UPDATE whatsapp_order_tracking SET ${updates.join(', ')} WHERE id = $${idx} RETURNING *`,
-                    values
-                );
-                console.log(`[WA Order] Smart Merged data into ID ${existing.id}`);
-                return updateResult.rows[0];
-            }
+            const orderId = recentOrder.rows[0].id;
+            console.log(`[WA Order] Updating existing order (${orderId}) for ${sender_id}...`);
             
-            if (number && existing.number && number !== existing.number) {
-                console.log(`[WA Order] New number for ${sender_id}. New row.`);
-            } else {
-                return existing;
-            }
+            const updateResult = await query(
+                `UPDATE whatsapp_order_tracking SET
+                    product_name = COALESCE($1, product_name),
+                    number = COALESCE($2, number),
+                    location = COALESCE($3, location),
+                    product_quantity = COALESCE($4::text, product_quantity),
+                    price = COALESCE($5::text, price),
+                    created_at = NOW()
+                 WHERE id = $6
+                 RETURNING *`,
+                [product_name, number, location, product_quantity, price, orderId]
+            );
+            return { ...updateResult.rows[0], status: 'updated' };
         }
 
-        if (!number && (!product_name || product_name === 'Recovered Lead')) return null;
-
+        // --- 3. NEW ORDER ---
         const result = await query(
             `INSERT INTO whatsapp_order_tracking
-                (session_name, sender_id, product_name, number, location, product_quantity, price)
-             VALUES ($1,$2,$3,$4,$5,$6,$7)
+                (session_name, sender_id, product_name, number, location, product_quantity, price, created_at)
+             VALUES ($1, $2, COALESCE($3, 'Recovered Lead'), $4, COALESCE($5, 'Pending'), COALESCE($6::text, '1'), COALESCE($7::text, '0'), NOW())
              RETURNING *`,
             [session_name, sender_id, product_name, number, location, product_quantity, price]
         );
@@ -1955,46 +1929,29 @@ async function saveOrderTracking(orderData) {
 
         if (recentOrder.rows.length > 0) {
             const orderId = recentOrder.rows[0].id;
-            console.log(`[Order] Found recent order (${orderId}) within 24h. Updating existing row...`);
+            console.log(`[Order] Updating existing order (${orderId}) for ${sender_id}...`);
             
-            await query(
+            const updateResult = await query(
                 `UPDATE fb_order_tracking SET
-                    product_name = CASE 
-                        WHEN $1 IS NOT NULL AND $1 <> 'Pending' AND $1 <> 'Recovered Lead' AND $1 <> '' THEN $1 
-                        ELSE product_name 
-                    END,
-                    number = CASE 
-                        WHEN $2 IS NOT NULL AND $2 <> 'Pending' AND $2 <> '' THEN $2 
-                        ELSE number 
-                    END,
-                    location = CASE 
-                        WHEN $3 IS NOT NULL AND $3 <> 'Pending' AND $3 <> '' THEN $3 
-                        ELSE location 
-                    END,
-                    product_quantity = CASE 
-                        WHEN $4 IS NOT NULL AND $4 <> '1' AND $4 <> '' THEN $4 
-                        ELSE product_quantity 
-                    END,
-                    price = CASE 
-                        WHEN $5 IS NOT NULL AND $5 <> '0' AND $5 <> '' THEN $5 
-                        ELSE price 
-                    END,
-                    sender_number = CASE 
-                        WHEN $6 IS NOT NULL AND $6 <> 'Pending' AND $6 <> '' THEN $6 
-                        ELSE sender_number 
-                    END,
+                    product_name = COALESCE($1, product_name),
+                    number = COALESCE($2, number),
+                    location = COALESCE($3, location),
+                    product_quantity = COALESCE($4::text, product_quantity),
+                    price = COALESCE($5::text, price),
+                    sender_number = COALESCE($6, sender_number),
                     created_at = NOW()
-                 WHERE id = $7`,
+                 WHERE id = $7
+                 RETURNING *`,
                 [product_name, number, location, product_quantity, price, sender_number, orderId]
             );
-            return { id: orderId, status: 'updated' };
+            return { ...updateResult.rows[0], status: 'updated' };
         }
 
-        // --- 3. NEW ORDER (If no recent order or it's a fresh intent) ---
+        // --- 3. NEW ORDER ---
         const result = await query(
             `INSERT INTO fb_order_tracking
                 (page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+             VALUES ($1, $2, COALESCE($3, 'Recovered Lead'), $4, COALESCE($5, 'Pending'), COALESCE($6::text, '1'), COALESCE($7::text, '0'), $8, NOW())
              RETURNING *`,
             [page_id, sender_id, product_name, number, location, product_quantity, price, sender_number]
         );

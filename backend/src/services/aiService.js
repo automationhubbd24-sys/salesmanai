@@ -2070,62 +2070,37 @@ ${productContext || "No specific product context provided yet."}
     // SPECIAL PATH: Use Own SalesmanChatbot API when selected
     if (!useCheapEngine && defaultProvider === 'salesmanchatbot' && pageConfig.api_key) {
         try {
-            const axios = require('axios');
-            // FIX: Use absolute URL for Production to avoid 'localhost' issues in external API calls
             // Standardizing URL to match n8n and external integration expectations
             const base = process.env.PUBLIC_BASE_URL 
-                ? `${process.env.PUBLIC_BASE_URL}/api/external/v1/chat/completions`
-                : (process.env.SALESMANCHATBOT_API_BASE_URL || `http://localhost:${process.env.PORT || 3001}/api/external/v1/chat/completions`);
+                ? `${process.env.PUBLIC_BASE_URL}/api/external/v1`
+                : (process.env.SALESMANCHATBOT_API_BASE_URL ? process.env.SALESMANCHATBOT_API_BASE_URL.replace(/\/chat\/completions$/, '') : `http://localhost:${process.env.PORT || 3001}/api/external/v1`);
             
             const modelToUse = (pageConfig.chat_model || 'salesmanchatbot-pro');
-            const payload = {
+            
+            console.log(`[AI] SalesmanChatbot Own API: Using runAgentLoop with model=${modelToUse} at ${base}`);
+
+            const result = await runAgentLoop({
+                apiKey: pageConfig.api_key,
+                baseURL: base,
                 model: modelToUse,
                 messages: messages,
-            };
-            const headers = {
-                'Authorization': `Bearer ${pageConfig.api_key}`,
-                'Content-Type': 'application/json'
-            };
-            
-            console.log(`[AI] SalesmanChatbot Own API: Calling ${base} with model=${modelToUse}`);
-            const resp = await axios.post(base, payload, { headers, timeout: 25000 });
-            const data = resp.data;
-            let aiText = data?.choices?.[0]?.message?.content || null;
-            const tokenUsage = data?.usage?.total_tokens || 0;
+                tools: tools,
+                pageConfig: pageConfig,
+                proxyAgent: null, // Usually internal or doesn't need proxy
+                totalTokenUsage: totalTokenUsage,
+                foundProducts: [],
+                userId: userId,
+                temperature: (pageConfig.is_external_api ? 0.7 : 0.2)
+            });
 
-            if (aiText) {
-                // --- NEW AGENTIC JSON PARSER ---
-                try {
-                    // Strip potential Markdown blocks if AI ignored instructions
-                    const cleanJson = aiText.replace(/```json|```/g, '').trim();
-                    const structured = JSON.parse(cleanJson);
-                    
-                    if (structured.reply_text) {
-                        return finalize({ 
-                            reply: structured.reply_text, 
-                            action: structured.action || "NONE",
-                            product_id: structured.product_id || null,
-                            image_urls: Array.isArray(structured.image_urls) ? structured.image_urls : [],
-                            sentiment: 'neutral', 
-                            token_usage: tokenUsage + totalTokenUsage, 
-                            model: modelToUse, 
-                            foundProducts 
-                        });
-                    }
-                } catch (parseErr) {
-                    console.warn(`[AI Agent] Failed to parse JSON response. Falling back to raw text.`, parseErr.message);
-                }
-                
-                return finalize({ reply: aiText, sentiment: 'neutral', token_usage: tokenUsage + totalTokenUsage, model: modelToUse, foundProducts });
-            }
+            return finalize({ ...result, sentiment: 'neutral' });
+
         } catch (error) {
-            const statusCode = error.response ? error.response.status : 'N/A';
-            const errorMsg = error.response?.data?.error?.message || error.message;
-            console.warn(`[AI] SalesmanChatbot Own API Error (${statusCode}):`, errorMsg);
+            console.warn(`[AI] SalesmanChatbot Own API Attempt Failed:`, error.message);
             
             return finalize({ 
                 reply: null, 
-                error: `[AI Error - Silent] Strict Domain Control (Null Reply) | AI Provider Error: ${statusCode} ${errorMsg}`,
+                error: `[Own API Error] ${error.message}. Please check your API settings.`,
                 token_usage: 0,
                 model: pageConfig.chat_model || 'salesmanchatbot-pro'
             });
