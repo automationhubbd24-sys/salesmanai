@@ -1510,29 +1510,6 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 continue;
             }
 
-            // --- AGENTIC JSON RESCUE (Fix for models that output JSON instead of tool calls) ---
-            if (!toolCalls && aiText && (aiText.includes('"phone"') || aiText.includes('"address"'))) {
-                try {
-                    const rescued = structured; // Already parsed above
-                    if (rescued && (rescued.phone || rescued.number || rescued.address || rescued.location)) {
-                        console.log(`[AgentLoop] Rescuing tool data from text response...`);
-                        const order = await dbService.saveOrder({
-                            page_id: pageConfig.page_id,
-                            sender_id: userId,
-                            product_name: rescued.product_name || null,
-                            phone: rescued.phone || rescued.number || rescued.mobile || null,
-                            address: rescued.address || rescued.location || null,
-                            quantity: rescued.quantity || null,
-                            price: rescued.price || null,
-                            platform: platform
-                        });
-                        if (order) console.log(`[AgentLoop] Rescued data saved successfully.`);
-                    }
-                } catch (e) {
-                    console.warn(`[AgentLoop] Rescue attempt failed:`, e.message);
-                }
-            }
-
             // No more tool calls -> Final Answer
             const aiTextFinal = responseMessage.content || "";
             const tokenUsage = (completionUsage && completionUsage.total_tokens) ? completionUsage.total_tokens : estimateTokenUsage(messages, aiTextFinal, 0);
@@ -2080,8 +2057,9 @@ ${productContext || "No specific product context provided yet."}
 [SALES WORKFLOW]
 - PRIORITY: Always follow the Customer's Prompt first.
 - DATABASE TRUTH: Always prioritize the [CURRENT ORDER PROGRESS (SYSTEM MEMORY)] over chat history. If a field is NOT 'Pending', you already have that information.
-- LEAD CAPTURE: Ensure you collect the customer's NAME, PHONE NUMBER, and FULL ADDRESS to complete the order.
-- MISSING INFO: If any mandatory info (Phone, Address, Product) is missing, politely ask for it to finalize the order.
+- LEAD CAPTURE: Your goal is to collect the customer's NAME, PHONE NUMBER, and FULL ADDRESS.
+- CONFIRMATION: Once you have all information, summarize it and ask the customer to confirm the order.
+- MISSING INFO: If any mandatory info (Phone, Address, Product) is missing, politely ask for it.
 - PRODUCT SOURCE: Use exact product names from the [PRODUCT LIST SNAPSHOT].
 - MANDATORY REPLY: You MUST still reply to the user. Silence is NOT allowed.
 
