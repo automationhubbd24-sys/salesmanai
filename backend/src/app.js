@@ -49,6 +49,7 @@ app.use('/api/db-admin', dbAdminRoutes);
 app.use('/db-admin', dbAdminRoutes); // Alias for both
 app.use('/api/api-list', apiListRoutes);
 app.use('/api/api-engine', apiEngineRoutes);
+app.use('/api-engine', apiEngineRoutes); // Alias for easier n8n connection
 
 app.use('/teams', teamRoutes);
 app.use('/api/teams', teamRoutes); // Alias for /api prefix

@@ -7,6 +7,20 @@ const adminAuthMiddleware = require('../src/middleware/adminAuthMiddleware');
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 
+// --- PRICING ---
+const PRICING = {
+    PRO: 150,
+    FLASH: 100,
+    LITE: 80
+};
+
+const getCostPerRequest = (modelName) => {
+    let rate = PRICING.PRO;
+    if (modelName.includes('flash')) rate = PRICING.FLASH;
+    else if (modelName.includes('lite')) rate = PRICING.LITE;
+    return rate / 1000;
+};
+
 // --- Proxy Helper ---
 function getProxyUrl(modelName = 'default') {
     const proxyUrl = process.env.BRIGHT_DATA_PROXY_URL;
@@ -70,7 +84,30 @@ function readFirstChunk(stream, timeoutMs = 5000) {
     });
 }
 
-// --- 1. ENGINE STATS & DASHBOARD ---
+// --- 1. AUTH HELPER ---
+const validateUserApiKey = async (req) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return { error: { status: 401, message: 'Missing or invalid Authorization header' } };
+    }
+
+    const apiKey = authHeader.replace('Bearer ', '').trim();
+    if (!apiKey) return { error: { status: 401, message: 'Invalid API Key' } };
+
+    try {
+        const result = await pgClient.query(
+            'SELECT user_id, balance, service_api_key FROM user_configs WHERE service_api_key = $1 LIMIT 1',
+            [apiKey]
+        );
+
+        if (result.rows.length === 0) return { error: { status: 401, message: 'Invalid API Key' } };
+        return { userConfig: result.rows[0] };
+    } catch (error) {
+        return { error: { status: 500, message: 'Database Error' } };
+    }
+};
+
+// --- 2. ENGINE STATS & DASHBOARD ---
 router.get('/stats', adminAuthMiddleware, async (req, res) => {
     try {
         const { provider, page, limit, q } = req.query; // Get filter and pagination
@@ -213,17 +250,55 @@ router.delete('/keys/:id', async (req, res) => {
 
 // --- 3. THE CORE PROXY ENGINE (Compatible with OpenAI Client) ---
 // Endpoint: /v1/chat/completions
+router.get('/v1/models', async (req, res) => {
+    const { error } = await validateUserApiKey(req);
+    if (error) return res.status(error.status).json({ error: error.message });
+
+    return res.json({
+        object: "list",
+        data: [
+            { id: "salesmanchatbot-pro", object: "model", created: 1677610602, owned_by: "salesman" },
+            { id: "salesmanchatbot-flash", object: "model", created: 1709251200, owned_by: "salesman" },
+            { id: "salesmanchatbot-lite", object: "model", created: 1709251200, owned_by: "salesman" }
+        ]
+    });
+});
+
 router.post('/v1/chat/completions', async (req, res) => {
+    const { userConfig, error: authError } = await validateUserApiKey(req);
+    if (authError) return res.status(authError.status).json({ error: authError.message });
+
+    // Check Balance
+    if (userConfig.balance < 0.01) {
+        return res.status(402).json({ error: "Insufficient balance. Minimum 0.01 BDT required." });
+    }
+
     const { model, messages, stream } = req.body;
     
     // Auto-Detect Provider if not specified via header (Internal Logic)
     let provider = 'google';
-    if (model.includes('gpt')) provider = 'openai';
-    else if (model.includes('mistral')) provider = 'mistral';
-    else if (model.includes('llama') || model.includes('mixtral')) provider = 'groq';
-    else if (model.includes('/') || model.includes(':free')) provider = 'openrouter';
+    let modelToUse = model;
 
-    console.log(`[API Engine] Processing Request: ${provider} / ${model}`);
+    if (model === 'salesmanchatbot-pro') {
+        provider = 'google';
+        modelToUse = 'gemini-1.5-flash'; // Default for Pro
+    } else if (model === 'salesmanchatbot-flash') {
+        provider = 'openrouter';
+        modelToUse = 'google/gemini-2.0-flash-001'; // Default for Flash
+    } else if (model === 'salesmanchatbot-lite') {
+        provider = 'groq';
+        modelToUse = 'llama-3.3-70b-versatile'; // Default for Lite
+    } else if (model.includes('gpt')) {
+        provider = 'openai';
+    } else if (model.includes('mistral')) {
+        provider = 'mistral';
+    } else if (model.includes('llama') || model.includes('mixtral')) {
+        provider = 'groq';
+    } else if (model.includes('/') || model.includes(':free')) {
+        provider = 'openrouter';
+    }
+
+    console.log(`[API Engine] Processing Request: ${provider} / ${model} (Resolved: ${modelToUse})`);
 
     // Determine Upstream Target
     let targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
@@ -231,6 +306,9 @@ router.post('/v1/chat/completions', async (req, res) => {
     else if (provider === 'groq') targetUrl = 'https://api.groq.com/openai/v1/chat/completions';
     else if (provider === 'openrouter') targetUrl = 'https://openrouter.ai/api/v1/chat/completions';
     else if (provider === 'mistral') targetUrl = 'https://api.mistral.ai/v1/chat/completions';
+
+    // Update body with resolved model
+    req.body.model = modelToUse;
 
     // Determined Key logic
     const isSystemEngine = req.body.is_system_engine !== false; 
@@ -240,7 +318,7 @@ router.post('/v1/chat/completions', async (req, res) => {
             const maxAttempts = 5;
             let lastError = null;
             for (let attempt = 0; attempt < maxAttempts; attempt++) {
-                const keyData = await keyService.getSmartKey(provider, model);
+                const keyData = await keyService.getSmartKey(provider, modelToUse);
                 if (!keyData) break;
 
                 // Proxy only for system keys to save costs
@@ -302,9 +380,9 @@ router.post('/v1/chat/completions', async (req, res) => {
             return res.status(status).json({ error: lastError || 'stream_failed' });
         }
 
-        const keyData = await keyService.getSmartKey(provider, model);
+        const keyData = await keyService.getSmartKey(provider, modelToUse);
         if (!keyData) {
-            console.warn(`[API Engine] ⚠️ No keys available for ${provider}/${model}`);
+            console.warn(`[API Engine] ⚠️ No keys available for ${provider}/${modelToUse}`);
             return res.status(429).json({ 
                 error: { 
                     message: "Engine Overload: All API keys are currently rate limited or exhausted.",
@@ -317,10 +395,10 @@ router.post('/v1/chat/completions', async (req, res) => {
         // Proxy only for system keys to save costs
         let agent = undefined;
         if (isSystemEngine) {
-            const proxyUrl = getProxyUrl(model);
+            const proxyUrl = getProxyUrl(modelToUse);
             agent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
             if (agent) {
-                console.log(`[API Engine] 🌐 Using Bright Data Proxy for SalesmanChatbot Engine (Model: ${model})`);
+                console.log(`[API Engine] 🌐 Using Bright Data Proxy for SalesmanChatbot Engine (Model: ${modelToUse})`);
                 // Optional: Log IP for debugging
                 axios.get('https://api.ip.sb/geoip', { httpsAgent: agent, timeout: 5000 })
                     .then(res => console.log(`[API Engine IP] IP: ${res.data.ip} | Country: ${res.data.country}`))
@@ -342,6 +420,11 @@ router.post('/v1/chat/completions', async (req, res) => {
 
         if (response.data?.usage) {
             keyService.recordKeyUsage(keyData.key, response.data.usage.total_tokens);
+            
+            // Deduct User Balance
+            const cost = getCostPerRequest(model);
+            dbService.deductUserBalance(userConfig.user_id, cost, `API Engine Call: ${model}`)
+                .catch(err => console.error(`[API Engine] Balance deduction failed:`, err.message));
         }
 
         res.json(response.data);
