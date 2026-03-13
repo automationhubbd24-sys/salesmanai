@@ -1,10 +1,10 @@
 import { useState, useEffect } from "react";
+import { useParams } from "react-router-dom";
 import { Megaphone, Plus, Trash2, Search, Loader2, Save } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { usePlatform } from "@/context/PlatformContext";
 import { toast } from "sonner";
 import { BACKEND_URL } from "@/config";
 import {
@@ -31,7 +31,7 @@ interface Product {
 }
 
 export default function AdsPage() {
-  const { platform } = usePlatform();
+  const { platform } = useParams();
   const [ads, setAds] = useState<Ad[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
