@@ -5,6 +5,7 @@ const whatsappRoutes = require('./routes/whatsappRoutes');
 const messengerRoutes = require('./routes/messengerRoutes');
 const authRoutes = require('./routes/authRoutes');
 const productRoutes = require('./routes/productRoutes');
+const adsRoutes = require('./routes/adsRoutes');
 const externalApiRoutes = require('./routes/externalApiRoutes');
 const liteEngineRoutes = require('./routes/liteEngineRoutes');
 const openrouterEngineRoutes = require('./routes/openrouterEngineRoutes');
@@ -42,6 +43,7 @@ app.use('/api/messenger', messengerRoutes); // Alias for /api prefix
 
 app.use('/api/auth', authRoutes); // Matches frontend call /api/auth/facebook/exchange-token
 app.use('/api/products', productRoutes);
+app.use('/api/ads', adsRoutes);
 app.use('/api/external', externalApiRoutes);
 app.use('/api/lite', liteEngineRoutes);
 app.use('/api/openrouter', openrouterEngineRoutes);

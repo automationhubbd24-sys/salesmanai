@@ -74,9 +74,11 @@ const App = () => (
             <Route path="api-docs" element={<ApiDocsPage />} />
             
             {/* Global Tools Routes (Direct access) */}
+            <Route path="integration" element={<IntegrationPage />} />
             <Route path="products" element={<ProductsPage />} />
             <Route path="ads" element={<AdsPage />} />
             <Route path="reseller" element={<ResellerPage />} />
+            <Route path="settings" element={<SettingsPage />} />
             <Route path="payment" element={<PaymentPage />} />
             <Route path="profile" element={<ProfilePage />} />
 

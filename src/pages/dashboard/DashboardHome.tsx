@@ -171,22 +171,17 @@ export default function DashboardHome() {
             </Card>
           </Link>
           
-          {/* Locked Ads Library */}
-          <div className="group relative cursor-not-allowed">
-            <Card className="h-full opacity-70 bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
+          <Link to={`/dashboard/${platform}/ads`} className="group">
+            <Card className="h-full hover:shadow-lg transition-all cursor-pointer bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10 group-hover:border-[#00ff88]/60">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-base text-muted-foreground">
+                <CardTitle className="flex items-center gap-2 group-hover:text-primary transition-colors text-base">
                   <Megaphone className="h-5 w-5" />
                   Ads Library
-                  <Lock className="h-4 w-4 ml-auto" />
                 </CardTitle>
                 <CardDescription>Manage your ad campaigns</CardDescription>
               </CardHeader>
-              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-background/50 backdrop-blur-sm rounded-lg">
-                <span className="font-semibold text-sm bg-primary/10 text-primary px-3 py-1 rounded-full">Coming Soon</span>
-              </div>
             </Card>
-          </div>
+          </Link>
 
           {/* Locked Reseller */}
           <div className="group relative cursor-not-allowed">

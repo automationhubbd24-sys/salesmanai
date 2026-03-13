@@ -3020,6 +3020,10 @@ module.exports = {
     getWhatsAppDailyAICount,
     checkFbLockStatus,
     toggleFbLock,
+    getAdContext,
+    saveAdContext,
+    getAdsByUserId,
+    deleteAdContext,
 
     // --- PRODUCT MANAGEMENT ---
     createProduct,
@@ -3643,5 +3647,80 @@ async function searchProducts(userId, queryText, pageId = null) {
     } catch (error) {
         console.error("[DB] searchProducts Error:", error.message);
         return [];
+    }
+}
+
+// 45. Get Ad Context from Ads Library
+async function getAdContext(adId, pageId) {
+    const { query } = require('./pgClient');
+    try {
+        const result = await query(
+            'SELECT * FROM ads_library WHERE ad_id = $1 AND page_id = $2 LIMIT 1',
+            [adId, pageId]
+        );
+        return result.rows.length > 0 ? result.rows[0] : null;
+    } catch (error) {
+        // Silently fail if table doesn't exist yet to avoid crashing
+        if (error.code === '42P01') {
+            console.warn(`[DB] ads_library table does not exist. Skipping ad context fetch for ad_id: ${adId}`);
+            return null;
+        }
+        console.error(`Error fetching ad context for ad_id ${adId}:`, error.message);
+        return null;
+    }
+}
+
+// 46. Save or Update Ad Context (Team Member Compatible)
+async function saveAdContext(data) {
+    const { ad_id, page_id, user_id, description, linked_product_ids } = data;
+    try {
+        const result = await query(
+            `INSERT INTO ads_library (ad_id, page_id, user_id, description, linked_product_ids)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (ad_id, page_id) 
+             DO UPDATE SET 
+                description = EXCLUDED.description,
+                linked_product_ids = EXCLUDED.linked_product_ids,
+                user_id = EXCLUDED.user_id
+             RETURNING *`,
+            [ad_id, page_id, user_id, description, JSON.stringify(linked_product_ids || [])]
+        );
+        return result.rows[0];
+    } catch (error) {
+        console.error("Error saving ad context:", error.message);
+        throw error;
+    }
+}
+
+// 47. Get All Ads for a User/Team (Team Member Compatible)
+async function getAdsByUserId(userId, allowedPageIds = null) {
+    try {
+        let sql = 'SELECT * FROM ads_library WHERE user_id::text = $1::text';
+        const params = [userId];
+
+        if (allowedPageIds && allowedPageIds.length > 0) {
+            sql += ' AND page_id = ANY($2)';
+            params.push(allowedPageIds);
+        }
+
+        const result = await query(sql, params);
+        return result.rows;
+    } catch (error) {
+        console.error("Error fetching ads by user ID:", error.message);
+        return [];
+    }
+}
+
+// 48. Delete Ad Context
+async function deleteAdContext(adId, pageId) {
+    try {
+        await query(
+            'DELETE FROM ads_library WHERE ad_id = $1 AND page_id = $2',
+            [adId, pageId]
+        );
+        return true;
+    } catch (error) {
+        console.error("Error deleting ad context:", error.message);
+        throw error;
     }
 }

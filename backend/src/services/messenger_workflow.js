@@ -34,6 +34,7 @@ function runMessengerWorkflow(messages) {
     let allImages = [];
     let allAudios = [];
     let hasPostback = false;
+    let adId = null;
 
     const imageItems = [];
     const voiceItems = [];
@@ -46,6 +47,7 @@ function runMessengerWorkflow(messages) {
         if (item.images.length > 0) allImages.push(...item.images);
         if (item.audios.length > 0) allAudios.push(...item.audios);
         if (item.isPostback) hasPostback = true;
+        if (item.referral && item.referral.ad_id) adId = item.referral.ad_id;
 
         const hasImage = item.images.length > 0;
         const hasVoice = item.audios.length > 0;
@@ -69,7 +71,7 @@ function runMessengerWorkflow(messages) {
     let combinedText = textOutputs.join("\n").trim();
     if (adContext) combinedText = combinedText ? `${combinedText}${adContext}` : adContext.trim();
 
-    return { combinedText, replyToId, allImages, allAudios, hasPostback, adContext };
+    return { combinedText, replyToId, allImages, allAudios, hasPostback, adContext, adId };
 }
 
 module.exports = { runMessengerWorkflow };

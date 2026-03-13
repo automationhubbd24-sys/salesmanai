@@ -772,6 +772,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         let allAudios = [];
         let hasPostback = false;
         let adContext = "";
+        let adId = null;
 
         try {
             const workflowResult = runMessengerWorkflow(messages);
@@ -781,6 +782,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             allAudios = workflowResult.allAudios || [];
             hasPostback = workflowResult.hasPostback || false;
             adContext = workflowResult.adContext || "";
+            adId = workflowResult.adId || null;
 
             const allStickers = messages.filter(m => m.isSticker);
             const hasOnlyStickers = allStickers.length > 0 && 
@@ -1004,6 +1006,35 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             facebookService.getConversationMessages(pageId, senderId, pageConfig.page_access_token, 10), // For Handover Check
             dbService.getChatHistory(sessionId, historyLimit)
         ]);
+
+        // --- FETCH SMART AD CONTEXT ---
+        let smartAdContext = "";
+        if (adId && adId !== 'N/A') {
+            try {
+                const adData = await dbService.getAdContext(adId, pageId);
+                if (adData) {
+                    smartAdContext = `\n[AD REFERRAL DATA: ${adData.description || 'N/A'}`;
+                    
+                    if (adData.linked_product_ids && Array.isArray(adData.linked_product_ids) && adData.linked_product_ids.length > 0) {
+                        const productDetails = [];
+                        for (const pId of adData.linked_product_ids) {
+                            const p = await dbService.getProductById(pId);
+                            if (p) {
+                                productDetails.push(`${p.name} (Price: ${p.price} ${p.currency || 'BDT'})`);
+                            }
+                        }
+                        if (productDetails.length > 0) {
+                            smartAdContext += ` | LINKED PRODUCTS: ${productDetails.join('; ')}`;
+                        }
+                    }
+                    smartAdContext += `]\n`;
+                    console.log(`[Ad Library] Injected smart context for Ad ID: ${adId}`);
+                }
+            } catch (adErr) {
+                console.warn(`[Ad Library] Failed to fetch context for ${adId}:`, adErr.message);
+            }
+        }
+        // ------------------------------
 
         const senderName = userProfile.name || 'Customer';
         const senderGender = userProfile.gender || null;
@@ -1313,7 +1344,7 @@ STRICT RULES:
             }
         }
         
-        const finalUserMessage = `${replyContext}${combinedText}${promptProductContext}`;
+        const finalUserMessage = `${smartAdContext}${replyContext}${combinedText}${promptProductContext}`;
         // ------------------------------------
 
         // 5. Generate AI Reply
