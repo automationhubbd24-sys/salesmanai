@@ -1952,7 +1952,7 @@ async function saveOrderTracking(orderData) {
         const result = await query(
             `INSERT INTO fb_order_tracking
                 (page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, created_at)
-             VALUES ($1::text, $2::text, COALESCE($3::text, 'Recovered Lead'), $4::text, COALESCE($5::text, 'Pending'), COALESCE($6::text, '1'), COALESCE($7::text, '0'), $8::text, NOW())
+             VALUES ($1::text, $2::text, COALESCE($3::text, 'Recovered Lead'), COALESCE($4::text, 'Pending'), COALESCE($5::text, 'Pending'), COALESCE($6::text, '1'), COALESCE($7::text, '0'), COALESCE($8::text, 'Pending'), NOW())
              RETURNING *`,
             [page_id, sender_id, product_name, number, location, product_quantity, price, sender_number]
         );
