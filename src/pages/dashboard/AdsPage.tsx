@@ -43,6 +43,7 @@ export default function AdsPage() {
   // Form State
   const [adId, setAdId] = useState("");
   const [pageId, setPageId] = useState("");
+  const [activePageName, setActivePageName] = useState("");
   const [description, setDescription] = useState("");
   const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
   const [productSearch, setProductSearch] = useState("");
@@ -51,6 +52,13 @@ export default function AdsPage() {
     checkActivePages();
     fetchAds();
   }, [platform]);
+
+  // Sync active page name for the premium feel
+  useEffect(() => {
+    const fbName = localStorage.getItem("active_fb_page_name");
+    const waName = localStorage.getItem("active_wp_session");
+    setActivePageName(fbName || waName || "");
+  }, [isDialogOpen]);
 
   // Fetch products whenever isDialogOpen becomes true or pageId changes
   useEffect(() => {
@@ -327,15 +335,23 @@ export default function AdsPage() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="pageId">Page ID / Session Name</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="pageId">Active Page</Label>
+                  <span className="text-[10px] text-primary bg-primary/10 px-2 py-0.5 rounded-full border border-primary/20">
+                    Linked
+                  </span>
+                </div>
                 <Input
                   id="pageId"
-                  placeholder="e.g. 1092837465"
+                  placeholder={activePageName ? `Current: ${activePageName}` : "Selecting Page..."}
                   value={pageId}
                   disabled
-                  className="bg-white/5 border-white/10 opacity-60 cursor-not-allowed"
+                  className="bg-white/5 border-white/10 opacity-70 cursor-not-allowed font-medium text-[#00ff88]"
                 />
-                <p className="text-[10px] text-muted-foreground">Automatically selected from your active page.</p>
+                <p className="text-[10px] text-muted-foreground italic flex items-center gap-1">
+                  <span className="h-1 w-1 bg-primary rounded-full animate-pulse" />
+                  Automatically selected: {activePageName || 'Active Resource'}
+                </p>
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="description">Ad Description (for AI Context)</Label>
