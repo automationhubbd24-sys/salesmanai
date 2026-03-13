@@ -785,9 +785,9 @@ async function generateResponse({ pageId, userId, userMessage, history, imageUrl
 
         // --- STEP B: LLM EXTRACTOR (The "n8n" way - History Aware) ---
         // We run this in background to extract product names, addresses, quantities.
-        // We pass recent history so it can detect corrections like "my previous number was wrong".
+        // We pass recent history (up to 30 messages) so it can detect corrections like "my previous number was wrong".
         try {
-            const recentHistory = history.slice(-4).map(h => `${h.role}: ${h.content}`).join('\n');
+            const recentHistory = history.slice(-30).map(h => `${h.role}: ${h.content}`).join('\n');
             const extractionPrompt = `[HISTORY]\n${recentHistory}\n\n[CURRENT MESSAGE]\n${userMessage}\n\nTask: Extract order details (Product, Address, Quantity, Phone). 
 If the user corrects previous info (e.g. "my number was wrong, use this one"), prioritize the LATEST info.
 Return ONLY JSON: {"product": "name or null", "address": "full address or null", "quantity": number or null, "phone": "number or null"}. 
