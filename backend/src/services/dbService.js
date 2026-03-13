@@ -8,7 +8,8 @@ async function getPageConfig(pageId) {
               fb.semantic_cache_enabled, 
               fb.semantic_cache_threshold, 
               fb.embed_enabled,
-              fb.semantic_cache_autosave
+              fb.semantic_cache_autosave,
+              fb.text_prompt as system_prompt
        FROM page_access_token_message pam
        LEFT JOIN fb_message_database fb ON CAST(fb.page_id AS TEXT) = CAST(pam.page_id AS TEXT)
        WHERE CAST(pam.page_id AS TEXT) = CAST($1 AS TEXT) LIMIT 1`,
@@ -1406,9 +1407,9 @@ async function saveWhatsAppOrderTracking(orderData) {
             
             const updateResult = await query(
                 `UPDATE whatsapp_order_tracking SET
-                    product_name = COALESCE($1, product_name),
-                    number = COALESCE($2, number),
-                    location = COALESCE($3, location),
+                    product_name = COALESCE($1::text, product_name),
+                    number = COALESCE($2::text, number),
+                    location = COALESCE($3::text, location),
                     product_quantity = COALESCE($4::text, product_quantity),
                     price = COALESCE($5::text, price),
                     created_at = NOW()
@@ -1423,7 +1424,7 @@ async function saveWhatsAppOrderTracking(orderData) {
         const result = await query(
             `INSERT INTO whatsapp_order_tracking
                 (session_name, sender_id, product_name, number, location, product_quantity, price, created_at)
-             VALUES ($1, $2, COALESCE($3, 'Recovered Lead'), $4, COALESCE($5, 'Pending'), COALESCE($6::text, '1'), COALESCE($7::text, '0'), NOW())
+             VALUES ($1::text, $2::text, COALESCE($3::text, 'Recovered Lead'), $4::text, COALESCE($5::text, 'Pending'), COALESCE($6::text, '1'), COALESCE($7::text, '0'), NOW())
              RETURNING *`,
             [session_name, sender_id, product_name, number, location, product_quantity, price]
         );
@@ -1933,12 +1934,12 @@ async function saveOrderTracking(orderData) {
             
             const updateResult = await query(
                 `UPDATE fb_order_tracking SET
-                    product_name = COALESCE($1, product_name),
-                    number = COALESCE($2, number),
-                    location = COALESCE($3, location),
+                    product_name = COALESCE($1::text, product_name),
+                    number = COALESCE($2::text, number),
+                    location = COALESCE($3::text, location),
                     product_quantity = COALESCE($4::text, product_quantity),
                     price = COALESCE($5::text, price),
-                    sender_number = COALESCE($6, sender_number),
+                    sender_number = COALESCE($6::text, sender_number),
                     created_at = NOW()
                  WHERE id = $7
                  RETURNING *`,
@@ -1951,7 +1952,7 @@ async function saveOrderTracking(orderData) {
         const result = await query(
             `INSERT INTO fb_order_tracking
                 (page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, created_at)
-             VALUES ($1, $2, COALESCE($3, 'Recovered Lead'), $4, COALESCE($5, 'Pending'), COALESCE($6::text, '1'), COALESCE($7::text, '0'), $8, NOW())
+             VALUES ($1::text, $2::text, COALESCE($3::text, 'Recovered Lead'), $4::text, COALESCE($5::text, 'Pending'), COALESCE($6::text, '1'), COALESCE($7::text, '0'), $8::text, NOW())
              RETURNING *`,
             [page_id, sender_id, product_name, number, location, product_quantity, price, sender_number]
         );

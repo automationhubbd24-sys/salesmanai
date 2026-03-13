@@ -805,9 +805,31 @@ async function generateResponse({ pageId, userId, userMessage, history, imageUrl
         }
     }
 
-    // 3. Call Core Logic
+    // 3. Inject Current Order Status (Commercial Precision)
+    let finalUserMessage = userMessage;
+    try {
+        const dbService = require('./dbService');
+        const recentOrder = (platform === 'whatsapp') 
+            ? await dbService.getRecentWhatsAppOrder(pageId, userId)
+            : await dbService.getRecentOrder(pageId, userId);
+
+        if (recentOrder) {
+            const status = `\n[CURRENT ORDER PROGRESS (SYSTEM MEMORY)]:
+- Product: ${recentOrder.product_name || 'Pending'}
+- Phone: ${recentOrder.number || 'Pending'}
+- Address: ${recentOrder.location || 'Pending'}
+- Quantity: ${recentOrder.product_quantity || '1'}
+- Price: ${recentOrder.price || '0'}
+(Note: Use this to avoid asking for info you already have. Always prioritize this System Memory over chat history.)`;
+            finalUserMessage += status;
+        }
+    } catch (e) {
+        console.warn(`[AI] Failed to fetch order context:`, e.message);
+    }
+
+    // 4. Call Core Logic
     return generateReply(
-        userMessage,
+        finalUserMessage,
         config,
         pagePrompts,
         history,
@@ -2020,6 +2042,7 @@ ${productContext || "No specific product context provided yet."}
 
 [SALES WORKFLOW]
 - PRIORITY: Always follow the Customer's Prompt first.
+- DATABASE TRUTH: Always prioritize the [CURRENT ORDER PROGRESS (SYSTEM MEMORY)] over chat history. If a field is NOT 'Pending', you already have that information.
 - LEAD CAPTURE: Ensure you collect the customer's NAME, PHONE NUMBER, and FULL ADDRESS to complete the order.
 - CRITICAL: Call 'capture_order_lead' immediately when a phone number is detected. Call it AGAIN as soon as you get an address, product name, or name. Do not wait for all info to call the tool.
 - PERSISTENCE: Each time you call 'capture_order_lead', include all information you currently know (even if previously sent) to ensure the order is fully updated.
