@@ -208,7 +208,11 @@ export default function AdsPage() {
 
   const resetForm = () => {
     setAdId("");
-    setPageId("");
+    // Auto-fill pageId from localStorage if available
+    const activeFbPageId = localStorage.getItem("active_fb_page_id");
+    const activeWpSession = localStorage.getItem("active_wp_session");
+    setPageId(activeFbPageId || activeWpSession || "");
+    
     setDescription("");
     setSelectedProducts([]);
   };
