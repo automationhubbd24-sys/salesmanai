@@ -332,9 +332,10 @@ export default function AdsPage() {
                   id="pageId"
                   placeholder="e.g. 1092837465"
                   value={pageId}
-                  onChange={(e) => setPageId(e.target.value)}
-                  className="bg-white/5 border-white/10"
+                  disabled
+                  className="bg-white/5 border-white/10 opacity-60 cursor-not-allowed"
                 />
+                <p className="text-[10px] text-muted-foreground">Automatically selected from your active page.</p>
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="description">Ad Description (for AI Context)</Label>
