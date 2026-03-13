@@ -1320,8 +1320,9 @@ STRICT RULES:
         // Use finalUserMessage which includes reply context
         
         // --- INJECT FORMATTING INSTRUCTION (Tool-Driven Product System) ---
-        if (pagePrompts && pagePrompts.text_prompt) {
-             pagePrompts.text_prompt += `\n\n[PROFESSIONAL OUTPUT RULES]\n` +
+        let finalPrompt = pagePrompts?.text_prompt || "";
+        if (finalPrompt) {
+             finalPrompt += `\n\n[PROFESSIONAL OUTPUT RULES]\n` +
                 `1) IDENTITY: You are a professional human sales representative. Talk naturally.\n` +
                 `2) TOOL-FIRST: If the user asks about product price/details, you MUST call tools. Do NOT invent prices or descriptions.\n` +
                 `   - Step A: Call resolve_product with the user's query.\n` +
@@ -1331,8 +1332,12 @@ STRICT RULES:
                 `4) LISTING PRODUCTS: If asked "What do you sell?", list 3-5 names from the [Inventory List] naturally and ask which one they are interested in.\n` +
                 `5) NO HALLUCINATIONS: Never guess or invent prices. Always use tool data only.\n`;
         }
-        // --------------------------------------------------------------------
-        // --------------------------------------------------------------------
+        
+        // Use a shallow copy of config to avoid modifying the original config object
+        const aiConfig = { ...pageConfig };
+        if (finalPrompt) {
+             aiConfig.text_prompt = finalPrompt;
+        }
 
         const aiResponse = await aiService.generateResponse({
             pageId: pageId,
@@ -1341,7 +1346,7 @@ STRICT RULES:
             history: effectiveHistory,
             imageUrls: [], // imageUrls (Already processed)
             audioUrls: [], // audioUrls (Already processed)
-            config: pageConfig,
+            config: aiConfig, // Use modified config
             platform: 'messenger',
             extraTokenUsage: totalVisionTokens + totalAudioTokens,
             senderName: senderName
@@ -1998,6 +2003,16 @@ STRICT RULES:
                 .replace(/(?:৳|bdt|taka|tk)\s*[\d,.]+/gi, '')
                 .replace(/[\d,.]+\s*(?:৳|bdt|taka|tk)/gi, '')
                 .trim();
+        }
+
+        // Final Punctuation/Noise Check before sending to user
+        if (replyText) {
+             const cleanedForNoise = replyText.trim();
+             const isJustPunctuation = /^[\s\p{P}]+$/u.test(cleanedForNoise);
+             if (isJustPunctuation && cleanedForNoise.length > 0) {
+                  console.log(`[Webhook] Silencing punctuation-only final reply: "${cleanedForNoise}"`);
+                  replyText = "";
+             }
         }
 
         try {

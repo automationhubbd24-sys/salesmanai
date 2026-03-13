@@ -118,49 +118,14 @@ const getHistoryText = (historyList) => {
 };
 
 const extractHistoryOrder = (historyText) => {
-    const cleanedText = String(historyText || '')
-        .replace(/\*\*/g, '')
-        .replace(/[*_`]/g, '')
-        .replace(/[•·]/g, ' ')
-        .trim();
-    const flatText = cleanedText.replace(/\s+/g, ' ').trim();
-    const normalized = normalizeBanglaDigits(cleanedText);
-
-    const productMatch = flatText.match(/(?:পণ্যের নাম|প্রোডাক্টের নাম|পণ্য|আইটেম|প্রোডাক্ট|product name|product|item)\s*[:ঃ-]?\s*([^\n,।|]+)/i);
-    const qtyMatch = normalized.match(/(?:কোয়ান্টিটি|quantity|qty|পরিমাণ)\s*[:ঃ-]?\s*([০-৯\d]+|এক|দুই|তিন|চার|পাঁচ|ছয়|সাত|আট|নয়|দশ)\s*(পিস|টা|টি|বোতল)?/i);
-    const unitMatch = normalized.match(/(\d+)\s*(পিস|টা|টি|বোতল)/i);
-    const totalMatch = normalized.match(/(?:মোট মূল্য|total price|total)\s*[:ঃ-]?\s*([\d,]+)\s*(টাকা|tk|bdt)?/i);
-    const priceMatch = normalized.match(/(?:পণ্যের মূল্য|price|amount|মূল্য|দাম)\s*[:ঃ-]?\s*([\d,]+)\s*(টাকা|tk|bdt)?/i);
-    const nameMatch = flatText.match(/(?:নাম|customer name|name)\s*[:ঃ-]?\s*([^\n,।|]+)/i);
-    const addrKeywords = ['ঠিকানা','জেলা','থানা','গ্রাম','পোস্ট','বাড়ি','রোড','বাসা','উপজেলা','বিভাগ','ইউনিয়ন','বাজার','এলাকা','address'];
-    const addressLines = cleanedText
-        .split('\n')
-        .map(l => l.trim())
-        .filter(l => l && addrKeywords.some(k => l.includes(k)))
-        .filter(l => !l.includes('[Instruction') && !l.includes('IMAGE:'));
-    
-    const location = addressLines.join(' ').trim();
-    const bnNumberMap = { এক: '1', দুই: '2', তিন: '3', চার: '4', পাঁচ: '5', ছয়: '6', সাত: '7', আট: '8', নয়: '9', দশ: '10' };
-    
-    let qtyValue = '';
-    let qtyUnit = '';
-    if (qtyMatch) {
-        qtyValue = bnNumberMap[qtyMatch[1]] || qtyMatch[1];
-        qtyUnit = qtyMatch[2] || '';
-    } else if (unitMatch) {
-        qtyValue = unitMatch[1];
-        qtyUnit = unitMatch[2] || '';
-    }
-    const quantity = qtyValue ? `${qtyValue}${qtyUnit ? ` ${qtyUnit}` : ''}`.trim() : '';
-    const priceRaw = totalMatch ? totalMatch[1] : (priceMatch ? priceMatch[1] : null);
-    const price = priceRaw ? String(priceRaw).replace(/,/g, '') : null;
-
+    // User request: "LLM niojei asob bujte pare sekane asob diye amra bisoy take ovveride helucinate kortesi"
+    // We return empty object to allow the LLM to handle extraction natively via tools/tags.
     return {
-        product_name: productMatch ? productMatch[1].trim() : '',
-        quantity,
-        price,
-        location,
-        name: nameMatch ? nameMatch[1].trim() : ''
+        product_name: '',
+        quantity: '',
+        price: null,
+        location: '',
+        name: ''
     };
 };
 // -----------------------------
@@ -2777,7 +2742,17 @@ STRICT RULES:
             }
         }
 
-        console.log(`[WA] Sending Reply: "${finalReplyText.substring(0, 50)}..."`);
+        console.log(`[WA] Sending Reply: "${(finalReplyText || '').substring(0, 50)}..."`);
+
+        // --- FINAL NOISE CLEANUP (Punctuation Only Check) ---
+        if (finalReplyText) {
+             const cleanedForNoise = finalReplyText.trim();
+             const isJustPunctuation = /^[\s\p{P}]+$/u.test(cleanedForNoise);
+             if (isJustPunctuation && cleanedForNoise.length > 0) {
+                  console.log(`[WA] Silencing punctuation-only final reply: "${cleanedForNoise}"`);
+                  finalReplyText = "";
+             }
+        }
 
         await whatsappService.sendSeen(sessionName, senderId);
         await whatsappService.sendTyping(sessionName, senderId);

@@ -358,12 +358,14 @@ async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, default
             voiceProvider = gConfig.voice_provider_override;
 
         if (keyService.setManualLimit) {
+            // User request: "jeno rate limit hardcode hoi mane doro ami ja select korbo fronted e setai mane colbe"
+            // We set these as 'global_engine' limits so KeyService enforces them strictly.
             if (gConfig.text_rpm || gConfig.text_rpd || gConfig.text_rph) 
-                keyService.setManualLimit(engineTextModel, { rpm: gConfig.text_rpm, rpd: gConfig.text_rpd, rph: gConfig.text_rph });
+                keyService.setManualLimit(engineTextModel, { rpm: gConfig.text_rpm, rpd: gConfig.text_rpd, rph: gConfig.text_rph, source: 'global_engine' });
             if (gConfig.vision_rpm || gConfig.vision_rpd || gConfig.vision_rph) 
-                keyService.setManualLimit(engineVisionModel, { rpm: gConfig.vision_rpm, rpd: gConfig.vision_rpd, rph: gConfig.vision_rph });
+                keyService.setManualLimit(engineVisionModel, { rpm: gConfig.vision_rpm, rpd: gConfig.vision_rpd, rph: gConfig.vision_rph, source: 'global_engine' });
             if (gConfig.voice_rpm || gConfig.voice_rpd || gConfig.voice_rph) 
-                keyService.setManualLimit(engineVoiceModel, { rpm: gConfig.voice_rpm, rpd: gConfig.voice_rpd, rph: gConfig.voice_rph });
+                keyService.setManualLimit(engineVoiceModel, { rpm: gConfig.voice_rpm, rpd: gConfig.voice_rpd, rph: gConfig.voice_rph, source: 'global_engine' });
         }
     }
 
@@ -942,10 +944,22 @@ function extractJsonFromAiResponse(rawContent) {
     // NORMALIZE REPLY FIELD
     if (!parsed.reply) {
         // Check aliases
-        if (parsed.response && typeof parsed.response === 'string') parsed.reply = parsed.response;
+        if (parsed.reply_text && typeof parsed.reply_text === 'string') parsed.reply = parsed.reply_text;
+        else if (parsed.response && typeof parsed.response === 'string') parsed.reply = parsed.response;
         else if (parsed.message && typeof parsed.message === 'string') parsed.reply = parsed.message;
         else if (parsed.answer && typeof parsed.answer === 'string') parsed.reply = parsed.answer;
         else if (parsed.text && typeof parsed.text === 'string') parsed.reply = parsed.text;
+
+        // --- NOISE FILTER: If reply is just punctuation/commas, silence it ---
+        if (parsed.reply && typeof parsed.reply === 'string') {
+            const cleaned = parsed.reply.trim();
+            // This regex matches strings that ONLY consist of punctuation, whitespace, or are empty
+            const isJustPunctuation = /^[\s\p{P}]+$/u.test(cleaned);
+            if (isJustPunctuation && cleaned.length > 0) {
+                 console.log(`[AI Parser] Silencing punctuation-only reply: "${cleaned}"`);
+                 parsed.reply = ""; 
+            }
+        }
 
         // Check for Tool Call (Native or Legacy)
         const isTool = (parsed.tool && typeof parsed.tool === 'string') ||
@@ -974,14 +988,21 @@ function extractReplyFromText(text) {
         const parsed = JSON.parse(text);
         if (parsed && typeof parsed === 'object') {
             // STRICT MODE: Only accept 'reply'
-            if (parsed.reply && typeof parsed.reply === 'string') {
-                return parsed.reply;
-            }
+            let rawReply = null;
+            if (parsed.reply && typeof parsed.reply === 'string') rawReply = parsed.reply;
+            else if (parsed.reply_text && typeof parsed.reply_text === 'string') rawReply = parsed.reply_text;
             // FLEXIBLE FALLBACK: Check aliases
-            if (parsed.response && typeof parsed.response === 'string') return parsed.response;
-            if (parsed.message && typeof parsed.message === 'string') return parsed.message;
-            if (parsed.answer && typeof parsed.answer === 'string') return parsed.answer;
-            if (parsed.text && typeof parsed.text === 'string') return parsed.text;
+            else if (parsed.response && typeof parsed.response === 'string') rawReply = parsed.response;
+            else if (parsed.message && typeof parsed.message === 'string') rawReply = parsed.message;
+            else if (parsed.answer && typeof parsed.answer === 'string') rawReply = parsed.answer;
+            else if (parsed.text && typeof parsed.text === 'string') rawReply = parsed.text;
+
+            if (rawReply !== null) {
+                const cleaned = rawReply.trim();
+                const isJustPunctuation = /^[\s\p{P}]+$/u.test(cleaned);
+                if (isJustPunctuation && cleaned.length > 0) return "";
+                return rawReply;
+            }
 
             // If reply is explicitly null, return empty string (don't return raw JSON)
             if (('reply' in parsed && parsed.reply === null) || 
@@ -1434,9 +1455,25 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                     const potentialJson = aiTextFinal.substring(firstBrace, lastBrace + 1);
                     const structuredFinal = JSON.parse(potentialJson);
                     
-                    if (structuredFinal.reply_text) {
+                    const reply = structuredFinal.reply_text || structuredFinal.reply || structuredFinal.message || structuredFinal.response;
+
+                    if (reply) {
+                        const cleaned = String(reply).trim();
+                        const isJustPunctuation = /^[\s\p{P}]+$/u.test(cleaned);
+                        if (isJustPunctuation && cleaned.length > 0) {
+                             console.log(`[AgentLoop] Silencing punctuation-only JSON reply: "${cleaned}"`);
+                             return { 
+                                reply: "", 
+                                action: "NONE",
+                                product_id: null,
+                                token_usage: tokenUsage + totalTokensInLoop, 
+                                model: model, 
+                                foundProducts 
+                            };
+                        }
+
                         return { 
-                            reply: structuredFinal.reply_text, 
+                            reply: reply, 
                             action: structuredFinal.action || "NONE",
                             product_id: structuredFinal.product_id || null,
                             image_urls: Array.isArray(structuredFinal.image_urls) ? structuredFinal.image_urls : [],
@@ -1447,11 +1484,24 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                     }
                 } else if (aiTextFinal.trim().length > 0) {
                     // LLM sent a plain text response instead of JSON. 
-                    // This happens if it forgets the JSON rule or thinks a direct answer is better.
-                    // We treat it as a valid reply but with action NONE.
+                    const cleaned = aiTextFinal.trim();
+                    const isJustPunctuation = /^[\s\p{P}]+$/u.test(cleaned);
+                    
+                    if (isJustPunctuation) {
+                         console.log(`[AgentLoop] Silencing punctuation-only plain text: "${cleaned}"`);
+                         return {
+                            reply: "",
+                            action: "NONE",
+                            product_id: null,
+                            token_usage: tokenUsage + totalTokensInLoop,
+                            model: model,
+                            foundProducts
+                        };
+                    }
+
                     console.log(`[AgentLoop] LLM sent plain text instead of JSON. Using as reply_text.`);
                     return {
-                        reply: aiTextFinal.trim(),
+                        reply: cleaned,
                         action: "NONE",
                         product_id: null,
                         token_usage: tokenUsage + totalTokensInLoop,

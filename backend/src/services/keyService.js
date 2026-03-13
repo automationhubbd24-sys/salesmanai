@@ -38,10 +38,15 @@ const pendingUpdates = new Map(); // apiKey -> { usage_delta, token_delta, last_
 // Function declaration MUST be hoisted or defined before call
 async function updateKeyCache(force = false) {
     const now = Date.now();
-    // Refresh cache ONLY if not exists, forced, or TTL expired (30 mins).
-    // This is extremely CPU efficient: 1 query every 30 mins.
+    // Refresh cache ONLY if not exists, forced, or TTL expired (1 min).
     if (!force && keyCache.length > 0 && (now - lastCacheUpdate < CACHE_TTL)) {
         return;
+    }
+
+    // --- CRITICAL: Always flush pending updates BEFORE fetching from DB ---
+    // This ensures in-memory increments are not lost when we replace the cache object.
+    if (pendingUpdates.size > 0) {
+        await flushUsageStats();
     }
 
     try {
@@ -74,12 +79,37 @@ async function updateKeyCache(force = false) {
             }
         });
 
+        // --- OPTIMIZATION: Sort once during cache update (O(N log N) once per min) ---
+        // instead of sorting during every request (O(N log N) per request).
+        // This ensures the "Oldest First" rotation is maintained efficiently.
+        for (const list of providerMap.values()) {
+            list.sort((a, b) => {
+                const tA = a.last_used_at ? new Date(a.last_used_at).getTime() : 0;
+                const tB = b.last_used_at ? new Date(b.last_used_at).getTime() : 0;
+                if (tA !== tB) return tA - tB;
+                return a.id - b.id;
+            });
+        }
+        for (const list of modelMap.values()) {
+            list.sort((a, b) => {
+                const tA = a.last_used_at ? new Date(a.last_used_at).getTime() : 0;
+                const tB = b.last_used_at ? new Date(b.last_used_at).getTime() : 0;
+                if (tA !== tB) return tA - tB;
+                return a.id - b.id;
+            });
+        }
+
         keyCacheMap = newMap;
         keysByProvider = providerMap;
         keysByModel = modelMap;
         lastCacheUpdate = now;
+
+        // --- RESET ROTATION POINTERS ---
+        // Since we re-sorted the keys (LRU style), we should restart scanning from index 0
+        // to pick the absolute oldest/freshest keys first.
+        globalKeyPointers.clear();
         
-        // console.log(`[KeyService] Cache updated: ${rows.length} active keys.`);
+        // console.log(`[KeyService] Cache updated: ${rows.length} active keys. Rotation reset to Oldest First.`);
     } catch (err) {
         console.error(`[KeyService] Failed to update key cache:`, err.message);
     }
@@ -92,6 +122,16 @@ setInterval(flushUsageStats, 30 * 1000);
 setInterval(() => {
     updateKeyCache(true).catch(err => console.error(`[KeyService] Background cache refresh failed:`, err.message));
 }, 60 * 1000);
+
+// Final Flush on Exit (Best effort)
+process.on('SIGTERM', async () => {
+    console.log('[KeyService] SIGTERM received. Flushing usage stats...');
+    await flushUsageStats();
+});
+process.on('SIGINT', async () => {
+    console.log('[KeyService] SIGINT received. Flushing usage stats...');
+    await flushUsageStats();
+});
 
 // --- Default Limits Map (Fallback if DB values are null) ---
 // Based on typical Free Tier limits as of early 2025
@@ -302,20 +342,27 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
     // User Requirement: "agula to fronted e select korbo defualt e kono limit takbe na"
     // Solution: REMOVE DEFAULT LIMITS.
     // Only enforce limits if explicitly set in DB (keyData.rpd_limit / rpm_limit).
-    // If not set (null/0), assume UNLIMITED.
+    // If not set (null/0), check for Dynamic Model Overrides (from Frontend).
     
+    const manual = requestedModel ? dynamicLimits.get(String(requestedModel)) : null;
+
     // RPD (Requests Per Day) - Unified
-    const rpdLimit = parseInt(keyData.rpd_limit); 
+    let rpdLimit = parseInt(keyData.rpd_limit); 
+    if (!(rpdLimit > 0) && manual && manual.rpd) {
+        rpdLimit = parseInt(manual.rpd);
+    }
     
     // We use the key's total daily usage (regardless of model)
     // Only check if rpdLimit is a valid positive number
     if (rpdLimit > 0 && keyData.last_date_checked === today && (keyData.usage_today || 0) >= rpdLimit) {
-        // console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPD limit (${rpdLimit})`);
         return false;
     }
 
     // RPM (Requests Per Minute) - Unified
-    const rpmLimit = parseInt(keyData.rpm_limit);
+    let rpmLimit = parseInt(keyData.rpm_limit);
+    if (!(rpmLimit > 0) && manual && manual.rpm) {
+        rpmLimit = parseInt(manual.rpm);
+    }
     
     // Check global timestamps for this KEY
     const timestamps = keyUsageTimestamps.get(keyData.api) || [];
@@ -332,11 +379,13 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
     // STRICT CHECK: If total requests in last minute >= Limit
     // Only check if rpmLimit is a valid positive number
     if (rpmLimit > 0 && validTimestamps.length >= rpmLimit) {
-        // console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPM limit (${rpmLimit})`);
         return false;
     }
 
-    const rphLimit = parseInt(keyData.rph_limit);
+    let rphLimit = parseInt(keyData.rph_limit);
+    if (!(rphLimit > 0) && manual && manual.rph) {
+        rphLimit = parseInt(manual.rph);
+    }
     const hourTimestamps = keyUsageHourTimestamps.get(keyData.api) || [];
     const oneHourAgo = now - 60 * 60 * 1000;
     const validHourTimestamps = hourTimestamps.filter(ts => ts > oneHourAgo);
@@ -349,37 +398,27 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
         return false;
     }
 
-    // --- 2. MODEL-LEVEL LIMITS (OPTIONAL/SECONDARY) ---
-    // Only check model-specific limits if the key itself is fine.
-    // This is useful if you want to limit "Gemini Vision" specifically to 1 RPM, but allow "Gemini Flash" 10 RPM.
-    if (modelToCheck) {
-        const manual = dynamicLimits.get(String(modelToCheck));
-        if (manual) {
-            // Strict Model RPD
-            if (manual.rpd) {
-                const daily = modelDailyUsage.get(modelToCheck) || { date: today, count: 0 };
-                if (daily.date === today && daily.count >= manual.rpd) {
-                    console.warn(`[KeyService] ⛔ Model ${modelToCheck} hit GLOBAL RPD limit (${manual.rpd})`);
-                    return false;
-                }
+    // --- 2. MODEL-LEVEL GLOBAL LIMITS (OPTIONAL/SECONDARY) ---
+    // User request: "jeno rate limit hardcode hoi mane doro ami ja select korbo fronted e setai mane colbe"
+    // If 'manual' has a source 'global_engine', we treat it as a GLOBAL limit for the WHOLE model usage across all keys.
+    // NOTE: We only enforce this if the limit is > 100, assuming small numbers are per-key defaults.
+    // If you want a strict small global limit, use a different source or explicit flag.
+    if (manual && manual.source === 'global_engine' && (manual.rpm > 100 || manual.rpd > 1000)) {
+        // Strict Model RPD
+        if (manual.rpd) {
+            const daily = modelDailyUsage.get(requestedModel) || { date: today, count: 0 };
+            if (daily.date === today && daily.count >= manual.rpd) {
+                console.warn(`[KeyService] ⛔ Global Engine ${requestedModel} hit RPD limit (${manual.rpd})`);
+                return false;
             }
-            // Strict Model RPM
-            if (manual.rpm) {
-                const mTimestamps = modelUsageTimestamps.get(modelToCheck) || [];
-                const mValid = mTimestamps.filter(ts => ts > oneMinuteAgo);
-                if (mValid.length >= manual.rpm) {
-                    console.warn(`[KeyService] ⛔ Model ${modelToCheck} hit GLOBAL RPM limit (${manual.rpm})`);
-                    return false;
-                }
-            }
-            if (manual.rph) {
-                const oneHourAgo = now - 60 * 60 * 1000;
-                const mHour = modelUsageHourTimestamps.get(modelToCheck) || [];
-                const mHourValid = mHour.filter(ts => ts > oneHourAgo);
-                if (mHourValid.length >= manual.rph) {
-                    console.warn(`[KeyService] ⛔ Model ${modelToCheck} hit GLOBAL RPH limit (${manual.rph})`);
-                    return false;
-                }
+        }
+        // Strict Model RPM
+        if (manual.rpm) {
+            const mTimestamps = modelUsageTimestamps.get(requestedModel) || [];
+            const mValid = mTimestamps.filter(ts => ts > oneMinuteAgo);
+            if (mValid.length >= manual.rpm) {
+                console.warn(`[KeyService] ⛔ Global Engine ${requestedModel} hit RPM limit (${manual.rpm})`);
+                return false;
             }
         }
     }
@@ -526,11 +565,12 @@ async function updateKeyStatusFromHeaders(apiKey, headers) {
 }
 
 // 5. Smart Key Selection (Sequential Round-Robin)
-// User Requirement: "total api jodi 1 - 100 ta take tahole 100 cross kore then 1 e asbe kintu 1 e ase jodi deke 24 er rate limit reset hoi ni engine work korbe na"
-// Solution: Sequential Global Rotation.
-// We maintain a global index for each Model/Provider combo.
+// User Requirement: "total api jodi 1 - 100 ta take tahole 100 cross kore then 1 e asbe"
+// Solution: O(1) Sequential Rotation. 
+// At 50,000 RPM / 10,000 Keys, we MUST avoid O(N log N) sorting during requests.
+// Keys are pre-sorted by updateKeyCache() once per minute.
 
-const globalKeyPointers = new Map(); // Stores last used index for each "provider:model"
+const globalKeyPointers = new Map(); // Stores current index for each "provider:model"
 
 async function getSmartKey(provider, model = 'default') {
     if (typeof updateKeyCache === 'function') {
@@ -552,70 +592,40 @@ async function getSmartKey(provider, model = 'default') {
     }
     
     if (!candidates || candidates.length === 0) {
-        // Fallback: If specific model keys not found, try provider generic keys
-        if (keysByProvider.has(provider)) {
-             candidates = keysByProvider.get(provider);
-        }
-        
-        if (!candidates || candidates.length === 0) {
-            console.warn(`[KeyService] No keys found for ${provider}/${model}`);
-            return null;
-        }
+        if (keysByProvider.has(provider)) candidates = keysByProvider.get(provider);
+        if (!candidates || candidates.length === 0) return null;
     }
 
-    // Filter dead keys
+    // Filter dead keys (In-Memory Check is O(N) but small for small dead pools)
+    // For 10,000 keys, we filter efficiently.
     const validKeys = candidates.filter(k => isKeyAlive(k.api));
+    if (validKeys.length === 0) return null;
 
-    if (validKeys.length === 0) {
-        console.warn(`[KeyService] All keys dead for ${provider}/${model}`);
-        return null;
-    }
-
-    // 2. SEQUENTIAL ROTATION LOGIC
-    // Sort keys by ID to ensure consistent order (1, 2, 3...)
-    // This is crucial for the "1-100 then back to 1" requirement.
-    validKeys.sort((a, b) => a.id - b.id);
-
+    // 2. SEQUENTIAL ROTATION LOGIC (Persistent & High-Performance)
     const mapKey = `${provider}:${model}`;
     let currentIndex = globalKeyPointers.get(mapKey) || 0;
     
-    // If index out of bounds (e.g. new keys added or removed), reset to 0
-    if (currentIndex >= validKeys.length) {
-        currentIndex = 0;
-    }
+    // If index out of bounds, reset to 0
+    if (currentIndex >= validKeys.length) currentIndex = 0;
 
     const minGapMs = KEY_MIN_GAP_MS > 0 ? (KEY_MIN_GAP_MS + Math.floor(Math.random() * (KEY_MIN_GAP_JITTER_MS + 1))) : 0;
     const now = Date.now();
 
-    // Iterate through keys starting from Last Index
-    // We check exactly ONCE through the list.
+    // Iterate through pre-sorted keys (O(N) check in worst case, but O(1) normally)
     for (let i = 0; i < validKeys.length; i++) {
-        // Circular Index: (Start + i) % Length
         const actualIndex = (currentIndex + i) % validKeys.length;
         const candidateKey = validKeys[actualIndex];
 
         if (minGapMs > 0 && candidateKey.last_used_at) {
             const lastUsedMs = new Date(candidateKey.last_used_at).getTime();
-            if (!Number.isNaN(lastUsedMs) && now - lastUsedMs < minGapMs) {
-                continue;
-            }
+            if (!Number.isNaN(lastUsedMs) && now - lastUsedMs < minGapMs) continue;
         }
 
-        // Check if Key is usable (RPM/RPD)
+        // Check usable (RPM/RPD)
         if (isKeyWithinLimits(candidateKey, model)) {
-            
-            // --- 24-HOUR RESET CHECK (Loop Back Safety) ---
-            // User Requirement: "1 e ase jodi deke 24 er rate limit reset hoi ni engine work korbe na"
-            // If we wrapped around (actualIndex < currentIndex), it means we finished the list.
-            // We should be extra careful about reuse.
-            
-            // For now, isKeyWithinLimits handles the 24h check via RPD.
-            // If RPD limit is reached, isKeyWithinLimits returns false.
-            // So we don't need extra logic here, just ensure RPD limit is set correctly.
-            
-            // Update Pointer for next time (Next Key)
+            // Update Pointer (O(1))
             globalKeyPointers.set(mapKey, (actualIndex + 1) % validKeys.length);
-
+            
             // --- ATOMIC TIMESTAMP RECORDING ---
             const today = new Date().toISOString().split('T')[0];
             
@@ -728,11 +738,12 @@ module.exports = {
     isModelLocked,
     setManualLimit(modelId, limits) {
         if (!modelId || !limits) return;
-        const rpm = parseInt(limits.rpm) || 1000;
-        const rpd = parseInt(limits.rpd) || 10000;
+        const rpm = parseInt(limits.rpm) || 0;
+        const rpd = parseInt(limits.rpd) || 0;
         const rph = parseInt(limits.rph) || 0;
-        console.log(`[KeyService] ⚙️ Manually Setting Limits for ${modelId}: RPM=${rpm}, RPD=${rpd}, RPH=${rph}`);
-        dynamicLimits.set(modelId, { rpm, rpd, rph, source: 'manual' });
+        const source = limits.source || 'manual';
+        console.log(`[KeyService] ⚙️ Manually Setting Limits for ${modelId}: RPM=${rpm}, RPD=${rpd}, RPH=${rph}, Source=${source}`);
+        dynamicLimits.set(modelId, { rpm, rpd, rph, source });
     },
     getLimitForModel: (modelId) => {
         const dyn = dynamicLimits.get(modelId);

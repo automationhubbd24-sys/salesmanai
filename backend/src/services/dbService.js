@@ -524,6 +524,30 @@ async function initTables() {
         await query(`
             DO $$ 
             BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='api_list' AND column_name='last_used_at') THEN
+                    ALTER TABLE api_list ADD COLUMN last_used_at TIMESTAMP WITH TIME ZONE;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='api_list' AND column_name='usage_today') THEN
+                    ALTER TABLE api_list ADD COLUMN usage_today INTEGER DEFAULT 0;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='api_list' AND column_name='usage_tokens_today') THEN
+                    ALTER TABLE api_list ADD COLUMN usage_tokens_today INTEGER DEFAULT 0;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='api_list' AND column_name='last_date_checked') THEN
+                    ALTER TABLE api_list ADD COLUMN last_date_checked DATE DEFAULT CURRENT_DATE;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='api_list' AND column_name='cooldown_until') THEN
+                    ALTER TABLE api_list ADD COLUMN cooldown_until TIMESTAMP WITH TIME ZONE;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='api_list' AND column_name='rph_limit') THEN
+                    ALTER TABLE api_list ADD COLUMN rph_limit INTEGER DEFAULT 0;
+                END IF;
+            END $$;
+        `);
+        console.log("[DB] 'api_list' columns verified.");
+        await query(`
+            DO $$ 
+            BEGIN 
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='allow_description') THEN
                     ALTER TABLE fb_message_database ADD COLUMN allow_description BOOLEAN DEFAULT FALSE;
                 END IF;
