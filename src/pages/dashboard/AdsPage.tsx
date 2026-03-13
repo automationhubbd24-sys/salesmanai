@@ -93,17 +93,57 @@ export default function AdsPage() {
     }
   };
 
+  const getTeamOwnerForContext = () => {
+    if (typeof window === "undefined") return null;
+    const teamOwner = localStorage.getItem("active_team_owner");
+    const activeWa = localStorage.getItem("active_wa_session_id");
+    const activeFb = localStorage.getItem("active_fb_page_id");
+    const activeId = activeFb || activeWa;
+
+    try {
+      const storedUser = localStorage.getItem("auth_user");
+      if (storedUser) {
+        const user = JSON.parse(storedUser);
+        if (user.email && teamOwner === user.email) return null;
+      }
+    } catch (e) {}
+
+    if (activeId && activeWa && activeId === activeWa) {
+      const mode = localStorage.getItem("whatsapp_view_mode");
+      if (mode === "team") return teamOwner;
+      return null;
+    }
+
+    if (activeId && activeFb && activeId === activeFb) {
+      const mode = localStorage.getItem("messenger_view_mode");
+      if (mode === "team") return teamOwner;
+      return null;
+    }
+
+    return teamOwner || null;
+  };
+
   const fetchAds = async () => {
     try {
       setLoading(true);
       const token = localStorage.getItem("auth_token");
-      const userId = localStorage.getItem("user_id");
-      const teamOwner = localStorage.getItem("team_owner_email");
+      const storedUser = localStorage.getItem("auth_user");
+      if (!storedUser) return;
+      const user = JSON.parse(storedUser);
+      const userId = user.id;
       
-      let url = `${BACKEND_URL}/api/ads?user_id=${userId}`;
-      if (teamOwner) url += `&team_owner=${teamOwner}`;
+      const activeFb = localStorage.getItem("active_fb_page_id");
+      const activeWa = localStorage.getItem("active_wa_session_id");
+      const resolvedPageId = activeFb || activeWa;
 
-      const response = await fetch(url, {
+      const params = new URLSearchParams();
+      params.set("user_id", userId);
+      
+      const teamOwner = getTeamOwnerForContext();
+      if (teamOwner) params.set("team_owner", teamOwner);
+      if (resolvedPageId) params.set("page_id", resolvedPageId);
+
+      const response = await fetch(`${BACKEND_URL}/api/ads?${params.toString()}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -122,23 +162,33 @@ export default function AdsPage() {
   const fetchProducts = async () => {
     try {
       const token = localStorage.getItem("auth_token");
-      const userId = localStorage.getItem("user_id");
+      const storedUser = localStorage.getItem("auth_user");
+      if (!storedUser) return;
+      const user = JSON.parse(storedUser);
+      const userId = user.id;
       
-      // Use the pageId from the form if available, otherwise it might fetch all or none
-      // In your case, we want products linked to the active context
-      let url = `${BACKEND_URL}/api/products?user_id=${userId}`;
-      if (pageId) {
-        url += `&page_id=${pageId}`;
-      }
+      const activeFb = localStorage.getItem("active_fb_page_id");
+      const activeWa = localStorage.getItem("active_wa_session_id");
+      const resolvedPageId = pageId || activeFb || activeWa;
 
-      const response = await fetch(url, {
+      const params = new URLSearchParams();
+      params.set("user_id", userId);
+      
+      const teamOwner = getTeamOwnerForContext();
+      if (teamOwner) params.set("team_owner", teamOwner);
+      if (resolvedPageId) params.set("page_id", resolvedPageId);
+
+      const response = await fetch(`${BACKEND_URL}/api/products?${params.toString()}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
       });
       if (!response.ok) throw new Error("Failed to fetch products");
       const data = await response.json();
-      setProducts(data.products || []);
+      
+      // The API returns products in data.data or directly as data
+      const productList = data.data || data.products || (Array.isArray(data) ? data : []);
+      setProducts(productList);
     } catch (error) {
       console.error("Failed to fetch products:", error);
     }
