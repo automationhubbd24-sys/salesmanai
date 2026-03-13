@@ -278,22 +278,43 @@ router.post('/v1/chat/completions', async (req, res) => {
     }
 
     const { model, messages, stream } = req.body;
-    
+
+    // --- MULTI-MODAL EXTRACTION (User Requirement: Unified Endpoint) ---
+    let imageUrls = [];
+    let audioUrls = [];
+    let lastUserMessage = "";
+
+    if (messages && Array.isArray(messages)) {
+        const lastMsg = messages[messages.length - 1];
+        if (lastMsg && lastMsg.role === 'user') {
+            if (Array.isArray(lastMsg.content)) {
+                lastMsg.content.forEach(part => {
+                    if (part.type === 'text') lastUserMessage += part.text + " ";
+                    else if (part.type === 'image_url') imageUrls.push(part.image_url?.url || part.image_url);
+                    else if (part.type === 'audio_url') audioUrls.push(part.audio_url?.url || part.audio_url);
+                });
+            } else {
+                lastUserMessage = lastMsg.content;
+            }
+        }
+    }
+
     // Auto-Detect Provider if not specified via header (Internal Logic)
     let provider = 'google';
     let modelToUse = model;
 
-    // --- DYNAMIC ENGINE RESOLUTION (User Requirement) ---
-    // Instead of hardcoding, we use the same resolution logic as the main system
-    // This respects whatever is selected in the Frontend Config.
-    if (model === 'salesmanchatbot-pro' || model === 'salesmanchatbot-flash' || model === 'salesmanchatbot-lite') {
+    // --- DYNAMIC ENGINE RESOLUTION ---
+    const isBranded = model === 'salesmanchatbot-pro' || model === 'salesmanchatbot-flash' || model === 'salesmanchatbot-lite';
+    const isVision = imageUrls.length > 0;
+    const isAudio = audioUrls.length > 0;
+
+    if (isBranded) {
         try {
-            // Mock a minimal config for resolution
             const mockConfig = { chat_model: model, cheap_engine: true };
-            const resolved = await aiService.resolveSalesmanchatbotEngine(mockConfig, 'salesmanchatbot', model, false, false);
+            const resolved = await aiService.resolveSalesmanchatbotEngine(mockConfig, 'salesmanchatbot', model, isVision, isAudio);
             provider = resolved.finalProvider;
             modelToUse = resolved.finalModel;
-            console.log(`[API Engine] Dynamically Resolved ${model} -> ${provider}/${modelToUse}`);
+            console.log(`[API Engine] Dynamically Resolved ${model} -> ${provider}/${modelToUse} (Vision: ${isVision}, Audio: ${isAudio})`);
         } catch (e) {
             console.warn(`[API Engine] Dynamic resolution failed for ${model}, using fallbacks.`);
             if (model === 'salesmanchatbot-pro') { provider = 'google'; modelToUse = 'gemini-1.5-flash'; }
@@ -325,6 +346,36 @@ router.post('/v1/chat/completions', async (req, res) => {
 
     // Determined Key logic
     const isSystemEngine = req.body.is_system_engine !== false; 
+
+    // --- MULTI-MODAL PRE-PROCESSING ---
+    let preProcessedContext = "";
+    if (imageUrls.length > 0 || audioUrls.length > 0) {
+        try {
+            console.log(`[API Engine] Pre-processing media: Images=${imageUrls.length}, Audio=${audioUrls.length}`);
+            const mediaResult = await aiService.generateReply(
+                lastUserMessage || "Analyze this media",
+                { cheap_engine: true, is_external_api: true, platform: 'api_engine' },
+                {}, [], "User", "Owner", null, imageUrls, audioUrls
+            );
+            
+            if (mediaResult && mediaResult.reply) {
+                preProcessedContext = mediaResult.reply;
+                console.log(`[API Engine] Media processed successfully.`);
+            }
+        } catch (mediaErr) {
+            console.warn(`[API Engine] Media pre-processing failed:`, mediaErr.message);
+        }
+    }
+
+    // If we have media context, we inject it into the LAST user message
+    if (preProcessedContext && messages.length > 0) {
+        const lastIndex = messages.length - 1;
+        if (typeof messages[lastIndex].content === 'string') {
+            messages[lastIndex].content += `\n\n[Media Analysis Context]: ${preProcessedContext}`;
+        } else if (Array.isArray(messages[lastIndex].content)) {
+            messages[lastIndex].content.push({ type: 'text', text: `\n\n[Media Analysis Context]: ${preProcessedContext}` });
+        }
+    }
 
     try {
         if (stream) {
