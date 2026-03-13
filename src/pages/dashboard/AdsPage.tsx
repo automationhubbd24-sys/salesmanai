@@ -43,7 +43,6 @@ export default function AdsPage() {
   // Form State
   const [adId, setAdId] = useState("");
   const [pageId, setPageId] = useState("");
-  const [activePageName, setActivePageName] = useState("");
   const [description, setDescription] = useState("");
   const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
   const [productSearch, setProductSearch] = useState("");
@@ -52,13 +51,6 @@ export default function AdsPage() {
     checkActivePages();
     fetchAds();
   }, [platform]);
-
-  // Sync active page name for the premium feel
-  useEffect(() => {
-    const fbName = localStorage.getItem("active_fb_page_name");
-    const waName = localStorage.getItem("active_wp_session");
-    setActivePageName(fbName || waName || "");
-  }, [isDialogOpen]);
 
   // Fetch products whenever isDialogOpen becomes true or pageId changes
   useEffect(() => {
@@ -269,9 +261,8 @@ export default function AdsPage() {
     setAdId("");
     // Auto-fill pageId from localStorage if available
     const activeFbPageId = localStorage.getItem("active_fb_page_id");
-    const activeWaSessionId = localStorage.getItem("active_wa_session_id");
-    const resolvedId = activeFbPageId || activeWaSessionId || "";
-    setPageId(resolvedId);
+    const activeWpSession = localStorage.getItem("active_wp_session");
+    setPageId(activeFbPageId || activeWpSession || "");
     
     setDescription("");
     setSelectedProducts([]);
@@ -336,23 +327,14 @@ export default function AdsPage() {
                 />
               </div>
               <div className="grid gap-2">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="pageId">Active Page</Label>
-                  <span className="text-[10px] text-primary bg-primary/10 px-2 py-0.5 rounded-full border border-primary/20">
-                    Linked
-                  </span>
-                </div>
+                <Label htmlFor="pageId">Page ID / Session Name</Label>
                 <Input
                   id="pageId"
-                  placeholder={activePageName ? `Current: ${activePageName}` : "Selecting Page..."}
+                  placeholder="e.g. 1092837465"
                   value={pageId}
-                  disabled
-                  className="bg-white/5 border-white/10 opacity-70 cursor-not-allowed font-medium text-[#00ff88]"
+                  onChange={(e) => setPageId(e.target.value)}
+                  className="bg-white/5 border-white/10"
                 />
-                <p className="text-[10px] text-muted-foreground italic flex items-center gap-1">
-                  <span className="h-1 w-1 bg-primary rounded-full animate-pulse" />
-                  Automatically selected: {activePageName || 'Active Resource'}
-                </p>
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="description">Ad Description (for AI Context)</Label>
