@@ -269,8 +269,9 @@ export default function AdsPage() {
     setAdId("");
     // Auto-fill pageId from localStorage if available
     const activeFbPageId = localStorage.getItem("active_fb_page_id");
-    const activeWpSession = localStorage.getItem("active_wp_session");
-    setPageId(activeFbPageId || activeWpSession || "");
+    const activeWaSessionId = localStorage.getItem("active_wa_session_id");
+    const resolvedId = activeFbPageId || activeWaSessionId || "";
+    setPageId(resolvedId);
     
     setDescription("");
     setSelectedProducts([]);
