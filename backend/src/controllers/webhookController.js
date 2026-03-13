@@ -1464,20 +1464,18 @@ STRICT RULES:
                     
                     if (!content) return '';
 
-                    // --- IGNORE SYSTEM MEMORY POLLUTION ---
-                    // If the content contains [SYSTEM MEMORY], we skip it entirely to avoid confusing AI or Lead Capture.
-                    if (content.includes('[SYSTEM MEMORY]')) return '';
+                    // --- IGNORE SYSTEM NOISE & LOGS ---
+                    if (content.includes('[SYSTEM MEMORY]') || content.includes('Link: http')) return '';
 
                     // --- SMART CLEAN INTERNAL NOISE FROM HISTORY ---
-                    // Instead of deleting everything, we strip out the "pollution" (long URLs and Descs)
-                    // but keep the core info (Product Name, Price) for the regex to find.
                     return content
-                        .replace(/Image URL: https?:\/\/[^\s|]+/gi, '(Image)') // Shorten long URLs
-                        .replace(/Desc: [\s\S]*?(?=\||\[End|$)/gi, '') // Remove long internal descriptions
-                        .replace(/\[Instruction Products\]/gi, '') // Remove start marker
-                        .replace(/\[End of Instruction Products\]/gi, '') // Remove end marker
-                        .replace(/\[SAVE_ORDER:[\s\S]*?\]/gi, '') // Remove raw JSON
+                        .replace(/Image URL: https?:\/\/[^\s|]+/gi, '(Image)')
+                        .replace(/Desc: [\s\S]*?(?=\||\[End|$)/gi, '')
+                        .replace(/\[Instruction Products\]/gi, '')
+                        .replace(/\[End of Instruction Products\]/gi, '')
+                        .replace(/\[SAVE_ORDER:[\s\S]*?\]/gi, '')
                         .replace(/##product/gi, '')
+                        .replace(/(?:\d+|[০-৯])\.\s*\*\*[^*]+\*\*/g, '') // Remove numbered product lists from history
                         .trim();
                 })
                 .filter(Boolean)
@@ -1485,61 +1483,14 @@ STRICT RULES:
         };
 
         const extractHistoryOrder = (historyText) => {
-            const cleanedText = String(historyText || '')
-                .replace(/\*\*/g, '')
-                .replace(/[*_`]/g, '')
-                .replace(/[•·]/g, ' ')
-                .trim();
-            const flatText = cleanedText.replace(/\s+/g, ' ').trim();
-            const normalized = normalizeBanglaDigits(cleanedText);
-
-            // 1. PRODUCT NAME EXTRACTION
-            // Priority: Explicit mention -> AI suggestion in history -> Recovered
-            const productMatch = flatText.match(/(?:পণ্যের নাম|প্রোডাক্টের নাম|পণ্য|আইটেম|প্রোডাক্ট|product name|product|item)\s*[:ঃ-]?\s*([^\n,।|]+)/i);
-            
-            // 2. QUANTITY EXTRACTION
-            const qtyMatch = normalized.match(/(?:কোয়ান্টিটি|quantity|qty|পরিমাণ)\s*[:ঃ-]?\s*([০-৯\d]+|এক|দুই|তিন|চার|পাঁচ|ছয়|সাত|আট|নয়|দশ)\s*(পিস|টা|টি|বোতল)?/i);
-            const unitMatch = normalized.match(/(\d+)\s*(পিস|টা|টি|বোতল)/i);
-            
-            // 3. PRICE EXTRACTION
-            const totalMatch = normalized.match(/(?:মোট মূল্য|total price|total)\s*[:ঃ-]?\s*([\d,]+)\s*(টাকা|tk|bdt)?/i);
-            const priceMatch = normalized.match(/(?:পণ্যের মূল্য|price|amount|মূল্য|দাম)\s*[:ঃ-]?\s*([\d,]+)\s*(টাকা|tk|bdt)?/i);
-            
-            // 4. CUSTOMER NAME
-            const nameMatch = flatText.match(/(?:নাম|customer name|name)\s*[:ঃ-]?\s*([^\n,।|]+)/i);
-            
-            // 5. LOCATION/ADDRESS
-            const addrKeywords = ['ঠিকানা','জেলা','থানা','গ্রাম','পোস্ট','বাড়ি','রোড','বাসা','উপজেলা','বিভাগ','ইউনিয়ন','বাজার','এলাকা','address'];
-            const addressLines = cleanedText
-                .split('\n')
-                .map(l => l.trim())
-                .filter(l => l && addrKeywords.some(k => l.includes(k)))
-                // Filter out any lines that still contain internal tags just in case
-                .filter(l => !l.includes('[Instruction') && !l.includes('IMAGE:'));
-            
-            const location = addressLines.join(' ').trim();
-            const bnNumberMap = { এক: '1', দুই: '2', তিন: '3', চার: '4', পাঁচ: '5', ছয়: '6', সাত: '7', আট: '8', নয়: '9', দশ: '10' };
-            
-            let qtyValue = '';
-            let qtyUnit = '';
-            if (qtyMatch) {
-                qtyValue = bnNumberMap[qtyMatch[1]] || qtyMatch[1];
-                qtyUnit = qtyMatch[2] || '';
-            } else if (unitMatch) {
-                qtyValue = unitMatch[1];
-                qtyUnit = unitMatch[2] || '';
-            }
-            const quantity = qtyValue ? `${qtyValue}${qtyUnit ? ` ${qtyUnit}` : ''}`.trim() : '';
-            
-            const priceRaw = totalMatch ? totalMatch[1] : (priceMatch ? priceMatch[1] : null);
-            const price = priceRaw ? String(priceRaw).replace(/,/g, '') : null;
-
+            // LLM manages everything via system prompt and order_details.
+            // We return an empty object to satisfy the caller, ensuring no regex-based hallucinations.
             return {
-                product_name: productMatch ? productMatch[1].trim() : '',
-                quantity,
-                price,
-                location,
-                name: nameMatch ? nameMatch[1].trim() : ''
+                product_name: '',
+                quantity: '',
+                price: null,
+                location: '',
+                name: ''
             };
         };
 
@@ -1577,56 +1528,18 @@ STRICT RULES:
             const phoneMatch = normalizedCombined.match(/(?:\+?88)?(01[3-9]\d{8})/g);
             const fallbackNumber = phoneMatch ? normalizeBdPhone(phoneMatch[0]) : null;
 
-            // ONLY save if we have a number in the current message OR if it's a known user with a previous order
+            // ONLY save if we have a phone number. 
+            // We rely on AI's 'order_details' for structured data. 
+            // Fallback only captures the phone number and marks others as Pending.
             if (fallbackNumber) {
-                // 1. Get History Context for fallback parsing
-                const historyText = getHistoryText(effectiveHistory);
-                const historyOrder = extractHistoryOrder(historyText);
-
-                // 2. Extract Info from CURRENT message (Highest Priority)
-                const addrKeywords = ['ঠিকানা','নাম','জেলা','থানা','গ্রাম','পোস্ট','বাড়ি','রোড','বাসা','উপজেলা','বিভাগ','ইউনিয়ন','বাজার','এলাকা','address'];
-                const addressLines = combinedText
-                    .split('\n')
-                    .map(l => l.trim())
-                    .filter(l => l && addrKeywords.some(k => l.includes(k)));
-                const currentAddress = addressLines.join(' ').trim();
-                
-                const nameMatch = combinedText.match(/(?:নাম|name)\s*[:ঃ-]?\s*([^\n,।|]+)/i);
-                const currentName = nameMatch ? nameMatch[1].trim() : '';
-                
-                const qtyMatch = normalizedCombined.match(/(এক|দুই|তিন|চার|পাঁচ|\d+)\s*(বোতল|পিস|টা|টি)/);
-                const currentQty = qtyMatch ? qtyMatch[0] : '';
-
-                // 3. MERGE Current Info with History Info (Fallback)
-                const finalName = currentName || historyOrder.name || '';
-                const finalAddress = currentAddress || historyOrder.location || '';
-                
-                const locationParts = [];
-                if (finalName) locationParts.push(`নাম: ${finalName}`);
-                if (finalAddress) locationParts.push(finalAddress);
-                const fallbackLocation = locationParts.join(' | ') || 'N/A';
-                
-                const finalQuantity = currentQty || historyOrder.quantity || '1';
-                
-                // For product name: Priority 1 (AI detection above), Priority 2 (History Parsing)
-                let finalProduct = historyOrder.product_name || 'Recovered Lead';
-                
-                // Clean product name if it was picked up from a polluted source
-                if (finalProduct.includes('|')) {
-                    finalProduct = finalProduct.split('|')[0].trim();
-                }
-                finalProduct = finalProduct.replace(/Item \d+:/gi, '').replace(/##product/gi, '').replace(/"/g, '').trim();
-
-                const finalPrice = historyOrder.price || null;
-
                 await dbService.saveOrderTracking({
                     page_id: pageId,
                     sender_id: senderId,
-                    product_name: finalProduct,
+                    product_name: 'Recovered Lead',
                     number: fallbackNumber,
-                    location: fallbackLocation,
-                    product_quantity: finalQuantity,
-                    price: finalPrice,
+                    location: 'Pending',
+                    product_quantity: '1',
+                    price: null,
                     sender_number: senderId
                 });
                 orderSaved = true;

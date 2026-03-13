@@ -2176,12 +2176,24 @@ ${productContext || "No specific product context provided yet."}
             let finalModel = resolved.finalModel;
 
             // If it's a retry, we might want to fallback from Gemini to OpenRouter or vice-versa
+            // BRANDED ENGINE FAILOVER: Pro -> Flash -> Lite
             if (retryCount > 0) {
-                if (finalProvider === 'google') finalProvider = 'openrouter';
-                else if (finalProvider === 'openrouter') finalProvider = 'google';
+                if (resolved.targetEngineName === 'salesmanchatbot-pro') {
+                    console.log(`[AI] Failover: Pro failed, switching to Flash...`);
+                    resolved = await resolveSalesmanchatbotEngine(pageConfig, 'salesmanchatbot', 'salesmanchatbot-flash', isVision, isAudio);
+                } else if (resolved.targetEngineName === 'salesmanchatbot-flash') {
+                    console.log(`[AI] Failover: Flash failed, switching to Lite...`);
+                    resolved = await resolveSalesmanchatbotEngine(pageConfig, 'salesmanchatbot', 'salesmanchatbot-lite', isVision, isAudio);
+                } else {
+                    // Standard fallback if not using branded engines or already on Lite
+                    if (finalProvider === 'google') finalProvider = 'openrouter';
+                    else if (finalProvider === 'openrouter') finalProvider = 'google';
+                }
+                
+                currentModel = resolved.finalModel;
+                finalProvider = resolved.finalProvider;
             }
 
-            currentModel = finalModel;
             let keyData = await keyService.getSmartKey(finalProvider, currentModel);
             
             if (!keyData || !keyData.key) {
@@ -2390,7 +2402,8 @@ Rules:
             if (!result) throw new Error("Empty response from OpenRouter");
 
             logDebug(`[Vision] Success with Priority ${model}: ${result.substring(0, 30)}... Usage: ${usage}`);
-            return { text: result, usage: usage, model: model };
+            const returnModel = resolved?.targetEngineName || model;
+            return { text: result, usage: usage, model: returnModel };
 
         } catch (error) {
             const errMsg = error.response?.data?.error?.message || error.message;
@@ -2526,6 +2539,60 @@ Rules:
             result = response.data?.choices?.[0]?.message?.content;
             usage = response.data?.usage?.total_tokens || 0;
 
+        } else if (provider === 'mistral') {
+            // Mistral Vision Call (mistral-large-2512 etc.)
+            const payload = {
+                model: model,
+                messages: [
+                    {
+                        role: "user",
+                        content: [
+                            { type: "text", text: systemPrompt },
+                            { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Image}` } }
+                        ]
+                    }
+                ],
+                max_tokens: maxTokens
+            };
+
+            const response = await axios.post('https://api.mistral.ai/v1/chat/completions', payload, {
+                headers: {
+                    'Authorization': `Bearer ${apiKey.trim()}`,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 40000
+            });
+
+            result = response.data?.choices?.[0]?.message?.content;
+            usage = response.data?.usage?.total_tokens || 0;
+
+        } else if (provider === 'groq') {
+            // Groq Vision Call (llama-3.2-11b-vision-preview etc.)
+            const payload = {
+                model: model,
+                messages: [
+                    {
+                        role: "user",
+                        content: [
+                            { type: "text", text: systemPrompt },
+                            { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Image}` } }
+                        ]
+                    }
+                ],
+                max_tokens: maxTokens
+            };
+
+            const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', payload, {
+                headers: {
+                    'Authorization': `Bearer ${apiKey.trim()}`,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 40000
+            });
+
+            result = response.data?.choices?.[0]?.message?.content;
+            usage = response.data?.usage?.total_tokens || 0;
+
         } else if (provider === 'google') {
             // Google Vision Call
             const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
@@ -2559,7 +2626,8 @@ Rules:
         if (!result) throw new Error(`Empty response from ${provider}`);
         
         logDebug(`[Vision] Success with ${model}: ${result.substring(0, 30)}... Usage: ${usage}`);
-        return { text: result, usage: usage, model: model };
+        const returnModel = resolved?.targetEngineName || model;
+        return { text: result, usage: usage, model: returnModel };
 
     } catch (error) {
         const errMsg = error.response?.data?.error?.message || error.message;
@@ -2625,7 +2693,8 @@ Rules:
         if (!result) throw new Error("Empty response from OpenRouter");
 
         logDebug(`[Vision] Success with ${model}: ${result.substring(0, 30)}... Usage: ${usage}`);
-        return { text: result, usage: usage };
+        const returnModel = resolved?.targetEngineName || model;
+        return { text: result, usage: usage, model: returnModel };
 
     } catch (error) {
         const errMsg = error.response?.data?.error?.message || error.message;
@@ -2638,7 +2707,8 @@ Rules:
     console.error(`[Vision] All attempts failed. Logs: ${failureReason}`);
     logDebug(`[Vision] FATAL: ${failureReason}`);
     
-    return { text: "Image found but analysis unavailable due to technical errors.", usage: 0 };
+    const returnModel = resolved?.targetEngineName || modelHint || 'salesmanchatbot-pro';
+    return { text: `[Vision Analysis Failed] Error: ${failureReason}`, usage: 0, model: returnModel };
 }
 
 // --- HELPER: Transcribe Audio (Multi-Engine Priority) ---
@@ -2766,10 +2836,10 @@ async function transcribeAudio(audioUrl, config) {
 
         // Map SalesmanChatbot branded names to actual models for audio
         if (voiceModel === 'salesmanchatbot-pro') {
-            voiceModel = 'gemini-2.5-flash';
+            voiceModel = 'gemini-1.5-flash';
             provider = 'google';
         } else if (voiceModel === 'salesmanchatbot-flash') {
-            voiceModel = 'gemini-2.5-flash'; // Flash also supports audio natively
+            voiceModel = 'gemini-1.5-flash'; // Flash also supports audio natively
             provider = 'google';
         } else if (voiceModel === 'salesmanchatbot-lite') {
             voiceModel = 'whisper-large-v3';
@@ -2931,6 +3001,32 @@ async function transcribeAudio(audioUrl, config) {
                 if (text) {
                     console.log(`[Audio] Success with ${option.name}: "${text.substring(0, 30)}..." Usage: ${usage}`);
                     return { text: text.trim(), usage: usage, model: option.model || option.name };
+                }
+            }
+
+            // MISTRAL AUDIO API
+            if (option.provider === 'mistral') {
+                const formData = new FormData();
+                const fileExt = mimeType === 'audio/mpeg' ? 'mp3' : (mimeType.split('/')[1] || 'mp3');
+                formData.append('file', audioBuffer, { 
+                    filename: `audio.${fileExt}`, 
+                    contentType: mimeType 
+                });
+                formData.append('model', option.model || 'mistral-embed'); // User can set model in frontend
+
+                const res = await axios.post('https://api.mistral.ai/v1/audio/transcriptions', formData, {
+                    headers: {
+                        ...formData.getHeaders(),
+                        'Authorization': `Bearer ${apiKey.trim()}`
+                    },
+                    timeout: 45000
+                });
+
+                const text = res.data?.text;
+                if (text) {
+                    console.log(`[Audio] Success with Mistral (${option.model}): "${text.substring(0, 30)}..."`);
+                    const returnModel = resolved?.targetEngineName || option.model || 'mistral-audio';
+                    return { text: text.trim(), usage: 0, model: returnModel };
                 }
             }
             
