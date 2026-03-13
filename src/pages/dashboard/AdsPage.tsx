@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { usePlatform } from "@/context/PlatformContext";
 import { toast } from "sonner";
-import api from "@/lib/api";
+import { BACKEND_URL } from "@/config";
 import {
   Dialog,
   DialogContent,
@@ -16,7 +16,6 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { MultiSelect } from "@/components/ui/multi-select"; // Assuming a MultiSelect component exists or using a simple alternative
 
 interface Ad {
   id: number;
@@ -54,8 +53,21 @@ export default function AdsPage() {
   const fetchAds = async () => {
     try {
       setLoading(true);
-      const response = await api.get("/ads");
-      setAds(response.data);
+      const token = localStorage.getItem("auth_token");
+      const userId = localStorage.getItem("user_id");
+      const teamOwner = localStorage.getItem("team_owner_email");
+      
+      let url = `${BACKEND_URL}/api/ads?user_id=${userId}`;
+      if (teamOwner) url += `&team_owner=${teamOwner}`;
+
+      const response = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) throw new Error("Failed to fetch ads");
+      const data = await response.json();
+      setAds(data);
     } catch (error) {
       console.error("Failed to fetch ads:", error);
       toast.error("Failed to load ads library");
@@ -66,8 +78,16 @@ export default function AdsPage() {
 
   const fetchProducts = async () => {
     try {
-      const response = await api.get("/products");
-      setProducts(response.data.products || []);
+      const token = localStorage.getItem("auth_token");
+      const userId = localStorage.getItem("user_id");
+      const response = await fetch(`${BACKEND_URL}/api/products?user_id=${userId}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) throw new Error("Failed to fetch products");
+      const data = await response.json();
+      setProducts(data.products || []);
     } catch (error) {
       console.error("Failed to fetch products:", error);
     }
@@ -81,12 +101,26 @@ export default function AdsPage() {
 
     try {
       setIsSaving(true);
-      await api.post("/ads", {
-        ad_id: adId,
-        page_id: pageId,
-        description,
-        linked_product_ids: selectedProducts,
+      const token = localStorage.getItem("auth_token");
+      const userId = localStorage.getItem("user_id");
+      
+      const response = await fetch(`${BACKEND_URL}/api/ads`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          ad_id: adId,
+          page_id: pageId,
+          user_id: userId,
+          description,
+          linked_product_ids: selectedProducts,
+        }),
       });
+
+      if (!response.ok) throw new Error("Failed to save ad context");
+      
       toast.success("Ad context saved successfully");
       setIsDialogOpen(false);
       fetchAds();
@@ -103,7 +137,16 @@ export default function AdsPage() {
     if (!confirm("Are you sure you want to delete this ad context?")) return;
 
     try {
-      await api.delete(`/ads?ad_id=${ad_id}&page_id=${p_id}`);
+      const token = localStorage.getItem("auth_token");
+      const response = await fetch(`${BACKEND_URL}/api/ads?ad_id=${ad_id}&page_id=${p_id}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) throw new Error("Failed to delete ad context");
+      
       toast.success("Ad context deleted");
       fetchAds();
     } catch (error) {
