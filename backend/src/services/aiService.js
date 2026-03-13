@@ -535,48 +535,7 @@ const functionTools = [
                 required: ['product_id']
             }
         }
-    },
- {
-  type: "function",
-  function: {
-    name: "capture_order_lead",
-    description: "Call this tool immediately when a phone number is detected to save/update order leads (phone, address, product, name, etc.).",
-    parameters: {
-      type: "object",
-      properties: {
-        phone: {
-          type: "string",
-          description: "Customer phone number if mentioned"
-        },
-        customer_name: {
-          type: "string",
-          description: "Customer name if mentioned"
-        },
-        product_name: {
-          type: "string",
-          description: "Product name from product list"
-        },
-        quantity: {
-          type: "number",
-          description: "Number of items ordered"
-        },
-        price: {
-          type: "number",
-          description: "Total order price"
-        },
-        address: {
-          type: "string",
-          description: "Delivery address"
-        },
-        note: {
-          type: "string",
-          description: "Extra instructions or notes"
-        }
-      },
-      required: []
     }
-  }
-}
 ];
 
 const normalizeText = (value) => (value || '').toString().toLowerCase().trim();
@@ -805,7 +764,7 @@ async function generateResponse({ pageId, userId, userMessage, history, imageUrl
         }
     }
 
-    // 3. Proactive Extraction & Context Injection (Commercial Quality)
+    // 3. Proactive Extraction & Context Injection (n8n Hybrid Flow)
     let finalUserMessage = userMessage;
     try {
         const dbService = require('./dbService');
@@ -824,7 +783,46 @@ async function generateResponse({ pageId, userId, userMessage, history, imageUrl
             });
         }
 
-        // --- STEP B: RE-FETCH CONTEXT FOR MAIN LLM ---
+        // --- STEP B: LLM EXTRACTOR (The "n8n" way - History Aware) ---
+        // We run this in background to extract product names, addresses, quantities.
+        // We pass recent history so it can detect corrections like "my previous number was wrong".
+        try {
+            const recentHistory = history.slice(-4).map(h => `${h.role}: ${h.content}`).join('\n');
+            const extractionPrompt = `[HISTORY]\n${recentHistory}\n\n[CURRENT MESSAGE]\n${userMessage}\n\nTask: Extract order details (Product, Address, Quantity, Phone). 
+If the user corrects previous info (e.g. "my number was wrong, use this one"), prioritize the LATEST info.
+Return ONLY JSON: {"product": "name or null", "address": "full address or null", "quantity": number or null, "phone": "number or null"}. 
+If no info found, return nulls. Do NOT guess. Output JSON ONLY.`;
+            
+            console.log(`[AI Extractor] Analyzing message with history context...`);
+            const extractionResult = await generateReply(
+                extractionPrompt,
+                { ...config, is_external_api: true }, // Simple mode, no tools
+                { text_prompt: "You are a professional data extractor. Output JSON only." },
+                [], 
+                'System',
+                'Extractor'
+            );
+
+            if (extractionResult && extractionResult.reply) {
+                const data = extractJsonFromAiResponse(extractionResult.reply);
+                if (data && (data.product || data.address || data.quantity || data.phone)) {
+                    console.log(`[AI Extractor] Found data:`, data);
+                    await dbService.saveOrder({
+                        page_id: pageId,
+                        sender_id: userId,
+                        product_name: data.product,
+                        address: data.address,
+                        quantity: data.quantity,
+                        phone: data.phone,
+                        platform: platform
+                    });
+                }
+            }
+        } catch (extractErr) {
+            console.warn(`[AI Extractor] Failed:`, extractErr.message);
+        }
+
+        // --- STEP C: RE-FETCH CONTEXT FOR MAIN LLM ---
         const recentOrder = (platform === 'whatsapp') 
             ? await dbService.getRecentWhatsAppOrder(pageId, userId)
             : await dbService.getRecentOrder(pageId, userId);
@@ -2083,15 +2081,9 @@ ${productContext || "No specific product context provided yet."}
 - PRIORITY: Always follow the Customer's Prompt first.
 - DATABASE TRUTH: Always prioritize the [CURRENT ORDER PROGRESS (SYSTEM MEMORY)] over chat history. If a field is NOT 'Pending', you already have that information.
 - LEAD CAPTURE: Ensure you collect the customer's NAME, PHONE NUMBER, and FULL ADDRESS to complete the order.
-- CRITICAL: Call 'capture_order_lead' immediately when a phone number is detected. Call it AGAIN as soon as you get an address, product name, or name. Do not wait for all info to call the tool.
-- PERSISTENCE: Each time you call 'capture_order_lead', include all information you currently know (even if previously sent) to ensure the order is fully updated.
 - MISSING INFO: If any mandatory info (Phone, Address, Product) is missing, politely ask for it to finalize the order.
-- PRODUCT SOURCE: Use exact product names from the [PRODUCT LIST SNAPSHOT]. IGNORE any text starting with '[SYSTEM MEMORY]' or 'Product Image' when identifying product names for 'capture_order_lead'.
-- ONE-STEP ACTION: You MUST call 'capture_order_lead' and provide a 'reply_text' in the SAME turn.
-- MANDATORY TOOL CALL: When you detect a phone number or address, use the native tool calling feature. 
-- FORMAT: Do NOT output Markdown blocks like "Tool Call: ...". Use native function calling only.
-- ACKNOWLEDGEMENT: When you call 'capture_order_lead', your 'reply_text' should acknowledge the information received.
-- MANDATORY REPLY: Even if you are only saving a lead, you MUST still reply to the user. Silence is NOT allowed.
+- PRODUCT SOURCE: Use exact product names from the [PRODUCT LIST SNAPSHOT].
+- MANDATORY REPLY: You MUST still reply to the user. Silence is NOT allowed.
 
 [RESPONSE FORMAT]
 {
