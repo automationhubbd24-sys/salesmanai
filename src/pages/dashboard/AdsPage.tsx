@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { useParams } from "react-router-dom";
-import { Megaphone, Plus, Trash2, Search, Loader2, Save } from "lucide-react";
+import { useParams, Link } from "react-router-dom";
+import { Megaphone, Plus, Trash2, Search, Loader2, Save, AlertCircle, ArrowRight } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,6 +35,7 @@ export default function AdsPage() {
   const [ads, setAds] = useState<Ad[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [hasActivePages, setHasActivePages] = useState<boolean | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -46,9 +47,42 @@ export default function AdsPage() {
   const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
 
   useEffect(() => {
+    checkActivePages();
     fetchAds();
-    fetchProducts();
   }, [platform]);
+
+  // Fetch products whenever isDialogOpen becomes true or pageId changes
+  useEffect(() => {
+    if (isDialogOpen) {
+      fetchProducts();
+    }
+  }, [isDialogOpen, pageId]);
+
+  const checkActivePages = async () => {
+    try {
+      const token = localStorage.getItem("auth_token");
+      const userId = localStorage.getItem("user_id");
+      
+      // Check for both Messenger and WhatsApp
+      const [msgRes, waRes] = await Promise.all([
+        fetch(`${BACKEND_URL}/api/external/fb/pages?user_id=${userId}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        }),
+        fetch(`${BACKEND_URL}/api/external/wa/sessions?user_id=${userId}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+      ]);
+
+      const msgData = await msgRes.json();
+      const waData = await waRes.json();
+
+      const totalActive = (msgData.pages?.length || 0) + (waData.sessions?.length || 0);
+      setHasActivePages(totalActive > 0);
+    } catch (error) {
+      console.error("Failed to check active pages:", error);
+      setHasActivePages(false);
+    }
+  };
 
   const fetchAds = async () => {
     try {
@@ -80,7 +114,15 @@ export default function AdsPage() {
     try {
       const token = localStorage.getItem("auth_token");
       const userId = localStorage.getItem("user_id");
-      const response = await fetch(`${BACKEND_URL}/api/products?user_id=${userId}`, {
+      
+      // Use the pageId from the form if available, otherwise it might fetch all or none
+      // In your case, we want products linked to the active context
+      let url = `${BACKEND_URL}/api/products?user_id=${userId}`;
+      if (pageId) {
+        url += `&page_id=${pageId}`;
+      }
+
+      const response = await fetch(url, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -167,6 +209,26 @@ export default function AdsPage() {
       ad.ad_id.toLowerCase().includes(searchQuery.toLowerCase()) ||
       ad.description?.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  if (hasActivePages === false) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <div className="bg-yellow-500/10 p-4 rounded-full mb-4">
+          <AlertCircle className="h-12 w-12 text-yellow-500" />
+        </div>
+        <h2 className="text-2xl font-bold">No Active Pages Found</h2>
+        <p className="text-muted-foreground max-w-md mt-2 mb-6">
+          To use the Ads Library, you first need to connect at least one Facebook Page or WhatsApp session.
+        </p>
+        <Link to={`/dashboard/${platform}/integration`}>
+          <Button>
+            Go to Integration
+            <ArrowRight className="ml-2 h-4 w-4" />
+          </Button>
+        </Link>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
