@@ -1530,58 +1530,9 @@ STRICT RULES:
             };
         };
 
-        // --- ZERO COST ORDER TRACKING LOGIC ---
-        // If AI detects order details, save to DB immediately.
-        // This uses the SAME AI call, so ZERO extra cost.
-        let orderSaved = false;
-        const saveOrderPayload = aiResponse.order_details || extractSaveOrderTag(aiResponse.reply);
-        
-        // AI DATA EXTRACTION (New Logic: AI detects Name, Phone, Address naturally)
-        if (saveOrderPayload && (saveOrderPayload.phone || saveOrderPayload.number || saveOrderPayload.address || saveOrderPayload.location)) {
-             const extracted = saveOrderPayload;
-             console.log(`[Order] AI extracted data: ${JSON.stringify(extracted)}`);
-             
-             let customerNumber = normalizeBdPhone(extracted.phone || extracted.number || extracted.mobile);
-             
-             // Smart Save: If we have at least a number OR a name/address, attempt save
-             if (customerNumber || extracted.address || extracted.location || extracted.name) {
-                 await dbService.saveOrderTracking({
-                     page_id: pageId,
-                     sender_id: senderId,
-                     product_name: extracted.product_name || 'Recovered Lead',
-                     number: customerNumber || null, 
-                     location: extracted.address || extracted.location || '',
-                     product_quantity: extracted.quantity || '1',
-                     price: extracted.price || null,
-                     sender_number: senderId
-                 });
-                 orderSaved = true;
-             }
-        }
-
-        if (!orderSaved) {
-            const normalizedCombined = normalizeBanglaDigits(combinedText);
-            const phoneMatch = normalizedCombined.match(/(?:\+?88)?(01[3-9]\d{8})/g);
-            const fallbackNumber = phoneMatch ? normalizeBdPhone(phoneMatch[0]) : null;
-
-            // ONLY save if we have a phone number. 
-            // We rely on AI's 'order_details' for structured data. 
-            // Fallback only captures the phone number and marks others as Pending.
-            if (fallbackNumber) {
-                await dbService.saveOrderTracking({
-                    page_id: pageId,
-                    sender_id: senderId,
-                    product_name: 'Recovered Lead',
-                    number: fallbackNumber,
-                    location: 'Pending',
-                    product_quantity: '1',
-                    price: null,
-                    sender_number: senderId
-                });
-                orderSaved = true;
-            }
-        }
-
+        // --- ORDER TRACKING LOGIC ---
+        // Handled by AI Agent via tools (aiService.js). 
+        // No manual extraction needed here to avoid duplicate entries or conflicts.
         // --------------------------------------
 
         // 6. Send Reply (Text + Images)

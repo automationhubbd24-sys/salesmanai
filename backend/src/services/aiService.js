@@ -546,7 +546,7 @@ const functionTools = [
       properties: {
         phone: {
           type: "string",
-          description: "Customer phone number (unique identifier)"
+          description: "Customer phone number if mentioned"
         },
         customer_name: {
           type: "string",
@@ -573,7 +573,7 @@ const functionTools = [
           description: "Extra instructions or notes"
         }
       },
-      required: ["phone"]
+      required: []
     }
   }
 }
@@ -805,9 +805,31 @@ async function generateResponse({ pageId, userId, userMessage, history, imageUrl
         }
     }
 
-    // 3. Call Core Logic
+    // 3. Inject Current Order Status (Commercial Precision)
+    let finalUserMessage = userMessage;
+    try {
+        const dbService = require('./dbService');
+        const recentOrder = (platform === 'whatsapp') 
+            ? await dbService.getRecentWhatsAppOrder(pageId, userId)
+            : await dbService.getRecentOrder(pageId, userId);
+
+        if (recentOrder) {
+            const status = `\n[CURRENT ORDER PROGRESS (SYSTEM MEMORY)]:
+- Product: ${recentOrder.product_name || 'Pending'}
+- Phone: ${recentOrder.number || 'Pending'}
+- Address: ${recentOrder.location || 'Pending'}
+- Quantity: ${recentOrder.product_quantity || '1'}
+- Price: ${recentOrder.price || '0'}
+(Note: Use this to avoid asking for info you already have.)`;
+            finalUserMessage += status;
+        }
+    } catch (e) {
+        console.warn(`[AI] Failed to fetch order context:`, e.message);
+    }
+
+    // 4. Call Core Logic
     return generateReply(
-        userMessage,
+        finalUserMessage,
         config,
         pagePrompts,
         history,
@@ -1176,15 +1198,15 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null
 case 'capture_order_lead': {
     const dbService = require('./dbService');
     try {
-        await dbService.saveOrder({
+        const order = await dbService.saveOrder({
             page_id: pageId,
             sender_id: senderId,
-            product_name: args.product_name || 'Pending',
-            phone: args.phone,
-            address: args.address || 'Pending',
-            quantity: typeof args.quantity === 'number' ? args.quantity : 1,
-            price: typeof args.price === 'number' ? args.price : 0,
-            customer_name: args.customer_name || 'Pending',
+            product_name: args.product_name || null,
+            phone: args.phone || null,
+            address: args.address || null,
+            quantity: typeof args.quantity === 'number' ? args.quantity : null,
+            price: typeof args.price === 'number' ? args.price : null,
+            customer_name: args.customer_name || null,
             note: args.note || '',
             platform: platform
         });
@@ -1193,9 +1215,26 @@ case 'capture_order_lead': {
             await dbService.updateContactPhone(pageId, senderId, args.phone);
         }
 
+        // --- NEW: Inject Current Order Status back to AI ---
+        const missing = [];
+        if (!order.product_name || order.product_name === 'Recovered Lead' || order.product_name === 'Pending') missing.push("Product Name");
+        if (!order.number || order.number === 'Pending') missing.push("Phone Number");
+        if (!order.location || order.location === 'Pending') missing.push("Full Address");
+
+        const statusMessage = missing.length > 0 
+            ? `Information captured. STILL MISSING: ${missing.join(', ')}. Please ask the customer for these specifically.`
+            : "Order is now COMPLETE. You have Phone, Address, and Product. Thank the customer and finalize.";
+
         return {
             status: 'SUCCESS',
-            message: "Lead captured successfully. I will continue to gather missing info if any."
+            current_order_state: {
+                product: order.product_name,
+                phone: order.number,
+                address: order.location,
+                quantity: order.product_quantity,
+                price: order.price
+            },
+            message: statusMessage
         };
     } catch (saveErr) {
         console.error("[AgentLoop] Failed to save lead:", saveErr.message);
@@ -1987,11 +2026,15 @@ ${productContext || "No specific product context provided yet."}
 
 [SALES WORKFLOW]
 - PRIORITY: Always follow the Customer's Prompt first.
-- LEAD CAPTURE: If the Customer's Prompt doesn't specify what to ask, you MUST ensure you collect the customer's NAME, PHONE NUMBER, and FULL ADDRESS to complete the order.
-- CRITICAL: When a phone number is detected, call 'capture_order_lead' immediately.
-- MISSING INFO: If any mandatory info (Phone or Address) is missing, politely ask for it to finalize the order.
+- DATABASE TRUTH: Always prioritize the [CURRENT ORDER PROGRESS (SYSTEM MEMORY)] over chat history. If a field is NOT 'Pending', you already have that information.
+- LEAD CAPTURE: Ensure you collect the customer's NAME, PHONE NUMBER, and FULL ADDRESS to complete the order.
+- CRITICAL: Call 'capture_order_lead' immediately when a phone number is detected. Call it AGAIN as soon as you get an address, product name, or name. Do not wait for all info to call the tool.
+- PERSISTENCE: Each time you call 'capture_order_lead', include all information you currently know (even if previously sent) to ensure the order is fully updated.
+- MISSING INFO: If any mandatory info (Phone, Address, Product) is missing, politely ask for it to finalize the order.
 - PRODUCT SOURCE: Use exact product names from the [PRODUCT LIST SNAPSHOT]. IGNORE any text starting with '[SYSTEM MEMORY]' or 'Product Image' when identifying product names for 'capture_order_lead'.
-- ONE-STEP ACTION: Call tools and provide 'reply_text' in the same JSON response. Do not wait for a second turn.
+- ONE-STEP ACTION: You MUST call 'capture_order_lead' and provide a 'reply_text' in the SAME JSON response. NEVER call a tool without providing a human-like reply to the customer.
+- ACKNOWLEDGEMENT: When you call 'capture_order_lead', your 'reply_text' should acknowledge the information received (e.g., "Thank you, I have noted your address/phone number. Is there anything else?").
+- MANDATORY REPLY: Even if you are only saving a lead, you MUST still reply to the user. Silence is NOT allowed.
 
 [RESPONSE FORMAT]
 {
