@@ -2683,7 +2683,16 @@ Rules:
         if (!result) throw new Error(`Empty response from ${provider}`);
         
         logDebug(`[Vision] Success with ${model}: ${result.substring(0, 30)}... Usage: ${usage}`);
-        const returnModel = resolved?.targetEngineName || model;
+        
+        // --- BRANDING PERSISTENCE ---
+        let returnModel = model;
+        const isManagedEngine = !(pageConfig && (pageConfig.cheap_engine === false || (pageConfig.api_key && pageConfig.api_key !== 'MANAGED_SECRET_KEY')));
+        
+        if (isManagedEngine) {
+             // Use the branded name if using system/managed keys
+             returnModel = resolved?.targetEngineName || 'salesmanchatbot-pro';
+        }
+        
         return { text: result, usage: usage, model: returnModel };
 
     } catch (error) {
@@ -2750,7 +2759,15 @@ Rules:
         if (!result) throw new Error("Empty response from OpenRouter");
 
         logDebug(`[Vision] Success with ${model}: ${result.substring(0, 30)}... Usage: ${usage}`);
-        const returnModel = resolved?.targetEngineName || model;
+        
+        // --- BRANDING PERSISTENCE ---
+        let returnModel = model;
+        const isManagedEngine = !(pageConfig && (pageConfig.cheap_engine === false || (pageConfig.api_key && pageConfig.api_key !== 'MANAGED_SECRET_KEY')));
+        
+        if (isManagedEngine) {
+             returnModel = resolved?.targetEngineName || 'salesmanchatbot-pro';
+        }
+        
         return { text: result, usage: usage, model: returnModel };
 
     } catch (error) {
