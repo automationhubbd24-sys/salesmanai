@@ -39,6 +39,7 @@ export default function AdsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [activePageName, setActivePageName] = useState("");
 
   // Form State
   const [adId, setAdId] = useState("");
@@ -262,7 +263,10 @@ export default function AdsPage() {
     // Auto-fill pageId from localStorage if available
     const activeFbPageId = localStorage.getItem("active_fb_page_id");
     const activeWpSession = localStorage.getItem("active_wp_session");
+    const activeFbPageName = localStorage.getItem("active_fb_page_name");
+
     setPageId(activeFbPageId || activeWpSession || "");
+    setActivePageName(activeFbPageName || activeWpSession || "");
     
     setDescription("");
     setSelectedProducts([]);
@@ -327,14 +331,25 @@ export default function AdsPage() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="pageId">Page ID / Session Name</Label>
-                <Input
-                  id="pageId"
-                  placeholder="e.g. 1092837465"
-                  value={pageId}
-                  onChange={(e) => setPageId(e.target.value)}
-                  className="bg-white/5 border-white/10"
-                />
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="pageId" className="text-white/60 text-xs font-semibold uppercase tracking-wider">Connected Resource</Label>
+                  <div className="flex items-center gap-1.5 bg-[#00ff88]/10 px-2 py-0.5 rounded-full border border-[#00ff88]/20">
+                    <div className="h-1.5 w-1.5 bg-[#00ff88] rounded-full animate-pulse shadow-[0_0_8px_#00ff88]" />
+                    <span className="text-[10px] text-[#00ff88] font-bold uppercase tracking-tighter">Active</span>
+                  </div>
+                </div>
+                <div className="relative group">
+                  <div className="absolute -inset-0.5 bg-gradient-to-r from-[#00ff88]/20 to-[#00ff88]/5 rounded-lg blur opacity-75 group-hover:opacity-100 transition duration-1000 group-hover:duration-200"></div>
+                  <Input
+                    id="pageId"
+                    value={pageId || 'ID: Loading...'}
+                    disabled
+                    className="relative bg-[#0a0a0a] border-white/5 opacity-100 cursor-not-allowed font-mono text-sm tracking-widest text-[#00ff88] text-center h-11 shadow-inner"
+                  />
+                </div>
+                <p className="text-[10px] text-white/40 italic flex items-center justify-center gap-1 mt-1">
+                  Synced with: <span className="text-white/80 font-semibold">{activePageName || 'Active Session'}</span>
+                </p>
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="description">Ad Description (for AI Context)</Label>
@@ -496,10 +511,12 @@ export default function AdsPage() {
           <p className="text-muted-foreground max-w-sm mt-1">
             Add your first ad context to help the AI understand which products customers are asking about.
           </p>
-          <Button variant="outline" className="mt-4 border-white/10" onClick={() => setIsDialogOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Add Ad Context
-          </Button>
+          <DialogTrigger asChild>
+            <Button variant="outline" className="mt-4 border-white/10 hover:bg-white/5" onClick={resetForm}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add Ad Context
+            </Button>
+          </DialogTrigger>
         </div>
       )}
     </div>
