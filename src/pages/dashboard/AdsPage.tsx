@@ -63,7 +63,16 @@ export default function AdsPage() {
       const token = localStorage.getItem("auth_token");
       const userId = localStorage.getItem("user_id");
       
-      // Check for both Messenger and WhatsApp
+      // Check if there is an active page in localStorage (sidebar selection)
+      const activeFbPageId = localStorage.getItem("active_fb_page_id");
+      const activeWpSession = localStorage.getItem("active_wp_session");
+      
+      if (activeFbPageId || activeWpSession) {
+        setHasActivePages(true);
+        return;
+      }
+
+      // Fallback: Check for any Messenger or WhatsApp pages from API
       const [msgRes, waRes] = await Promise.all([
         fetch(`${BACKEND_URL}/api/external/fb/pages?user_id=${userId}`, {
           headers: { Authorization: `Bearer ${token}` }
@@ -220,12 +229,12 @@ export default function AdsPage() {
         <p className="text-muted-foreground max-w-md mt-2 mb-6">
           To use the Ads Library, you first need to connect at least one Facebook Page or WhatsApp session.
         </p>
-        <Link to={`/dashboard/${platform}/integration`}>
+        <a href="https://salesmanchatbot.online/dashboard/messenger/integration">
           <Button>
             Go to Integration
             <ArrowRight className="ml-2 h-4 w-4" />
           </Button>
-        </Link>
+        </a>
       </div>
     );
   }
