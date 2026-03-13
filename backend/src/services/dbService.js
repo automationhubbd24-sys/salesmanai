@@ -1948,23 +1948,41 @@ async function saveOrderTracking(orderData) {
         const recentOrder = await query(
             `SELECT id FROM fb_order_tracking 
              WHERE page_id = $1 AND sender_id = $2 
-             AND created_at > NOW() - INTERVAL '2 hours'
+             AND created_at > NOW() - INTERVAL '24 hours'
              ORDER BY created_at DESC LIMIT 1`,
             [page_id, sender_id]
         );
 
         if (recentOrder.rows.length > 0) {
             const orderId = recentOrder.rows[0].id;
-            console.log(`[Order] Found recent order (${orderId}). Updating existing row...`);
+            console.log(`[Order] Found recent order (${orderId}) within 24h. Updating existing row...`);
             
             await query(
                 `UPDATE fb_order_tracking SET
-                    product_name = CASE WHEN $1 <> 'Pending' AND $1 <> 'Recovered Lead' THEN $1 ELSE product_name END,
-                    number = CASE WHEN $2 <> 'Pending' THEN $2 ELSE number END,
-                    location = CASE WHEN $3 <> 'Pending' THEN $3 ELSE location END,
-                    product_quantity = CASE WHEN $4 <> '1' THEN $4 ELSE product_quantity END,
-                    price = CASE WHEN $5 <> '0' THEN $5 ELSE price END,
-                    sender_number = CASE WHEN $6 <> 'Pending' THEN $6 ELSE sender_number END,
+                    product_name = CASE 
+                        WHEN $1 IS NOT NULL AND $1 <> 'Pending' AND $1 <> 'Recovered Lead' AND $1 <> '' THEN $1 
+                        ELSE product_name 
+                    END,
+                    number = CASE 
+                        WHEN $2 IS NOT NULL AND $2 <> 'Pending' AND $2 <> '' THEN $2 
+                        ELSE number 
+                    END,
+                    location = CASE 
+                        WHEN $3 IS NOT NULL AND $3 <> 'Pending' AND $3 <> '' THEN $3 
+                        ELSE location 
+                    END,
+                    product_quantity = CASE 
+                        WHEN $4 IS NOT NULL AND $4 <> '1' AND $4 <> '' THEN $4 
+                        ELSE product_quantity 
+                    END,
+                    price = CASE 
+                        WHEN $5 IS NOT NULL AND $5 <> '0' AND $5 <> '' THEN $5 
+                        ELSE price 
+                    END,
+                    sender_number = CASE 
+                        WHEN $6 IS NOT NULL AND $6 <> 'Pending' AND $6 <> '' THEN $6 
+                        ELSE sender_number 
+                    END,
                     created_at = NOW()
                  WHERE id = $7`,
                 [product_name, number, location, product_quantity, price, sender_number, orderId]
