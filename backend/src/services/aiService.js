@@ -805,10 +805,26 @@ async function generateResponse({ pageId, userId, userMessage, history, imageUrl
         }
     }
 
-    // 3. Inject Current Order Status (Commercial Precision)
+    // 3. Proactive Extraction (n8n-style smoothness)
     let finalUserMessage = userMessage;
     try {
         const dbService = require('./dbService');
+        
+        // --- NATIVE PHONE EXTRACTOR ---
+        const bdPhoneRegex = /(?:\+88|88)?(01[3-9]\d{8})/g;
+        const matches = [...userMessage.matchAll(bdPhoneRegex)];
+        if (matches.length > 0) {
+            const foundPhone = matches[0][1]; // Get the 11-digit part
+            console.log(`[AI Proactive] Detected phone number in user message: ${foundPhone}. Saving to DB...`);
+            await dbService.saveOrder({
+                page_id: pageId,
+                sender_id: userId,
+                phone: foundPhone,
+                platform: platform
+            });
+        }
+
+        // --- RE-FETCH ORDER CONTEXT ---
         const recentOrder = (platform === 'whatsapp') 
             ? await dbService.getRecentWhatsAppOrder(pageId, userId)
             : await dbService.getRecentOrder(pageId, userId);
@@ -824,7 +840,7 @@ async function generateResponse({ pageId, userId, userMessage, history, imageUrl
             finalUserMessage += status;
         }
     } catch (e) {
-        console.warn(`[AI] Failed to fetch order context:`, e.message);
+        console.warn(`[AI] Proactive Extraction/Context Failed:`, e.message);
     }
 
     // 4. Call Core Logic
