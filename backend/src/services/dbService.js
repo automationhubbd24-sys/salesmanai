@@ -1888,26 +1888,29 @@ async function updateContactPhone(pageId, senderId, phone) {
 async function saveOrderTracking(orderData) {
     let { page_id, sender_id, product_name, number, location, product_quantity, price, sender_number } = orderData;
     
-    // --- 1. SMART DATA CLEANING (Filter out templates like "নাম: ঠিকানা:") ---
+    // --- 1. SMART DATA CLEANING ---
     const cleanValue = (val) => {
         if (!val || typeof val !== 'string') return val;
-        // Remove common prompt templates like (জেলা, থানা...) or নাম: ঠিকানা:
+        // Remove templates like (জেলা, থানা...) or নাম: ঠিকানা:
         let cleaned = val
-            .replace(/\(.*?\)/g, '') // Remove everything in brackets
+            .replace(/\(.*?\)/g, '') 
             .replace(/(নাম|ঠিকানা|ফোন|মোবাইল|নাম্বার|জেলা|থানা|উপজেলা|বাজার|এলাকা|ফুল ঠিকানা|পূর্ণাঙ্গ ঠিকানা)\s*[:：-]\s*/gi, '')
             .replace(/\|/g, ' ')
             .replace(/\s+/g, ' ')
             .trim();
-        return cleaned || val; // Fallback to original if cleaning results in empty
+        
+        // If it's just 'Pending' or 'Recovered Lead' from a placeholder, return null to allow COALESCE
+        if (!cleaned || ['pending', 'recovered lead', 'n/a', 'unknown', 'null'].includes(cleaned.toLowerCase())) return null;
+        return cleaned;
     };
 
+    product_name = cleanValue(product_name);
     if (product_name) {
-        product_name = cleanValue(product_name)
+        product_name = product_name
             .replace(/Item \d+:/gi, '')
             .replace(/##product/gi, '')
             .replace(/"/g, '')
             .trim();
-        if (!product_name || product_name.toLowerCase() === 'pending') product_name = 'Recovered Lead';
     }
     
     location = cleanValue(location);
@@ -1917,9 +1920,7 @@ async function saveOrderTracking(orderData) {
     console.log(`[Order] Smart Update/Save for ${sender_id}...`);
 
     try {
-        // --- 2. SMART AGENT DECISION (Merge into existing incomplete order) ---
-        // Look for a recent order (last 2 hours) from this sender that is "Incomplete"
-        // An order is incomplete if location or number is 'Pending' or empty
+        // --- 2. SMART MERGE (Last 24 hours) ---
         const recentOrder = await query(
             `SELECT id FROM fb_order_tracking 
              WHERE page_id = $1 AND sender_id = $2 
@@ -1952,7 +1953,14 @@ async function saveOrderTracking(orderData) {
         const result = await query(
             `INSERT INTO fb_order_tracking
                 (page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, created_at)
-             VALUES ($1::text, $2::text, COALESCE($3::text, 'Recovered Lead'), COALESCE($4::text, 'Pending'), COALESCE($5::text, 'Pending'), COALESCE($6::text, '1'), COALESCE($7::text, '0'), COALESCE($8::text, 'Pending'), NOW())
+             VALUES ($1::text, $2::text, 
+                     COALESCE($3::text, 'Recovered Lead'), 
+                     COALESCE($4::text, 'Pending'), 
+                     COALESCE($5::text, 'Pending'), 
+                     COALESCE($6::text, '1'), 
+                     COALESCE($7::text, '0'), 
+                     COALESCE($8::text, 'Pending'), 
+                     NOW())
              RETURNING *`,
             [page_id, sender_id, product_name, number, location, product_quantity, price, sender_number]
         );

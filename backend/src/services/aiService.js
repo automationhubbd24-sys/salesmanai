@@ -805,17 +805,17 @@ async function generateResponse({ pageId, userId, userMessage, history, imageUrl
         }
     }
 
-    // 3. Proactive Extraction (n8n-style smoothness)
+    // 3. Proactive Extraction & Context Injection (n8n-style smoothness)
     let finalUserMessage = userMessage;
     try {
         const dbService = require('./dbService');
         
-        // --- NATIVE PHONE EXTRACTOR ---
+        // --- STEP A: NATIVE REGEX EXTRACTOR (Fastest, 0 Cost) ---
         const bdPhoneRegex = /(?:\+88|88)?(01[3-9]\d{8})/g;
-        const matches = [...userMessage.matchAll(bdPhoneRegex)];
-        if (matches.length > 0) {
-            const foundPhone = matches[0][1]; // Get the 11-digit part
-            console.log(`[AI Proactive] Detected phone number in user message: ${foundPhone}. Saving to DB...`);
+        const phoneMatches = [...userMessage.matchAll(bdPhoneRegex)];
+        if (phoneMatches.length > 0) {
+            const foundPhone = phoneMatches[0][1];
+            console.log(`[AI Proactive] Regex detected phone: ${foundPhone}. Saving...`);
             await dbService.saveOrder({
                 page_id: pageId,
                 sender_id: userId,
@@ -824,7 +824,43 @@ async function generateResponse({ pageId, userId, userMessage, history, imageUrl
             });
         }
 
-        // --- RE-FETCH ORDER CONTEXT ---
+        // --- STEP B: LLM EXTRACTOR (The "n8n" way - 100% Precision) ---
+        // This runs in background to extract product names, addresses, quantities from the message
+        // even if the main LLM is just "chatting".
+        try {
+            const extractionPrompt = `Extract order details from this message: "${userMessage}". 
+Return ONLY JSON: {"product": "name or null", "address": "full address or null", "quantity": number or null}. 
+If no info found, return nulls. Do NOT guess.`;
+            
+            // Using a cheaper/faster call for extraction if possible, else use same config
+            const extractionResult = await generateReply(
+                extractionPrompt,
+                { ...config, is_external_api: true }, // Simple mode, no tools
+                { text_prompt: "You are a data extractor. Output JSON only." },
+                [], // No history needed for extraction
+                'System',
+                'Extractor'
+            );
+
+            if (extractionResult && extractionResult.reply) {
+                const data = extractJsonFromAiResponse(extractionResult.reply);
+                if (data && (data.product || data.address || data.quantity)) {
+                    console.log(`[AI Extractor] Found data:`, data);
+                    await dbService.saveOrder({
+                        page_id: pageId,
+                        sender_id: userId,
+                        product_name: data.product,
+                        address: data.address,
+                        quantity: data.quantity,
+                        platform: platform
+                    });
+                }
+            }
+        } catch (extractErr) {
+            console.warn(`[AI Extractor] Failed:`, extractErr.message);
+        }
+
+        // --- STEP C: RE-FETCH CONTEXT FOR MAIN LLM ---
         const recentOrder = (platform === 'whatsapp') 
             ? await dbService.getRecentWhatsAppOrder(pageId, userId)
             : await dbService.getRecentOrder(pageId, userId);
