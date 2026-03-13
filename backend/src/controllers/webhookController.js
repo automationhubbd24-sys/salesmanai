@@ -1561,35 +1561,40 @@ STRICT RULES:
 
         // --- JSON & ERROR HANDLING (Commercial Grade) ---
         // 1. Attempt to Rescue JSON (Moved BEFORE block check)
-        if (replyText && (replyText.trim().startsWith('{') || replyText.trim().startsWith('['))) {
+        if (replyText && (replyText.includes('{') || replyText.includes('['))) {
             const trimmed = replyText.trim();
             // Robust check: Is it likely JSON? (Contains " : " and " " ")
             const isLikelyJson = (trimmed.includes('"') && trimmed.includes(':')) || trimmed.includes('{}');
             
             if (isLikelyJson) {
                 try {
-                    // Remove Markdown code blocks if present (```json ... ```)
-                    const cleanJson = replyText.replace(/```json/g, '').replace(/```/g, '').trim();
-                    const parsed = JSON.parse(cleanJson);
+                    // Robust extraction: find the first { and last }
+                    const firstBrace = replyText.indexOf('{');
+                    const lastBrace = replyText.lastIndexOf('}');
                     
-                    // Extract useful text from common JSON fields
-                    if (parsed.reply_text) replyText = parsed.reply_text;
-                    else if (parsed.reply) replyText = parsed.reply;
-                    else if (parsed.message) replyText = parsed.message;
-                    else if (parsed.text) replyText = parsed.text;
-                    else if (parsed.answer) replyText = parsed.answer;
-                    else if (parsed.content) replyText = parsed.content;
-                    
-                    console.log(`[JSON Rescuer] Successfully extracted text from JSON: "${replyText.substring(0, 50)}..."`);
+                    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+                        const potentialJson = replyText.substring(firstBrace, lastBrace + 1);
+                        const parsed = JSON.parse(potentialJson.replace(/```json/g, '').replace(/```/g, '').trim());
+                        
+                        // Extract useful text from common JSON fields
+                        if (parsed.reply_text) replyText = parsed.reply_text;
+                        else if (parsed.reply) replyText = parsed.reply;
+                        else if (parsed.message) replyText = parsed.message;
+                        else if (parsed.text) replyText = parsed.text;
+                        else if (parsed.answer) replyText = parsed.answer;
+                        else if (parsed.content) replyText = parsed.content;
+                        
+                        console.log(`[JSON Rescuer] Successfully extracted text from JSON.`);
+                    }
                 } catch (e) {
-                    console.warn(`[JSON Rescuer] Failed to parse JSON: ${e.message}. Content: ${replyText.substring(0, 20)}...`);
+                    console.warn(`[JSON Rescuer] Failed to parse JSON: ${e.message}`);
                     // If parsing fails, we treat it as potentially harmful raw code.
                     // We will LOG it for Admin but NOT send it to User.
                     await dbService.saveFbChat({
                         page_id: pageId,
                         sender_id: pageId,
                         recipient_id: senderId,
-                        message_id: `fail_${Date.now()}`,
+                        message_id: `fail_json_${Date.now()}`,
                         text: `[AI Error - Silent] Raw JSON/Code Blocked: ${replyText}`,
                         timestamp: Date.now(),
                         status: 'ai_ignored',

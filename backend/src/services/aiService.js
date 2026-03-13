@@ -805,7 +805,7 @@ async function generateResponse({ pageId, userId, userMessage, history, imageUrl
         }
     }
 
-    // 3. Proactive Extraction & Context Injection (n8n-style smoothness)
+    // 3. Proactive Extraction & Context Injection (Commercial Quality)
     let finalUserMessage = userMessage;
     try {
         const dbService = require('./dbService');
@@ -824,43 +824,7 @@ async function generateResponse({ pageId, userId, userMessage, history, imageUrl
             });
         }
 
-        // --- STEP B: LLM EXTRACTOR (The "n8n" way - 100% Precision) ---
-        // This runs in background to extract product names, addresses, quantities from the message
-        // even if the main LLM is just "chatting".
-        try {
-            const extractionPrompt = `Extract order details from this message: "${userMessage}". 
-Return ONLY JSON: {"product": "name or null", "address": "full address or null", "quantity": number or null}. 
-If no info found, return nulls. Do NOT guess.`;
-            
-            // Using a cheaper/faster call for extraction if possible, else use same config
-            const extractionResult = await generateReply(
-                extractionPrompt,
-                { ...config, is_external_api: true }, // Simple mode, no tools
-                { text_prompt: "You are a data extractor. Output JSON only." },
-                [], // No history needed for extraction
-                'System',
-                'Extractor'
-            );
-
-            if (extractionResult && extractionResult.reply) {
-                const data = extractJsonFromAiResponse(extractionResult.reply);
-                if (data && (data.product || data.address || data.quantity)) {
-                    console.log(`[AI Extractor] Found data:`, data);
-                    await dbService.saveOrder({
-                        page_id: pageId,
-                        sender_id: userId,
-                        product_name: data.product,
-                        address: data.address,
-                        quantity: data.quantity,
-                        platform: platform
-                    });
-                }
-            }
-        } catch (extractErr) {
-            console.warn(`[AI Extractor] Failed:`, extractErr.message);
-        }
-
-        // --- STEP C: RE-FETCH CONTEXT FOR MAIN LLM ---
+        // --- STEP B: RE-FETCH CONTEXT FOR MAIN LLM ---
         const recentOrder = (platform === 'whatsapp') 
             ? await dbService.getRecentWhatsAppOrder(pageId, userId)
             : await dbService.getRecentOrder(pageId, userId);
@@ -2123,9 +2087,10 @@ ${productContext || "No specific product context provided yet."}
 - PERSISTENCE: Each time you call 'capture_order_lead', include all information you currently know (even if previously sent) to ensure the order is fully updated.
 - MISSING INFO: If any mandatory info (Phone, Address, Product) is missing, politely ask for it to finalize the order.
 - PRODUCT SOURCE: Use exact product names from the [PRODUCT LIST SNAPSHOT]. IGNORE any text starting with '[SYSTEM MEMORY]' or 'Product Image' when identifying product names for 'capture_order_lead'.
-- ONE-STEP ACTION: You MUST call 'capture_order_lead' and provide a 'reply_text' in the SAME JSON response. NEVER call a tool without providing a human-like reply to the customer.
-- MANDATORY TOOL CALL: When you detect a phone number or address, you MUST use the native tool calling feature. Do NOT just output JSON text. You MUST call the tool.
-- ACKNOWLEDGEMENT: When you call 'capture_order_lead', your 'reply_text' should acknowledge the information received (e.g., "Thank you, I have noted your address/phone number. Is there anything else?").
+- ONE-STEP ACTION: You MUST call 'capture_order_lead' and provide a 'reply_text' in the SAME turn.
+- MANDATORY TOOL CALL: When you detect a phone number or address, use the native tool calling feature. 
+- FORMAT: Do NOT output Markdown blocks like "Tool Call: ...". Use native function calling only.
+- ACKNOWLEDGEMENT: When you call 'capture_order_lead', your 'reply_text' should acknowledge the information received.
 - MANDATORY REPLY: Even if you are only saving a lead, you MUST still reply to the user. Silence is NOT allowed.
 
 [RESPONSE FORMAT]
