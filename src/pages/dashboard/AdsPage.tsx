@@ -45,6 +45,7 @@ export default function AdsPage() {
   const [pageId, setPageId] = useState("");
   const [description, setDescription] = useState("");
   const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
+  const [productSearch, setProductSearch] = useState("");
 
   useEffect(() => {
     checkActivePages();
@@ -265,6 +266,7 @@ export default function AdsPage() {
     
     setDescription("");
     setSelectedProducts([]);
+    setProductSearch("");
   };
 
   const filteredAds = ads.filter(
@@ -345,30 +347,67 @@ export default function AdsPage() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label>Linked Products</Label>
-                <div className="grid grid-cols-1 gap-2 max-h-[150px] overflow-y-auto p-2 border border-white/10 rounded-md bg-white/5">
-                  {products.map((product) => (
-                    <div key={product.id} className="flex items-center space-x-2">
+                <div className="flex items-center justify-between">
+                  <Label>Linked Products</Label>
+                  {selectedProducts.length > 0 && (
+                    <span className="text-[10px] bg-primary/20 text-primary px-2 py-0.5 rounded-full border border-primary/30">
+                      {selectedProducts.length} Selected
+                    </span>
+                  )}
+                </div>
+                
+                <div className="relative mb-2">
+                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                  <Input
+                    placeholder="Search products..."
+                    value={productSearch}
+                    onChange={(e) => setProductSearch(e.target.value)}
+                    className="pl-8 h-8 text-xs bg-white/5 border-white/10"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 gap-1 max-h-[180px] overflow-y-auto p-2 border border-white/10 rounded-md bg-[#050505] custom-scrollbar">
+                  {products
+                    .filter(p => p.name.toLowerCase().includes(productSearch.toLowerCase()))
+                    .map((product) => (
+                    <div 
+                      key={product.id} 
+                      className={`flex items-center justify-between p-2 rounded-md cursor-pointer transition-all ${
+                        selectedProducts.includes(product.id) 
+                        ? 'bg-primary/10 border border-primary/20' 
+                        : 'hover:bg-white/5 border border-transparent'
+                      }`}
+                      onClick={() => {
+                        if (selectedProducts.includes(product.id)) {
+                          setSelectedProducts(selectedProducts.filter(id => id !== product.id));
+                        } else {
+                          setSelectedProducts([...selectedProducts, product.id]);
+                        }
+                      }}
+                    >
+                      <div className="flex items-center gap-2 overflow-hidden">
+                        <div className={`h-2 w-2 rounded-full ${selectedProducts.includes(product.id) ? 'bg-primary shadow-[0_0_8px_rgba(0,255,136,0.6)]' : 'bg-white/20'}`} />
+                        <span className={`text-sm truncate ${selectedProducts.includes(product.id) ? 'text-primary' : 'text-white/80'}`}>
+                          {product.name}
+                        </span>
+                      </div>
                       <input
                         type="checkbox"
-                        id={`prod-${product.id}`}
                         checked={selectedProducts.includes(product.id)}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setSelectedProducts([...selectedProducts, product.id]);
-                          } else {
-                            setSelectedProducts(selectedProducts.filter(id => id !== product.id));
-                          }
-                        }}
-                        className="rounded border-white/20 bg-white/10"
+                        onChange={() => {}} // Handled by div click
+                        className="hidden"
                       />
-                      <label htmlFor={`prod-${product.id}`} className="text-sm cursor-pointer truncate">
-                        {product.name}
-                      </label>
                     </div>
                   ))}
                   {products.length === 0 && (
-                    <p className="text-xs text-muted-foreground italic">No products found. Add products first.</p>
+                    <div className="py-8 text-center">
+                      <p className="text-xs text-muted-foreground italic">No products found for this page.</p>
+                    </div>
+                  )}
+                  {products.length > 0 && products.filter(p => p.name.toLowerCase().includes(productSearch.toLowerCase())).length === 0 && (
+                    <div className="py-8 text-center">
+                      <p className="text-xs text-muted-foreground italic">No matching products.</p>
+                    </div>
                   )}
                 </div>
               </div>
