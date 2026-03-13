@@ -233,7 +233,9 @@ exports.handleChatCompletion = async (req, res) => {
         );
 
         if (typeof aiResponseObj === 'object' && aiResponseObj !== null) {
-            aiText = aiResponseObj.reply || aiResponseObj.text || JSON.stringify(aiResponseObj);
+            // Priority: If it's a structured reply from our agent, take the text part.
+            // This prevents JSON leaking into n8n/external platforms.
+            aiText = aiResponseObj.reply || aiResponseObj.reply_text || aiResponseObj.text || JSON.stringify(aiResponseObj);
             totalTokens = aiResponseObj.token_usage || 0;
             // ALWAYS return the branded name the user requested
             responseModelName = requestedModel; 

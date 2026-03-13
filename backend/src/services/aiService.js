@@ -1932,8 +1932,9 @@ ${productContext}`;
     let responseFormat = undefined; 
     
     // --- TOOL ENABLING LOGIC ---
-    // User plan: External API should also be branded and powerful (support tools)
-    const tools = functionTools; 
+    // User plan: External API should be clean (No Tools/JSON) unless explicitly needed.
+    // We disable tools for external_api platform to prevent malformed JSON responses in n8n.
+    const tools = (pageConfig.platform === 'external_api' || pageConfig.is_external_api) ? [] : functionTools; 
 
     // --- IDENTITY PROTECTION PROTOCOL (WHITE-LABEL) ---
     const isBrandedModel = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(userModel);
