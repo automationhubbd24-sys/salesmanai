@@ -2024,6 +2024,39 @@ async function ensureFbOrderTrackingTable() {
     `);
 }
 
+// 11. Get Recent Order
+async function getRecentOrder(pageId, senderId) {
+    try {
+        const result = await query(
+            `SELECT * FROM fb_order_tracking 
+             WHERE page_id = $1 AND sender_id = $2 
+             AND created_at > NOW() - INTERVAL '24 hours'
+             ORDER BY created_at DESC LIMIT 1`,
+            [pageId, senderId]
+        );
+        return result.rows[0] || null;
+    } catch (e) {
+        console.error("[DB] getRecentOrder error:", e.message);
+        return null;
+    }
+}
+
+async function getRecentWhatsAppOrder(sessionName, senderId) {
+    try {
+        const result = await query(
+            `SELECT * FROM whatsapp_order_tracking 
+             WHERE session_name = $1 AND sender_id = $2 
+             AND created_at > NOW() - INTERVAL '24 hours'
+             ORDER BY created_at DESC LIMIT 1`,
+            [sessionName, senderId]
+        );
+        return result.rows[0] || null;
+    } catch (e) {
+        console.error("[DB] getRecentWhatsAppOrder error:", e.message);
+        return null;
+    }
+}
+
 // 13. Check Conversation Lock Status (Failure Lock)
 async function checkLockStatus(pageId, senderId) {
     try {
@@ -3006,6 +3039,8 @@ module.exports = {
     getWhatsAppChatById,
     getMessageById,
     saveOrderTracking,
+    getRecentOrder,
+    getRecentWhatsAppOrder,
     checkLockStatus,
     getAllActivePages,
     markPageTokenInvalid,
