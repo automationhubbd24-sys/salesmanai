@@ -283,15 +283,23 @@ router.post('/v1/chat/completions', async (req, res) => {
     let provider = 'google';
     let modelToUse = model;
 
-    if (model === 'salesmanchatbot-pro') {
-        provider = 'google';
-        modelToUse = 'gemini-1.5-flash'; // Optimized for Pro Engine
-    } else if (model === 'salesmanchatbot-flash') {
-        provider = 'openrouter';
-        modelToUse = 'google/gemini-2.0-flash-001'; 
-    } else if (model === 'salesmanchatbot-lite') {
-        provider = 'groq';
-        modelToUse = 'llama-3.3-70b-versatile'; 
+    // --- DYNAMIC ENGINE RESOLUTION (User Requirement) ---
+    // Instead of hardcoding, we use the same resolution logic as the main system
+    // This respects whatever is selected in the Frontend Config.
+    if (model === 'salesmanchatbot-pro' || model === 'salesmanchatbot-flash' || model === 'salesmanchatbot-lite') {
+        try {
+            // Mock a minimal config for resolution
+            const mockConfig = { chat_model: model, cheap_engine: true };
+            const resolved = await aiService.resolveSalesmanchatbotEngine(mockConfig, 'salesmanchatbot', model, false, false);
+            provider = resolved.finalProvider;
+            modelToUse = resolved.finalModel;
+            console.log(`[API Engine] Dynamically Resolved ${model} -> ${provider}/${modelToUse}`);
+        } catch (e) {
+            console.warn(`[API Engine] Dynamic resolution failed for ${model}, using fallbacks.`);
+            if (model === 'salesmanchatbot-pro') { provider = 'google'; modelToUse = 'gemini-1.5-flash'; }
+            else if (model === 'salesmanchatbot-flash') { provider = 'openrouter'; modelToUse = 'google/gemini-2.0-flash-001'; }
+            else if (model === 'salesmanchatbot-lite') { provider = 'groq'; modelToUse = 'llama-3.3-70b-versatile'; }
+        }
     } else if (model.includes('gpt')) {
         provider = 'openai';
     } else if (model.includes('mistral')) {
