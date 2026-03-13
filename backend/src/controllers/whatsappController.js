@@ -1519,8 +1519,8 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
     // Regex for Alphanumeric or Bangla characters
     const hasNoAlphanumeric = combinedRawText && !/[a-zA-Z0-9\u0980-\u09FF]/.test(combinedRawText);
 
-    if (hasOnlyStickers || (combinedRawText && hasNoAlphanumeric && messages.every(m => !m.images?.length))) {
-        console.log(`[Gatekeeper] Blocking reply for stickers/emojis only from ${senderId}`);
+    if (hasOnlyStickers) {
+        console.log(`[Gatekeeper] Blocking reply for stickers only from ${senderId}`);
         return;
     }
 
