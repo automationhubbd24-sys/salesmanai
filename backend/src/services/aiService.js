@@ -1185,56 +1185,38 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
             let toolCalls = [];
             let completionUsage;
 
-            if (isGoogle) {
-                // --- FIX: USE OPENAI SDK FOR GOOGLE TOO (Ensures Proxy works) ---
-                // Google's /v1beta/openai/ endpoint is fully compatible with OpenAI SDK.
-                // Using OpenAI SDK allows us to pass the HttpsProxyAgent correctly.
-                
-                const openai = new OpenAI({ 
-                    apiKey: apiKey, 
-                    baseURL: baseURL,
-                    timeout: 40000,
-                    ...(proxyAgent ? { httpAgent: proxyAgent, httpsAgent: proxyAgent } : {})
-                });
+            // Unified OpenAI-Compatible Client
+            const openai = new OpenAI({ 
+                apiKey: apiKey, 
+                baseURL: baseURL,
+                timeout: isGoogle ? 40000 : 30000,
+                ...(proxyAgent ? { httpAgent: proxyAgent, httpsAgent: proxyAgent } : {})
+            });
 
-                const completion = await openai.chat.completions.create({
-                    model: model,
-                    messages: messages,
-                    tools: tools,
-                    tool_choice: "auto",
-                    temperature: temperature
-                });
+            // Defensive params for Google/Gemini
+            let targetModel = model;
+            if (isGoogle && targetModel.includes('/')) targetModel = targetModel.split('/').pop();
+            
+            const params = {
+                model: targetModel,
+                messages: messages,
+                temperature: temperature
+            };
 
-                responseMessage = completion.choices[0].message;
-                toolCalls = responseMessage.tool_calls;
-                completionUsage = completion.usage;
-
-                console.log(`[AI Response] Status: Success | Provider: Google | Tokens: ${completionUsage?.total_tokens || 0} | Proxy: ${proxyAgent?.proxySessionName || 'NONE'}`);
-
-            } else {
-                // --- OPENAI COMPATIBLE PATH ---
-                const openai = new OpenAI({ 
-                    apiKey: apiKey, 
-                    baseURL: baseURL,
-                    timeout: 30000,
-                    ...(proxyAgent ? { httpAgent: proxyAgent, httpsAgent: proxyAgent } : {})
-                });
-
-                const completion = await openai.chat.completions.create({
-                    model: model,
-                    messages: messages,
-                    tools: tools,
-                    tool_choice: "auto",
-                    temperature: temperature
-                });
-
-                responseMessage = completion.choices[0].message;
-                toolCalls = responseMessage.tool_calls;
-                completionUsage = completion.usage;
-                
-                const providerName = baseURL.includes('openrouter') ? 'OpenRouter' : (baseURL.includes('groq') ? 'Groq' : 'OpenAI');
-                console.log(`[AI Response] Status: Success | Provider: ${providerName} | Tokens: ${completionUsage?.total_tokens || 0} | Proxy: ${proxyAgent?.proxySessionName || 'NONE'}`);
+            // Only send tools if they exist
+            if (Array.isArray(tools) && tools.length > 0) {
+                params.tools = tools;
+                params.tool_choice = "auto";
             }
+
+            const completion = await openai.chat.completions.create(params);
+
+            responseMessage = completion.choices[0].message;
+            toolCalls = responseMessage.tool_calls;
+            completionUsage = completion.usage;
+
+            const providerName = isGoogle ? 'Google' : (baseURL.includes('openrouter') ? 'OpenRouter' : (baseURL.includes('groq') ? 'Groq' : 'OpenAI'));
+            console.log(`[AI Response] Status: Success | Provider: ${providerName} | Tokens: ${completionUsage?.total_tokens || 0} | Proxy: ${proxyAgent?.proxySessionName || 'NONE'}`);
             
             // Add AI's response to history
             messages.push(responseMessage);
