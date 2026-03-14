@@ -2396,7 +2396,7 @@ STRICT RULES:
             platform: 'whatsapp',
             intent: orderIntent,
             data: orderDataFromAI || {},
-            rawText: finalOutput
+            rawText: `${finalOutput}\n${aiResponse.reply}` // Pass both user text and AI cleaned text
         });
 
         // Handle Legacy [SAVE_ORDER: {...}] Tag for WhatsApp specifically (Advanced Lock)

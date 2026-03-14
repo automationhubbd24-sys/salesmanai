@@ -1394,10 +1394,10 @@ async function saveWhatsAppOrderTracking(orderData) {
         const recentOrder = await query(
             `SELECT id, product_name, number, location, product_quantity, price 
              FROM whatsapp_order_tracking 
-             WHERE session_name = $1 AND sender_id = $2 
+             WHERE session_name = $1::text AND sender_id = $2::text 
              AND created_at >= NOW() - INTERVAL '1 hour'
              ORDER BY created_at DESC LIMIT 1`,
-            [session_name, sender_id]
+            [session_name || null, sender_id || null]
         );
 
         if (recentOrder.rows.length > 0) {
@@ -1407,23 +1407,23 @@ async function saveWhatsAppOrderTracking(orderData) {
             let idx = 1;
 
             if (product_name && product_name !== 'Recovered Lead' && product_name !== 'Pending') {
-                updates.push(`product_name = $${idx++}`);
+                updates.push(`product_name = $${idx++}::text`);
                 values.push(product_name);
             }
             if (number && number !== 'Pending') {
-                updates.push(`number = $${idx++}`);
+                updates.push(`number = $${idx++}::text`);
                 values.push(number);
             }
             if (location && location !== 'N/A' && location !== 'Pending' && location !== '') {
-                updates.push(`location = $${idx++}`);
+                updates.push(`location = $${idx++}::text`);
                 values.push(location);
             }
             if (product_quantity && product_quantity !== '1') {
-                updates.push(`product_quantity = $${idx++}`);
+                updates.push(`product_quantity = $${idx++}::text`);
                 values.push(product_quantity);
             }
             if (price && price !== '0') {
-                updates.push(`price = $${idx++}`);
+                updates.push(`price = $${idx++}::text`);
                 values.push(price);
             }
 
@@ -1449,9 +1449,9 @@ async function saveWhatsAppOrderTracking(orderData) {
         const result = await query(
             `INSERT INTO whatsapp_order_tracking
                 (session_name, sender_id, product_name, number, location, product_quantity, price)
-             VALUES ($1,$2,$3,$4,$5,$6,$7)
+             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text)
              RETURNING *`,
-            [session_name, sender_id, product_name, number, location, product_quantity, price]
+            [session_name || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null]
         );
         return result.rows[0];
     } catch (error) {
@@ -1947,10 +1947,10 @@ async function saveOrderTracking(orderData) {
         // An order is incomplete if location or number is 'Pending' or empty
         const recentOrder = await query(
             `SELECT id FROM fb_order_tracking 
-             WHERE page_id = $1 AND sender_id = $2 
+             WHERE page_id = $1::text AND sender_id = $2::text 
              AND created_at > NOW() - INTERVAL '24 hours'
              ORDER BY created_at DESC LIMIT 1`,
-            [page_id, sender_id]
+            [page_id || null, sender_id || null]
         );
 
         if (recentOrder.rows.length > 0) {
@@ -1960,32 +1960,32 @@ async function saveOrderTracking(orderData) {
             await query(
                 `UPDATE fb_order_tracking SET
                     product_name = CASE 
-                        WHEN $1 IS NOT NULL AND $1 <> 'Pending' AND $1 <> 'Recovered Lead' AND $1 <> '' THEN $1 
+                        WHEN $1::text IS NOT NULL AND $1::text <> 'Pending' AND $1::text <> 'Recovered Lead' AND $1::text <> '' THEN $1::text 
                         ELSE product_name 
                     END,
                     number = CASE 
-                        WHEN $2 IS NOT NULL AND $2 <> 'Pending' AND $2 <> '' THEN $2 
+                        WHEN $2::text IS NOT NULL AND $2::text <> 'Pending' AND $2::text <> '' THEN $2::text 
                         ELSE number 
                     END,
                     location = CASE 
-                        WHEN $3 IS NOT NULL AND $3 <> 'Pending' AND $3 <> '' THEN $3 
+                        WHEN $3::text IS NOT NULL AND $3::text <> 'Pending' AND $3::text <> '' THEN $3::text 
                         ELSE location 
                     END,
                     product_quantity = CASE 
-                        WHEN $4 IS NOT NULL AND $4 <> '1' AND $4 <> '' THEN $4 
+                        WHEN $4::text IS NOT NULL AND $4::text <> '1' AND $4::text <> '' THEN $4::text 
                         ELSE product_quantity 
                     END,
                     price = CASE 
-                        WHEN $5 IS NOT NULL AND $5 <> '0' AND $5 <> '' THEN $5 
+                        WHEN $5::text IS NOT NULL AND $5::text <> '0' AND $5::text <> '' THEN $5::text 
                         ELSE price 
                     END,
                     sender_number = CASE 
-                        WHEN $6 IS NOT NULL AND $6 <> 'Pending' AND $6 <> '' THEN $6 
+                        WHEN $6::text IS NOT NULL AND $6::text <> 'Pending' AND $6::text <> '' THEN $6::text 
                         ELSE sender_number 
                     END,
                     created_at = NOW()
                  WHERE id = $7`,
-                [product_name, number, location, product_quantity, price, sender_number, orderId]
+                [product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderId]
             );
             return { id: orderId, status: 'updated' };
         }
@@ -1994,9 +1994,9 @@ async function saveOrderTracking(orderData) {
         const result = await query(
             `INSERT INTO fb_order_tracking
                 (page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, NOW())
              RETURNING *`,
-            [page_id, sender_id, product_name, number, location, product_quantity, price, sender_number]
+            [page_id || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null]
         );
         return result.rows[0];
 
