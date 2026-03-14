@@ -2002,19 +2002,19 @@ async function saveOrderTracking(orderData) {
                 await query(
                     `UPDATE fb_order_tracking SET
                         product_name = CASE 
-                            WHEN $1::text IS NOT NULL AND $1::text <> 'Pending' AND $1::text <> 'Recovered Lead' AND $1::text <> '' THEN $1::text 
+                            WHEN $1::text IS NOT NULL AND $1::text <> 'Pending' AND $1::text <> 'Recovered Lead' AND $1::text <> 'Unknown' AND $1::text <> '' THEN $1::text 
                             ELSE product_name 
                         END,
                         number = CASE 
-                            WHEN $2::text IS NOT NULL AND $2::text <> 'Pending' AND $2::text <> '' THEN $2::text 
+                            WHEN $2::text IS NOT NULL AND $2::text <> 'Pending' AND $2::text <> 'null' AND $2::text <> '' THEN $2::text 
                             ELSE number 
                         END,
                         location = CASE 
-                            WHEN $3::text IS NOT NULL AND $3::text <> 'Pending' AND $3::text <> '' THEN $3::text 
+                            WHEN $3::text IS NOT NULL AND $3::text <> 'Pending' AND $3::text <> 'null' AND $3::text <> '' THEN $3::text 
                             ELSE location 
                         END,
                         product_quantity = CASE 
-                            WHEN $4::text IS NOT NULL AND $4::text <> '1' AND $4::text <> '' THEN $4::text 
+                            WHEN $4::text IS NOT NULL AND $4::text <> '1' AND $4::text <> '0' AND $4::text <> '' THEN $4::text 
                             ELSE product_quantity 
                         END,
                         price = CASE 
@@ -2022,11 +2022,11 @@ async function saveOrderTracking(orderData) {
                             ELSE price 
                         END,
                         sender_number = CASE 
-                            WHEN $6::text IS NOT NULL AND $6::text <> 'Pending' AND $6::text <> '' THEN $6::text 
+                            WHEN $6::text IS NOT NULL AND $6::text <> 'Pending' AND $6::text <> 'null' AND $6::text <> '' THEN $6::text 
                             ELSE sender_number 
                         END,
                         customer_name = CASE
-                            WHEN $8::text IS NOT NULL AND $8::text <> 'Pending' AND $8::text <> '' THEN $8::text
+                            WHEN $8::text IS NOT NULL AND $8::text <> 'Pending' AND $8::text <> 'Unknown' AND $8::text <> '' THEN $8::text
                             ELSE customer_name
                         END,
                         updated_at = NOW()
