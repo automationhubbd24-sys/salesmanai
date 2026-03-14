@@ -344,22 +344,23 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
     const today = new Date().toISOString().split('T')[0];
 
     // --- 1. KEY-LEVEL LIMITS (STRICT & UNIFIED) ---
-    // User Requirement: "agula to fronted e select korbo defualt e kono limit takbe na"
-    // Solution: REMOVE DEFAULT LIMITS.
+    // Use effective usage (Cache + Pending Delta) to prevent over-usage during cache refresh windows
+    const pending = pendingUpdates.get(keyData.api) || { usage_delta: 0 };
+    const effectiveUsageToday = (keyData.usage_today || 0) + (keyData.last_date_checked === today ? pending.usage_delta : 0);
+
     // Only enforce limits if explicitly set in DB (keyData.rpd_limit / rpm_limit).
     // If not set (null/0), check for Dynamic Model Overrides (from Frontend).
-    
     const manual = requestedModel ? dynamicLimits.get(String(requestedModel)) : null;
 
     // RPD (Requests Per Day) - Unified
     let rpdLimit = parseInt(keyData.rpd_limit); 
-    if (!(rpdLimit > 0) && manual && manual.rpd) {
+    if (!(rpdLimit > 0) && manual && manual.rpd && manual.source !== 'global_engine') {
         rpdLimit = parseInt(manual.rpd);
     }
     
-    // We use the key's total daily usage (regardless of model)
-    // Only check if rpdLimit is a valid positive number
-    if (rpdLimit > 0 && keyData.last_date_checked === today && (keyData.usage_today || 0) >= rpdLimit) {
+    // Check if rpdLimit is hit
+    if (rpdLimit > 0 && keyData.last_date_checked === today && effectiveUsageToday >= rpdLimit) {
+        console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPD limit (${rpdLimit}). Usage: ${effectiveUsageToday}`);
         return false;
     }
 
@@ -406,26 +407,34 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
         return false;
     }
 
-    // --- 2. MODEL-LEVEL GLOBAL LIMITS (OPTIONAL/SECONDARY) ---
-    // User request: "jeno rate limit hardcode hoi mane doro ami ja select korbo fronted e setai mane colbe"
-    // If 'manual' has a source 'global_engine', we treat it as a GLOBAL limit for the WHOLE model usage across all keys.
-    // NOTE: We only enforce this if the limit is > 100, assuming small numbers are per-key defaults.
-    // If you want a strict small global limit, use a different source or explicit flag.
-    if (manual && manual.source === 'global_engine' && (manual.rpm > 100 || manual.rpd > 1000)) {
-        // Strict Model RPD
-        if (manual.rpd) {
-            const daily = modelDailyUsage.get(requestedModel) || { date: today, count: 0 };
+    // --- 2. MODEL-LEVEL GLOBAL LIMITS (STRICT ENFORCEMENT) ---
+    // User request: Ensure global model limits (RPD/RPM) are honored regardless of size.
+    if (manual && manual.source === 'global_engine') {
+        // Strict Model RPD (Daily Limit across ALL keys)
+        if (manual.rpd > 0) {
+            const daily = modelDailyUsage.get(modelToCheck) || { date: today, count: 0 };
             if (daily.date === today && daily.count >= manual.rpd) {
-                console.warn(`[KeyService] ⛔ Global Engine ${requestedModel} hit RPD limit (${manual.rpd})`);
+                console.warn(`[KeyService] ⛔ Global Engine ${modelToCheck} hit RPD limit (${manual.rpd}). Total Usage: ${daily.count}`);
                 return false;
             }
         }
-        // Strict Model RPM
-        if (manual.rpm) {
-            const mTimestamps = modelUsageTimestamps.get(requestedModel) || [];
+        // Strict Model RPM (Minute Limit across ALL keys)
+        if (manual.rpm > 0) {
+            const mTimestamps = modelUsageTimestamps.get(modelToCheck) || [];
+            const oneMinuteAgo = now - RPM_WINDOW_MS;
             const mValid = mTimestamps.filter(ts => ts > oneMinuteAgo);
             if (mValid.length >= manual.rpm) {
-                console.warn(`[KeyService] ⛔ Global Engine ${requestedModel} hit RPM limit (${manual.rpm})`);
+                console.warn(`[KeyService] ⛔ Global Engine ${modelToCheck} hit RPM limit (${manual.rpm}). Current: ${mValid.length}`);
+                return false;
+            }
+        }
+        // Strict Model RPH (Hourly Limit across ALL keys)
+        if (manual.rph > 0) {
+            const mHourTimestamps = modelUsageHourTimestamps.get(modelToCheck) || [];
+            const oneHourAgo = now - RPH_WINDOW_MS;
+            const mValidHour = mHourTimestamps.filter(ts => ts > oneHourAgo);
+            if (mValidHour.length >= manual.rph) {
+                console.warn(`[KeyService] ⛔ Global Engine ${modelToCheck} hit RPH limit (${manual.rph}). Current: ${mValidHour.length}`);
                 return false;
             }
         }
