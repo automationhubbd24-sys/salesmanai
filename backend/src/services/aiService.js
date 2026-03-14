@@ -1359,6 +1359,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                         action: structured.action || "NONE",
                         product_id: structured.product_id || null,
                         image_urls: Array.isArray(structured.image_urls) ? structured.image_urls : [],
+                        order_details: structured.order_details || null,
                         token_usage: (completionUsage?.total_tokens || 0) + totalTokensInLoop, 
                         model: model, 
                         foundProducts 
@@ -1406,6 +1407,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                             action: structuredFinal.action || "NONE",
                             product_id: structuredFinal.product_id || null,
                             image_urls: Array.isArray(structuredFinal.image_urls) ? structuredFinal.image_urls : [],
+                            order_details: structuredFinal.order_details || null,
                             token_usage: tokenUsage + totalTokensInLoop, 
                             model: model, 
                             foundProducts 
@@ -2011,6 +2013,7 @@ ${productContext || "No specific product context provided yet."}
                             action: structured.action || "NONE",
                             product_id: structured.product_id || null,
                             image_urls: Array.isArray(structured.image_urls) ? structured.image_urls : [],
+                            order_details: structured.order_details || null,
                             sentiment: 'neutral', 
                             token_usage: tokenUsage + totalTokenUsage, 
                             model: modelToUse, 
