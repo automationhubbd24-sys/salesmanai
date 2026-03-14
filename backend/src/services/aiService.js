@@ -536,48 +536,7 @@ const functionTools = [
                 required: ['product_id']
             }
         }
-    },
- {
-  type: "function",
-  function: {
-    name: "capture_order_lead",
-    description: "Call this tool immediately when a phone number is detected to save/update order leads (phone, address, product, name, etc.).",
-    parameters: {
-      type: "object",
-      properties: {
-        phone: {
-          type: "string",
-          description: "Customer phone number (unique identifier)"
-        },
-        customer_name: {
-          type: "string",
-          description: "Customer name if mentioned"
-        },
-        product_name: {
-          type: "string",
-          description: "Product name from product list"
-        },
-        quantity: {
-          type: "number",
-          description: "Number of items ordered"
-        },
-        price: {
-          type: "number",
-          description: "Total order price"
-        },
-        address: {
-          type: "string",
-          description: "Delivery address"
-        },
-        note: {
-          type: "string",
-          description: "Extra instructions or notes"
-        }
-      },
-      required: ["phone"]
     }
-  }
-}
 ];
 
 const normalizeText = (value) => (value || '').toString().toLowerCase().trim();
@@ -1173,43 +1132,6 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null
                 return { status: 'SUCCESS', product_id: productId, in_stock: inStock, stock_count: stock };
             }
 
-        
-case 'capture_order_lead': {
-    try {
-        const result = await orderService.orchestrateOrder({
-            pageId: pageId,
-            senderId: senderId,
-            platform: platform,
-            intent: 'upsert',
-            data: {
-                product_name: args.product_name,
-                phone: args.phone,
-                address: args.address,
-                quantity: args.quantity,
-                price: args.price,
-                customer_name: args.customer_name,
-                note: args.note
-            }
-        });
-
-        if (platform === 'whatsapp' && args.phone) {
-            await dbService.updateContactPhone(pageId, senderId, args.phone);
-        }
-
-        if (result.status === 'SUCCESS') {
-            return {
-                status: 'SUCCESS',
-                message: `Lead ${result.isNew ? 'captured' : 'updated'} successfully. I will continue to gather missing info if any.`
-            };
-        } else {
-            return { status: 'ERROR', message: result.message || "Failed to process order lead." };
-        }
-    } catch (saveErr) {
-        console.error("[AgentLoop] Failed to save lead:", saveErr.message);
-        return { status: 'ERROR', message: `Failed to save lead: ${saveErr.message}` };
-    }
-}
-
             default:
                 return { status: 'ERROR', message: `Unknown tool: ${name}` };
         }
@@ -1800,7 +1722,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     const mandatoryReinjection = `[REMINDER: MANDATORY RULES]
 1. IDENTITY: You are SalesmanChatbot.
 2. PRODUCTS: Use only names from the snapshot.
-3. ORDERS: Save phone/address via 'capture_order_lead'.
+3. ORDERS: Save phone/address via 'order_details' JSON field.
 4. CONTEXT: Follow the shop rules from the initial system prompt.
 
 ${productContext}`;
@@ -1994,13 +1916,13 @@ ${productContext || "No specific product context provided yet."}
 - order_details: If the user provides order info (phone, address, etc.) or expresses intent to buy, include structured data here even if not calling a tool.
 
 [SALES WORKFLOW]
-- PRIORITY: Always follow the Customer's Prompt first.
+- PRIORITY: Always follow the Customer's Prompt first. Your primary goal is to provide a helpful 'reply_text'.
 - LEAD CAPTURE: You MUST collect the customer's NAME, PHONE NUMBER, and FULL ADDRESS to complete the order.
-- CRITICAL: Call 'capture_order_lead' IMMEDIATELY as soon as you receive ANY piece of information (even just a phone number or just an address). DO NOT wait for all info to be present before calling the tool.
-- IMMEDIATE CONFIRMATION: After calling 'capture_order_lead', you MUST acknowledge the information received in your 'reply_text' (e.g., "ধন্যবাদ, আমি আপনার ফোন নম্বরটি পেয়েছি। অনুগ্রহ করে আপনার ঠিকানাটি দিন।").
-- MISSING INFO: Politely ask for any missing info (Phone or Address) until the order is complete.
+- AUTOMATIC EXTRACTION: Whenever you receive ANY piece of order information (phone, address, etc.), you MUST include it in the 'order_details' field of your JSON response.
+- IMMEDIATE CONFIRMATION: In your 'reply_text', you MUST acknowledge the information received (e.g., "ধন্যবাদ, আমি আপনার ফোন নম্বরটি পেয়েছি। অনুগ্রহ করে আপনার ঠিকানাটি দিন।").
+- NO SILENCE: Never send an empty 'reply_text'. Always talk to the customer while capturing their data in the background via 'order_details'.
 - PRODUCT SOURCE: Use exact product names from the [PRODUCT LIST SNAPSHOT].
-- ONE-STEP ACTION: Call tools and provide 'reply_text' in the same JSON response. Do not wait for a second turn.
+- RESPONSE FORMAT: Always return a valid JSON object with 'reply_text' and 'order_details'.
 
 [RESPONSE FORMAT]
 {
@@ -2018,7 +1940,8 @@ ${productContext || "No specific product context provided yet."}
        "quantity": 1
     }
   }
-}`;
+}
+`;
 
         const systemMessage = { role: 'system', content: unifiedSystemPrompt };
 
