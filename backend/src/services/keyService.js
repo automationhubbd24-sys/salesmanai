@@ -304,6 +304,43 @@ async function markKeyAsQuotaExceeded(key) {
     await markKeyAsDead(key, safeDuration, 'quota_exceeded');
 }
 
+// Helper to lock a model globally for a specific duration
+function lockModelTemporarily(modelName, durationMs) {
+    if (!modelName) return;
+    const expiry = Date.now() + durationMs;
+    modelLockMap.set(modelName, { expiry, strikes: 1 });
+    console.warn(`[KeyService] 🔒 Model ${modelName} locked for ${durationMs/1000}s`);
+}
+
+async function handleApiKeyError(key, error, modelName = null) {
+    if (!key) return;
+    const errorStr = String(error).toLowerCase();
+    
+    // --- SMART 429 DETECTION ---
+    if (errorStr.includes('429') || errorStr.includes('too many requests')) {
+        // Check if it's a Daily Quota (RPD) or just a Rate Limit (RPM)
+        const isDailyQuota = errorStr.includes('perday') || 
+                             errorStr.includes('quota exceeded') || 
+                             errorStr.includes('quotavalue');
+
+        if (isDailyQuota) {
+            console.warn(`[KeyService] 🚨 Daily Quota Exceeded for ${key.substring(0,8)}... Locking for 24h.`);
+            await markKeyAsQuotaExceeded(key);
+            if (modelName) lockModelTemporarily(modelName, 60 * 60 * 1000); // Lock model for 1h to stop spamming
+        } else {
+            console.warn(`[KeyService] ⏳ Rate Limit (RPM) hit for ${key.substring(0,8)}... Cooldown 2 min.`);
+            await markKeyAsDead(key, 2 * 60 * 1000, 'rate_limit_rpm');
+        }
+        return;
+    }
+
+    if (errorStr.includes('401') || errorStr.includes('invalid api key') || errorStr.includes('expired')) {
+        console.error(`[KeyService] 💀 Key ${key.substring(0,8)}... is DEAD (401/Invalid).`);
+        await markKeyAsDead(key, 30 * 24 * 60 * 60 * 1000, 'invalid_key'); // 30 days
+        return;
+    }
+}
+
 function isKeyAlive(key) {
     // 1. Check Legacy In-Memory Map
     if (deadKeys.has(key)) {
@@ -803,6 +840,7 @@ module.exports = {
     markKeyAsDead,
     markKeyAsSuspended,
     markKeyAsQuotaExceeded,
+    handleApiKeyError,
     recordKeyUsage,
     updateKeyStatusFromHeaders,
     updateKeyCache, // Export this!

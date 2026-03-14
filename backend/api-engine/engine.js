@@ -501,8 +501,9 @@ router.post('/v1/chat/completions', async (req, res) => {
                 const authHeader = error.config.headers.Authorization;
                 const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
                 if (token) {
-                    console.warn(`[API Engine] Blocking Key ${token.substring(0,8)}...`);
-                    keyService.markKeyAsDead(token, 60000, `upstream_${status}`);
+                    // Use the smart error handler
+                    const requestedModel = req.body.model || req.query.model;
+                    await keyService.handleApiKeyError(token, error.response?.data?.error?.message || error.message, requestedModel);
                 }
             }
         }
