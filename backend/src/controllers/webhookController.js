@@ -990,11 +990,15 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         // 1. STICKER & EMOJI GATEKEEPER
         const hasOnlyStickers = messages.every(m => m.isSticker === true);
         const combinedRawText = messages.map(m => m.text).filter(Boolean).join(' ').trim();
-        // Regex for Alphanumeric or Bangla characters
+        
+        // --- RELAXED GATEKEEPER ---
+        // We only block if it's strictly Emojis/Stickers AND has no special intent characters like ?, !, .
+        // "???" or "..." often mean the user is waiting or confused, so the AI should respond.
         const hasNoAlphanumeric = combinedRawText && !/[a-zA-Z0-9\u0980-\u09FF]/.test(combinedRawText);
+        const hasNoSpecialPunctuation = combinedRawText && !/[?!.]/.test(combinedRawText);
 
-        if (hasOnlyStickers || (combinedRawText && hasNoAlphanumeric && messages.every(m => !m.images?.length))) {
-            console.log(`[Gatekeeper] Blocking reply for stickers/emojis only from ${senderId}`);
+        if (hasOnlyStickers || (combinedRawText && hasNoAlphanumeric && hasNoSpecialPunctuation && messages.every(m => !m.images?.length))) {
+            console.log(`[Gatekeeper] Blocking reply for strictly stickers/emojis only from ${senderId}`);
             debounceMap.delete(sessionId);
             return;
         }
