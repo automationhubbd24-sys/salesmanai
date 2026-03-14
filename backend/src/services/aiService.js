@@ -1346,7 +1346,8 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                                 if (dbService && dbService.saveOrder) {
                                     // Use unified saveOrder wrapper with correct platform detection
                                     // CRITICAL: Prioritize pageConfig.page_id for database consistency
-                                    const actualPageId = pageConfig.page_id || pageId || pageConfig.id; 
+                                    // User Request: If ExternalAPI, we MUST look into pageConfig.page_id
+                                    const actualPageId = (pageConfig.page_id && pageConfig.page_id !== 'ExternalAPI') ? pageConfig.page_id : pageId; 
                                     
                                     if (actualPageId && actualPageId !== 'ExternalAPI') {
                                         await dbService.saveOrder({
@@ -1362,7 +1363,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                                         });
                                         console.log(`[AgentLoop] ✅ Precision Order Saved/Updated to DB for Page: ${actualPageId}`);
                                     } else {
-                                        console.warn(`[AgentLoop] ❌ Skipping order save: page_id is '${actualPageId}'. Cannot save orders for generic ExternalAPI context.`);
+                                        console.warn(`[AgentLoop] ❌ Skipping order save: page_id is '${actualPageId}'.`);
                                     }
                                 }
                             } catch (err) {
