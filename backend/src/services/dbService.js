@@ -1970,7 +1970,7 @@ async function saveOrderTracking(orderData) {
     try {
         // --- 2. SMART AGENT DECISION (Merge into existing incomplete order) ---
         const recentOrder = await query(
-            `SELECT id, status, is_locked FROM fb_order_tracking 
+            `SELECT id, is_locked, status, product_name, number, location FROM fb_order_tracking 
              WHERE page_id = $1::text AND sender_id = $2::text 
              AND created_at > NOW() - INTERVAL '24 hours'
              ORDER BY created_at DESC LIMIT 1`,
@@ -1985,7 +1985,13 @@ async function saveOrderTracking(orderData) {
                 console.log(`[Order] Recent order (${existing.id}) is LOCKED/DELIVERED. Creating a fresh order row.`);
             } else {
                 const orderId = existing.id;
-                console.log(`[Order] Found active recent order (${orderId}). Updating existing row...`);
+                
+                // --- INCOMPLETE ORDER LOGIC: Check if vital fields are missing ---
+                const isMissingDetails = !existing.product_name || existing.product_name === 'Pending' || 
+                                       !existing.number || existing.number === 'Pending' || 
+                                       !existing.location || existing.location === 'Pending';
+
+                console.log(`[Order] Found active recent order (${orderId}). Incomplete: ${isMissingDetails}. Updating...`);
                 
                 await query(
                     `UPDATE fb_order_tracking SET

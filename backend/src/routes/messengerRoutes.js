@@ -674,7 +674,7 @@ router.get('/orders', authMiddleware, async (req, res) => {
 
         const where = conditions.join(' AND ');
         const queryText = `
-            SELECT id, product_name, number, location, product_quantity, price, created_at, sender_id
+            SELECT id, product_name, number, location, product_quantity, price, created_at, sender_id, status, is_locked
             FROM fb_order_tracking
             WHERE ${where}
             ORDER BY created_at DESC
@@ -826,6 +826,37 @@ router.get('/stats', authMiddleware, async (req, res) => {
     } catch (err) {
         console.error('Messenger stats error:', err);
         res.status(500).json({ error: err.message, stack: err.stack });
+    }
+});
+
+router.patch('/orders/:id/status', authMiddleware, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+        const allowedStatuses = ['ongoing', 'delivered', 'locked', 'cancelled'];
+
+        if (!allowedStatuses.includes(status)) {
+            return res.status(400).json({ error: 'Invalid status' });
+        }
+
+        const isLocked = (status === 'delivered' || status === 'locked');
+
+        const result = await pgClient.query(
+            `UPDATE fb_order_tracking 
+             SET status = $1, is_locked = $2, updated_at = NOW() 
+             WHERE id = $3 
+             RETURNING *`,
+            [status, isLocked, id]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'Order not found' });
+        }
+
+        res.json({ success: true, order: result.rows[0] });
+    } catch (err) {
+        console.error('Error updating order status:', err);
+        res.status(500).json({ error: err.message });
     }
 });
 
