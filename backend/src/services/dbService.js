@@ -753,8 +753,25 @@ async function initTables() {
         `);
         console.log("[DB] 'openrouter_engine' tables checked/initialized.");
 
-        // --- FINAL AUDIT: Ensure critical tables and constraints exist ---
         await ensureFbOrderTrackingTable();
+        
+        // Ensure 'status' and 'is_locked' columns exist in fb_order_tracking
+        await query(`
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='status') THEN
+                    ALTER TABLE fb_order_tracking ADD COLUMN status TEXT DEFAULT 'ongoing';
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='is_locked') THEN
+                    ALTER TABLE fb_order_tracking ADD COLUMN is_locked BOOLEAN DEFAULT FALSE;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='updated_at') THEN
+                    ALTER TABLE fb_order_tracking ADD COLUMN updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+                END IF;
+            END $$;
+        `);
+        console.log("[DB] 'fb_order_tracking' status columns verified.");
+
         await ensureFbChatsTable();
         await ensureFbCommentsTable();
         console.log("[DB] Audit: Critical tables and constraints verified.");
@@ -1952,10 +1969,8 @@ async function saveOrderTracking(orderData) {
 
     try {
         // --- 2. SMART AGENT DECISION (Merge into existing incomplete order) ---
-        // Look for a recent order (last 2 hours) from this sender that is "Incomplete"
-        // An order is incomplete if location or number is 'Pending' or empty
         const recentOrder = await query(
-            `SELECT id FROM fb_order_tracking 
+            `SELECT id, status, is_locked FROM fb_order_tracking 
              WHERE page_id = $1::text AND sender_id = $2::text 
              AND created_at > NOW() - INTERVAL '24 hours'
              ORDER BY created_at DESC LIMIT 1`,
@@ -1963,47 +1978,58 @@ async function saveOrderTracking(orderData) {
         );
 
         if (recentOrder.rows.length > 0) {
-            const orderId = recentOrder.rows[0].id;
-            console.log(`[Order] Found recent order (${orderId}) within 24h. Updating existing row...`);
+            const existing = recentOrder.rows[0];
             
-            await query(
-                `UPDATE fb_order_tracking SET
-                    product_name = CASE 
-                        WHEN $1::text IS NOT NULL AND $1::text <> 'Pending' AND $1::text <> 'Recovered Lead' AND $1::text <> '' THEN $1::text 
-                        ELSE product_name 
-                    END,
-                    number = CASE 
-                        WHEN $2::text IS NOT NULL AND $2::text <> 'Pending' AND $2::text <> '' THEN $2::text 
-                        ELSE number 
-                    END,
-                    location = CASE 
-                        WHEN $3::text IS NOT NULL AND $3::text <> 'Pending' AND $3::text <> '' THEN $3::text 
-                        ELSE location 
-                    END,
-                    product_quantity = CASE 
-                        WHEN $4::text IS NOT NULL AND $4::text <> '1' AND $4::text <> '' THEN $4::text 
-                        ELSE product_quantity 
-                    END,
-                    price = CASE 
-                        WHEN $5::text IS NOT NULL AND $5::text <> '0' AND $5::text <> '' THEN $5::text 
-                        ELSE price 
-                    END,
-                    sender_number = CASE 
-                        WHEN $6::text IS NOT NULL AND $6::text <> 'Pending' AND $6::text <> '' THEN $6::text 
-                        ELSE sender_number 
-                    END,
-                    created_at = NOW()
-                 WHERE id = $7::bigint`,
-                [product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderId]
-            );
-            return { id: orderId, status: 'updated' };
+            // --- LOCK MECHANISM: If order is locked or delivered, do NOT update it. Create new instead. ---
+            if (existing.is_locked || existing.status === 'delivered' || existing.status === 'locked') {
+                console.log(`[Order] Recent order (${existing.id}) is LOCKED/DELIVERED. Creating a fresh order row.`);
+            } else {
+                const orderId = existing.id;
+                console.log(`[Order] Found active recent order (${orderId}). Updating existing row...`);
+                
+                await query(
+                    `UPDATE fb_order_tracking SET
+                        product_name = CASE 
+                            WHEN $1::text IS NOT NULL AND $1::text <> 'Pending' AND $1::text <> 'Recovered Lead' AND $1::text <> '' THEN $1::text 
+                            ELSE product_name 
+                        END,
+                        number = CASE 
+                            WHEN $2::text IS NOT NULL AND $2::text <> 'Pending' AND $2::text <> '' THEN $2::text 
+                            ELSE number 
+                        END,
+                        location = CASE 
+                            WHEN $3::text IS NOT NULL AND $3::text <> 'Pending' AND $3::text <> '' THEN $3::text 
+                            ELSE location 
+                        END,
+                        product_quantity = CASE 
+                            WHEN $4::text IS NOT NULL AND $4::text <> '1' AND $4::text <> '' THEN $4::text 
+                            ELSE product_quantity 
+                        END,
+                        price = CASE 
+                            WHEN $5::text IS NOT NULL AND $5::text <> '0' AND $5::text <> '' THEN $5::text 
+                            ELSE price 
+                        END,
+                        sender_number = CASE 
+                            WHEN $6::text IS NOT NULL AND $6::text <> 'Pending' AND $6::text <> '' THEN $6::text 
+                            ELSE sender_number 
+                        END,
+                        customer_name = CASE
+                            WHEN $8::text IS NOT NULL AND $8::text <> 'Pending' AND $8::text <> '' THEN $8::text
+                            ELSE customer_name
+                        END,
+                        updated_at = NOW()
+                     WHERE id = $7::bigint`,
+                    [product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderId, orderData.customer_name || null]
+                );
+                return { id: orderId, status: 'updated' };
+            }
         }
 
         // --- 3. NEW ORDER (If no recent order or it's a fresh intent) ---
         const result = await query(
             `INSERT INTO fb_order_tracking
-                (page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, created_at)
-             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, NOW())
+                (page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, created_at, status, is_locked)
+             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, NOW(), 'ongoing', FALSE)
              RETURNING *`,
             [page_id || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null]
         );

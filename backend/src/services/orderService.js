@@ -34,6 +34,39 @@ function parsePrice(value) {
 }
 
 /**
+ * Fetches the most recent pending/incomplete order for a user to provide context to the AI.
+ */
+async function getPendingOrderContext(pageId, senderId) {
+    try {
+        const pgClient = require('./pgClient');
+        // Look for the latest order for this sender on this page
+        const result = await pgClient.query(
+            "SELECT product_name, phone, address, customer_name, quantity, price, status FROM fb_order_list WHERE page_id = $1 AND sender_id = $2 ORDER BY created_at DESC LIMIT 1",
+            [pageId, senderId]
+        );
+
+        if (result.rows.length === 0) return null;
+
+        const order = result.rows[0];
+        const missingFields = [];
+        if (!order.phone || order.phone === 'null') missingFields.push('phone number');
+        if (!order.address || order.address === 'Pending' || order.address === 'null') missingFields.push('delivery address');
+        if (!order.customer_name || order.customer_name === 'Pending' || order.customer_name === 'Unknown') missingFields.push('customer name');
+        if (!order.product_name || order.product_name === 'Unknown' || order.product_name === 'Recovered Lead') missingFields.push('product name');
+
+        return {
+            exists: true,
+            data: order,
+            missingFields: missingFields,
+            isComplete: missingFields.length === 0
+        };
+    } catch (err) {
+        console.error(`[OrderEngine] Context Error:`, err.message);
+        return null;
+    }
+}
+
+/**
  * Orchestrates order-related actions (creation, update, lookup).
  * This is the single source of truth for all order logic.
  */

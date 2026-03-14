@@ -1320,7 +1320,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                         
                         // Mapping fields from different potential AI structures
                         const customerPhone = structuredFinal.customer_phone || structuredFinal.phone || rawData.phone || rawData.customer_phone || null;
-                        const customerAddress = structuredFinal.customer_address || structuredFinal.address || rawData.address || rawData.customer_address || null;
+                        const customerAddress = structuredFinal.customer_address || rawData.address || rawData.customer_address || null;
                         const customerName = structuredFinal.customer_name || structuredFinal.name || rawData.name || rawData.customer_name || "Unknown";
                         const productName = structuredFinal.product_name || structuredFinal.product || rawData.product_name || rawData.product || "Unknown";
 
@@ -1333,13 +1333,9 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                             customer_address: customerAddress ? String(customerAddress).trim() : null
                         };
 
-                        // Precision Logic: Save if we have ANY vital info that looks valid
-                        const hasVitalInfo = (orderData.customer_phone && orderData.customer_phone.length >= 10) || 
-                                           (orderData.customer_address && orderData.customer_address.length > 5) ||
-                                           (orderData.customer_name !== "Unknown" && orderData.customer_name.length > 2);
-
-                        if (hasVitalInfo && orderData.customer_phone) {
-                            console.log(`[AgentLoop] 📦 High-Precision Incremental Order (Phone found):`, orderData);
+                        // Phone First Rule: Start saving only if phone exists
+                        if (orderData.customer_phone && orderData.customer_phone.length >= 10) {
+                            console.log(`[AgentLoop] 📦 Phone detected. Proceeding with order orchestration...`);
                             
                             try {
                                 const orderService = require('./orderService');
@@ -1364,8 +1360,8 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                             } catch (err) {
                                 console.error(`[AgentLoop] ❌ Order Orchestration Error:`, err.message);
                             }
-                        } else if (hasVitalInfo && !orderData.customer_phone) {
-                            console.log(`[AgentLoop] ⏳ Info found (Address/Name) but NO PHONE yet. Skipping save as per User Request.`);
+                        } else {
+                            console.log(`[AgentLoop] ⏳ No phone detected yet. Skipping order save/update.`);
                         }
                     }
 
