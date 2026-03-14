@@ -51,15 +51,24 @@ function createProxyAgent(proxyUrl) {
     if (!proxyUrl) return null;
     try {
         const agent = new HttpsProxyAgent(proxyUrl);
-        const sessionName = proxyUrl.split('-session-')[1]?.split(':')[0] || 'unknown';
+        const sessionName = proxyUrl.includes('-session-') ? proxyUrl.split('-session-')[1]?.split(':')[0] : 'direct';
+        
+        // Attach session name to agent for logging in other functions
+        agent.proxySessionName = sessionName;
         
         // Log IP Info for Debugging (Non-blocking)
-        axios.get('https://api.ip.sb/geoip', { httpsAgent: agent, timeout: 5000 })
+        const testServices = ['https://api.ip.sb/geoip', 'https://ipinfo.io/json', 'https://api.myip.com'];
+        const service = testServices[Math.floor(Math.random() * testServices.length)];
+
+        axios.get(service, { httpsAgent: agent, timeout: 5000 })
             .then(res => {
-                console.log(`[Proxy IP Success] Session: ${sessionName} | IP: ${res.data.ip} | Country: ${res.data.country} | Org: ${res.data.organization}`);
+                const ip = res.data.ip || res.data.ip_addr || 'unknown';
+                const country = res.data.country || res.data.country_code || 'unknown';
+                console.log(`[Proxy Verification] Agent Ready | IP: ${ip} | Session: ${sessionName} | Country: ${country}`);
             })
             .catch(e => {
-                console.warn(`[Proxy IP Error] Session: ${sessionName} failed to fetch IP info: ${e.message}. BrightData credentials or zone might be invalid.`);
+                // Silently log verification failure (doesn't affect actual AI call)
+                // console.warn(`[Proxy Verification Failed] Session: ${sessionName}`);
             });
 
         return agent;
@@ -1173,7 +1182,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
             };
         }
 
-        console.log(`[AgentLoop] Starting iteration ${loopCount} with ${model} (Temp: ${temperature})...`);
+        console.log(`[AI Request] ${model} | Proxy: ${proxyAgent?.proxySessionName || 'NONE'} | URL: ${baseURL}`);
 
         try {
             let responseMessage;
@@ -1204,6 +1213,8 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 toolCalls = responseMessage.tool_calls;
                 completionUsage = completion.usage;
 
+                console.log(`[AI Response] Status: Success | Provider: Google | Tokens: ${completionUsage?.total_tokens || 0} | Proxy: ${proxyAgent?.proxySessionName || 'NONE'}`);
+
             } else {
                 // --- OPENAI COMPATIBLE PATH ---
                 const openai = new OpenAI({ 
@@ -1224,6 +1235,9 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 responseMessage = completion.choices[0].message;
                 toolCalls = responseMessage.tool_calls;
                 completionUsage = completion.usage;
+                
+                const providerName = baseURL.includes('openrouter') ? 'OpenRouter' : (baseURL.includes('groq') ? 'Groq' : 'OpenAI');
+                console.log(`[AI Response] Status: Success | Provider: ${providerName} | Tokens: ${completionUsage?.total_tokens || 0} | Proxy: ${proxyAgent?.proxySessionName || 'NONE'}`);
             }
             
             // Add AI's response to history
