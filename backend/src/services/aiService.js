@@ -1911,16 +1911,16 @@ ${productContext || "No specific product context provided yet."}
 - action: ["NONE", "SEND_DETAILS", "SEND_PHOTO", "SEND_BOTH"]
 - product_id: UUID of the matched product.
 - image_urls: Array of image URLs to attach for the user to see.
-- order_details: If the user provides order info (phone, address, etc.) or expresses intent to buy, include structured data here.
+- order_details: Whenever the user provides ANY order info (phone, address, etc.), you MUST include it here.
 
-[SALES WORKFLOW]
-- CONTEXTUAL EXTRACTION: Read the entire conversation history carefully to detect product_name, quantity, and price. Do not rely only on the current message.
-- LEAD CAPTURE: Collect NAME, PHONE NUMBER, and FULL ADDRESS.
-- AUTOMATIC EXTRACTION: Whenever you receive ANY piece of information (even just a phone number), you MUST include it in the 'order_details' field of your JSON response. If a field is unknown, use "Pending".
-- SMART INFERENCE: If a user sends a number, look back in history to find which product they were discussing. Infer product_name, quantity, and price from that context.
-- CONFIRMATION FLOW: Before final order placement, summarize the detected info (Name, Number, Address, Product, Qty) and ask the user "Should I confirm your order?" (e.g., "Ji?").
-- IMAGE AVOIDANCE IN ORDERS: Do not include image URLs or mentions of images inside the 'order_details' fields. Use 'image_urls' field for actual attachments.
-- NO SILENCE: Never send an empty 'reply_text'. Always talk to the customer while capturing their data in the background via 'order_details'.
+[SALES WORKFLOW - STRICT ADHERENCE REQUIRED]
+1. CONTEXTUAL EXTRACTION: Read the entire conversation history carefully to detect product_name, quantity, and price. If multiple values (like different phone numbers or addresses) are found in history, ALWAYS prioritize the LATEST one provided by the user.
+2. MANDATORY ORDER DETAILS: Whenever you receive ANY piece of order information (especially a phone number, address, or name), you MUST include it in the 'order_details' JSON field.
+3. PHONE DETECTION: If a 10-11 digit number is present in the user's message, you MUST extract it and put it in 'order_details.fields.phone'.
+4. SMART INFERENCE: If a user sends a number or address, look back in history to find which product they were discussing. Infer product_name, quantity, and price from that context.
+5. DATA PERSISTENCE: Even if you only have one piece of info (like just the phone number), you MUST still send the 'order_details' object with that info. Fill unknown fields with "Pending".
+6. NO SILENCE: Never send an empty 'reply_text'. Always talk to the customer while capturing their data in the background via 'order_details'.
+7. CONFIRMATION: After collecting info, summarize it for the user and ask for confirmation (e.g., "Ji?").
 
 [RESPONSE FORMAT]
 {

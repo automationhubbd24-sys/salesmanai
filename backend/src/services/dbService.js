@@ -1430,7 +1430,7 @@ async function saveWhatsAppOrderTracking(orderData) {
             if (updates.length > 0) {
                 values.push(existing.id);
                 const updateResult = await query(
-                    `UPDATE whatsapp_order_tracking SET ${updates.join(', ')} WHERE id = $${idx} RETURNING *`,
+                    `UPDATE whatsapp_order_tracking SET ${updates.join(', ')} WHERE id = $${idx}::bigint RETURNING *`,
                     values
                 );
                 console.log(`[WA Order] Smart Merged data into ID ${existing.id}`);
@@ -1984,7 +1984,7 @@ async function saveOrderTracking(orderData) {
                         ELSE sender_number 
                     END,
                     created_at = NOW()
-                 WHERE id = $7`,
+                 WHERE id = $7::bigint`,
                 [product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderId]
             );
             return { id: orderId, status: 'updated' };
