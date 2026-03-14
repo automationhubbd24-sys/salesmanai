@@ -1758,13 +1758,13 @@ ${productContext}`;
     console.log(`[AI] Engine Config (Strict): Provider=${defaultProvider}, Model=${defaultModel}`);
 
     // --- MULTI-TENANCY SAFETY CHECK ---
-    const pageId = pageConfig.page_id;
+    const activePageId = pageConfig.page_id || pageId;
     
     // Check Cheap Engine Flag (Default to TRUE if undefined/null, for zero-cost)
     const useCheapEngine = pageConfig.cheap_engine !== false;
 
     const promptPreview = pagePrompts?.text_prompt ? pagePrompts.text_prompt.substring(0, 30) : "DEFAULT";
-    console.log(`[AI Isolation Check] Generating for Page ID: ${pageId} | CheapEngine: ${useCheapEngine} | Sender: ${senderName} | Prompt: "${promptPreview}..."`);
+    console.log(`[AI Isolation Check] Generating for Page ID: ${activePageId} | CheapEngine: ${useCheapEngine} | Sender: ${senderName} | Prompt: "${promptPreview}..."`);
     // ----------------------------------
 
     let totalTokenUsage = extraTokenUsage || 0;
