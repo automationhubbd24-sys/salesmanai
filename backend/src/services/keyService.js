@@ -412,9 +412,28 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
     if (manual && manual.source === 'global_engine') {
         // Strict Model RPD (Daily Limit across ALL keys)
         if (manual.rpd > 0) {
-            const daily = modelDailyUsage.get(modelToCheck) || { date: today, count: 0 };
-            if (daily.date === today && daily.count >= manual.rpd) {
-                console.warn(`[KeyService] ⛔ Global Engine ${modelToCheck} hit RPD limit (${manual.rpd}). Total Usage: ${daily.count}`);
+            // Bulletproof: Sum up actual usage from all active keys in cache for this model/provider
+            let totalActualUsage = 0;
+            const targetProvider = (keyData.provider || '').toLowerCase();
+            const targetModel = (modelToCheck || '').toLowerCase();
+
+            keyCache.forEach(k => {
+                const kProvider = (k.provider || '').toLowerCase();
+                const kModel = (k.model || '').toLowerCase();
+                
+                // Match by model if specified, or by provider
+                if (kModel === targetModel || (targetProvider && kProvider === targetProvider)) {
+                    if (k.last_date_checked === today) {
+                        totalActualUsage += (k.usage_today || 0);
+                        // Add pending delta for this key
+                        const p = pendingUpdates.get(k.api);
+                        if (p && p.usage_delta) totalActualUsage += p.usage_delta;
+                    }
+                }
+            });
+
+            if (totalActualUsage >= manual.rpd) {
+                console.warn(`[KeyService] ⛔ Global Engine ${modelToCheck} hit RPD limit (${manual.rpd}). Actual Total Usage: ${totalActualUsage}`);
                 return false;
             }
         }
