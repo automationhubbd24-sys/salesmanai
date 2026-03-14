@@ -742,11 +742,13 @@ async function fetchOgImage(url) {
 
 // Wrapper for Controller Consistency
 async function generateResponse({ pageId, userId, userMessage, history, imageUrls, audioUrls, config, platform, extraTokenUsage = 0, senderName: explicitSenderName = null, ownerName = null }) {
-    // 1. Fetch Prompts if needed
-    let pagePrompts = config;
-    if (config && platform) {
-        config.platform = platform;
+    // 1. Ensure config has essential IDs
+    if (config) {
+        if (pageId && !config.page_id) config.page_id = pageId;
+        if (platform) config.platform = platform;
     }
+    
+    let pagePrompts = config;
     
     // For Messenger, config might not have prompts if passed from minimal object
     // But for WhatsApp, we usually pass full config.
@@ -791,7 +793,8 @@ async function generateResponse({ pageId, userId, userMessage, history, imageUrl
         imageUrls,
         audioUrls,
         extraTokenUsage, // Pass initial usage (e.g. from Vision API in Controller)
-        userId // Pass actual Customer ID
+        userId, // Pass actual Customer ID
+        pageId // Pass Page ID for order tracking
     );
 }
 
@@ -1164,7 +1167,7 @@ function parsePrice(value) {
 }
 
 // --- AGENTIC LOOP EXECUTION ---
-async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfig, proxyAgent, totalTokenUsage, foundProducts, userId, temperature = 0.7 }) {
+async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfig, proxyAgent, totalTokenUsage, foundProducts, userId, temperature = 0.7, pageId = null }) {
     let loopCount = 0;
     const MAX_LOOP = 3;
     let totalTokensInLoop = totalTokenUsage;
@@ -1342,21 +1345,25 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                                 const dbService = require('./dbService');
                                 if (dbService && dbService.saveOrder) {
                                     // Use unified saveOrder wrapper with correct platform detection
-                                    // CRITICAL: We need the actual page_id from pageConfig
-                                    const actualPageId = pageConfig.page_id || pageConfig.id || userId; 
+                                    // CRITICAL: Ensure we use the actual Page ID passed from the controller
+                                    const actualPageId = pageId || pageConfig.page_id || pageConfig.id; 
                                     
-                                    await dbService.saveOrder({
-                                        page_id: actualPageId,
-                                        sender_id: userId,
-                                        platform: platform || 'messenger', // Default to messenger if null
-                                        product_name: orderData.product_name,
-                                        phone: orderData.customer_phone,
-                                        address: orderData.customer_address,
-                                        quantity: orderData.quantity,
-                                        price: orderData.price,
-                                        customer_name: orderData.customer_name
-                                    });
-                                    console.log(`[AgentLoop] ✅ Precision Order Saved/Updated to DB.`);
+                                    if (actualPageId) {
+                                        await dbService.saveOrder({
+                                            page_id: actualPageId,
+                                            sender_id: userId,
+                                            platform: platform || 'messenger', 
+                                            product_name: orderData.product_name,
+                                            phone: orderData.customer_phone,
+                                            address: orderData.customer_address,
+                                            quantity: orderData.quantity,
+                                            price: orderData.price,
+                                            customer_name: orderData.customer_name
+                                        });
+                                        console.log(`[AgentLoop] ✅ Precision Order Saved/Updated to DB for Page: ${actualPageId}`);
+                                    } else {
+                                        console.warn(`[AgentLoop] ❌ Cannot save order: actualPageId is missing.`);
+                                    }
                                 }
                             } catch (err) {
                                 console.error(`[AgentLoop] ❌ Precision Order Save Error:`, err.message);
@@ -1449,7 +1456,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
 }
 
 // Step 2: Business Logic / AI Brain
-async function generateReply(userMessage, pageConfig, pagePrompts, history = [], senderName = 'Customer', ownerName = 'Automation Hub BD', senderGender = null, imageUrls = [], audioUrls = [], extraTokenUsage = 0, userId = null) {
+async function generateReply(userMessage, pageConfig, pagePrompts, history = [], senderName = 'Customer', ownerName = 'Automation Hub BD', senderGender = null, imageUrls = [], audioUrls = [], extraTokenUsage = 0, userId = null, pageId = null) {
     // --- SAFETY FIX: Ensure names are not null ---
     if (!senderName || senderName === 'null') senderName = 'Customer';
     if (!ownerName || ownerName === 'null') ownerName = 'Automation Hub BD';
@@ -2226,7 +2233,8 @@ ${productContext || "No specific product context provided yet."}
                 totalTokenUsage: totalTokenUsage,
                 foundProducts: [],
                 userId: userId,
-                temperature: (pageConfig.is_external_api ? 0.7 : 0.2)
+                temperature: (pageConfig.is_external_api ? 0.7 : 0.2),
+                pageId: pageId // Pass Page ID for order tracking
             });
 
             return finalize({ ...result, sentiment: 'neutral' });
