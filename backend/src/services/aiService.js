@@ -238,16 +238,21 @@ async function handleAiError(error, apiKey, model) {
 
     // 1. Quota / Rate Limit (429)
     if (statusCode === 429 || errorMsg.includes('429') || errorMsg.includes('limit') || errorMsg.includes('quota') || errorMsg.includes('exhausted') || errorMsg.includes('too many requests')) {
-        if (errorMsg.includes('quota') || responseMessage.includes('quota')) {
-            console.warn(`[AI] ⛔ Quota Exceeded for key ${apiKey.substring(0, 8)}... marking as EXCEEDED (Midnight Reset).`);
+        // Precise Detection for Google/Gemini
+        const isQuotaExceeded = (errorMsg.includes('quota') || responseMessage.includes('quota') || errorMsg.includes('daily') || responseMessage.includes('daily')) && 
+                               !(errorMsg.includes('minute') || responseMessage.includes('minute'));
+
+        if (isQuotaExceeded) {
+            console.warn(`[AI] ⛔ Daily Quota Exceeded for key ${apiKey.substring(0, 8)}... marking as EXCEEDED (Midnight Reset).`);
             if (keyService.markKeyAsQuotaExceeded) {
                 await keyService.markKeyAsQuotaExceeded(apiKey);
             }
         } else {
-            console.warn(`[AI] 🔒 Rate Limit hit for key ${apiKey.substring(0, 8)}... marking as DEAD (Short cooldown).`);
+            // It's likely an RPM/TPM limit hit (temporary)
+            console.warn(`[AI] 🔒 Rate Limit (RPM/TPM) hit for key ${apiKey.substring(0, 8)}... marking as DEAD (70s Short cooldown).`);
             if (keyService.markKeyAsDead) {
-                // Short cooldown for RPM/TPM limits (1 minute)
-                await keyService.markKeyAsDead(apiKey, 60 * 1000, `rate_limit_${model}`);
+                // Short cooldown for RPM/TPM limits (70 seconds to match our window)
+                await keyService.markKeyAsDead(apiKey, 70 * 1000, `rate_limit_${model}`);
             }
         }
         return;

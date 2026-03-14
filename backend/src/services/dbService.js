@@ -3011,7 +3011,7 @@ module.exports = {
     addApiKey,
     deleteApiKey,
     getApiKeyById,
-    updateApiKeyRphLimit,
+    updateApiKeyLimits,
     updateApiKeyStatus,
     logApiUsage,
     logAiUsage,

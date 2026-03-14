@@ -182,17 +182,17 @@ async function report429(modelName, apiKey = null) {
         }
 
         if (state.strikes === 0) {
-            // First offense -> 2 Minutes
+            // First offense -> 70 Seconds (Match RPM window)
             state.strikes = 1;
-            const duration = 2 * 60 * 1000;
+            const duration = 70 * 1000;
             await markKeyAsDead(apiKey, duration, '429_rate_limit_1st');
-            console.warn(`[KeyService] 🔒 Locking KEY ${apiKey.substring(0,8)}... for 2 mins (First 429)`);
+            console.warn(`[KeyService] 🔒 Locking KEY ${apiKey.substring(0,8)}... for 70s (First 429)`);
         } else {
-            // Second offense -> 24 Hours
+            // Second offense -> 10 Minutes (User has many keys, so 10 mins is fine to let it cool down)
             state.strikes = 2;
-            const duration = 24 * 60 * 60 * 1000;
+            const duration = 10 * 60 * 1000;
             await markKeyAsDead(apiKey, duration, '429_rate_limit_2nd');
-            console.warn(`[KeyService] 🔒 Locking KEY ${apiKey.substring(0,8)}... for 24 HOURS (Repeated 429)`);
+            console.warn(`[KeyService] 🔒 Locking KEY ${apiKey.substring(0,8)}... for 10 MINUTES (Repeated 429)`);
         }
         
         state.last_429 = now;
