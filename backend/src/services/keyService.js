@@ -304,29 +304,33 @@ async function markKeyAsQuotaExceeded(key) {
     await markKeyAsDead(key, safeDuration, 'quota_exceeded');
 }
 
-// Helper to lock a model globally for a specific duration
-function lockModelTemporarily(modelName, durationMs) {
-    if (!modelName) return;
-    const expiry = Date.now() + durationMs;
-    modelLockMap.set(modelName, { expiry, strikes: 1 });
-    console.warn(`[KeyService] 🔒 Model ${modelName} locked for ${durationMs/1000}s`);
+// 13. Check Conversation Lock Status (Failure Lock)
+async function checkLockStatus(pageId, senderId) {
+    // ... logic remains ...
 }
+
+// REMOVED lockModelTemporarily to avoid global model restrictions
 
 async function handleApiKeyError(key, error, modelName = null) {
     if (!key) return;
     const errorStr = String(error).toLowerCase();
     
-    // --- SMART 429 DETECTION ---
+    // --- SMART 429 DETECTION (FOR ALL PROVIDERS) ---
+    // This logic now applies to Gemini, OpenRouter, Groq, Mistral, etc.
     if (errorStr.includes('429') || errorStr.includes('too many requests')) {
         // Check if it's a Daily Quota (RPD) or just a Rate Limit (RPM)
+        // Gemini: "perday", "quotavalue"
+        // OpenRouter/Others: "quota exceeded", "daily limit"
         const isDailyQuota = errorStr.includes('perday') || 
                              errorStr.includes('quota exceeded') || 
-                             errorStr.includes('quotavalue');
+                             errorStr.includes('quotavalue') ||
+                             errorStr.includes('daily limit');
 
         if (isDailyQuota) {
             console.warn(`[KeyService] 🚨 Daily Quota Exceeded for ${key.substring(0,8)}... Locking for 24h.`);
+            // This will update DB via markKeyAsDead internally
             await markKeyAsQuotaExceeded(key);
-            if (modelName) lockModelTemporarily(modelName, 60 * 60 * 1000); // Lock model for 1h to stop spamming
+            // REMOVED model-level locking to allow other keys to try
         } else {
             console.warn(`[KeyService] ⏳ Rate Limit (RPM) hit for ${key.substring(0,8)}... Cooldown 2 min.`);
             await markKeyAsDead(key, 2 * 60 * 1000, 'rate_limit_rpm');
