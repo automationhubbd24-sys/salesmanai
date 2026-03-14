@@ -398,10 +398,6 @@ async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, default
         if (finalModel.includes(',')) {
             finalModel = finalModel.split(',')[0].trim();
         }
-        // Ensure Google models have 'google/' prefix for OpenRouter
-        if (finalModel.toLowerCase().startsWith('gemini-') && !finalModel.includes('/')) {
-            finalModel = `google/${finalModel}`;
-        }
     }
 
     if (isAudio && voiceProvider === 'groq') {

@@ -316,10 +316,8 @@ router.post('/v1/chat/completions', async (req, res) => {
             modelToUse = resolved.finalModel;
             console.log(`[API Engine] Dynamically Resolved ${model} -> ${provider}/${modelToUse} (Vision: ${isVision}, Audio: ${isAudio})`);
         } catch (e) {
-            console.warn(`[API Engine] Dynamic resolution failed for ${model}, using fallbacks.`);
-            if (model === 'salesmanchatbot-pro') { provider = 'google'; modelToUse = 'gemini-1.5-flash'; }
-            else if (model === 'salesmanchatbot-flash') { provider = 'openrouter'; modelToUse = 'google/gemini-2.0-flash-001'; }
-            else if (model === 'salesmanchatbot-lite') { provider = 'groq'; modelToUse = 'llama-3.3-70b-versatile'; }
+            console.warn(`[API Engine] Dynamic resolution failed for ${model}. Error: ${e.message}`);
+            // No hardcoded fallbacks here as per user requirement to manage from frontend
         }
     } else if (model.includes('gpt')) {
         provider = 'openai';
