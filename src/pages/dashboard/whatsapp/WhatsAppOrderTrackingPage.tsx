@@ -48,6 +48,65 @@ export default function WhatsAppOrderTrackingPage() {
 
   const activeSessionName = currentSession?.session_name || null;
 
+  const fetchOrders = useCallback(async (showLoading = true) => {
+    if (!activeSessionName) return;
+    if (showLoading) setOrderLoading(true);
+    try {
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        setOrders([]);
+        return;
+      }
+
+      const params = new URLSearchParams();
+      params.set("session_name", activeSessionName);
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+
+      const yesterday = new Date(today);
+      yesterday.setDate(yesterday.getDate() - 1);
+
+      if (dateFilter === "today") {
+        params.set("from", today.getTime().toString());
+        params.set("to", tomorrow.getTime().toString());
+      } else if (dateFilter === "yesterday") {
+        params.set("from", yesterday.getTime().toString());
+        params.set("to", today.getTime().toString());
+      } else if (dateFilter === "custom" && date) {
+        const customStart = new Date(date);
+        customStart.setHours(0, 0, 0, 0);
+        const customEnd = new Date(date);
+        customEnd.setHours(23, 59, 59, 999);
+        params.set("from", customStart.getTime().toString());
+        params.set("to", customEnd.getTime().toString());
+      }
+
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/orders?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        const msg = errBody.error || "Failed to fetch orders";
+        throw new Error(msg);
+      }
+
+      const data = await res.json();
+      setOrders(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error("Error fetching orders:", error);
+      toast.error((error as Error).message || "Failed to fetch orders");
+    } finally {
+      if (showLoading) setOrderLoading(false);
+    }
+  }, [dateFilter, date, activeSessionName]);
+
   const updateOrderStatus = async (orderId: string, newStatus: string) => {
     const token = localStorage.getItem("auth_token");
     if (!token) return;
@@ -87,68 +146,8 @@ Phone: ${order.number || 'N/A'}`;
   };
 
   useEffect(() => {
-    if (!activeSessionName) return;
-
-    const fetchOrders = async () => {
-      setOrderLoading(true);
-      try {
-        const token = localStorage.getItem("auth_token");
-        if (!token) {
-          setOrders([]);
-          return;
-        }
-
-        const params = new URLSearchParams();
-        params.set("session_name", activeSessionName);
-
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        
-        const tomorrow = new Date(today);
-        tomorrow.setDate(tomorrow.getDate() + 1);
-
-        const yesterday = new Date(today);
-        yesterday.setDate(yesterday.getDate() - 1);
-
-        if (dateFilter === "today") {
-          params.set("from", today.getTime().toString());
-          params.set("to", tomorrow.getTime().toString());
-        } else if (dateFilter === "yesterday") {
-          params.set("from", yesterday.getTime().toString());
-          params.set("to", today.getTime().toString());
-        } else if (dateFilter === "custom" && date) {
-          const customStart = new Date(date);
-          customStart.setHours(0, 0, 0, 0);
-          const customEnd = new Date(date);
-          customEnd.setHours(23, 59, 59, 999);
-          params.set("from", customStart.getTime().toString());
-          params.set("to", customEnd.getTime().toString());
-        }
-
-        const res = await fetch(`${BACKEND_URL}/api/whatsapp/orders?${params.toString()}`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-
-        if (!res.ok) {
-          const errBody = await res.json().catch(() => ({}));
-          const msg = errBody.error || "Failed to fetch orders";
-          throw new Error(msg);
-        }
-
-        const data = await res.json();
-        setOrders(Array.isArray(data) ? data : []);
-      } catch (error) {
-        console.error("Error fetching orders:", error);
-        toast.error((error as Error).message || "Failed to fetch orders");
-      } finally {
-        setOrderLoading(false);
-      }
-    };
-
     fetchOrders();
-  }, [dateFilter, date, activeSessionName]);
+  }, [fetchOrders]);
 
   if (contextLoading && !activeSessionName) {
     return (
