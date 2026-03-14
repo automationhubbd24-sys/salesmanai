@@ -18,6 +18,7 @@ import {
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { Calendar as CalendarIcon, Download, ShoppingBag, Copy, Check, AlertCircle, RefreshCw } from "lucide-react";
@@ -25,17 +26,53 @@ import { toast } from "sonner";
 import { Link } from "react-router-dom";
 import { BACKEND_URL } from "@/config";
 
+interface Order {
+  id: string;
+  product_name: string;
+  product_quantity: string | number;
+  price: string | number;
+  location: string;
+  number: string;
+  status: string;
+  sender_id: string;
+  created_at: string;
+}
+
 export default function WhatsAppOrderTrackingPage() {
   const { currentSession, loading: contextLoading } = useWhatsApp();
-  const [orders, setOrders] = useState<any[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
   const [orderLoading, setOrderLoading] = useState(false);
   const [dateFilter, setDateFilter] = useState<'today' | 'yesterday' | 'custom' | 'all'>('today');
   const [date, setDate] = useState<Date | undefined>(new Date());
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  const activeSessionName = currentSession?.name || null;
+  const activeSessionName = currentSession?.session_name || null;
 
-  const handleCopy = (order: any) => {
+  const updateOrderStatus = async (orderId: string, newStatus: string) => {
+    const token = localStorage.getItem("auth_token");
+    if (!token) return;
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/orders/${orderId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ status: newStatus }),
+      });
+
+      if (!res.ok) throw new Error("Failed to update status");
+      
+      toast.success(`Order status updated to ${newStatus}`);
+      fetchOrders(false); // Refresh without full loading state
+    } catch (error) {
+      console.error("Error updating order status:", error);
+      toast.error("Failed to update status");
+    }
+  };
+
+  const handleCopy = (order: Order) => {
     const textToCopy = `Product: ${order.product_name || 'N/A'}
 Qty: ${order.product_quantity || '1'}
 Price: ${order.price || 'N/A'}
@@ -102,9 +139,9 @@ Phone: ${order.number || 'N/A'}`;
 
         const data = await res.json();
         setOrders(Array.isArray(data) ? data : []);
-      } catch (error: any) {
+      } catch (error) {
         console.error("Error fetching orders:", error);
-        toast.error(error.message || "Failed to fetch orders");
+        toast.error((error as Error).message || "Failed to fetch orders");
       } finally {
         setOrderLoading(false);
       }
@@ -186,7 +223,7 @@ Phone: ${order.number || 'N/A'}`;
                   <CardDescription>All orders within the selected period.</CardDescription>
               </div>
               <div className="flex flex-wrap items-center gap-6">
-                  <Select value={dateFilter} onValueChange={(val: any) => setDateFilter(val)}>
+                  <Select value={dateFilter} onValueChange={(val: 'today' | 'yesterday' | 'custom' | 'all') => setDateFilter(val)}>
                       <SelectTrigger className="w-[130px]">
                           <SelectValue placeholder="Filter" />
                       </SelectTrigger>
@@ -251,6 +288,7 @@ Phone: ${order.number || 'N/A'}`;
                               <TableHead>Price</TableHead>
                               <TableHead>Location</TableHead>
                               <TableHead>Customer</TableHead>
+                              <TableHead>Status</TableHead>
                               <TableHead>Sender ID</TableHead>
                               <TableHead className="w-[50px]"></TableHead>
                           </TableRow>
@@ -280,6 +318,30 @@ Phone: ${order.number || 'N/A'}`;
                                     </Popover>
                                   </TableCell>
                                   <TableCell>{order.number}</TableCell>
+                                  <TableCell>
+                                    <Select 
+                                      value={order.status || 'pending'} 
+                                      onValueChange={(val) => updateOrderStatus(order.id, val)}
+                                    >
+                                      <SelectTrigger className={cn(
+                                        "w-[110px] h-8 text-xs font-medium border-none",
+                                        (order.status === 'pending' || !order.status) && "bg-orange-500/10 text-orange-500 hover:bg-orange-500/20",
+                                        order.status === 'ongoing' && "bg-[#00ff88]/10 text-[#00ff88] hover:bg-[#00ff88]/20",
+                                        order.status === 'delivered' && "bg-blue-500/10 text-blue-500 hover:bg-blue-500/20",
+                                        order.status === 'locked' && "bg-red-500/10 text-red-500 hover:bg-red-500/20",
+                                        order.status === 'cancelled' && "bg-muted text-muted-foreground hover:bg-muted/80"
+                                      )}>
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="pending">Pending</SelectItem>
+                                        <SelectItem value="ongoing">Ongoing</SelectItem>
+                                        <SelectItem value="delivered">Delivered</SelectItem>
+                                        <SelectItem value="locked">Locked</SelectItem>
+                                        <SelectItem value="cancelled">Cancelled</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </TableCell>
                                   <TableCell>{order.sender_id}</TableCell>
                                   <TableCell>
                                     <Button

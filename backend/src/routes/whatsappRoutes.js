@@ -257,7 +257,7 @@ router.get('/orders', authMiddleware, async (req, res) => {
 
         const where = conditions.join(' AND ');
         const queryText = `
-            SELECT id, product_name, number, location, product_quantity, price, created_at, sender_id
+            SELECT id, product_name, number, location, product_quantity, price, created_at, sender_id, status
             FROM whatsapp_order_tracking
             WHERE ${where}
             ORDER BY created_at DESC
@@ -286,6 +286,35 @@ router.get('/orders', authMiddleware, async (req, res) => {
         }
     } catch (err) {
         console.error('Get WhatsApp orders error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.patch('/orders/:id/status', authMiddleware, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+        const allowedStatuses = ['pending', 'ongoing', 'delivered', 'locked', 'cancelled'];
+
+        if (!allowedStatuses.includes(status)) {
+            return res.status(400).json({ error: 'Invalid status' });
+        }
+
+        const result = await pgClient.query(
+            `UPDATE whatsapp_order_tracking 
+             SET status = $1
+             WHERE id = $2 
+             RETURNING *`,
+            [status, id]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'Order not found' });
+        }
+
+        res.json({ success: true, order: result.rows[0] });
+    } catch (err) {
+        console.error('Error updating WhatsApp order status:', err);
         res.status(500).json({ error: err.message });
     }
 });
