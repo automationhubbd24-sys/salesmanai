@@ -59,7 +59,9 @@ export default function WhatsAppOrderTrackingPage() {
       }
 
       const params = new URLSearchParams();
-      params.set("session_name", activeSessionName);
+      if (activeSessionName) {
+        params.set("session_name", String(activeSessionName));
+      }
 
       const today = new Date();
       today.setHours(0, 0, 0, 0);
