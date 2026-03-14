@@ -1287,10 +1287,27 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 const firstBrace = aiTextFinal.indexOf('{');
                 const lastBrace = aiTextFinal.lastIndexOf('}');
                 
+                let structuredFinal = null;
                 if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
                     const potentialJson = aiTextFinal.substring(firstBrace, lastBrace + 1);
-                    const structuredFinal = JSON.parse(potentialJson);
-                    
+                    try {
+                        structuredFinal = JSON.parse(potentialJson);
+                    } catch (e) {
+                        console.warn(`[AgentLoop] JSON Parse Error: ${e.message}. Trying to fix common Bangla formatting issues...`);
+                        // Fallback: Try to clean common AI hallucinations in JSON
+                        const cleanedJson = potentialJson
+                            .replace(/[\u200B-\u200D\uFEFF]/g, '') // Remove hidden chars
+                            .replace(/\\n/g, ' ') // Replace literal \n
+                            .replace(/\n/g, ' '); // Replace actual newlines
+                        try {
+                            structuredFinal = JSON.parse(cleanedJson);
+                        } catch (e2) {
+                            console.error(`[AgentLoop] Final JSON Parse Failure.`);
+                        }
+                    }
+                }
+
+                if (structuredFinal) {
                     // --- AUTO-ORDER SAVE FALLBACK (User Request: JSON based incremental order save) ---
                     // CASE A/B/C: AI provides any piece of order data (phone, address, etc.)
                     if (structuredFinal.order_details || (structuredFinal.action === "save_order" && (structuredFinal.order_data || structuredFinal.details)) || structuredFinal.customer_phone || structuredFinal.customer_address || structuredFinal.phone) {
@@ -1324,11 +1341,14 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                             try {
                                 const dbService = require('./dbService');
                                 if (dbService && dbService.saveOrder) {
-                                    // Use unified saveOrder wrapper instead of direct saveOrderTracking
+                                    // Use unified saveOrder wrapper with correct platform detection
+                                    // CRITICAL: We need the actual page_id from pageConfig
+                                    const actualPageId = pageConfig.page_id || pageConfig.id || userId; 
+                                    
                                     await dbService.saveOrder({
-                                        page_id: pageConfig.page_id,
+                                        page_id: actualPageId,
                                         sender_id: userId,
-                                        platform: platform || 'unknown',
+                                        platform: platform || 'messenger', // Default to messenger if null
                                         product_name: orderData.product_name,
                                         phone: orderData.customer_phone,
                                         address: orderData.customer_address,
@@ -1336,7 +1356,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                                         price: orderData.price,
                                         customer_name: orderData.customer_name
                                     });
-                                    console.log(`[AgentLoop] ✅ Precision Order Saved/Updated.`);
+                                    console.log(`[AgentLoop] ✅ Precision Order Saved/Updated to DB.`);
                                 }
                             } catch (err) {
                                 console.error(`[AgentLoop] ❌ Precision Order Save Error:`, err.message);
