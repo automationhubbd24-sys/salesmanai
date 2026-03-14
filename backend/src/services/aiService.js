@@ -1345,11 +1345,16 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                                 const dbService = require('./dbService');
                                 if (dbService && dbService.saveOrder) {
                                     // Use unified saveOrder wrapper with correct platform detection
-                                    // CRITICAL: Prioritize pageConfig.page_id for database consistency
-                                    // User Request: If ExternalAPI, we MUST look into pageConfig.page_id
-                                    const actualPageId = (pageConfig.page_id && pageConfig.page_id !== 'ExternalAPI') ? pageConfig.page_id : pageId; 
+                                    // CRITICAL: Force use of Page ID from pageConfig if available
+                                    let actualPageId = pageConfig.page_id || pageId;
                                     
-                                    if (actualPageId && actualPageId !== 'ExternalAPI') {
+                                    // IF it's STILL ExternalAPI, it means we are in a generic loop.
+                                    // BUT we need the real FB Page ID. 
+                                    if (actualPageId === 'ExternalAPI' && pageConfig.id) {
+                                        actualPageId = pageConfig.id;
+                                    }
+                                    
+                                    if (actualPageId && actualPageId !== 'ExternalAPI' && actualPageId !== 'null') {
                                         await dbService.saveOrder({
                                             page_id: actualPageId,
                                             sender_id: userId,
@@ -1363,7 +1368,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                                         });
                                         console.log(`[AgentLoop] ✅ Precision Order Saved/Updated to DB for Page: ${actualPageId}`);
                                     } else {
-                                        console.warn(`[AgentLoop] ❌ Skipping order save: page_id is '${actualPageId}'.`);
+                                        console.warn(`[AgentLoop] ❌ Skipping order save: page_id resolved to '${actualPageId}'. Check if page_id is missing in DB for this page.`);
                                     }
                                 }
                             } catch (err) {
