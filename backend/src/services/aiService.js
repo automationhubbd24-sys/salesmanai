@@ -1706,13 +1706,10 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     }
 
     // --- SMART HISTORY PROCESSOR ---
-    // User Requirement: "system memory ta read korte partese na"
-    // Solution: Many providers (Gemini) ignore 'system' roles in middle of history.
-    // We merge 'system' notes into the NEXT message to ensure LLM sees them.
     const processedHistory = [];
     let pendingSystemNotes = [];
 
-    // Inject last product context if available
+    // Inject last product context if available (only if user provided one)
     if (lastProductContext) {
         pendingSystemNotes.push(lastProductContext);
     }
@@ -1745,6 +1742,7 @@ ${productContext}`;
     if (mandatoryReinjection) {
         pendingSystemNotes.push(mandatoryReinjection);
     }
+
 
     // 1. Prepare Configuration
     // User Request: "vaii tumi defult keno add dicco ? ami fronted e save kore dibo best model ta amr motabek kono engine e nijer teke defult e work korbe na"
@@ -1912,17 +1910,17 @@ ${productContext || "No specific product context provided yet."}
 - PHOTO INTENT: If the user asks for a photo/image, set "action": "SEND_PHOTO" and provide the product_id.
 - action: ["NONE", "SEND_DETAILS", "SEND_PHOTO", "SEND_BOTH"]
 - product_id: UUID of the matched product.
-- image_urls: Array of image URLs to attach.
-- order_details: If the user provides order info (phone, address, etc.) or expresses intent to buy, include structured data here even if not calling a tool.
+- image_urls: Array of image URLs to attach for the user to see.
+- order_details: If the user provides order info (phone, address, etc.) or expresses intent to buy, include structured data here.
 
 [SALES WORKFLOW]
-- PRIORITY: Always follow the Customer's Prompt first. Your primary goal is to provide a helpful 'reply_text'.
-- LEAD CAPTURE: You MUST collect the customer's NAME, PHONE NUMBER, and FULL ADDRESS to complete the order.
-- AUTOMATIC EXTRACTION: Whenever you receive ANY piece of order information (phone, address, etc.), you MUST include it in the 'order_details' field of your JSON response.
-- IMMEDIATE CONFIRMATION: In your 'reply_text', you MUST acknowledge the information received (e.g., "ধন্যবাদ, আমি আপনার ফোন নম্বরটি পেয়েছি। অনুগ্রহ করে আপনার ঠিকানাটি দিন।").
+- CONTEXTUAL EXTRACTION: Read the entire conversation history carefully to detect product_name, quantity, and price. Do not rely only on the current message.
+- LEAD CAPTURE: Collect NAME, PHONE NUMBER, and FULL ADDRESS.
+- AUTOMATIC EXTRACTION: Whenever you receive ANY piece of information (even just a phone number), you MUST include it in the 'order_details' field of your JSON response. If a field is unknown, use "Pending".
+- SMART INFERENCE: If a user sends a number, look back in history to find which product they were discussing. Infer product_name, quantity, and price from that context.
+- CONFIRMATION FLOW: Before final order placement, summarize the detected info (Name, Number, Address, Product, Qty) and ask the user "Should I confirm your order?" (e.g., "Ji?").
+- IMAGE AVOIDANCE IN ORDERS: Do not include image URLs or mentions of images inside the 'order_details' fields. Use 'image_urls' field for actual attachments.
 - NO SILENCE: Never send an empty 'reply_text'. Always talk to the customer while capturing their data in the background via 'order_details'.
-- PRODUCT SOURCE: Use exact product names from the [PRODUCT LIST SNAPSHOT].
-- RESPONSE FORMAT: Always return a valid JSON object with 'reply_text' and 'order_details'.
 
 [RESPONSE FORMAT]
 {
@@ -1937,7 +1935,8 @@ ${productContext || "No specific product context provided yet."}
        "address": "...",
        "customer_name": "...",
        "product_name": "...",
-       "quantity": 1
+       "quantity": "...",
+       "price": "..."
     }
   }
 }
