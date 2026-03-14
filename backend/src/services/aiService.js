@@ -1342,37 +1342,27 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                             console.log(`[AgentLoop] 📦 High-Precision Incremental Order (Phone found):`, orderData);
                             
                             try {
-                                const dbService = require('./dbService');
-                                if (dbService && dbService.saveOrder) {
-                                    // Use unified saveOrder wrapper with correct platform detection
-                                    // CRITICAL: Force use of Page ID from pageConfig if available
-                                    let actualPageId = pageConfig.page_id || pageId;
-                                    
-                                    // IF it's STILL ExternalAPI, it means we are in a generic loop.
-                                    // BUT we need the real FB Page ID. 
-                                    if (actualPageId === 'ExternalAPI' && pageConfig.id) {
-                                        actualPageId = pageConfig.id;
-                                    }
-                                    
-                                    if (actualPageId && actualPageId !== 'ExternalAPI' && actualPageId !== 'null') {
-                                        await dbService.saveOrder({
-                                            page_id: actualPageId,
-                                            sender_id: userId,
-                                            platform: platform || 'messenger', 
+                                const orderService = require('./orderService');
+                                if (orderService && orderService.orchestrateOrder) {
+                                    // Use orchestrateOrder which is the standard way this project saves orders
+                                    await orderService.orchestrateOrder({
+                                        pageId: pageConfig.page_id || pageId || pageConfig.id,
+                                        senderId: userId,
+                                        platform: platform || 'messenger',
+                                        intent: 'upsert',
+                                        data: {
                                             product_name: orderData.product_name,
                                             phone: orderData.customer_phone,
                                             address: orderData.customer_address,
                                             quantity: orderData.quantity,
                                             price: orderData.price,
                                             customer_name: orderData.customer_name
-                                        });
-                                        console.log(`[AgentLoop] ✅ Precision Order Saved/Updated to DB for Page: ${actualPageId}`);
-                                    } else {
-                                        console.warn(`[AgentLoop] ❌ Skipping order save: page_id resolved to '${actualPageId}'. Check if page_id is missing in DB for this page.`);
-                                    }
+                                        }
+                                    });
+                                    console.log(`[AgentLoop] ✅ Order Orchestrated Successfully via orderService.`);
                                 }
                             } catch (err) {
-                                console.error(`[AgentLoop] ❌ Precision Order Save Error:`, err.message);
+                                console.error(`[AgentLoop] ❌ Order Orchestration Error:`, err.message);
                             }
                         } else if (hasVitalInfo && !orderData.customer_phone) {
                             console.log(`[AgentLoop] ⏳ Info found (Address/Name) but NO PHONE yet. Skipping save as per User Request.`);
