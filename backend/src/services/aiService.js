@@ -1318,28 +1318,31 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                                            (orderData.customer_address && orderData.customer_address.length > 5) ||
                                            (orderData.customer_name !== "Unknown" && orderData.customer_name.length > 2);
 
-                        if (hasVitalInfo) {
-                            console.log(`[AgentLoop] 📦 High-Precision Incremental Order:`, orderData);
+                        if (hasVitalInfo && orderData.customer_phone) {
+                            console.log(`[AgentLoop] 📦 High-Precision Incremental Order (Phone found):`, orderData);
                             
                             try {
                                 const dbService = require('./dbService');
-                                if (dbService && dbService.saveOrderTracking) {
-                                    // The saveOrderTracking function should handle updates to existing entries based on userId
-                                    await dbService.saveOrderTracking(
-                                        userId,
-                                        orderData.product_name,
-                                        orderData.quantity,
-                                        orderData.price,
-                                        orderData.customer_name,
-                                        orderData.customer_phone,
-                                        orderData.customer_address,
-                                        platform || 'unknown'
-                                    );
+                                if (dbService && dbService.saveOrder) {
+                                    // Use unified saveOrder wrapper instead of direct saveOrderTracking
+                                    await dbService.saveOrder({
+                                        page_id: pageConfig.page_id,
+                                        sender_id: userId,
+                                        platform: platform || 'unknown',
+                                        product_name: orderData.product_name,
+                                        phone: orderData.customer_phone,
+                                        address: orderData.customer_address,
+                                        quantity: orderData.quantity,
+                                        price: orderData.price,
+                                        customer_name: orderData.customer_name
+                                    });
                                     console.log(`[AgentLoop] ✅ Precision Order Saved/Updated.`);
                                 }
                             } catch (err) {
                                 console.error(`[AgentLoop] ❌ Precision Order Save Error:`, err.message);
                             }
+                        } else if (hasVitalInfo && !orderData.customer_phone) {
+                            console.log(`[AgentLoop] ⏳ Info found (Address/Name) but NO PHONE yet. Skipping save as per User Request.`);
                         }
                     }
 
