@@ -1212,11 +1212,13 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 temperature: temperature
             };
 
-            // Only send tools if they exist
+            // Only send tools if they exist - DISABLED BY USER REQUEST
+            /*
             if (Array.isArray(tools) && tools.length > 0) {
                 params.tools = tools;
                 params.tool_choice = "auto";
             }
+            */
 
             const completion = await openai.chat.completions.create(params);
 
@@ -1279,7 +1281,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
             const aiTextFinal = responseMessage.content || "";
             const tokenUsage = (completionUsage && completionUsage.total_tokens) ? completionUsage.total_tokens : estimateTokenUsage(messages, aiTextFinal, 0);
             
-            // --- AGENTIC JSON PARSER ---
+            // --- AGENTIC JSON PARSER & AUTO-ORDER FALLBACK ---
             try {
                 // More robust cleaning: find the first { and last }
                 const firstBrace = aiTextFinal.indexOf('{');
@@ -1289,6 +1291,58 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                     const potentialJson = aiTextFinal.substring(firstBrace, lastBrace + 1);
                     const structuredFinal = JSON.parse(potentialJson);
                     
+                    // --- AUTO-ORDER SAVE FALLBACK (User Request: JSON based incremental order save) ---
+                    // CASE A/B/C: AI provides any piece of order data (phone, address, etc.)
+                    if (structuredFinal.order_details || (structuredFinal.action === "save_order" && (structuredFinal.order_data || structuredFinal.details)) || structuredFinal.customer_phone || structuredFinal.customer_address || structuredFinal.phone) {
+                        
+                        // Unified Order Data Object with Validation & Precision
+                        const rawData = structuredFinal.order_details || structuredFinal.order_data || structuredFinal.details || {};
+                        
+                        // Mapping fields from different potential AI structures
+                        const customerPhone = structuredFinal.customer_phone || structuredFinal.phone || rawData.phone || rawData.customer_phone || null;
+                        const customerAddress = structuredFinal.customer_address || structuredFinal.address || rawData.address || rawData.customer_address || null;
+                        const customerName = structuredFinal.customer_name || structuredFinal.name || rawData.name || rawData.customer_name || "Unknown";
+                        const productName = structuredFinal.product_name || structuredFinal.product || rawData.product_name || rawData.product || "Unknown";
+
+                        const orderData = {
+                            product_name: productName,
+                            quantity: parseInt(rawData.quantity || structuredFinal.quantity || 1) || 1,
+                            price: parseFloat(rawData.price || structuredFinal.price || 0) || 0,
+                            customer_name: customerName,
+                            customer_phone: customerPhone ? String(customerPhone).replace(/[^\d+]/g, '') : null,
+                            customer_address: customerAddress ? String(customerAddress).trim() : null
+                        };
+
+                        // Precision Logic: Save if we have ANY vital info that looks valid
+                        const hasVitalInfo = (orderData.customer_phone && orderData.customer_phone.length >= 10) || 
+                                           (orderData.customer_address && orderData.customer_address.length > 5) ||
+                                           (orderData.customer_name !== "Unknown" && orderData.customer_name.length > 2);
+
+                        if (hasVitalInfo) {
+                            console.log(`[AgentLoop] 📦 High-Precision Incremental Order:`, orderData);
+                            
+                            try {
+                                const dbService = require('./dbService');
+                                if (dbService && dbService.saveOrderTracking) {
+                                    // The saveOrderTracking function should handle updates to existing entries based on userId
+                                    await dbService.saveOrderTracking(
+                                        userId,
+                                        orderData.product_name,
+                                        orderData.quantity,
+                                        orderData.price,
+                                        orderData.customer_name,
+                                        orderData.customer_phone,
+                                        orderData.customer_address,
+                                        platform || 'unknown'
+                                    );
+                                    console.log(`[AgentLoop] ✅ Precision Order Saved/Updated.`);
+                                }
+                            } catch (err) {
+                                console.error(`[AgentLoop] ❌ Precision Order Save Error:`, err.message);
+                            }
+                        }
+                    }
+
                     const reply = structuredFinal.reply_text || structuredFinal.reply || structuredFinal.message || structuredFinal.response;
 
                     if (reply) {
@@ -1765,9 +1819,9 @@ ${productContext}`;
     let responseFormat = undefined; 
     
     // --- TOOL ENABLING LOGIC ---
-    // User plan: External API should be clean (No Tools/JSON) unless explicitly needed.
-    // We disable tools for external_api platform to prevent malformed JSON responses in n8n.
-    const tools = (pageConfig.platform === 'external_api' || pageConfig.is_external_api) ? [] : functionTools; 
+    // User Request: Disable Tool Calls entirely and prefer JSON-based extraction for reliability.
+    // We keep the tools array empty to prevent the model from trying to call tools.
+    const tools = []; // Tool calls are disabled by user request to prefer JSON.
 
     // --- IDENTITY PROTECTION PROTOCOL (WHITE-LABEL) ---
     const isBrandedModel = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(userModel);
@@ -1819,21 +1873,24 @@ ${productContext || "No specific product context provided yet."}
 - image_urls: Array of image URLs to attach for the user to see.
 - order_details: Whenever the user provides ANY order info (phone, address, etc.), you MUST include it here.
 
-[SALES WORKFLOW - STRICT ADHERENCE REQUIRED]
-1. CONTEXTUAL EXTRACTION: Read the entire conversation history carefully to detect product_name, quantity, and price. If multiple values (like different phone numbers or addresses) are found in history, ALWAYS prioritize the LATEST one provided by the user.
-2. MANDATORY ORDER DETAILS: Whenever you receive ANY piece of order information (especially a phone number, address, or name), you MUST include it in the 'order_details' JSON field.
-3. PHONE DETECTION: If a 10-11 digit number is present in the user's message, you MUST extract it and put it in 'order_details.fields.phone'.
-4. SMART INFERENCE: If a user sends a number or address, look back in history to find which product they were discussing. Infer product_name, quantity, and price from that context.
-5. DATA PERSISTENCE: Even if you only have one piece of info (like just the phone number), you MUST still send the 'order_details' object with that info. Fill unknown fields with "Pending".
-6. NO SILENCE: Never send an empty 'reply_text'. Always talk to the customer while capturing their data in the background via 'order_details'.
-7. CONFIRMATION: After collecting info, summarize it for the user and ask for confirmation (e.g., "Ji?").
+[SALES WORKFLOW - EVOLUTIONARY TRACKING]
+1. INCREMENTAL SAVING: Start saving order info as soon as you get even ONE piece of data (like just a phone number). Do NOT wait for all fields to be filled.
+2. CONTINUOUS UPDATING: If the customer provides a phone number first, set 'phone' in the JSON. If they later send an address, add 'address' while keeping the phone number. If they change a value, update it in the next response.
+3. DATA PERSISTENCE: Always include the latest known values for all order fields in every JSON response until the conversation ends.
+4. SMART INFERENCE: Extract product_name, quantity, and price from the context of the conversation.
 
 [RESPONSE FORMAT]
 {
   "reply_text": "...",
-  "action": "...",
+  "action": "save_order",
   "product_id": "...",
   "image_urls": ["url1", "url2"],
+  "customer_phone": "Extracted phone or null",
+  "customer_address": "Extracted address or null",
+  "customer_name": "Extracted name or null",
+  "product_name": "Product name or null",
+  "quantity": 1,
+  "price": 0,
   "order_details": {
     "intent": "order_create_or_update",
     "fields": {
