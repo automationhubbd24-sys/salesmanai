@@ -5,11 +5,31 @@ const aiService = require('../services/aiService');
 exports.list = async (req, res) => {
     try {
         const result = await pgClient.query(
-            'SELECT id, provider, api, status FROM api_list ORDER BY id DESC'
+            'SELECT id, provider, api, model, status, usage_today, rph_limit, rpm_limit, rpd_limit FROM api_list ORDER BY id DESC'
         );
-        res.json({ success: true, items: result.rows });
+        
+        // Enrich with current in-memory usage stats
+        const enrichedItems = result.rows.map(item => {
+            const summary = keyService.getKeyUsageSummary(item.api);
+            return {
+                ...item,
+                current_rpm: summary.rpm,
+                current_rph: summary.rph
+            };
+        });
+
+        res.json({ success: true, items: enrichedItems });
     } catch (error) {
         console.error('apiList list error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+exports.getRotationLogs = async (req, res) => {
+    try {
+        const logs = keyService.getRotationLogs();
+        res.json({ success: true, logs });
+    } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
 };
@@ -18,14 +38,15 @@ exports.create = async (req, res) => {
     try {
         const provider = String(req.body.provider || '').trim();
         const api = String(req.body.api || '').trim();
+        const model = String(req.body.model || 'default').trim();
 
         if (!provider || !api) {
             return res.status(400).json({ success: false, error: 'provider and api are required' });
         }
 
         const result = await pgClient.query(
-            'INSERT INTO api_list (provider, api, status) VALUES ($1, $2, $3) RETURNING *',
-            [provider, api, 'active']
+            'INSERT INTO api_list (provider, api, model, status) VALUES ($1, $2, $3, $4) RETURNING *',
+            [provider, api, model, 'active']
         );
 
         await keyService.updateKeyCache(true);

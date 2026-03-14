@@ -254,16 +254,20 @@ async function handleAiError(error, apiKey, model) {
     }
 
     // 2. Invalid Key / Auth (401 / 403)
-    if (statusCode === 401 || statusCode === 403 || errorMsg.includes('401') || errorMsg.includes('403') || errorMsg.includes('invalid') || errorMsg.includes('key') || errorMsg.includes('authentication')) {
+    if (statusCode === 401 || statusCode === 403 || errorMsg.includes('401') || errorMsg.includes('403') || errorMsg.includes('invalid') || errorMsg.includes('key') || errorMsg.includes('authentication') || errorMsg.includes('unauthorized')) {
         if (errorCode.includes('consumer_suspended') || responseMessage.includes('suspended')) {
             if (keyService.markKeyAsSuspended) {
                 await keyService.markKeyAsSuspended(apiKey, 'consumer_suspended');
             }
             return;
         }
-        console.error(`[AI] 💀 Invalid Key detected: ${apiKey.substring(0, 8)}... marking as DEAD (30 days).`);
+        
+        // --- LOG THE FULL ERROR FOR AUTH FAILURES ---
+        console.error(`[AI] 💀 Authentication Failed for Key: ${apiKey.substring(0, 8)}... | Full Msg: ${errorMsg} | Response: ${responseMessage}`);
+
         if (keyService.markKeyAsDead) {
-            await keyService.markKeyAsDead(apiKey, 30 * 24 * 60 * 60 * 1000, 'invalid_key'); // 30 days cooldown
+            // Mark as dead for 30 days to avoid retrying bad keys
+            await keyService.markKeyAsDead(apiKey, 30 * 24 * 60 * 60 * 1000, 'authentication_failed'); 
         }
         return;
     }

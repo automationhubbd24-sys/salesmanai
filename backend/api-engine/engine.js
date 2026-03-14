@@ -225,8 +225,8 @@ router.patch('/keys/:id/limits', adminAuthMiddleware, async (req, res) => {
         if (!id || Number.isNaN(id)) {
             return res.status(400).json({ success: false, error: 'Invalid id' });
         }
-        const { rph_limit } = req.body || {};
-        const updated = await dbService.updateApiKeyRphLimit(id, rph_limit);
+        const { rph_limit, rpm_limit, rpd_limit, model } = req.body || {};
+        const updated = await dbService.updateApiKeyLimits(id, { rph_limit, rpm_limit, rpd_limit, model });
         if (!updated) {
             return res.status(404).json({ success: false, error: 'Key not found' });
         }

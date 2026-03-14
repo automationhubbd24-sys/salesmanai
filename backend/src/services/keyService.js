@@ -22,6 +22,11 @@ const DEFAULT_COOLDOWN = 60 * 1000; // 1 Minute default for RPM/TPM
 const KEY_MIN_GAP_MS = process.env.KEY_MIN_GAP_MS ? parseInt(process.env.KEY_MIN_GAP_MS, 10) : 900;
 const KEY_MIN_GAP_JITTER_MS = process.env.KEY_MIN_GAP_JITTER_MS ? parseInt(process.env.KEY_MIN_GAP_JITTER_MS, 10) : 400;
 
+// --- CUSTOM RESET WINDOWS (User Request) ---
+const RPM_WINDOW_MS = 70 * 1000; // 70 Seconds
+const RPH_WINDOW_MS = 70 * 60 * 1000; // 1 Hour 10 Minutes
+const RPD_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 Hours
+
 const keyUsageMap = new Map(); 
 
 const keyUsageTimestamps = new Map(); // Key: apiKey, Value: Array of timestamps in the last 60 seconds
@@ -366,10 +371,10 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
     
     // Check global timestamps for this KEY
     const timestamps = keyUsageTimestamps.get(keyData.api) || [];
-    const oneMinuteAgo = now - 60000;
+    const rpmThreshold = now - RPM_WINDOW_MS;
     
     // Filter valid timestamps (clean up old ones)
-    const validTimestamps = timestamps.filter(ts => ts > oneMinuteAgo);
+    const validTimestamps = timestamps.filter(ts => ts > rpmThreshold);
     
     // Update cache if needed
     if (validTimestamps.length !== timestamps.length) {
@@ -379,22 +384,25 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
     // STRICT CHECK: If total requests in last minute >= Limit
     // Only check if rpmLimit is a valid positive number
     if (rpmLimit > 0 && validTimestamps.length >= rpmLimit) {
+        console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPM limit (${rpmLimit}) in last 70s`);
         return false;
     }
 
+    // RPH (Requests Per Hour) - Unified
     let rphLimit = parseInt(keyData.rph_limit);
     if (!(rphLimit > 0) && manual && manual.rph) {
         rphLimit = parseInt(manual.rph);
     }
     const hourTimestamps = keyUsageHourTimestamps.get(keyData.api) || [];
-    const oneHourAgo = now - 60 * 60 * 1000;
-    const validHourTimestamps = hourTimestamps.filter(ts => ts > oneHourAgo);
+    const rphThreshold = now - RPH_WINDOW_MS;
+    const validHourTimestamps = hourTimestamps.filter(ts => ts > rphThreshold);
 
     if (validHourTimestamps.length !== hourTimestamps.length) {
         keyUsageHourTimestamps.set(keyData.api, validHourTimestamps);
     }
 
     if (rphLimit > 0 && validHourTimestamps.length >= rphLimit) {
+        console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPH limit (${rphLimit}) in last 1h 10m`);
         return false;
     }
 
@@ -571,6 +579,39 @@ async function updateKeyStatusFromHeaders(apiKey, headers) {
 // Keys are pre-sorted by updateKeyCache() once per minute.
 
 const globalKeyPointers = new Map(); // Stores current index for each "provider:model"
+const rotationLogs = []; // Stores recent rotation events for the frontend
+const MAX_ROTATION_LOGS = 50;
+
+function addRotationLog(provider, model, apiKey, index, total) {
+    const log = {
+        timestamp: new Date().toISOString(),
+        provider,
+        model,
+        key: apiKey.substring(0, 12) + '***',
+        index,
+        total
+    };
+    rotationLogs.unshift(log);
+    if (rotationLogs.length > MAX_ROTATION_LOGS) rotationLogs.pop();
+}
+
+function getRotationLogs() {
+    return rotationLogs;
+}
+
+function getKeyUsageSummary(apiKey) {
+    const now = Date.now();
+    const rpmThreshold = now - RPM_WINDOW_MS;
+    const rphThreshold = now - RPH_WINDOW_MS;
+    
+    const rpmTs = keyUsageTimestamps.get(apiKey) || [];
+    const rphTs = keyUsageHourTimestamps.get(apiKey) || [];
+    
+    return {
+        rpm: rpmTs.filter(ts => ts > rpmThreshold).length,
+        rph: rphTs.filter(ts => ts > rphThreshold).length
+    };
+}
 
 async function getSmartKey(provider, model = 'default') {
     if (typeof updateKeyCache === 'function') {
@@ -639,6 +680,12 @@ async function getSmartKey(provider, model = 'default') {
             const hourList = keyUsageHourTimestamps.get(candidateKey.api) || [];
             hourList.push(now);
             keyUsageHourTimestamps.set(candidateKey.api, hourList);
+
+            // CRITICAL: Log rotation to verify it's working sequentially
+            console.log(`[KeyService] 🔄 Rotated to Key: ${candidateKey.api.substring(0,8)}... (Index: ${actualIndex}/${validKeys.length}, Provider: ${provider}, Model: ${model})`);
+            
+            // --- ADD TO FRONTEND LOGS ---
+            addRotationLog(provider, model, candidateKey.api, actualIndex + 1, validKeys.length);
 
             const modelTs = modelUsageTimestamps.get(modelName) || [];
             modelTs.push(now);
@@ -720,6 +767,8 @@ module.exports = {
         // It will reset on restart, which is good for recovering from temporary outages.
     },
 
+    getKeyUsageSummary,
+    getRotationLogs,
     getManagedKey: () => null, 
     getAllManagedKeys: () => [], 
     getSmartKey, 
@@ -785,15 +834,22 @@ module.exports = {
             total,
             page,
             limit,
-            keys: paginatedKeys.map(k => ({
-                id: k.id,
-                provider: k.provider,
-                api: k.api.substring(0, 12) + '***', // Mask key for safety
-                status: k.status,
-                usage_today: k.usage_today,
-                last_used_at: k.last_used_at,
-                rph_limit: k.rph_limit
-            }))
+            keys: paginatedKeys.map(k => {
+                const summary = getKeyUsageSummary(k.api);
+                return {
+                    id: k.id,
+                    provider: k.provider,
+                    api: k.api.substring(0, 12) + '***', // Mask key for safety
+                    status: k.status,
+                    usage_today: k.usage_today,
+                    last_used_at: k.last_used_at,
+                    rph_limit: k.rph_limit,
+                    rpm_limit: k.rpm_limit,
+                    rpd_limit: k.rpd_limit,
+                    current_rpm: summary.rpm,
+                    current_rph: summary.rph
+                };
+            })
         };
     }
 };

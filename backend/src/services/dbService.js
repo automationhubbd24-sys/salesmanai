@@ -542,6 +542,15 @@ async function initTables() {
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='api_list' AND column_name='rph_limit') THEN
                     ALTER TABLE api_list ADD COLUMN rph_limit INTEGER DEFAULT 0;
                 END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='api_list' AND column_name='rpm_limit') THEN
+                    ALTER TABLE api_list ADD COLUMN rpm_limit INTEGER DEFAULT 0;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='api_list' AND column_name='rpd_limit') THEN
+                    ALTER TABLE api_list ADD COLUMN rpd_limit INTEGER DEFAULT 0;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='api_list' AND column_name='model') THEN
+                    ALTER TABLE api_list ADD COLUMN model TEXT;
+                END IF;
             END $$;
         `);
         console.log("[DB] 'api_list' columns verified.");
@@ -2611,16 +2620,36 @@ async function getApiKeyById(id) {
     }
 }
 
-async function updateApiKeyRphLimit(id, rphLimit) {
+async function updateApiKeyLimits(id, { rph_limit, rpm_limit, rpd_limit, model }) {
     try {
-        const limitValue = Math.max(0, parseInt(rphLimit) || 0);
-        const result = await query(
-            'UPDATE api_list SET rph_limit = $2 WHERE id = $1 RETURNING id, rph_limit',
-            [id, limitValue]
-        );
+        const updates = [];
+        const values = [id];
+        let placeholderIdx = 2;
+
+        if (rph_limit !== undefined) {
+            updates.push(`rph_limit = $${placeholderIdx++}`);
+            values.push(Math.max(0, parseInt(rph_limit) || 0));
+        }
+        if (rpm_limit !== undefined) {
+            updates.push(`rpm_limit = $${placeholderIdx++}`);
+            values.push(Math.max(0, parseInt(rpm_limit) || 0));
+        }
+        if (rpd_limit !== undefined) {
+            updates.push(`rpd_limit = $${placeholderIdx++}`);
+            values.push(Math.max(0, parseInt(rpd_limit) || 0));
+        }
+        if (model !== undefined) {
+            updates.push(`model = $${placeholderIdx++}`);
+            values.push(model);
+        }
+
+        if (updates.length === 0) return null;
+
+        const queryText = `UPDATE api_list SET ${updates.join(', ')} WHERE id = $1 RETURNING *`;
+        const result = await query(queryText, values);
         return result.rows[0] || null;
     } catch (error) {
-        console.error("[DB] updateApiKeyRphLimit Error:", error.message);
+        console.error("[DB] updateApiKeyLimits Error:", error.message);
         return null;
     }
 }
