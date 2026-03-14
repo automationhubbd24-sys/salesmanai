@@ -385,13 +385,13 @@ async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, default
     if (isAudio) {
         finalModel = engineVoiceModel;
         finalProvider = voiceProvider;
-        console.log(`[AI] Smart Routing (Voice): Using ${finalProvider}/${finalModel}`);
+        console.log(`[AI] Smart Routing (Voice): Provider: ${finalProvider} | Model: ${finalModel}`);
     } else if (isVision) {
         finalModel = engineVisionModel;
         finalProvider = visionProvider;
-        console.log(`[AI] Smart Routing (Vision): Using ${finalProvider}/${finalModel}`);
+        console.log(`[AI] Smart Routing (Vision): Provider: ${finalProvider} | Model: ${finalModel}`);
     } else {
-        console.log(`[AI] Smart Routing (Text): Using ${finalProvider}/${finalModel}`);
+        console.log(`[AI] Smart Routing (Text): Provider: ${finalProvider} | Model: ${finalModel}`);
     }
 
     if (finalProvider === 'openrouter') {
@@ -404,7 +404,7 @@ async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, default
         finalProvider = 'groq';
     }
 
-    console.log(`[AI] Engine Resolved: ${finalProvider}/${finalModel} (Audio: ${isAudio}, Vision: ${isVision})`);
+    console.log(`[AI] Engine Resolved: Provider: ${finalProvider} | Model: ${finalModel} (Audio: ${isAudio}, Vision: ${isVision})`);
 
     return { 
         finalProvider,
