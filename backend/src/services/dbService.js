@@ -1444,7 +1444,7 @@ async function saveWhatsAppOrderTracking(orderData) {
             }
         }
 
-        if (!number && (!product_name || product_name === 'Recovered Lead')) return null;
+        if (!number && !product_name && !location) return null;
 
         const result = await query(
             `INSERT INTO whatsapp_order_tracking
