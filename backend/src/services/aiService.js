@@ -1181,125 +1181,28 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
             let completionUsage;
 
             if (isGoogle) {
-                // --- NEW: ROBUST GEMINI MESSAGE FORMATTER ---
-                const contents = [];
-                const safeMessages = Array.isArray(messages) ? messages : [];
-
-                for (let i = 0; i < safeMessages.length; i++) {
-                    const m = safeMessages[i];
-                    let role = m.role === 'assistant' ? 'model' : 'user';
-                    if (m.role === 'system') role = 'user';
-                    
-                    const parts = [];
-                    if (m.content) {
-                        parts.push({ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) });
-                    }
-
-                    // Handle Tool Calls (OpenAI format -> Gemini format)
-                    if (m.tool_calls) {
-                        role = 'model';
-                        m.tool_calls.forEach(tc => {
-                            parts.push({ 
-                                functionCall: { 
-                                    name: tc.function.name, 
-                                    args: JSON.parse(tc.function.arguments || '{}') 
-                                } 
-                            });
-                        });
-                    }
-
-                    // Handle Tool Responses (OpenAI 'tool' role -> Gemini 'function' role)
-                    if (m.role === 'tool') {
-                        role = 'function';
-                        parts.push({ 
-                            functionResponse: { 
-                                name: m.name, 
-                                response: JSON.parse(m.content || '{}') 
-                            } 
-                        });
-                    }
-
-                    // --- MERGE LOGIC ---
-                    if (contents.length > 0) {
-                        const last = contents[contents.length - 1];
-                        
-                        // Merge consecutive same-role messages
-                        if (role === last.role) {
-                            last.parts.push(...parts);
-                            continue;
-                        }
-
-                        // Gemini Constraint: 'function' role MUST follow a 'model' role (with functionCall)
-                        if (role === 'function' && last.role !== 'model') {
-                            last.parts.push(...parts);
-                            continue;
-                        }
-                    }
-                    
-                    contents.push({ role, parts });
-                }
-
-                // Final Pass: Ensure alternating user/model
-                const finalContents = [];
-                for (const content of contents) {
-                    if (finalContents.length > 0) {
-                        const last = finalContents[finalContents.length - 1];
-                        if (content.role === last.role) {
-                            last.parts.push(...content.parts);
-                            continue;
-                        }
-                    }
-                    finalContents.push(content);
-                }
-
-                // Ensure it starts with 'user'
-                if (finalContents.length > 0 && finalContents[0].role !== 'user') {
-                    finalContents.unshift({ role: 'user', parts: [{ text: "Hello" }] });
-                }
-
-                // Gemini tools format
-                const geminiTools = (Array.isArray(tools) && tools.length > 0) ? [{
-                    functionDeclarations: tools.map(t => ({
-                        name: t.function.name,
-                        description: t.function.description,
-                        parameters: t.function.parameters
-                    }))
-                }] : [];
-
-                const genAI = new GoogleGenerativeAI(apiKey);
-                const geminiModel = genAI.getGenerativeModel({ model: model });
-
-                const result = await geminiModel.generateContent({
-                    contents: finalContents,
-                    tools: geminiTools,
-                    generationConfig: { temperature: temperature }
+                // --- FIX: USE OPENAI SDK FOR GOOGLE TOO (Ensures Proxy works) ---
+                // Google's /v1beta/openai/ endpoint is fully compatible with OpenAI SDK.
+                // Using OpenAI SDK allows us to pass the HttpsProxyAgent correctly.
+                
+                const openai = new OpenAI({ 
+                    apiKey: apiKey, 
+                    baseURL: baseURL,
+                    timeout: 40000,
+                    ...(proxyAgent ? { httpAgent: proxyAgent, httpsAgent: proxyAgent } : {})
                 });
 
-                const response = result.response;
-                const candidate = response.candidates?.[0];
-                const content = candidate?.content;
-                
-                if (!content || !content.parts) {
-                    throw new Error("Gemini API returned an empty or blocked response. Please check your safety settings or prompt.");
-                }
-                
-                responseMessage = {
-                    role: 'assistant',
-                    content: content.parts.map(p => p.text || '').join(''),
-                    tool_calls: content.parts
-                        .filter(p => p.functionCall)
-                        .map((p, idx) => ({
-                            id: `call_${Date.now()}_${idx}`,
-                            type: 'function',
-                            function: {
-                                name: p.functionCall.name,
-                                arguments: JSON.stringify(p.functionCall.args)
-                            }
-                        }))
-                };
-                
-                completionUsage = response.usageMetadata ? { total_tokens: response.usageMetadata.totalTokenCount } : null;
+                const completion = await openai.chat.completions.create({
+                    model: model,
+                    messages: messages,
+                    tools: tools,
+                    tool_choice: "auto",
+                    temperature: temperature
+                });
+
+                responseMessage = completion.choices[0].message;
                 toolCalls = responseMessage.tool_calls;
+                completionUsage = completion.usage;
 
             } else {
                 // --- OPENAI COMPATIBLE PATH ---
@@ -2218,7 +2121,6 @@ ${productContext || "No specific product context provided yet."}
             else baseURL = 'https://api.openai.com/v1'; // Default to OpenAI compatible for others
             
             const isBrandedEngine = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(resolved.targetEngineName);
-            const isManagedEngine = !(pageConfig && (pageConfig.cheap_engine === false || pageConfig.api_key));
             
             let proxyAgent = null;
             if (isBrandedEngine) {
@@ -2229,12 +2131,6 @@ ${productContext || "No specific product context provided yet."}
                 } else {
                     const proxy = getProxyUrl(resolved.targetEngineName);
                     proxyAgent = createProxyAgent(proxy);
-                }
-            } else if (isManagedEngine) {
-                if (finalProvider === 'google' || finalProvider === 'gemini') {
-                    proxyAgent = getGeminiProxyAgent(baseURL, true, 'managed');
-                } else if (finalProvider === 'groq') {
-                    proxyAgent = getGroqProxyAgent(true, 'managed');
                 }
             }
 
@@ -2502,7 +2398,23 @@ Rules:
              if (keyData && keyData.key) apiKey = keyData.key;
         }
 
-        console.log(`[Vision] Attempt 1: ${model} (${provider})`);
+        // Determine if we should use Proxy (ONLY for Branded Engines)
+        const isBrandedEngine = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(resolved?.targetEngineName || modelHint);
+        const useProxy = isBrandedEngine;
+        
+        let proxyAgent = null;
+        if (useProxy) {
+            if (provider === 'google' || provider === 'gemini') {
+                proxyAgent = getGeminiProxyAgent('google', true, resolved?.targetEngineName || modelHint);
+            } else if (provider === 'groq') {
+                proxyAgent = getGroqProxyAgent(true, resolved?.targetEngineName || modelHint);
+            } else {
+                const proxy = getProxyUrl(resolved?.targetEngineName || modelHint);
+                proxyAgent = createProxyAgent(proxy);
+            }
+        }
+
+        console.log(`[Vision] Attempt 1: ${model} (${provider}) | Proxy: ${useProxy ? 'YES' : 'NO'}`);
 
         let result = null;
         let usage = 0;
@@ -2535,6 +2447,9 @@ Rules:
                     'HTTP-Referer': 'https://orderly-conversations.com', 
                     'X-Title': 'Orderly Conversations'
                 },
+                httpsAgent: proxyAgent,
+                httpAgent: proxyAgent,
+                proxy: false,
                 timeout: 40000
             });
 
@@ -2562,6 +2477,9 @@ Rules:
                     'Authorization': `Bearer ${apiKey.trim()}`,
                     'Content-Type': 'application/json'
                 },
+                httpsAgent: proxyAgent,
+                httpAgent: proxyAgent,
+                proxy: false,
                 timeout: 40000
             });
 
@@ -2589,6 +2507,9 @@ Rules:
                     'Authorization': `Bearer ${apiKey.trim()}`,
                     'Content-Type': 'application/json'
                 },
+                httpsAgent: proxyAgent,
+                httpAgent: proxyAgent,
+                proxy: false,
                 timeout: 40000
             });
 
@@ -2607,16 +2528,13 @@ Rules:
                 }],
                 generationConfig: { maxOutputTokens: maxTokens }
             };
-            const useProxy = (provider === 'google' || provider === 'gemini') && !(pageConfig && (pageConfig.cheap_engine === false || pageConfig.api_key));
-            const geminiProxyAgent = getGeminiProxyAgent(url, useProxy);
+            
             const visionResponse = await axios.post(url, payload, {
                     headers: { 'Content-Type': 'application/json' },
                     timeout: 40000,
-                    ...(geminiProxyAgent ? { 
-                        httpsAgent: geminiProxyAgent, 
-                        httpAgent: geminiProxyAgent, 
-                        proxy: false 
-                    } : {})
+                    httpsAgent: proxyAgent,
+                    httpAgent: proxyAgent,
+                    proxy: false
                 });
 
             result = visionResponse.data?.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -2938,6 +2856,22 @@ async function transcribeAudio(audioUrl, config) {
                 }
                 apiKey = keyData.key;
             }
+
+            // Determine if we should use Proxy (ONLY for Branded Engines)
+            const isBrandedEngine = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(resolved?.targetEngineName || modelHint || config.chat_model);
+            const useProxy = isBrandedEngine;
+            
+            let proxyAgent = null;
+            if (useProxy) {
+                if (option.provider === 'google') {
+                    proxyAgent = getGeminiProxyAgent('google', true, isBrandedEngine ? (resolved?.targetEngineName || modelHint || config.chat_model) : 'managed');
+                } else if (option.provider === 'groq') {
+                    proxyAgent = getGroqProxyAgent(true, isBrandedEngine ? (resolved?.targetEngineName || modelHint || config.chat_model) : 'managed');
+                } else {
+                    const proxy = getProxyUrl(isBrandedEngine ? (resolved?.targetEngineName || modelHint || config.chat_model) : 'managed');
+                    proxyAgent = createProxyAgent(proxy);
+                }
+            }
             
             // OPENAI WHISPER API (User Key)
             if (option.provider === 'openai') {
@@ -2962,12 +2896,15 @@ async function transcribeAudio(audioUrl, config) {
                         ...formData.getHeaders(),
                         'Authorization': `Bearer ${apiKey}`
                     },
+                    httpsAgent: proxyAgent,
+                    httpAgent: proxyAgent,
+                    proxy: false,
                     timeout: 30000
                 });
 
                 const text = res.data?.text;
                 if (text) {
-                    console.log(`[Audio] Success with ${option.name}: "${text.substring(0, 30)}..."`);
+                    console.log(`[Audio] Success with ${option.name}: "${text.substring(0, 30)}..." | Proxy: ${useProxy ? 'YES' : 'NO'}`);
                     return { text: text.trim(), usage: 0 }; // Usage tracking for audio is complex, skipping for now
                 }
             }
@@ -3002,15 +2939,12 @@ async function transcribeAudio(audioUrl, config) {
                     }]
                 };
                 
-                const isManaged = !(config && (config.cheap_engine === false || config.api_key));
-                const geminiProxyAgent = getGeminiProxyAgent(url, isManaged);
-                
                 const res = await axios.post(url, payload, {
-                    ...(geminiProxyAgent ? { 
-                        httpsAgent: geminiProxyAgent, 
-                        httpAgent: geminiProxyAgent, 
-                        proxy: false 
-                    } : {})
+                    headers: { 'Content-Type': 'application/json' },
+                    httpsAgent: proxyAgent,
+                    httpAgent: proxyAgent,
+                    proxy: false,
+                    timeout: 40000
                 });
 
                 const text = res.data?.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -3018,7 +2952,7 @@ async function transcribeAudio(audioUrl, config) {
                 const usage = res.data?.usageMetadata?.totalTokenCount || 0;
                 
                 if (text) {
-                    console.log(`[Audio] Success with ${option.name}: "${text.substring(0, 30)}..." Usage: ${usage}`);
+                    console.log(`[Audio] Success with ${option.name}: "${text.substring(0, 30)}..." Usage: ${usage} | Proxy: ${useProxy ? 'YES' : 'NO'}`);
                     return { text: text.trim(), usage: usage, model: option.model || option.name };
                 }
             }
@@ -3038,12 +2972,15 @@ async function transcribeAudio(audioUrl, config) {
                         ...formData.getHeaders(),
                         'Authorization': `Bearer ${apiKey.trim()}`
                     },
+                    httpsAgent: proxyAgent,
+                    httpAgent: proxyAgent,
+                    proxy: false,
                     timeout: 45000
                 });
 
                 const text = res.data?.text;
                 if (text) {
-                    console.log(`[Audio] Success with Mistral (${option.model}): "${text.substring(0, 30)}..."`);
+                    console.log(`[Audio] Success with Mistral (${option.model}): "${text.substring(0, 30)}..." | Proxy: ${useProxy ? 'YES' : 'NO'}`);
                     const returnModel = resolved?.targetEngineName || option.model || 'mistral-audio';
                     return { text: text.trim(), usage: 0, model: returnModel };
                 }
@@ -3064,32 +3001,20 @@ async function transcribeAudio(audioUrl, config) {
                 // Adding language='bn' hint for Bengali transcription
                 formData.append('language', 'bn');
 
-                // NEW: Groq Proxy Support (Similar to Gemini Proxy)
-                // Use proxy if it's a system key (no user key provided in option)
-                const isManaged = !(config && (config.cheap_engine === false || config.api_key));
-                const useProxy = isManaged;
-                const groqProxyAgent = getGroqProxyAgent(useProxy);
-                
-                // Force proxy for system keys as requested
-                // "groq er test file banao then ... salesmanchatbot er groq diye test deo"
-                // This implies system keys must work behind proxy.
-                
                 const res = await axios.post('https://api.groq.com/openai/v1/audio/transcriptions', formData, {
                     headers: {
                         ...formData.getHeaders(),
                         'Authorization': `Bearer ${apiKey}`
                     },
+                    httpsAgent: proxyAgent,
+                    httpAgent: proxyAgent,
+                    proxy: false,
                     timeout: 30000, // 30s timeout for audio
-                    ...(groqProxyAgent ? { 
-                        httpsAgent: groqProxyAgent, 
-                        httpAgent: groqProxyAgent, 
-                        proxy: false 
-                    } : {})
                 });
 
                 const text = res.data.text;
                 if (text) {
-                    console.log(`[Audio] Success with ${option.name}: "${text.substring(0, 30)}..."`);
+                    console.log(`[Audio] Success with ${option.name}: "${text.substring(0, 30)}..." | Proxy: ${useProxy ? 'YES' : 'NO'}`);
                     return { text: text.trim(), usage: 0, model: option.model || 'whisper-large-v3' };
                 }
             }

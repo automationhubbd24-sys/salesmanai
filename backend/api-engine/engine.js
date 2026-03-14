@@ -456,19 +456,19 @@ router.post('/v1/chat/completions', async (req, res) => {
             });
         }
 
-        // Proxy only for system keys to save costs
-        let agent = undefined;
-        if (isSystemEngine) {
-            const proxyUrl = getProxyUrl(modelToUse);
-            agent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
-            if (agent) {
-                console.log(`[API Engine] 🌐 Using Bright Data Proxy for SalesmanChatbot Engine (Model: ${modelToUse})`);
-                // Optional: Log IP for debugging
-                axios.get('https://api.ip.sb/geoip', { httpsAgent: agent, timeout: 5000 })
-                    .then(res => console.log(`[API Engine IP] IP: ${res.data.ip} | Country: ${res.data.country}`))
-                    .catch(() => {});
-            }
+    // Proxy ONLY if it's a branded engine (User requirement: affordable costs)
+    let agent = undefined;
+    if (isBranded) {
+        const proxyUrl = getProxyUrl(model); // Use original model name for session pinning
+        agent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
+        if (agent) {
+            console.log(`[API Engine] 🌐 Using Bright Data Proxy for Branded Engine: ${model}`);
+            // Optional: Log IP for debugging
+            axios.get('https://api.ip.sb/geoip', { httpsAgent: agent, timeout: 5000 })
+                .then(res => console.log(`[API Engine IP] IP: ${res.data.ip} | Country: ${res.data.country}`))
+                .catch(() => {});
         }
+    }
 
         const response = await axios.post(targetUrl, req.body, {
             headers: {
