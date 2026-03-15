@@ -2617,11 +2617,13 @@ Rules:
         
         // --- BRANDING PERSISTENCE ---
         let returnModel = model;
+        // User Request: Always prefer branded names for SalesmanChatbot engines
         const isManagedEngine = !(pageConfig && (pageConfig.cheap_engine === false || (pageConfig.api_key && pageConfig.api_key !== 'MANAGED_SECRET_KEY')));
+        const isSalesmanProvider = (pageConfig.ai_provider === 'salesmanchatbot' || pageConfig.ai === 'salesmanchatbot');
         
-        if (isManagedEngine) {
+        if (isManagedEngine || isSalesmanProvider) {
              // Use the branded name if using system/managed keys
-             returnModel = resolved?.targetEngineName || 'salesmanchatbot-pro';
+             returnModel = resolved?.targetEngineName || modelHint || 'salesmanchatbot-pro';
         }
         
         return { text: result, usage: usage, model: returnModel };
@@ -2693,10 +2695,12 @@ Rules:
         
         // --- BRANDING PERSISTENCE ---
         let returnModel = model;
+        // User Request: Always prefer branded names for SalesmanChatbot engines
         const isManagedEngine = !(pageConfig && (pageConfig.cheap_engine === false || (pageConfig.api_key && pageConfig.api_key !== 'MANAGED_SECRET_KEY')));
+        const isSalesmanProvider = (pageConfig.ai_provider === 'salesmanchatbot' || pageConfig.ai === 'salesmanchatbot');
         
-        if (isManagedEngine) {
-             returnModel = resolved?.targetEngineName || 'salesmanchatbot-pro';
+        if (isManagedEngine || isSalesmanProvider) {
+             returnModel = resolved?.targetEngineName || modelHint || 'salesmanchatbot-pro';
         }
         
         return { text: result, usage: usage, model: returnModel };
