@@ -2370,9 +2370,14 @@ export default function AdminPage() {
                         </TableCell>
                         <TableCell>
                           {k.cooldown_until && new Date(k.cooldown_until) > new Date() ? (
-                            <Badge variant="outline" className="bg-amber-500/10 text-amber-400 border-amber-500/20">
-                              <AlertTriangle className="mr-1 h-3 w-3" /> Locked (Cooldown)
-                            </Badge>
+                            <div className="flex flex-col gap-1">
+                              <Badge variant="outline" className="bg-amber-500/10 text-amber-400 border-amber-500/20 w-fit">
+                                <AlertTriangle className="mr-1 h-3 w-3" /> Locked (Cooldown)
+                              </Badge>
+                              <span className="text-[10px] text-amber-500/70 font-mono">
+                                Ends: {new Date(k.cooldown_until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
                           ) : (
                             <Badge variant={k.status === 'active' ? 'default' : 'destructive'} className={k.status === 'active' ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' : ''}>
                               {k.status}

@@ -254,10 +254,11 @@ async function markKeyAsDead(keyOrObj, duration = DEFAULT_COOLDOWN, reason = 'un
     // --- IMMEDIATE DB UPDATE for status/cooldown ---
     try {
         const pgClient = require('./pgClient');
-        await pgClient.query(
+        const res = await pgClient.query(
             "UPDATE api_list SET cooldown_until = $1, last_used_at = NOW() WHERE api = $2",
             [expiryDate.toISOString(), key]
         );
+        console.log(`[KeyService] 💾 Persisted lock for ${key.substring(0,8)}... until ${expiryDate.toISOString()}. Rows affected: ${res.rowCount}`);
     } catch (err) {
         console.error(`[KeyService] Failed to immediately persist dead key status:`, err.message);
     }
