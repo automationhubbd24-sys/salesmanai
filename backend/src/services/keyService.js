@@ -62,22 +62,14 @@ async function updateKeyCache(force = false) {
         
         const rows = Array.isArray(result.rows) ? result.rows : [];
         
-        // --- EXTRA FILTER: Only keep keys where cooldown_until is past OR null ---
-        const nowMs = Date.now();
-        const activeRows = rows.filter(k => {
-            if (!k.cooldown_until) return true;
-            const cooldownExpiry = new Date(k.cooldown_until).getTime();
-            return nowMs > cooldownExpiry;
-        });
-
-        keyCache = activeRows;
-        
-        // Re-build lookup maps for performance
+        // --- RE-BUILD MAPS WITH ALL ACTIVE STATUS KEYS (Including those in Cooldown) ---
+        // This ensures the UI always sees the latest state from Postgres
         const newMap = new Map();
         const providerMap = new Map();
         const modelMap = new Map();
+        const nowMs = Date.now();
 
-        activeRows.forEach(k => {
+        rows.forEach(k => {
             newMap.set(k.api, k);
             
             // Provider Index
@@ -93,26 +85,15 @@ async function updateKeyCache(force = false) {
             }
         });
 
-        // --- OPTIMIZATION: Sort once during cache update (O(N log N) once per min) ---
-        // instead of sorting during every request (O(N log N) per request).
-        // This ensures the "Oldest First" rotation is maintained efficiently.
-        for (const list of providerMap.values()) {
-            list.sort((a, b) => {
-                const tA = a.last_used_at ? new Date(a.last_used_at).getTime() : 0;
-                const tB = b.last_used_at ? new Date(b.last_used_at).getTime() : 0;
-                if (tA !== tB) return tA - tB;
-                return a.id - b.id;
-            });
-        }
-        for (const list of modelMap.values()) {
-            list.sort((a, b) => {
-                const tA = a.last_used_at ? new Date(a.last_used_at).getTime() : 0;
-                const tB = b.last_used_at ? new Date(b.last_used_at).getTime() : 0;
-                if (tA !== tB) return tA - tB;
-                return a.id - b.id;
-            });
-        }
+        // --- FILTER FOR ENGINE (Rotation Pool) ---
+        // Only keep keys that are NOT currently in cooldown
+        const activeRows = rows.filter(k => {
+            if (!k.cooldown_until) return true;
+            const cooldownExpiry = new Date(k.cooldown_until).getTime();
+            return nowMs > cooldownExpiry;
+        });
 
+        keyCache = activeRows;
         keyCacheMap = newMap;
         keysByProvider = providerMap;
         keysByModel = modelMap;
@@ -854,10 +835,7 @@ module.exports = {
         let keys = [];
         
         // --- FETCH ALL KEYS FROM DATABASE FOR POOL (Including Cooldown) ---
-        // Since keyCache only has active/non-cooldown keys, we use a separate logic for the UI pool
-        // But for performance, we can't easily query DB here synchronously.
-        // Let's use the full cache if available, but for UI we want to see everything.
-        // The most reliable way is to return the full list including cooldowns.
+        // We use keyCacheMap which is now populated with ALL keys from Postgres in updateKeyCache()
         
         const fullList = Array.from(keyCacheMap.values());
         
