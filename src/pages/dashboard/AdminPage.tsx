@@ -2717,8 +2717,6 @@ export default function AdminPage() {
               })()}
             </CardContent>
           </Card>
-            </CardContent>
-          </Card>
 
           {/* Rotation Logs */}
           <Card className="border-white/10 bg-black/20">
