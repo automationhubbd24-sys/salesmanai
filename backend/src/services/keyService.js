@@ -304,6 +304,14 @@ async function markKeyAsQuotaExceeded(key) {
     await markKeyAsDead(key, safeDuration, 'quota_exceeded');
 }
 
+// Helper to lock a model globally for a specific duration
+function lockModelTemporarily(modelName, durationMs) {
+    if (!modelName) return;
+    const expiry = Date.now() + durationMs;
+    modelLockMap.set(modelName, { expiry, strikes: 3 }); // Set strikes high to indicate serious lock
+    console.warn(`[KeyService] 🔒 Model ${modelName} locked for ${durationMs/1000}s`);
+}
+
 // 13. Check Conversation Lock Status (Failure Lock)
 async function checkLockStatus(pageId, senderId) {
     // ... logic remains ...
@@ -311,16 +319,17 @@ async function checkLockStatus(pageId, senderId) {
 
 // REMOVED lockModelTemporarily to avoid global model restrictions
 
+const modelStrikeMap = new Map(); // Key: modelName, Value: { strikes: number, last_strike: number }
+
 async function handleApiKeyError(key, error, modelName = null) {
     if (!key) return;
     const errorStr = String(error).toLowerCase();
+    const now = Date.now();
     
     // --- SMART 429 DETECTION (FOR ALL PROVIDERS) ---
     // This logic now applies to Gemini, OpenRouter, Groq, Mistral, etc.
     if (errorStr.includes('429') || errorStr.includes('too many requests')) {
         // Check if it's a Daily Quota (RPD) or just a Rate Limit (RPM)
-        // Gemini: "perday", "quotavalue"
-        // OpenRouter/Others: "quota exceeded", "daily limit"
         const isDailyQuota = errorStr.includes('perday') || 
                              errorStr.includes('quota exceeded') || 
                              errorStr.includes('quotavalue') ||
@@ -328,9 +337,27 @@ async function handleApiKeyError(key, error, modelName = null) {
 
         if (isDailyQuota) {
             console.warn(`[KeyService] 🚨 Daily Quota Exceeded for ${key.substring(0,8)}... Locking for 24h.`);
-            // This will update DB via markKeyAsDead internally
             await markKeyAsQuotaExceeded(key);
-            // REMOVED model-level locking to allow other keys to try
+
+            // --- MODEL STRIKE SYSTEM ---
+            // If 3 different keys for the SAME model fail with Daily Quota within 5 mins,
+            // we lock the whole model for 1 hour to prevent "trying all 180 keys".
+            if (modelName) {
+                const strike = modelStrikeMap.get(modelName) || { strikes: 0, last_strike: 0 };
+                // Reset if last strike was > 5 mins ago
+                if (now - strike.last_strike > 5 * 60 * 1000) strike.strikes = 0;
+                
+                strike.strikes += 1;
+                strike.last_strike = now;
+                modelStrikeMap.set(modelName, strike);
+
+                if (strike.strikes >= 3) {
+                    console.error(`[KeyService] ⛔ Model ${modelName} hit 3 Quota Strikes. Locking GLOBALLY for 1 hour.`);
+                    lockModelTemporarily(modelName, 60 * 60 * 1000);
+                    strike.strikes = 0; // Reset for next cycle
+                    modelStrikeMap.set(modelName, strike);
+                }
+            }
         } else {
             console.warn(`[KeyService] ⏳ Rate Limit (RPM) hit for ${key.substring(0,8)}... Cooldown 2 min.`);
             await markKeyAsDead(key, 2 * 60 * 1000, 'rate_limit_rpm');
@@ -717,7 +744,12 @@ async function getSmartKey(provider, model = 'default') {
     // Filter dead keys (In-Memory Check is O(N) but small for small dead pools)
     // For 10,000 keys, we filter efficiently.
     const validKeys = candidates.filter(k => isKeyAlive(k.api));
-    if (validKeys.length === 0) return null;
+    
+    if (validKeys.length === 0) {
+        const deadCount = candidates.length;
+        console.warn(`[KeyService] ⚠️ All ${deadCount} keys for ${provider}/${model} are currently in COOLDOWN or DEAD.`);
+        return null;
+    }
 
     // 2. SEQUENTIAL ROTATION LOGIC (Persistent & High-Performance)
     const mapKey = `${provider}:${model}`;
