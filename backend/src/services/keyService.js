@@ -56,6 +56,14 @@ async function updateKeyCache(force = false) {
 
     try {
         const pgClient = require('./pgClient');
+        
+        // --- PROACTIVE CLEANUP: Clear expired cooldowns in DB ---
+        const nowIso = new Date().toISOString();
+        await pgClient.query(
+            "UPDATE api_list SET cooldown_until = NULL WHERE cooldown_until < $1",
+            [nowIso]
+        ).catch(e => console.warn("[KeyService] Expired cooldown cleanup failed:", e.message));
+
         const result = await pgClient.query(
             "SELECT * FROM api_list WHERE status = 'active' ORDER BY id ASC"
         );
