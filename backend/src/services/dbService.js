@@ -2037,13 +2037,19 @@ async function saveOrderTracking(orderData) {
             }
         }
 
-        // --- 3. NEW ORDER (If no recent order or it's a fresh intent) ---
+        // --- 3. NEW ORDER (Strict Requirement: Must have a phone number to start a new row) ---
+        // If we reach here, no existing order was found. We ONLY create a new row if we have a phone number.
+        if (!number || number === 'Pending' || number === 'null' || number.length < 8) {
+            console.log(`[Order] Skipping New Order Creation: Missing or invalid phone number (${number}).`);
+            return null;
+        }
+
         const result = await query(
             `INSERT INTO fb_order_tracking
-                (page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, created_at, status, is_locked)
-             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, NOW(), 'ongoing', FALSE)
+                (page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, created_at, status, is_locked, customer_name)
+             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, NOW(), 'ongoing', FALSE, $9::text)
              RETURNING *`,
-            [page_id || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null]
+            [page_id || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderData.customer_name || null]
         );
         return result.rows[0];
 
