@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Shield, Database as DatabaseIcon, Trash2, Edit, CheckCircle, CreditCard, DollarSign, Loader2, XCircle, Cpu, Plus, RefreshCw, Server, Activity, AlertTriangle, ChevronLeft, ChevronRight, Settings, Facebook, Smartphone } from "lucide-react";
+import { Shield, Database as DatabaseIcon, Trash2, Edit, CheckCircle, CreditCard, DollarSign, Loader2, XCircle, Cpu, Plus, RefreshCw, Server, Activity, AlertTriangle, ChevronLeft, ChevronRight, Settings, Facebook, Smartphone, ShieldCheck, Ticket, Zap, MessageSquare, Mic, Image as ImageIcon } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Slider } from "@/components/ui/slider";
