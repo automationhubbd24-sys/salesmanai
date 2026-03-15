@@ -130,7 +130,10 @@ export default function AdsPage() {
       setLoading(true);
       const token = localStorage.getItem("auth_token");
       const storedUser = localStorage.getItem("auth_user");
-      if (!storedUser) return;
+      if (!storedUser) {
+        setLoading(false);
+        return;
+      }
       const user = JSON.parse(storedUser);
       const userId = user.id;
       
@@ -152,9 +155,10 @@ export default function AdsPage() {
       });
       if (!response.ok) throw new Error("Failed to fetch ads");
       const data = await response.json();
-      setAds(data);
+      setAds(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error("Failed to fetch ads:", error);
+      setAds([]);
       toast.error("Failed to load ads library");
     } finally {
       setLoading(false);
@@ -273,11 +277,11 @@ export default function AdsPage() {
     setProductSearch("");
   };
 
-  const filteredAds = ads.filter(
+  const filteredAds = Array.isArray(ads) ? ads.filter(
     (ad) =>
-      ad.ad_id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      ad.description?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+      (ad?.ad_id || "").toString().toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (ad?.description || "").toString().toLowerCase().includes(searchQuery.toLowerCase())
+  ) : [];
 
   if (hasActivePages === false) {
     return (
@@ -300,15 +304,15 @@ export default function AdsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Ads Library</h1>
-          <p className="text-muted-foreground">
-            Configure smart AI responses for specific Facebook/WhatsApp ads.
-          </p>
-        </div>
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+    <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+      <div className="space-y-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Ads Library</h1>
+            <p className="text-muted-foreground">
+              Configure smart AI responses for specific Facebook/WhatsApp ads.
+            </p>
+          </div>
           <DialogTrigger asChild>
             <Button onClick={resetForm}>
               <Plus className="mr-2 h-4 w-4" />
@@ -382,8 +386,8 @@ export default function AdsPage() {
                 </div>
 
                 <div className="grid grid-cols-1 gap-1 max-h-[180px] overflow-y-auto p-2 border border-white/10 rounded-md bg-[#050505] custom-scrollbar">
-                  {products
-                    .filter(p => p.name.toLowerCase().includes(productSearch.toLowerCase()))
+                  {Array.isArray(products) && products
+                    .filter(p => (p?.name?.toLowerCase() || "").includes(productSearch.toLowerCase()))
                     .map((product) => (
                     <div 
                       key={product.id} 
@@ -414,12 +418,12 @@ export default function AdsPage() {
                       />
                     </div>
                   ))}
-                  {products.length === 0 && (
+                  {(!Array.isArray(products) || products.length === 0) && (
                     <div className="py-8 text-center">
                       <p className="text-xs text-muted-foreground italic">No products found for this page.</p>
                     </div>
                   )}
-                  {products.length > 0 && products.filter(p => p.name.toLowerCase().includes(productSearch.toLowerCase())).length === 0 && (
+                  {Array.isArray(products) && products.length > 0 && products.filter(p => (p?.name?.toLowerCase() || "").includes(productSearch.toLowerCase())).length === 0 && (
                     <div className="py-8 text-center">
                       <p className="text-xs text-muted-foreground italic">No matching products.</p>
                     </div>
@@ -437,88 +441,88 @@ export default function AdsPage() {
               </Button>
             </DialogFooter>
           </DialogContent>
-        </Dialog>
-      </div>
-
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          placeholder="Search ads by ID or description..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="pl-10 bg-[#0f0f0f]/80 border-white/10"
-        />
-      </div>
-
-      {loading ? (
-        <div className="flex flex-col items-center justify-center py-20">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <p className="mt-2 text-muted-foreground">Loading ads library...</p>
         </div>
-      ) : filteredAds.length > 0 ? (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {filteredAds.map((ad) => (
-            <Card key={`${ad.ad_id}-${ad.page_id}`} className="bg-[#0f0f0f]/80 backdrop-blur-sm border-white/10 hover:border-primary/50 transition-colors">
-              <CardHeader className="pb-3">
-                <div className="flex justify-between items-start">
-                  <div className="flex items-center gap-2">
-                    <Megaphone className="h-4 w-4 text-primary" />
-                    <CardTitle className="text-lg">Ad ID: {ad.ad_id}</CardTitle>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-                    onClick={() => handleDeleteAd(ad.ad_id, ad.page_id)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-                <CardDescription className="font-mono text-xs">Page ID: {ad.page_id}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  <div>
-                    <p className="text-sm font-semibold mb-1">AI Context:</p>
-                    <p className="text-sm text-muted-foreground line-clamp-3">
-                      {ad.description || "No description provided."}
-                    </p>
-                  </div>
-                  {ad.linked_product_ids && ad.linked_product_ids.length > 0 && (
-                    <div>
-                      <p className="text-xs font-semibold mb-1">Linked Products:</p>
-                      <div className="flex flex-wrap gap-1">
-                        {ad.linked_product_ids.map((pId) => {
-                          const p = products.find(p => String(p.id) === String(pId));
-                          return (
-                            <span key={pId} className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full border border-primary/20">
-                              {p?.name || `ID: ${pId}`}
-                            </span>
-                          );
-                        })}
-                      </div>
+
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search ads by ID or description..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10 bg-[#0f0f0f]/80 border-white/10"
+          />
+        </div>
+
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-20">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <p className="mt-2 text-muted-foreground">Loading ads library...</p>
+          </div>
+        ) : filteredAds.length > 0 ? (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {filteredAds.map((ad) => (
+              <Card key={`${ad.ad_id}-${ad.page_id}`} className="bg-[#0f0f0f]/80 backdrop-blur-sm border-white/10 hover:border-primary/50 transition-colors">
+                <CardHeader className="pb-3">
+                  <div className="flex justify-between items-start">
+                    <div className="flex items-center gap-2">
+                      <Megaphone className="h-4 w-4 text-primary" />
+                      <CardTitle className="text-lg">Ad ID: {ad.ad_id}</CardTitle>
                     </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      ) : (
-        <div className="flex flex-col items-center justify-center py-20 text-center border rounded-lg border-dashed border-white/10 bg-[#0f0f0f]/40">
-          <Megaphone className="h-12 w-12 text-muted-foreground/20 mb-4" />
-          <h3 className="text-lg font-medium">No ad contexts found</h3>
-          <p className="text-muted-foreground max-w-sm mt-1">
-            Add your first ad context to help the AI understand which products customers are asking about.
-          </p>
-          <DialogTrigger asChild>
-            <Button variant="outline" className="mt-4 border-white/10 hover:bg-white/5" onClick={resetForm}>
-              <Plus className="mr-2 h-4 w-4" />
-              Add Ad Context
-            </Button>
-          </DialogTrigger>
-        </div>
-      )}
-    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                      onClick={() => handleDeleteAd(ad.ad_id, ad.page_id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <CardDescription className="font-mono text-xs">Page ID: {ad.page_id}</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    <div>
+                      <p className="text-sm font-semibold mb-1">AI Context:</p>
+                      <p className="text-sm text-muted-foreground line-clamp-3">
+                        {ad.description || "No description provided."}
+                      </p>
+                    </div>
+                    {ad && ad.linked_product_ids && Array.isArray(ad.linked_product_ids) && ad.linked_product_ids.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold mb-1">Linked Products:</p>
+                        <div className="flex flex-wrap gap-1">
+                          {ad.linked_product_ids.map((pId) => {
+                            const p = Array.isArray(products) ? products.find(p => p && String(p.id) === String(pId)) : null;
+                            return (
+                              <span key={pId} className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full border border-primary/20">
+                                {p?.name || `ID: ${pId}`}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-20 text-center border rounded-lg border-dashed border-white/10 bg-[#0f0f0f]/40">
+            <Megaphone className="h-12 w-12 text-muted-foreground/20 mb-4" />
+            <h3 className="text-lg font-medium">No ad contexts found</h3>
+            <p className="text-muted-foreground max-w-sm mt-1">
+              Add your first ad context to help the AI understand which products customers are asking about.
+            </p>
+            <DialogTrigger asChild>
+              <Button variant="outline" className="mt-4 border-white/10 hover:bg-white/5" onClick={resetForm}>
+                <Plus className="mr-2 h-4 w-4" />
+                Add Ad Context
+              </Button>
+            </DialogTrigger>
+          </div>
+        )}
+      </div>
+    </Dialog>
   );
 }
