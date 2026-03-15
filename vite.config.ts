@@ -26,6 +26,13 @@ export default defineConfig(() => ({
       input: {
         main: path.resolve(__dirname, "index.html"),
       },
+      output: {
+        manualChunks: {
+          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+          'vendor-ui': ['@radix-ui/react-tabs', '@radix-ui/react-select', 'lucide-react'],
+          'vendor-utils': ['axios', 'date-fns', 'clsx', 'tailwind-merge'],
+        },
+      },
     },
   },
 }));

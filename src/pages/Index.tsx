@@ -62,6 +62,9 @@ const Index = () => {
                   src="https://cdn-icons-png.flaticon.com/512/733/733585.png"
                   alt="WhatsApp"
                   className="w-7 h-7"
+                  width="28"
+                  height="28"
+                  loading="lazy"
                 />
               </a>
               <a
@@ -74,6 +77,9 @@ const Index = () => {
                   src="https://cdn-icons-png.flaticon.com/512/5968/5968756.png"
                   alt="Discord"
                   className="w-7 h-7"
+                  width="28"
+                  height="28"
+                  loading="lazy"
                 />
               </a>
             </div>

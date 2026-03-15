@@ -695,7 +695,8 @@ export default function AdminPage() {
     return () => clearTimeout(timer);
   }, [engineSearch, isAuthenticated]);
 
-  // Auto-refresh engine pool data (Active Rotation Pool)
+  // Auto-refresh engine pool data (Active Rotation Pool) - DISABLED PER USER REQUEST
+  /*
   useEffect(() => {
     if (!isAuthenticated) return;
     const interval = setInterval(() => {
@@ -703,6 +704,7 @@ export default function AdminPage() {
     }, 10000); // 10 seconds
     return () => clearInterval(interval);
   }, [isAuthenticated, enginePage, engineFilter, engineSearch]);
+  */
 
   const updateEngineConfig = async (name: string, config: Partial<EngineConfig>) => {
     try {
@@ -2507,7 +2509,7 @@ export default function AdminPage() {
                     <Activity className="h-5 w-5 text-[#00ff88]" />
                     Active Rotation Pool
                   </CardTitle>
-                  <CardDescription>Live status of all keys in the rotation system (Refreshes every 10s)</CardDescription>
+                  <CardDescription>Live status of all keys in the rotation system</CardDescription>
                 </div>
                 <div className="flex items-center gap-3">
                   <div className="relative">

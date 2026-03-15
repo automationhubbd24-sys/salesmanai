@@ -26,7 +26,31 @@ app.set('trust proxy', 1);
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
-app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+
+// Optimized Static Serving with Caching
+const cacheOptions = {
+    maxAge: '7d', // Cache for 7 days
+    setHeaders: (res, path) => {
+        if (path.endsWith('.html')) {
+            res.set('Cache-Control', 'public, max-age=0, must-revalidate'); // Don't cache HTML
+        } else {
+            res.set('Cache-Control', 'public, max-age=604800, immutable'); // Cache assets for 7 days
+        }
+    }
+};
+
+app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads'), cacheOptions));
+
+// Serve Frontend Dist (Production)
+const distPath = path.join(__dirname, '../../dist');
+if (require('fs').existsSync(distPath)) {
+    app.use(express.static(distPath, cacheOptions));
+    // SPA Fallback: handle client-side routing
+    app.get('*', (req, res, next) => {
+        if (req.path.startsWith('/api')) return next();
+        res.sendFile(path.join(distPath, 'index.html'));
+    });
+}
 
 // Routes
 // We mount the webhook route at /webhook or /api/webhook based on preference
