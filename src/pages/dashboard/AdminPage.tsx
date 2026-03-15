@@ -237,6 +237,15 @@ export default function AdminPage() {
   // Pagination for tables list
   const [tableSearch, setTableSearch] = useState("");
 
+  const [activeTab, setActiveTab] = useState(() => {
+    const hash = window.location.hash.replace('#', '');
+    return hash || "payments";
+  });
+
+  useEffect(() => {
+    window.location.hash = activeTab;
+  }, [activeTab]);
+
   const [cacheConfigs, setCacheConfigs] = useState<CacheConfig[]>([]);
   const [cacheLoading, setCacheLoading] = useState(false);
   const [cacheSearch, setCacheSearch] = useState("");
@@ -1526,28 +1535,17 @@ export default function AdminPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header with Warning */}
-      <div className="flex items-center gap-4 p-4 bg-destructive/10 rounded-lg border border-destructive/20">
-        <Shield className="h-8 w-8 text-destructive" />
-        <div>
-          <h2 className="text-xl font-bold text-foreground">Admin Control Panel</h2>
-          <p className="text-sm text-muted-foreground">
-            Manage payments, users, and system settings.
-          </p>
-        </div>
-      </div>
-
       {/* Tabs */}
-      <Tabs defaultValue="payments" className="space-y-4">
-        <TabsList className="bg-secondary">
-          <TabsTrigger value="payments">Payments</TabsTrigger>
-          <TabsTrigger value="finance">Finance</TabsTrigger>
-          <TabsTrigger value="engine">Engine Test</TabsTrigger>
-          <TabsTrigger value="api-engine">API Engine</TabsTrigger>
-          <TabsTrigger value="gemini">Gemini Monitor</TabsTrigger>
-          <TabsTrigger value="cache" className="text-blue-400 font-bold">Semantic Cache</TabsTrigger>
-          <TabsTrigger value="db">Database Admin</TabsTrigger>
-          <TabsTrigger value="openrouter">OpenRouter Config</TabsTrigger>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+        <TabsList className="bg-secondary/50 backdrop-blur-sm border border-white/5 p-1">
+          <TabsTrigger value="payments" className="data-[state=active]:bg-primary data-[state=active]:text-black transition-all">Payments</TabsTrigger>
+          <TabsTrigger value="finance" className="data-[state=active]:bg-primary data-[state=active]:text-black transition-all">Finance</TabsTrigger>
+          <TabsTrigger value="engine" className="data-[state=active]:bg-primary data-[state=active]:text-black transition-all">Engine Test</TabsTrigger>
+          <TabsTrigger value="api-engine" className="data-[state=active]:bg-primary data-[state=active]:text-black transition-all">API Engine</TabsTrigger>
+          <TabsTrigger value="gemini" className="data-[state=active]:bg-primary data-[state=active]:text-black transition-all">Gemini Monitor</TabsTrigger>
+          <TabsTrigger value="cache" className="text-blue-400 font-bold data-[state=active]:bg-blue-500 data-[state=active]:text-white transition-all">Semantic Cache</TabsTrigger>
+          <TabsTrigger value="db" className="data-[state=active]:bg-[#00ff88] data-[state=active]:text-black transition-all font-bold">Database Admin</TabsTrigger>
+          <TabsTrigger value="openrouter" className="data-[state=active]:bg-primary data-[state=active]:text-black transition-all">OpenRouter Config</TabsTrigger>
         </TabsList>
 
         {/* Payments Tab */}
@@ -3037,31 +3035,41 @@ export default function AdminPage() {
                       </CardDescription>
                     </div>
                     {selectedTable && (
-                      <div className="flex items-center gap-2">
-                        <div className="relative">
+                      <div className="flex items-center gap-3">
+                        <div className="relative group">
                           <Input 
-                            placeholder="Filter rows..." 
-                            className="h-8 w-48 text-xs bg-black/20 border-white/10 pl-8"
+                            placeholder="Search records..." 
+                            className="h-9 w-64 text-xs bg-black/40 border-white/10 pl-9 pr-8 focus:ring-1 focus:ring-[#00ff88] transition-all group-hover:border-white/20"
                             value={dbSearch}
                             onChange={(e) => setDbSearch(e.target.value)}
                           />
-                          <svg className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                          <svg className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground group-focus-within:text-[#00ff88] transition-colors" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                          {dbSearch && (
+                            <button 
+                              onClick={() => setDbSearch("")}
+                              className="absolute right-2 top-2.5 h-4 w-4 text-muted-foreground hover:text-white transition-colors"
+                            >
+                              <XCircle className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                         </div>
+                        <div className="h-6 w-[1px] bg-white/10 mx-1" />
                         <Button
                           variant="outline"
                           size="sm"
-                          className="h-8 text-[10px] uppercase font-bold border-white/10"
+                          className="h-9 text-[10px] uppercase font-bold border-white/10 hover:bg-white/5"
                           onClick={() => setAddColumnDialogOpen(true)}
                         >
-                          Add Column
+                          <Settings className="mr-1.5 h-3 w-3" />
+                          Columns
                         </Button>
                         <Button
                           size="sm"
-                          className="h-8 text-[10px] uppercase font-bold bg-[#00ff88] hover:bg-[#00ff88]/90 text-black"
+                          className="h-9 text-[10px] uppercase font-bold bg-[#00ff88] hover:bg-[#00ff88]/90 text-black shadow-[0_0_15px_rgba(0,255,136,0.2)] hover:shadow-[0_0_20px_rgba(0,255,136,0.4)] transition-all"
                           onClick={openInsertRow}
                         >
-                          <Plus className="mr-1 h-3 w-3" />
-                          Insert Row
+                          <Plus className="mr-1.5 h-3.5 w-3.5" />
+                          New Record
                         </Button>
                       </div>
                     )}
