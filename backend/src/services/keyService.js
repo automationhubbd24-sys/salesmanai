@@ -61,14 +61,23 @@ async function updateKeyCache(force = false) {
         );
         
         const rows = Array.isArray(result.rows) ? result.rows : [];
-        keyCache = rows;
+        
+        // --- EXTRA FILTER: Only keep keys where cooldown_until is past OR null ---
+        const nowMs = Date.now();
+        const activeRows = rows.filter(k => {
+            if (!k.cooldown_until) return true;
+            const cooldownExpiry = new Date(k.cooldown_until).getTime();
+            return nowMs > cooldownExpiry;
+        });
+
+        keyCache = activeRows;
         
         // Re-build lookup maps for performance
         const newMap = new Map();
         const providerMap = new Map();
         const modelMap = new Map();
 
-        rows.forEach(k => {
+        activeRows.forEach(k => {
             newMap.set(k.api, k);
             
             // Provider Index
@@ -302,6 +311,7 @@ async function markKeyAsQuotaExceeded(key) {
     const safeDuration = duration + (60 * 60 * 1000); // +1 hour buffer
     
     // markKeyAsDead now handles DB persistence
+    console.log(`[KeyService] 🔒 Quota exceeded for ${key.substring(0,8)}... Locking until UTC Midnight + 1h (Duration: ${(safeDuration/1000/3600).toFixed(1)}h)`);
     await markKeyAsDead(key, safeDuration, 'quota_exceeded_24h');
 }
 
@@ -843,16 +853,23 @@ module.exports = {
     getActiveRotationPool: (providerFilter = null, page = 1, limit = 10, searchQuery = '') => {
         let keys = [];
         
+        // --- FETCH ALL KEYS FROM DATABASE FOR POOL (Including Cooldown) ---
+        // Since keyCache only has active/non-cooldown keys, we use a separate logic for the UI pool
+        // But for performance, we can't easily query DB here synchronously.
+        // Let's use the full cache if available, but for UI we want to see everything.
+        // The most reliable way is to return the full list including cooldowns.
+        
+        const fullList = Array.from(keyCacheMap.values());
+        
         if (providerFilter && providerFilter !== 'all') {
             // Filter by Provider
             if (providerFilter === 'google' || providerFilter === 'gemini') {
-                keys = keysByProvider.get('google') || [];
+                keys = fullList.filter(k => (k.provider === 'google' || k.provider === 'gemini'));
             } else {
-                keys = keysByProvider.get(providerFilter) || [];
+                keys = fullList.filter(k => k.provider === providerFilter);
             }
         } else {
-            // No filter, use all keys
-            keys = keyCache;
+            keys = fullList;
         }
 
         const query = String(searchQuery || '').trim().toLowerCase();
@@ -863,6 +880,14 @@ module.exports = {
                 return provider.includes(query) || api.includes(query);
             })
             : keys;
+
+        // Sort: Active first, then by ID
+        filteredKeys.sort((a, b) => {
+            const aLocked = a.cooldown_until && new Date(a.cooldown_until) > new Date();
+            const bLocked = b.cooldown_until && new Date(b.cooldown_until) > new Date();
+            if (aLocked !== bLocked) return aLocked ? 1 : -1;
+            return a.id - b.id;
+        });
 
         const total = filteredKeys.length;
         const offset = (page - 1) * limit;
