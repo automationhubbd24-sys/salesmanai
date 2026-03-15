@@ -185,6 +185,11 @@ export default function AdminPage() {
   const [engineRevealedKeys, setEngineRevealedKeys] = useState<Record<number, string>>({});
   const [rotationLogs, setRotationLogs] = useState<any[]>([]);
 
+  // Search/Filter states for other tabs
+  const [txnSearch, setTxnSearch] = useState("");
+  const [couponSearch, setCouponSearch] = useState("");
+  const [txnStatusFilter, setTxnStatusFilter] = useState("all");
+
   const [geminiModel, setGeminiModel] = useState("");
   const [geminiMessage, setGeminiMessage] = useState("hi from SalesmanChatbot key test");
   const [geminiProviderFilter, setGeminiProviderFilter] = useState("all");
@@ -1550,74 +1555,126 @@ export default function AdminPage() {
 
         {/* Payments Tab */}
         <TabsContent value="payments">
-          <Card className="bg-card border-border">
-            <CardHeader>
-              <CardTitle>Transaction Requests</CardTitle>
-              <CardDescription>Approve or reject deposit requests</CardDescription>
+          <Card className="bg-card/40 backdrop-blur-md border-white/5 shadow-2xl overflow-hidden">
+            <CardHeader className="border-b border-white/5 bg-white/5 pb-6">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <CardTitle className="text-xl font-bold flex items-center gap-2">
+                    <DollarSign className="h-5 w-5 text-[#00ff88]" />
+                    Transaction Requests
+                  </CardTitle>
+                  <CardDescription>Approve or reject deposit requests from users</CardDescription>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="relative">
+                    <Input 
+                      placeholder="Search email or TRX ID..." 
+                      className="h-9 w-64 bg-black/40 border-white/10 pl-9 text-xs"
+                      value={txnSearch}
+                      onChange={(e) => setTxnSearch(e.target.value)}
+                    />
+                    <svg className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                  </div>
+                  <Select value={txnStatusFilter} onValueChange={setTxnStatusFilter}>
+                    <SelectTrigger className="h-9 w-32 bg-black/40 border-white/10 text-xs">
+                      <SelectValue placeholder="Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Status</SelectItem>
+                      <SelectItem value="pending">Pending</SelectItem>
+                      <SelectItem value="approved">Approved</SelectItem>
+                      <SelectItem value="rejected">Rejected</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button variant="outline" size="icon" className="h-9 w-9 border-white/10 bg-black/20" onClick={fetchTransactions}>
+                    <RefreshCw className={`h-4 w-4 ${loadingTxns ? 'animate-spin' : ''}`} />
+                  </Button>
+                </div>
+              </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="p-0">
               <div className="overflow-x-auto">
                 <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>User Email</TableHead>
-                      <TableHead>Method</TableHead>
-                      <TableHead>Amount</TableHead>
-                      <TableHead>Details</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                  <TableHeader className="bg-white/5">
+                    <TableRow className="hover:bg-transparent border-white/10">
+                      <TableHead className="py-4 text-[10px] uppercase font-bold text-muted-foreground">User Email</TableHead>
+                      <TableHead className="py-4 text-[10px] uppercase font-bold text-muted-foreground">Method</TableHead>
+                      <TableHead className="py-4 text-[10px] uppercase font-bold text-muted-foreground">Amount</TableHead>
+                      <TableHead className="py-4 text-[10px] uppercase font-bold text-muted-foreground">Details</TableHead>
+                      <TableHead className="py-4 text-[10px] uppercase font-bold text-muted-foreground text-center">Status</TableHead>
+                      <TableHead className="py-4 text-right text-[10px] uppercase font-bold text-muted-foreground">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {loadingTxns ? (
-                       <TableRow><TableCell colSpan={6} className="text-center">Loading...</TableCell></TableRow>
+                       <TableRow><TableCell colSpan={6} className="h-64 text-center">
+                         <Loader2 className="h-8 w-8 animate-spin mx-auto text-[#00ff88] mb-2" />
+                         <span className="text-xs uppercase tracking-widest opacity-50">Syncing transactions...</span>
+                       </TableCell></TableRow>
                     ) : transactions.length === 0 ? (
-                       <TableRow><TableCell colSpan={6} className="text-center">No transactions found</TableCell></TableRow>
+                       <TableRow><TableCell colSpan={6} className="h-64 text-center text-muted-foreground">No transactions found</TableCell></TableRow>
                     ) : (
-                      transactions.map((txn: any) => (
-                        <TableRow key={txn.id}>
-                          <TableCell className="font-medium text-sm">{txn.user_email}</TableCell>
-                          <TableCell className="capitalize">{txn.method}</TableCell>
-                          <TableCell className="font-bold text-green-600">৳{txn.amount}</TableCell>
-                          <TableCell>
-                            <div className="text-xs">
-                              <p>TRX: {txn.trx_id}</p>
-                              <p className="text-muted-foreground">Sender: {txn.sender_number}</p>
-                              <p className="text-muted-foreground">{new Date(txn.created_at).toLocaleString()}</p>
+                      transactions
+                        .filter(txn => {
+                          const matchesSearch = txn.user_email.toLowerCase().includes(txnSearch.toLowerCase()) || txn.trx_id.toLowerCase().includes(txnSearch.toLowerCase());
+                          const matchesStatus = txnStatusFilter === 'all' ? true : txn.status === txnStatusFilter;
+                          return matchesSearch && matchesStatus;
+                        })
+                        .map((txn: any) => (
+                        <TableRow key={txn.id} className="hover:bg-white/5 border-white/5 transition-colors group">
+                          <TableCell className="py-4">
+                            <div className="flex flex-col">
+                              <span className="font-bold text-white text-sm">{txn.user_email}</span>
+                              <span className="text-[10px] text-muted-foreground opacity-60">ID: {txn.id}</span>
                             </div>
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="py-4 capitalize font-medium text-xs">{txn.method}</TableCell>
+                          <TableCell className="py-4 font-black text-[#00ff88] text-lg">৳{txn.amount}</TableCell>
+                          <TableCell className="py-4">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] text-muted-foreground uppercase font-bold">TRX:</span>
+                                <span className="text-xs font-mono text-blue-400">{txn.trx_id}</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] text-muted-foreground uppercase font-bold">Sender:</span>
+                                <span className="text-xs text-white/80">{txn.sender_number}</span>
+                              </div>
+                              <span className="text-[9px] text-muted-foreground opacity-50">{new Date(txn.created_at).toLocaleString()}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="py-4 text-center">
                             <Badge 
-                              variant="secondary"
-                              className={
-                                txn.status === 'completed' || txn.status === 'approved' ? 'bg-green-100 text-green-700 hover:bg-green-100' :
-                                txn.status === 'pending' ? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-100' :
-                                'bg-red-100 text-red-700 hover:bg-red-100'
-                              }
+                              variant="outline"
+                              className={`text-[10px] font-black px-2 h-5 uppercase tracking-tighter ${
+                                txn.status === 'completed' || txn.status === 'approved' ? 'border-green-500/30 text-green-500 bg-green-500/5' :
+                                txn.status === 'pending' ? 'border-amber-500/30 text-amber-500 bg-amber-500/5' :
+                                'border-red-500/30 text-red-500 bg-red-500/5'
+                              }`}
                             >
                               {txn.status}
                             </Badge>
                           </TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className="py-4 text-right">
                             {txn.status === 'pending' && (
-                              <div className="flex justify-end gap-2">
+                              <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                 <Button 
                                   size="sm" 
                                   variant="outline" 
-                                  className="text-green-600 border-green-200 hover:bg-green-50"
+                                  className="h-8 text-[10px] font-bold uppercase border-green-500/20 text-green-500 hover:bg-green-500 hover:text-black"
                                   onClick={() => handleApproveTxn(txn)}
                                   disabled={processingId === txn.id}
                                 >
-                                  {processingId === txn.id ? <Loader2 className="h-4 w-4 animate-spin"/> : <CheckCircle className="h-4 w-4" />}
+                                  {processingId === txn.id ? <Loader2 className="h-3 w-3 animate-spin"/> : "Approve"}
                                 </Button>
                                 <Button 
                                   size="sm" 
                                   variant="outline" 
-                                  className="text-red-600 border-red-200 hover:bg-red-50"
+                                  className="h-8 text-[10px] font-bold uppercase border-red-500/20 text-red-500 hover:bg-red-500 hover:text-black"
                                   onClick={() => handleRejectTxn(txn)}
                                   disabled={processingId === txn.id}
                                 >
-                                  {processingId === txn.id ? <Loader2 className="h-4 w-4 animate-spin"/> : <XCircle className="h-4 w-4" />}
+                                  {processingId === txn.id ? <Loader2 className="h-3 w-3 animate-spin"/> : "Reject"}
                                 </Button>
                               </div>
                             )}
@@ -1634,120 +1691,209 @@ export default function AdminPage() {
 
         {/* Finance Tab */}
         <TabsContent value="finance" className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <CreditCard className="h-5 w-5" /> Manual Top-Up
+          <div className="grid gap-6 md:grid-cols-2">
+            <Card className="bg-card/40 backdrop-blur-md border-white/5 shadow-xl">
+              <CardHeader className="pb-4 border-b border-white/5 bg-white/5">
+                <CardTitle className="text-lg font-bold flex items-center gap-2">
+                  <CreditCard className="h-5 w-5 text-purple-400" />
+                  Manual Top-Up
                 </CardTitle>
                 <CardDescription>Add balance directly to a user via Email</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="space-y-4 pt-6">
                 <div className="space-y-2">
-                  <Label>User Email</Label>
+                  <Label className="text-[10px] uppercase font-bold text-muted-foreground">User Email</Label>
                   <Input 
                     placeholder="user@example.com" 
                     value={topupEmail}
                     onChange={(e) => setTopupEmail(e.target.value)}
+                    className="bg-black/20 border-white/10 h-10"
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>Amount (BDT)</Label>
+                  <Label className="text-[10px] uppercase font-bold text-muted-foreground">Amount (BDT)</Label>
                   <Input 
                     type="number" 
                     placeholder="100" 
                     value={topupAmount}
                     onChange={(e) => setTopupAmount(e.target.value)}
+                    className="bg-black/20 border-white/10 h-10"
                   />
                 </div>
-                <Button className="w-full" onClick={handleManualTopup} disabled={topupLoading}>
-                  {topupLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                <Button 
+                  className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold h-11 shadow-[0_0_15px_rgba(147,51,234,0.2)]" 
+                  onClick={handleManualTopup} 
+                  disabled={topupLoading}
+                >
+                  {topupLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4" />}
                   Add Balance
                 </Button>
               </CardContent>
             </Card>
 
-            <Card className="bg-card border-border">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <DollarSign className="h-5 w-5" /> Create Coupon
+            <Card className="bg-card/40 backdrop-blur-md border-white/5 shadow-xl">
+              <CardHeader className="pb-4 border-b border-white/5 bg-white/5">
+                <CardTitle className="flex items-center gap-2 text-lg font-bold">
+                  <DollarSign className="h-5 w-5 text-[#00ff88]" /> Create Coupon
                 </CardTitle>
                 <CardDescription>Generate balance codes</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="space-y-4 pt-6">
                 <div className="space-y-2">
-                  <Label>Coupon Code</Label>
-                  <Input placeholder="e.g. WELCOME500" value={couponCode} onChange={(e) => setCouponCode(e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Value (BDT / Credits)</Label>
-                  <Input type="number" placeholder="500" value={couponValue} onChange={(e) => setCouponValue(e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Coupon Type</Label>
-                  <Select value={couponType} onValueChange={setCouponType}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="balance">Balance (BDT)</SelectItem>
-                      <SelectItem value="credit">Message Credits</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Label className="text-[10px] uppercase font-bold text-muted-foreground">Coupon Code</Label>
+                  <Input 
+                    placeholder="e.g. WELCOME500" 
+                    value={couponCode} 
+                    onChange={(e) => setCouponCode(e.target.value)}
+                    className="bg-black/20 border-white/10 h-10 font-mono"
+                  />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label>Total Usage Limit</Label>
-                    <Input type="number" value={couponUsageLimit} onChange={(e) => setCouponUsageLimit(e.target.value)} />
+                    <Label className="text-[10px] uppercase font-bold text-muted-foreground">Value (BDT / Credits)</Label>
+                    <Input 
+                      type="number" 
+                      placeholder="500" 
+                      value={couponValue} 
+                      onChange={(e) => setCouponValue(e.target.value)}
+                      className="bg-black/20 border-white/10 h-10"
+                    />
                   </div>
                   <div className="space-y-2">
-                    <Label>Per User Limit</Label>
-                    <Input type="number" value={couponPerUserLimit} onChange={(e) => setCouponPerUserLimit(e.target.value)} />
+                    <Label className="text-[10px] uppercase font-bold text-muted-foreground">Coupon Type</Label>
+                    <Select value={couponType} onValueChange={setCouponType}>
+                      <SelectTrigger className="bg-black/20 border-white/10 h-10">
+                        <SelectValue placeholder="Select type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="balance">Balance (BDT)</SelectItem>
+                        <SelectItem value="credit">Message Credits</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
-                <Button className="w-full" onClick={handleCreateCoupon}>Create Code</Button>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label className="text-[10px] uppercase font-bold text-muted-foreground">Total Usage Limit</Label>
+                    <Input 
+                      type="number" 
+                      value={couponUsageLimit} 
+                      onChange={(e) => setCouponUsageLimit(e.target.value)}
+                      className="bg-black/20 border-white/10 h-10"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-[10px] uppercase font-bold text-muted-foreground">Per User Limit</Label>
+                    <Input 
+                      type="number" 
+                      value={couponPerUserLimit} 
+                      onChange={(e) => setCouponPerUserLimit(e.target.value)}
+                      className="bg-black/20 border-white/10 h-10"
+                    />
+                  </div>
+                </div>
+                <Button 
+                  className="w-full bg-[#00ff88] hover:bg-[#00ff88]/90 text-black font-bold h-11 shadow-[0_0_15px_rgba(0,255,136,0.2)]" 
+                  onClick={handleCreateCoupon}
+                >
+                  Create Code
+                </Button>
               </CardContent>
             </Card>
 
-            <Card className="bg-card border-border md:col-span-2">
-              <CardHeader>
-                <CardTitle>Active Coupons</CardTitle>
+            <Card className="bg-card/40 backdrop-blur-md border-white/5 shadow-2xl overflow-hidden md:col-span-2">
+              <CardHeader className="border-b border-white/5 bg-white/5 py-4">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-lg font-bold flex items-center gap-2">
+                    <Ticket className="h-5 w-5 text-amber-400" />
+                    Active Coupons
+                  </CardTitle>
+                  <div className="relative group">
+                    <Input 
+                      placeholder="Search coupons..." 
+                      className="h-8 w-48 bg-black/20 border-white/10 pl-8 text-[10px] focus:ring-1 focus:ring-amber-500/50 transition-all"
+                      value={couponSearch}
+                      onChange={(e) => setCouponSearch(e.target.value)}
+                    />
+                    <svg className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                  </div>
+                </div>
               </CardHeader>
-              <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Code</TableHead>
-                      <TableHead>Value</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Usage (Used/Total)</TableHead>
-                      <TableHead>Per User</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Action</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {loadingCoupons ? (
-                         <TableRow><TableCell colSpan={7}>Loading...</TableCell></TableRow>
-                    ) : coupons.map((c) => (
-                      <TableRow key={c.id}>
-                        <TableCell className="font-mono font-bold">{c.code}</TableCell>
-                        <TableCell>{c.type === 'credit' ? `${c.value} Credits` : `৳${c.value}`}</TableCell>
-                        <TableCell className="capitalize">{c.type}</TableCell>
-                        <TableCell>{c.current_usage} / {c.usage_limit === 0 ? '∞' : c.usage_limit}</TableCell>
-                        <TableCell>{c.per_user_limit === 0 ? '∞' : c.per_user_limit}</TableCell>
-                        <TableCell>
-                          <Badge variant={c.status === 'active' ? 'default' : 'secondary'}>{c.status}</Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button size="sm" variant="ghost" onClick={() => toggleCouponStatus(c)}>
-                            {c.status === 'active' ? 'Deactivate' : 'Activate'}
-                          </Button>
-                        </TableCell>
+              <CardContent className="p-0">
+                <div className="max-h-[500px] overflow-auto custom-scrollbar">
+                  <Table>
+                    <TableHeader className="bg-white/5 sticky top-0 z-10">
+                      <TableRow className="hover:bg-transparent border-white/10">
+                        <TableHead className="py-3 text-[10px] uppercase font-bold text-muted-foreground">Code</TableHead>
+                        <TableHead className="py-3 text-[10px] uppercase font-bold text-muted-foreground">Value</TableHead>
+                        <TableHead className="py-3 text-[10px] uppercase font-bold text-muted-foreground">Type</TableHead>
+                        <TableHead className="py-3 text-[10px] uppercase font-bold text-muted-foreground">Usage (Used/Total)</TableHead>
+                        <TableHead className="py-3 text-[10px] uppercase font-bold text-muted-foreground">Per User</TableHead>
+                        <TableHead className="py-3 text-[10px] uppercase font-bold text-muted-foreground">Status</TableHead>
+                        <TableHead className="py-3 text-right text-[10px] uppercase font-bold text-muted-foreground">Action</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {loadingCoupons ? (
+                           <TableRow><TableCell colSpan={7} className="h-32 text-center text-muted-foreground"><Loader2 className="h-6 w-6 animate-spin mx-auto mb-2 opacity-50"/>Loading coupons...</TableCell></TableRow>
+                      ) : coupons.length === 0 ? (
+                           <TableRow><TableCell colSpan={7} className="h-32 text-center text-muted-foreground italic">No active coupons</TableCell></TableRow>
+                      ) : coupons
+                          .filter(c => c.code.toLowerCase().includes(couponSearch.toLowerCase()))
+                          .map((c) => (
+                        <TableRow key={c.id} className="hover:bg-white/5 border-white/5 transition-colors group">
+                          <TableCell className="py-3">
+                            <code className="px-2 py-1 bg-white/5 text-amber-500 rounded border border-white/10 font-mono text-xs font-black">
+                              {c.code}
+                            </code>
+                          </TableCell>
+                          <TableCell className="py-3 text-xs font-bold text-white">
+                            {c.type === 'credit' ? (
+                              <span className="flex items-center gap-1.5"><Zap className="h-3 w-3 text-blue-400"/>{c.value} Credits</span>
+                            ) : (
+                              <span className="text-[#00ff88]">৳{c.value}</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="py-3">
+                            <Badge variant="outline" className="text-[9px] uppercase tracking-widest font-bold opacity-60 h-4">{c.type}</Badge>
+                          </TableCell>
+                          <TableCell className="py-3">
+                            <div className="flex flex-col gap-1">
+                              <span className="text-[11px] font-mono text-white/80">{c.current_usage} / {c.usage_limit === 0 ? '∞' : c.usage_limit}</span>
+                              {c.usage_limit > 0 && (
+                                <div className="h-1 w-20 bg-white/10 rounded-full overflow-hidden">
+                                  <div 
+                                    className="h-full bg-blue-500" 
+                                    style={{ width: `${Math.min((c.current_usage / c.usage_limit) * 100, 100)}%` }}
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="py-3 font-mono text-xs opacity-60">{c.per_user_limit === 0 ? '∞' : c.per_user_limit}</TableCell>
+                          <TableCell className="py-3">
+                            <Badge 
+                              variant="outline" 
+                              className={`text-[9px] uppercase font-black px-1.5 h-4 ${c.status === 'active' ? 'border-green-500/30 text-green-500 bg-green-500/5' : 'border-red-500/30 text-red-500 bg-red-500/5'}`}
+                            >
+                              {c.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="py-3 text-right">
+                            <Button 
+                              size="sm" 
+                              variant="ghost" 
+                              className={`h-7 text-[10px] font-bold uppercase transition-all ${c.status === 'active' ? 'text-red-400 hover:bg-red-500/10' : 'text-green-400 hover:bg-green-500/10'}`}
+                              onClick={() => toggleCouponStatus(c)}
+                            >
+                              {c.status === 'active' ? 'Deactivate' : 'Activate'}
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               </CardContent>
             </Card>
           </div>
@@ -1881,50 +2027,58 @@ export default function AdminPage() {
           {/* Engine Model Configuration */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {engineConfigs.map((config) => (
-              <Card key={config.id} className="border-primary/20 bg-card/50">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <Cpu className="h-5 w-5 text-primary" />
-                    {config.name === 'salesmanchatbot-pro' ? 'SalesmanChatbot 2.0 Pro Engine (Google)' : 
-                     config.name === 'salesmanchatbot-flash' ? 'SalesmanChatbot 2.0 Flash Engine (OpenRouter)' : 
-                     'SalesmanChatbot 2.0 Lite Engine (Groq)'}
+              <Card key={config.id} className="bg-card/40 backdrop-blur-md border-white/5 shadow-xl hover:border-white/10 transition-all">
+                <CardHeader className="pb-4 border-b border-white/5 bg-white/5">
+                  <CardTitle className="text-lg font-bold flex items-center gap-2">
+                    <Cpu className={`h-5 w-5 ${config.name.includes('pro') ? 'text-blue-400' : config.name.includes('flash') ? 'text-amber-400' : 'text-[#00ff88]'}`} />
+                    {config.name === 'salesmanchatbot-pro' ? '2.0 Pro (Google)' : 
+                     config.name === 'salesmanchatbot-flash' ? '2.0 Flash (OpenRouter)' : 
+                     '2.0 Lite (Groq)'}
                   </CardTitle>
-                  <CardDescription>Configure models for {config.name}</CardDescription>
+                  <CardDescription className="text-[10px] uppercase tracking-widest font-bold opacity-60">Engine: {config.name}</CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label className="text-xs">Text Model</Label>
-                    <Input 
-                      value={config.text_model} 
-                      onChange={(e) => updateEngineConfig(config.name, { text_model: e.target.value })}
-                      className="h-8 text-xs"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-xs">Voice Model</Label>
-                    <Input 
-                      value={config.voice_model} 
-                      onChange={(e) => updateEngineConfig(config.name, { voice_model: e.target.value })}
-                      className="h-8 text-xs"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-xs">Image Model</Label>
-                    <Input 
-                      value={config.image_model} 
-                      onChange={(e) => updateEngineConfig(config.name, { image_model: e.target.value })}
-                      className="h-8 text-xs"
-                    />
+                <CardContent className="space-y-5 pt-6">
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label className="text-[10px] uppercase font-bold text-muted-foreground flex items-center gap-2">
+                        <MessageSquare className="h-3 w-3" /> Text Model
+                      </Label>
+                      <Input 
+                        value={config.text_model} 
+                        onChange={(e) => updateEngineConfig(config.name, { text_model: e.target.value })}
+                        className="h-9 text-xs bg-black/20 border-white/10 font-mono"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-[10px] uppercase font-bold text-muted-foreground flex items-center gap-2">
+                        <Mic className="h-3 w-3" /> Voice Model
+                      </Label>
+                      <Input 
+                        value={config.voice_model} 
+                        onChange={(e) => updateEngineConfig(config.name, { voice_model: e.target.value })}
+                        className="h-9 text-xs bg-black/20 border-white/10 font-mono"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-[10px] uppercase font-bold text-muted-foreground flex items-center gap-2">
+                        <ImageIcon className="h-3 w-3" /> Image Model
+                      </Label>
+                      <Input 
+                        value={config.image_model} 
+                        onChange={(e) => updateEngineConfig(config.name, { image_model: e.target.value })}
+                        className="h-9 text-xs bg-black/20 border-white/10 font-mono"
+                      />
+                    </div>
                   </div>
                   
-                  <div className="pt-2 border-t border-white/5 space-y-3">
+                  <div className="pt-4 border-t border-white/5 space-y-4">
                     <div className="space-y-2">
-                      <Label className="text-[10px] text-muted-foreground uppercase">Voice Provider Override</Label>
+                      <Label className="text-[10px] text-muted-foreground uppercase font-black">Voice Provider Override</Label>
                       <Select 
                         value={config.voice_provider_override || "none"} 
                         onValueChange={(val) => updateEngineConfig(config.name, { voice_provider_override: val === "none" ? null : val })}
                       >
-                        <SelectTrigger className="h-7 text-[11px]">
+                        <SelectTrigger className="h-8 text-[11px] bg-black/40 border-white/10">
                           <SelectValue placeholder="No Override" />
                         </SelectTrigger>
                         <SelectContent>
@@ -1936,12 +2090,12 @@ export default function AdminPage() {
                       </Select>
                     </div>
                     <div className="space-y-2">
-                      <Label className="text-[10px] text-muted-foreground uppercase">Image Provider Override</Label>
+                      <Label className="text-[10px] text-muted-foreground uppercase font-black">Image Provider Override</Label>
                       <Select 
                         value={config.image_provider_override || "none"} 
                         onValueChange={(val) => updateEngineConfig(config.name, { image_provider_override: val === "none" ? null : val })}
                       >
-                        <SelectTrigger className="h-7 text-[11px]">
+                        <SelectTrigger className="h-8 text-[11px] bg-black/40 border-white/10">
                           <SelectValue placeholder="No Override" />
                         </SelectTrigger>
                         <SelectContent>
@@ -1960,46 +2114,52 @@ export default function AdminPage() {
 
           {/* Stats Grid */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <Card className="bg-card/50 backdrop-blur border-primary/20">
+            <Card className="bg-card/40 backdrop-blur border-white/5 shadow-lg">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Engine Status</CardTitle>
+                <CardTitle className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest">Engine Status</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="flex items-center gap-2">
-                  <div className={`h-3 w-3 rounded-full ${engineStats?.engine_status === 'online' ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
-                  <span className="text-2xl font-bold capitalize">{engineStats?.engine_status || 'Offline'}</span>
+                <div className="flex items-center gap-3">
+                  <div className={`h-4 w-4 rounded-full border-2 ${engineStats?.engine_status === 'online' ? 'bg-green-500 border-green-500/20 animate-pulse' : 'bg-red-500 border-red-500/20'}`} />
+                  <span className="text-2xl font-black uppercase tracking-tighter text-white">{engineStats?.engine_status || 'Offline'}</span>
                 </div>
               </CardContent>
             </Card>
             
-            <Card className="bg-card/50 backdrop-blur border-white/10">
+            <Card className="bg-card/40 backdrop-blur border-white/5 shadow-lg">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Active Keys</CardTitle>
+                <CardTitle className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest">Active Keys</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="flex items-center gap-2">
-                  <Activity className="h-5 w-5 text-green-400" />
-                  <span className="text-2xl font-bold">{engineStats?.active_keys || 0}</span>
-                  <span className="text-xs text-muted-foreground">/ {engineStats?.total_keys || 0}</span>
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-lg bg-green-500/10 border border-green-500/20 flex items-center justify-center">
+                    <Activity className="h-5 w-5 text-green-500" />
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-2xl font-black text-white">{engineStats?.active_keys || 0}</span>
+                    <span className="text-[10px] uppercase font-bold text-muted-foreground opacity-50">of {engineStats?.total_keys || 0} total</span>
+                  </div>
                 </div>
               </CardContent>
             </Card>
 
-            <Card className="bg-card/50 backdrop-blur border-white/10">
+            <Card className="bg-card/40 backdrop-blur border-white/5 shadow-lg">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Dead Keys</CardTitle>
+                <CardTitle className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest">Dead Keys</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="flex items-center gap-2">
-                  <AlertTriangle className="h-5 w-5 text-red-400" />
-                  <span className="text-2xl font-bold">{engineStats?.dead_keys || 0}</span>
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+                    <AlertTriangle className="h-5 w-5 text-red-500" />
+                  </div>
+                  <span className="text-2xl font-black text-white">{engineStats?.dead_keys || 0}</span>
                 </div>
               </CardContent>
             </Card>
 
-            <Card className="bg-card/50 backdrop-blur border-white/10">
+            <Card className="bg-card/40 backdrop-blur border-white/5 shadow-lg">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Providers</CardTitle>
+                <CardTitle className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest">Providers</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="flex gap-2 text-xs flex-wrap">
