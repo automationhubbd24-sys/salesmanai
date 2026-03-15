@@ -182,7 +182,8 @@ export default function AdminPage() {
   const [enginePage, setEnginePage] = useState(1);
   const [engineTotal, setEngineTotal] = useState(0);
   const [engineSearch, setEngineSearch] = useState("");
-  const [engineStatusFilter, setEngineStatusFilter] = useState("all"); // New: Filter for Active/Locked/Dead
+  const [engineStatusFilter, setEngineStatusFilter] = useState("all"); 
+  const [engineItemsPerPage] = useState(10); // Client-side pagination limit
 
   // Countdown Helper for Locked Keys
   const [now, setNow] = useState(Date.now());
@@ -194,12 +195,18 @@ export default function AdminPage() {
   const formatCountdown = (cooldownUntil: string) => {
     const expiry = new Date(cooldownUntil).getTime();
     const diff = expiry - now;
+    
+    // If diff is negative but cooldown_until exists, it might be a clock sync issue
+    // but the server will reset it on next fetch anyway.
     if (diff <= 0) return "Ready";
     
     const hours = Math.floor(diff / (1000 * 60 * 60));
     const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
     const secs = Math.floor((diff % (1000 * 60)) / 1000);
-    return `${hours}h ${mins}m ${secs}s`;
+    
+    if (hours > 0) return `${hours}h ${mins}m ${secs}s`;
+    if (mins > 0) return `${mins}m ${secs}s`;
+    return `${secs}s`;
   };
   const [engineRevealedKeys, setEngineRevealedKeys] = useState<Record<number, string>>({});
   const [rotationLogs, setRotationLogs] = useState<any[]>([]);
@@ -554,14 +561,13 @@ export default function AdminPage() {
       const token = getAdminToken();
       if (!token) return;
 
-      // Fetch Stats with Provider Filter and Pagination
-      let statsUrl = `${BACKEND_URL}/api/api-engine/stats?page=${page}&limit=10`;
+      // Fetch Stats with Provider Filter
+      // Fetching all keys (limit 1000) to handle local filtering/searching for the entire pool
+      let statsUrl = `${BACKEND_URL}/api/api-engine/stats?page=1&limit=1000`;
       if (engineFilter !== "all") {
         statsUrl += `&provider=${engineFilter}`;
       }
-      if (engineSearch.trim()) {
-        statsUrl += `&q=${encodeURIComponent(engineSearch.trim())}`;
-      }
+      // REMOVED &q= to handle searching locally for a better user experience
 
       const statsRes = await fetch(statsUrl, {
         headers: { Authorization: `Bearer ${token}` }
@@ -2492,251 +2498,225 @@ export default function AdminPage() {
             </CardContent>
           </Card>
 
-          {/* Key List */}
+          {/* Key List (Active Rotation Pool) */}
           <Card className="bg-card/40 backdrop-blur-md border-white/5 shadow-2xl overflow-hidden">
-            <CardHeader className="border-b border-white/5 bg-white/5 py-6">
+            <CardHeader className="border-b border-white/5 bg-white/5 pb-4">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
-                  <CardTitle className="text-xl font-bold flex items-center gap-2">
-                    <Server className="h-5 w-5 text-blue-400" />
-                    Active Key Rotation Pool
+                  <CardTitle className="text-lg font-bold flex items-center gap-2">
+                    <Activity className="h-5 w-5 text-[#00ff88]" />
+                    Active Rotation Pool
                   </CardTitle>
-                  <CardDescription className="text-xs">Manage API keys used by the rotation engine</CardDescription>
+                  <CardDescription>Live status of all keys in the rotation system (Refreshes every 10s)</CardDescription>
                 </div>
-                <div className="flex flex-wrap items-center gap-4">
-                  {/* Supabase-style Status Filter Tabs */}
-                  <div className="flex items-center bg-black/40 border border-white/5 p-1 rounded-lg">
-                    {[
-                      { id: 'all', label: 'All', icon: <DatabaseIcon className="h-3 w-3" /> },
-                      { id: 'active', label: 'Active', icon: <Activity className="h-3 w-3" /> },
-                      { id: 'locked', label: 'Locked', icon: <AlertTriangle className="h-3 w-3" /> },
-                      { id: 'dead', label: 'Dead', icon: <XCircle className="h-3 w-3" /> },
-                    ].map((tab) => (
-                      <button
-                        key={tab.id}
-                        onClick={() => setEngineStatusFilter(tab.id)}
-                        className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all ${
-                          engineStatusFilter === tab.id 
-                            ? "bg-white/10 text-white shadow-sm" 
-                            : "text-muted-foreground hover:text-white hover:bg-white/5"
-                        }`}
-                      >
-                        {tab.icon}
-                        {tab.label}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="h-8 w-[1px] bg-white/5 mx-1 hidden md:block" />
-
-                  <div className="relative group">
-                    <Input
-                      placeholder="Search key or provider..."
-                      className="h-9 w-48 bg-black/40 border-white/10 pl-9 text-xs focus:ring-1 focus:ring-blue-500/50 transition-all"
+                <div className="flex items-center gap-3">
+                  <div className="relative">
+                    <Input 
+                      placeholder="Search keys..." 
+                      className="h-9 w-64 bg-black/40 border-white/10 pl-9 text-xs"
                       value={engineSearch}
                       onChange={(e) => setEngineSearch(e.target.value)}
                     />
-                    <svg className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground group-focus-within:text-blue-400 transition-colors" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                    <svg className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
                   </div>
-
-                  <Select value={engineFilter} onValueChange={setEngineFilter}>
-                    <SelectTrigger className="h-9 w-36 bg-black/40 border-white/10 text-xs">
-                      <SelectValue placeholder="Provider" />
+                  <Select value={engineStatusFilter} onValueChange={setEngineStatusFilter}>
+                    <SelectTrigger className="h-9 w-32 bg-black/40 border-white/10 text-xs">
+                      <SelectValue placeholder="Status" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">All Providers</SelectItem>
-                      <SelectItem value="google">Google Gemini</SelectItem>
-                      <SelectItem value="openrouter">OpenRouter</SelectItem>
-                      <SelectItem value="groq">Groq</SelectItem>
-                      <SelectItem value="openai">OpenAI</SelectItem>
-                      <SelectItem value="mistral">Mistral</SelectItem>
+                      <SelectItem value="all">All Status</SelectItem>
+                      <SelectItem value="active">Healthy</SelectItem>
+                      <SelectItem value="locked">Locked</SelectItem>
+                      <SelectItem value="dead">Dead</SelectItem>
                     </SelectContent>
                   </Select>
-
-                  <Button variant="outline" size="sm" className="h-9 border-white/10 bg-black/20 text-xs font-bold uppercase hover:bg-white/5" onClick={() => fetchEngineData(enginePage)}>
-                    <RefreshCw className={`h-3.5 w-3.5 mr-2 ${engineLoading ? 'animate-spin' : ''}`} />
-                    Sync Pool
+                  <Button variant="outline" size="icon" className="h-9 w-9 border-white/10 bg-black/20" onClick={() => fetchEngineData(1)}>
+                    <RefreshCw className={`h-4 w-4 ${engineStatsLoading ? 'animate-spin' : ''}`} />
                   </Button>
                 </div>
               </div>
             </CardHeader>
             <CardContent className="p-0">
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader className="bg-white/5">
-                    <TableRow className="hover:bg-transparent border-white/10">
-                      <TableHead className="py-4 text-[10px] uppercase font-bold text-muted-foreground">Provider</TableHead>
-                      <TableHead className="py-4 text-[10px] uppercase font-bold text-muted-foreground">Key Preview</TableHead>
-                      <TableHead className="py-4 text-[10px] uppercase font-bold text-muted-foreground">Health Status</TableHead>
-                      <TableHead className="py-4 text-[10px] uppercase font-bold text-muted-foreground">Usage Today</TableHead>
-                      <TableHead className="py-4 text-right text-[10px] uppercase font-bold text-muted-foreground">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {engineKeys
-                      .filter(k => {
-                        const matchesSearch = k.api.toLowerCase().includes(engineSearch.toLowerCase()) || k.provider.toLowerCase().includes(engineSearch.toLowerCase());
-                        const isLocked = k.cooldown_until && new Date(k.cooldown_until).getTime() > now;
-                        
-                        let matchesStatus = true;
-                        if (engineStatusFilter === 'active') matchesStatus = k.status === 'active' && !isLocked;
-                        else if (engineStatusFilter === 'locked') matchesStatus = !!isLocked;
-                        else if (engineStatusFilter === 'dead') matchesStatus = k.status !== 'active';
-                        
-                        return matchesSearch && matchesStatus;
-                      })
-                      .map((k) => {
-                        const revealedKey = engineRevealedKeys[k.id];
-                        const isLocked = k.cooldown_until && new Date(k.cooldown_until).getTime() > now;
-                        return (
-                          <TableRow key={k.id} className="hover:bg-white/5 border-white/5 transition-colors group">
-                            <TableCell className="py-4">
-                              <Badge variant="outline" className="text-[10px] font-black uppercase tracking-widest h-5 border-white/10 text-white/80">
-                                {k.provider}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="py-4">
-                              <code className="text-xs font-mono text-muted-foreground group-hover:text-blue-400 transition-colors">
-                                {revealedKey || k.api}
-                              </code>
-                            </TableCell>
-                            <TableCell className="py-4">
-                              {isLocked ? (
-                                <div className="flex flex-col gap-2 min-w-[140px]">
-                                  <div className="flex items-center justify-between">
-                                    <Badge variant="outline" className="bg-amber-500/10 text-amber-500 border-amber-500/20 h-5 text-[9px] font-black uppercase tracking-tighter">
-                                      Locked (24h)
-                                    </Badge>
-                                    <span className="text-[10px] text-amber-500/80 font-mono font-bold">
-                                      {formatCountdown(k.cooldown_until!)}
-                                    </span>
-                                  </div>
-                                  {/* Progress Bar for Cooldown (Visual) */}
-                                  <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
-                                    <div 
-                                      className="h-full bg-amber-500/50 transition-all duration-1000"
-                                      style={{ 
-                                        width: `${Math.max(0, Math.min(100, (new Date(k.cooldown_until!).getTime() - now) / (24 * 60 * 60 * 1000) * 100))}%` 
-                                      }}
-                                    />
-                                  </div>
-                                </div>
-                              ) : (
-                                <div className="flex items-center gap-2">
-                                  <div className={`h-2 w-2 rounded-full ${k.status === 'active' ? 'bg-[#00ff88] shadow-[0_0_8px_rgba(0,255,136,0.5)]' : 'bg-red-500'}`} />
-                                  <Badge 
-                                    variant="outline" 
-                                    className={`text-[10px] font-black uppercase tracking-tighter h-5 ${k.status === 'active' ? 'border-green-500/30 text-green-500 bg-green-500/5' : 'border-red-500/30 text-red-500 bg-red-500/5'}`}
-                                  >
-                                    {k.status === 'active' ? 'Healthy' : 'Dead'}
-                                  </Badge>
-                                </div>
-                              )}
-                            </TableCell>
-                            <TableCell className="py-4">
-                              <div className="flex flex-col">
-                                <span className="font-black text-white text-lg leading-none">{k.usage_today || 0}</span>
-                                <span className="text-[9px] uppercase font-bold text-muted-foreground opacity-40 mt-1">Total Req</span>
-                              </div>
-                            </TableCell>
-                            <TableCell className="py-4 text-right">
-                              <div className="flex justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8 text-muted-foreground hover:text-white hover:bg-white/5"
-                                  onClick={() => {
-                                    navigator.clipboard.writeText(revealedKey || k.api);
-                                    toast.success("Key copied to clipboard");
-                                  }}
-                                  title="Copy Key"
-                                >
-                                  <svg className="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8 text-blue-400 hover:text-blue-300 hover:bg-blue-500/10"
-                                  onClick={() => toggleRevealKey(k.id)}
-                                  title="Show/Hide Key"
-                                >
-                                  <Eye className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8 text-red-400 hover:text-red-300 hover:bg-red-500/10"
-                                  onClick={() => deleteEngineKey(k.id)}
-                                  title="Delete Key"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    {engineKeys.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={5} className="h-64 text-center text-muted-foreground italic">
-                          No API keys found in rotation pool.
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
+              {(() => {
+                const filtered = engineKeys.filter(k => {
+                  const matchesSearch = k.api.toLowerCase().includes(engineSearch.toLowerCase()) || k.provider.toLowerCase().includes(engineSearch.toLowerCase());
+                  const isLocked = k.cooldown_until && new Date(k.cooldown_until).getTime() > now;
+                  
+                  let matchesStatus = true;
+                  if (engineStatusFilter === 'active') matchesStatus = k.status === 'active' && !isLocked;
+                  else if (engineStatusFilter === 'locked') matchesStatus = !!isLocked;
+                  else if (engineStatusFilter === 'dead') matchesStatus = k.status !== 'active';
+                  
+                  return matchesSearch && matchesStatus;
+                });
 
-              {/* Pagination Controls */}
-              {engineTotal > 10 && (
-                <div className="flex items-center justify-between mt-4 px-2">
-                  <div className="text-xs text-muted-foreground">
-                    Showing {(enginePage - 1) * 10 + 1} to {Math.min(enginePage * 10, engineTotal)} of {engineTotal} keys
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      disabled={enginePage <= 1}
-                      onClick={() => {
-                        setEnginePage(enginePage - 1);
-                        fetchEngineData(enginePage - 1);
-                      }}
-                      className="h-8 text-xs"
-                    >
-                      <ChevronLeft className="h-4 w-4 mr-1" /> Previous
-                    </Button>
-                    <div className="flex items-center gap-1">
-                      {Array.from({ length: Math.ceil(engineTotal / 10) }).map((_, i) => (
-                        <Button
-                          key={i}
-                          variant={enginePage === i + 1 ? "default" : "ghost"}
-                          size="sm"
-                          onClick={() => {
-                            setEnginePage(i + 1);
-                            fetchEngineData(i + 1);
-                          }}
-                          className="h-8 w-8 p-0 text-xs"
-                        >
-                          {i + 1}
-                        </Button>
-                      )).slice(Math.max(0, enginePage - 3), Math.min(Math.ceil(engineTotal / 10), enginePage + 2))}
+                const startIndex = (enginePage - 1) * engineItemsPerPage;
+                const paginated = filtered.slice(startIndex, startIndex + engineItemsPerPage);
+                const totalFiltered = filtered.length;
+                const totalPages = Math.ceil(totalFiltered / engineItemsPerPage);
+
+                return (
+                  <>
+                    <div className="overflow-x-auto">
+                      <Table>
+                        <TableHeader className="bg-white/5">
+                          <TableRow className="hover:bg-transparent border-white/10">
+                            <TableHead className="py-4 text-[10px] uppercase font-bold text-muted-foreground">Provider</TableHead>
+                            <TableHead className="py-4 text-[10px] uppercase font-bold text-muted-foreground">Key Preview</TableHead>
+                            <TableHead className="py-4 text-[10px] uppercase font-bold text-muted-foreground">Health Status</TableHead>
+                            <TableHead className="py-4 text-[10px] uppercase font-bold text-muted-foreground">Usage Today</TableHead>
+                            <TableHead className="py-4 text-right text-[10px] uppercase font-bold text-muted-foreground">Actions</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {paginated.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={5} className="h-64 text-center text-muted-foreground italic">
+                                {engineSearch ? `No keys found matching "${engineSearch}"` : "No API keys found in rotation pool."}
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            paginated.map((k) => {
+                              const revealedKey = engineRevealedKeys[k.id];
+                              const isLocked = k.cooldown_until && new Date(k.cooldown_until).getTime() > now;
+                              return (
+                                <TableRow key={k.id} className="hover:bg-white/5 border-white/5 transition-colors group">
+                                  <TableCell className="py-4">
+                                    <Badge variant="outline" className="text-[10px] font-black uppercase tracking-widest h-5 border-white/10 text-white/80">
+                                      {k.provider}
+                                    </Badge>
+                                  </TableCell>
+                                  <TableCell className="py-4">
+                                    <code className="text-xs font-mono text-muted-foreground group-hover:text-blue-400 transition-colors">
+                                      {revealedKey || (k.api.length > 15 ? k.api.substring(0, 12) + '***' : k.api)}
+                                    </code>
+                                  </TableCell>
+                                  <TableCell className="py-4">
+                                    {isLocked ? (
+                                      <div className="flex flex-col gap-2 min-w-[140px]">
+                                        <div className="flex items-center justify-between">
+                                          <Badge variant="outline" className="bg-amber-500/10 text-amber-500 border-amber-500/20 h-5 text-[9px] font-black uppercase tracking-tighter">
+                                            Locked (24h)
+                                          </Badge>
+                                          <span className="text-[10px] text-amber-500/80 font-mono font-bold">
+                                            {formatCountdown(k.cooldown_until!)}
+                                          </span>
+                                        </div>
+                                        <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
+                                          <div 
+                                            className="h-full bg-amber-500/50 transition-all duration-1000"
+                                            style={{ 
+                                              width: `${Math.max(0, Math.min(100, (new Date(k.cooldown_until!).getTime() - now) / (24 * 60 * 60 * 1000) * 100))}%` 
+                                            }}
+                                          />
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="flex items-center gap-2">
+                                        <div className={`h-2 w-2 rounded-full ${k.status === 'active' ? 'bg-[#00ff88] shadow-[0_0_8px_rgba(0,255,136,0.5)]' : 'bg-red-500'}`} />
+                                        <Badge 
+                                          variant="outline" 
+                                          className={`text-[10px] font-black uppercase tracking-tighter h-5 ${k.status === 'active' ? 'border-green-500/30 text-green-500 bg-green-500/5' : 'border-red-500/30 text-red-500 bg-red-500/5'}`}
+                                        >
+                                          {k.status === 'active' ? 'Healthy' : 'Dead'}
+                                        </Badge>
+                                      </div>
+                                    )}
+                                  </TableCell>
+                                  <TableCell className="py-4">
+                                    <div className="flex flex-col">
+                                      <span className="font-black text-white text-lg leading-none">{k.usage_today || 0}</span>
+                                      <span className="text-[9px] uppercase font-bold text-muted-foreground opacity-40 mt-1">Total Req</span>
+                                    </div>
+                                  </TableCell>
+                                  <TableCell className="py-4 text-right">
+                                    <div className="flex justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8 text-muted-foreground hover:text-white hover:bg-white/5"
+                                        onClick={() => {
+                                          navigator.clipboard.writeText(revealedKey || k.api);
+                                          toast.success("Key copied to clipboard");
+                                        }}
+                                        title="Copy Key"
+                                      >
+                                        <svg className="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>
+                                      </Button>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8 text-blue-400 hover:text-blue-300 hover:bg-blue-500/10"
+                                        onClick={() => toggleRevealKey(k.id)}
+                                        title="Show/Hide Key"
+                                      >
+                                        <Eye className="h-4 w-4" />
+                                      </Button>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8 text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                                        onClick={() => deleteEngineKey(k.id)}
+                                        title="Delete Key"
+                                      >
+                                        <Trash2 className="h-4 w-4" />
+                                      </Button>
+                                    </div>
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })
+                          )}
+                        </TableBody>
+                      </Table>
                     </div>
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      disabled={enginePage >= Math.ceil(engineTotal / 10)}
-                      onClick={() => {
-                        setEnginePage(enginePage + 1);
-                        fetchEngineData(enginePage + 1);
-                      }}
-                      className="h-8 text-xs"
-                    >
-                      Next <ChevronRight className="h-4 w-4 ml-1" />
-                    </Button>
-                  </div>
-                </div>
-              )}
+
+                    {/* Pagination Controls */}
+                    {totalFiltered > engineItemsPerPage && (
+                      <div className="flex items-center justify-between mt-4 px-4 pb-4">
+                        <div className="text-[10px] uppercase font-black text-muted-foreground tracking-widest">
+                          Showing {startIndex + 1} to {Math.min(startIndex + engineItemsPerPage, totalFiltered)} of {totalFiltered} Keys
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            disabled={enginePage <= 1}
+                            onClick={() => setEnginePage(enginePage - 1)}
+                            className="h-8 text-[10px] font-bold uppercase border-white/10 bg-black/20"
+                          >
+                            <ChevronLeft className="h-3 w-3 mr-1" /> Prev
+                          </Button>
+                          <div className="flex items-center gap-1">
+                            {Array.from({ length: totalPages }).map((_, i) => (
+                              <Button
+                                key={i}
+                                variant={enginePage === i + 1 ? "default" : "ghost"}
+                                size="sm"
+                                onClick={() => setEnginePage(i + 1)}
+                                className={`h-8 w-8 p-0 text-[10px] font-bold ${enginePage === i + 1 ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-white hover:bg-white/5'}`}
+                              >
+                                {i + 1}
+                              </Button>
+                            )).slice(Math.max(0, enginePage - 3), Math.min(totalPages, enginePage + 2))}
+                          </div>
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            disabled={enginePage >= totalPages}
+                            onClick={() => setEnginePage(enginePage + 1)}
+                            className="h-8 text-[10px] font-bold uppercase border-white/10 bg-black/20"
+                          >
+                            Next <ChevronRight className="h-3 w-3 ml-1" />
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+            </CardContent>
+          </Card>
             </CardContent>
           </Card>
 

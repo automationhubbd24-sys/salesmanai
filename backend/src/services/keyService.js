@@ -66,13 +66,13 @@ async function updateKeyCache(force = false) {
         }
 
         const result = await pgClient.query(
-            "SELECT * FROM api_list WHERE status = 'active' ORDER BY id ASC"
+            "SELECT * FROM api_list ORDER BY id ASC"
         );
         
         const rows = Array.isArray(result.rows) ? result.rows : [];
         
-        // --- RE-BUILD MAPS WITH ALL ACTIVE STATUS KEYS (Including those in Cooldown) ---
-        // This ensures the UI always sees the latest state from Postgres
+        // --- RE-BUILD MAPS WITH ALL KEYS (Including those in Cooldown/Dead) ---
+        // This ensures the UI always sees the latest state for ALL keys in the database
         const newMap = new Map();
         const providerMap = new Map();
         const modelMap = new Map();
@@ -81,22 +81,26 @@ async function updateKeyCache(force = false) {
         rows.forEach(k => {
             newMap.set(k.api, k);
             
-            // Provider Index
-            const p = (k.provider || 'unknown').toLowerCase();
-            if (!providerMap.has(p)) providerMap.set(p, []);
-            providerMap.get(p).push(k);
+            // Only index for rotation if status is 'active' or 'locked' (locked might be released later)
+            if (k.status === 'active' || k.status === 'locked') {
+                // Provider Index
+                const p = (k.provider || 'unknown').toLowerCase();
+                if (!providerMap.has(p)) providerMap.set(p, []);
+                providerMap.get(p).push(k);
 
-            // Model Index (if set)
-            if (k.model) {
-                const m = k.model.toLowerCase();
-                if (!modelMap.has(m)) modelMap.set(m, []);
-                modelMap.get(m).push(k);
+                // Model Index (if set)
+                if (k.model) {
+                    const m = k.model.toLowerCase();
+                    if (!modelMap.has(m)) modelMap.set(m, []);
+                    modelMap.get(m).push(k);
+                }
             }
         });
 
         // --- FILTER FOR ENGINE (Rotation Pool) ---
-        // Only keep keys that are NOT currently in cooldown
+        // Only keep keys that are 'active' AND NOT currently in cooldown
         const activeRows = rows.filter(k => {
+            if (k.status !== 'active') return false;
             if (!k.cooldown_until) return true;
             const cooldownExpiry = new Date(k.cooldown_until).getTime();
             return nowMs > cooldownExpiry;
@@ -293,17 +297,10 @@ async function markKeyAsSuspended(key, reason = 'suspended') {
 
 async function markKeyAsQuotaExceeded(key) {
     if (!key) return;
-    // --- PERSISTENT 24H LOCK ---
-    // Calculate time until next midnight (UTC) + extra safety buffer
-    const now = new Date();
-    const tomorrow = new Date(now);
-    tomorrow.setUTCHours(24, 0, 0, 0); 
-    const duration = tomorrow.getTime() - now.getTime();
-    const safeDuration = duration + (60 * 60 * 1000); // +1 hour buffer
-    
-    // markKeyAsDead now handles DB persistence
-    console.log(`[KeyService] 🔒 Quota exceeded for ${key.substring(0,8)}... Locking until UTC Midnight + 1h (Duration: ${(safeDuration/1000/3600).toFixed(1)}h)`);
-    await markKeyAsDead(key, safeDuration, 'quota_exceeded_24h');
+    // --- PERSISTENT STRICT 24H LOCK ---
+    const strictDuration = 24 * 60 * 60 * 1000;
+    console.log(`[KeyService] 🔒 Quota exceeded for ${key.substring(0,8)}... Locking for strict 24 hours.`);
+    await markKeyAsDead(key, strictDuration, 'quota_exceeded_24h');
 }
 
 // Helper to lock a model globally for a specific duration
@@ -416,7 +413,9 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
     
     // Check if rpdLimit is hit
     if (rpdLimit > 0 && keyData.last_date_checked === today && effectiveUsageToday >= rpdLimit) {
-        console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPD limit (${rpdLimit}). Usage: ${effectiveUsageToday}`);
+        console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPD limit (${rpdLimit}). Usage: ${effectiveUsageToday}. Marking as Locked.`);
+        // Proactively lock it for 24h if it hit the limit in isKeyWithinLimits
+        markKeyAsDead(keyData.api, 24 * 60 * 60 * 1000, 'rpd_limit_reached_strict').catch(e => {});
         return false;
     }
 
@@ -698,11 +697,22 @@ async function getSmartKey(provider, model = 'default') {
         // --- ENFORCE RPD FROM FRONTEND ---
         const manual = model !== 'default' ? dynamicLimits.get(String(model)) : null;
         if (manual && manual.rpd > 0) {
-            if (candidateKey.last_date_checked === today && (candidateKey.usage_today || 0) >= manual.rpd) {
-                console.warn(`[KeyService] ⛔ Key ${candidateKey.api.substring(0,8)}... hit Frontend RPD limit (${manual.rpd}). Locking for 24h.`);
-                // Use the async quota exceeded helper
-                markKeyAsQuotaExceeded(candidateKey.api); 
-                continue; // Skip this key and try next
+            const pending = pendingUpdates.get(candidateKey.api) || { usage_delta: 0 };
+            // Correctly calculate usage: if date is different, start from 0
+            const dbUsage = candidateKey.last_date_checked === today ? (candidateKey.usage_today || 0) : 0;
+            const effectiveUsageToday = dbUsage + pending.usage_delta;
+
+            if (effectiveUsageToday >= manual.rpd) {
+                console.warn(`[KeyService] ⛔ Key ${candidateKey.api.substring(0,8)}... hit Frontend RPD limit (${manual.rpd}). Usage: ${effectiveUsageToday}. Locking for 24h.`);
+                // Update in-memory state immediately to prevent other requests from picking it up
+                candidateKey.status = 'locked';
+                const twentyFourHours = 24 * 60 * 60 * 1000;
+                const expiry = new Date(Date.now() + twentyFourHours).toISOString();
+                candidateKey.cooldown_until = expiry;
+                
+                // MUST await the lock to ensure DB is updated before next request picks it up
+                await markKeyAsDead(candidateKey.api, twentyFourHours, 'frontend_rpd_limit'); 
+                continue; 
             }
         }
 
@@ -902,7 +912,7 @@ module.exports = {
                 return {
                     id: k.id,
                     provider: k.provider,
-                    api: k.api.substring(0, 12) + '***', // Mask key for safety
+                    api: k.api, // Send full API key for searching (Admin Panel only)
                     status: pending.status || k.status,
                     usage_today: (k.usage_today || 0) + (pending.usage_delta || 0),
                     last_used_at: k.last_used_at,
