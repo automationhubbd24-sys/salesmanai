@@ -33,16 +33,16 @@ router.get('/pages', async (req, res) => {
         // 2. Fetch Personal Pages
         // Only if Personal Context (no requestedOwner or requestedOwner is self)
         let myPages = [];
-        if (!requestedOwner || requestedOwner === userEmail) {
+        if (!requestedOwner || (userEmail && requestedOwner.toLowerCase() === userEmail.toLowerCase())) {
             const { rows } = await pgClient.query(
                 `SELECT p.*, u.message_credit AS user_message_credit
                  FROM page_access_token_message p
                  LEFT JOIN user_configs u ON u.user_id::text = p.user_id::text
-                 WHERE p.email = $1`,
-                [userEmail]
+                 WHERE LOWER(p.email) = LOWER($1) OR p.user_id::text = $2`,
+                [userEmail, userId]
             );
             myPages = rows;
-            console.log(`[GET /pages] Personal Pages found: ${myPages.length}`);
+            console.log(`[GET /pages] Personal Pages found: ${myPages.length} for ${userEmail}`);
         }
 
         res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
