@@ -292,16 +292,16 @@ async function markKeyAsSuspended(key, reason = 'suspended') {
 
 async function markKeyAsQuotaExceeded(key) {
     if (!key) return;
-    // Calculate time until next midnight (UTC)
+    // --- PERSISTENT 24H LOCK ---
+    // Calculate time until next midnight (UTC) + extra safety buffer
     const now = new Date();
     const tomorrow = new Date(now);
-    tomorrow.setUTCHours(24, 0, 0, 0); // Next UTC Midnight
+    tomorrow.setUTCHours(24, 0, 0, 0); 
     const duration = tomorrow.getTime() - now.getTime();
+    const safeDuration = duration + (60 * 60 * 1000); // +1 hour buffer
     
-    // Add 1 hour buffer to be safe
-    const safeDuration = duration + (60 * 60 * 1000);
-    
-    await markKeyAsDead(key, safeDuration, 'quota_exceeded');
+    // markKeyAsDead now handles DB persistence
+    await markKeyAsDead(key, safeDuration, 'quota_exceeded_24h');
 }
 
 // Helper to lock a model globally for a specific duration
@@ -677,10 +677,21 @@ async function getSmartKey(provider, model = 'default') {
     const minGapMs = KEY_MIN_GAP_MS > 0 ? (KEY_MIN_GAP_MS + Math.floor(Math.random() * (KEY_MIN_GAP_JITTER_MS + 1))) : 0;
     const now = Date.now();
 
-    // Iterate through pre-sorted keys (O(N) check in worst case, but O(1) normally)
+    // Check unusable (RPM/RPD)
     for (let i = 0; i < validKeys.length; i++) {
         const actualIndex = (currentIndex + i) % validKeys.length;
         const candidateKey = validKeys[actualIndex];
+
+        // --- ENFORCE RPD FROM FRONTEND ---
+        const manual = model !== 'default' ? dynamicLimits.get(String(model)) : null;
+        if (manual && manual.rpd > 0) {
+            if (candidateKey.last_date_checked === today && (candidateKey.usage_today || 0) >= manual.rpd) {
+                console.warn(`[KeyService] ⛔ Key ${candidateKey.api.substring(0,8)}... hit Frontend RPD limit (${manual.rpd}). Locking for 24h.`);
+                // Use the async quota exceeded helper
+                markKeyAsQuotaExceeded(candidateKey.api); 
+                continue; // Skip this key and try next
+            }
+        }
 
         if (minGapMs > 0 && candidateKey.last_used_at) {
             const lastUsedMs = new Date(candidateKey.last_used_at).getTime();

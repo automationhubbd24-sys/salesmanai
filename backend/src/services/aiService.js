@@ -2139,64 +2139,45 @@ ${productContext || "No specific product context provided yet."}
         });
     }
 
-    // --- FALLBACK & RETRY LOGIC FOR SYSTEM ENGINES ---
+    // --- FALLBACK & RETRY LOGIC FOR SYSTEM ENGINES (SAME MODEL FIRST) ---
     let retryCount = 0;
-    const MAX_RETRIES = 2; // Try up to 2 different keys/models
+    const MAX_RETRIES = 10; // Try more keys if we have many
     let lastError = null;
+    let attemptedKeys = new Set();
 
     while (retryCount <= MAX_RETRIES) {
         let currentModel = defaultModel;
         let apiKey = null;
 
         try {
-            if (retryCount > 0) {
-                console.log(`[AI] Retry attempt ${retryCount} starting...`);
-                // On retry, we might want to slightly tweak the model or just let the smart rotation handle it
-                // If it failed once, we clear the specific key cache for this process to get a fresh key
-                if (keyService.clearProcessKeyCache) keyService.clearProcessKeyCache();
-            }
-
             // 1. Resolve Modality for Chat Engine
-            let isVision = false;
+            let isVision = (imageUrls && imageUrls.length > 0);
             let isAudio = false; 
-            if (imageUrls && imageUrls.length > 0) isVision = true;
 
             let resolved = await resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio);
             let finalProvider = resolved.finalProvider;
             let finalModel = resolved.finalModel;
 
-            // If it's a retry, we might want to fallback from Gemini to OpenRouter or vice-versa
-            // BRANDED ENGINE FAILOVER: Pro -> Flash -> Lite
-            if (retryCount > 0) {
-                if (resolved.targetEngineName === 'salesmanchatbot-pro') {
-                    console.log(`[AI] Failover: Pro failed, switching to Flash...`);
-                    resolved = await resolveSalesmanchatbotEngine(pageConfig, 'salesmanchatbot', 'salesmanchatbot-flash', isVision, isAudio);
-                } else if (resolved.targetEngineName === 'salesmanchatbot-flash') {
-                    console.log(`[AI] Failover: Flash failed, switching to Lite...`);
-                    resolved = await resolveSalesmanchatbotEngine(pageConfig, 'salesmanchatbot', 'salesmanchatbot-lite', isVision, isAudio);
-                } else {
-                    // Standard fallback if not using branded engines or already on Lite
-                    if (finalProvider === 'google') finalProvider = 'openrouter';
-                    else if (finalProvider === 'openrouter') finalProvider = 'google';
-                }
-                
-                finalModel = resolved.finalModel;
-                finalProvider = resolved.finalProvider;
-            }
-
             currentModel = finalModel;
+            
+            // 2. Get Next Smart Key (Round-Robin)
             let keyData = await keyService.getSmartKey(finalProvider, currentModel);
             
-            if (!keyData || !keyData.key) {
+            if (!keyData || !keyData.key || attemptedKeys.has(keyData.key)) {
+                 // Try fallback to default if no specific model keys
                  keyData = await keyService.getSmartKey(finalProvider, 'default');
             }
 
-            if (!keyData || !keyData.key) {
-                throw new Error(`No active keys for ${finalProvider}`);
+            if (!keyData || !keyData.key || attemptedKeys.has(keyData.key)) {
+                // If we still have no key, it means all keys for this provider/model are locked
+                throw new Error(`All API keys for ${finalProvider}/${currentModel} are currently LOCKED. Please add more keys or wait 24h.`);
             }
 
             apiKey = keyData.key;
+            attemptedKeys.add(apiKey);
+
             let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
+            // ... baseURL logic remains ...
             
             if (finalProvider === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
             else if (finalProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
