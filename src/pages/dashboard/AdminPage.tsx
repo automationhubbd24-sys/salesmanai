@@ -2386,13 +2386,7 @@ export default function AdminPage() {
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-col">
-                            <span className="font-medium text-primary">{k.usage_today || 0}</span>
-                            {/* Show limit if explicitly set on key, OR show global limit if available */}
-                            {(k.rpd_limit && k.rpd_limit > 0) ? (
-                                <span className="text-[9px] text-muted-foreground bg-white/5 px-1 rounded w-fit">Limit: {k.rpd_limit} RPD</span>
-                            ) : (configValues.text_rpd && configValues.text_rpd > 0) ? (
-                                <span className="text-[9px] text-muted-foreground/60 bg-white/5 px-1 rounded w-fit">Global: {configValues.text_rpd} RPD</span>
-                            ) : null}
+                            <span className="font-medium text-primary text-lg">{k.usage_today || 0}</span>
                           </div>
                         </TableCell>
                         <TableCell className="text-right">
