@@ -887,21 +887,11 @@ module.exports = {
                 const summary = getKeyUsageSummary(k.api);
                 const pending = pendingUpdates.get(k.api) || { usage_delta: 0 };
                 
-                // --- REAL-TIME COOLDOWN CHECK ---
-                // If the cooldown timestamp is in the past, treat it as active immediately
-                let currentCooldown = pending.cooldown_until || k.cooldown_until;
-                let currentStatus = pending.status || k.status;
-                
-                if (currentCooldown && new Date(currentCooldown).getTime() <= Date.now()) {
-                    currentCooldown = null;
-                    currentStatus = 'active';
-                }
-
                 return {
                     id: k.id,
                     provider: k.provider,
                     api: k.api.substring(0, 12) + '***', // Mask key for safety
-                    status: currentStatus,
+                    status: pending.status || k.status,
                     usage_today: (k.usage_today || 0) + (pending.usage_delta || 0),
                     last_used_at: k.last_used_at,
                     rph_limit: k.rph_limit,
@@ -909,7 +899,7 @@ module.exports = {
                     rpd_limit: k.rpd_limit,
                     current_rpm: summary.rpm,
                     current_rph: summary.rph,
-                    cooldown_until: currentCooldown
+                    cooldown_until: pending.cooldown_until || k.cooldown_until
                 };
             })
         };

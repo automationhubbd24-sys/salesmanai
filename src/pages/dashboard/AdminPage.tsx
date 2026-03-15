@@ -214,9 +214,9 @@ export default function AdminPage() {
   const [dbLoading, setDbLoading] = useState(false);
   const [dbLimit] = useState(50);
   const [dbOffset, setDbOffset] = useState(0);
+  const [dbSearch, setDbSearch] = useState("");
   const [dbError, setDbError] = useState<string | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [editJson, setEditJson] = useState("");
   const [editingRow, setEditingRow] = useState<any | null>(null);
   const [insertDialogOpen, setInsertDialogOpen] = useState(false);
   const [insertForm, setInsertForm] = useState<any>({});
@@ -233,6 +233,9 @@ export default function AdminPage() {
   const [newColumnName, setNewColumnName] = useState("");
   const [newColumnType, setNewColumnType] = useState("");
   const [newColumnNullable, setNewColumnNullable] = useState(true);
+
+  // Pagination for tables list
+  const [tableSearch, setTableSearch] = useState("");
 
   const [cacheConfigs, setCacheConfigs] = useState<CacheConfig[]>([]);
   const [cacheLoading, setCacheLoading] = useState(false);
@@ -857,7 +860,7 @@ export default function AdminPage() {
 
   const openEditRow = (row: any) => {
     setEditingRow(row);
-    setEditJson(JSON.stringify(row, null, 2));
+    setInsertForm({ ...row }); // Reuse insertForm for editing to have card-like feel
     setEditDialogOpen(true);
   };
 
@@ -870,7 +873,6 @@ export default function AdminPage() {
     }
     const keyValue = editingRow[keyColumn];
     try {
-      const parsed = JSON.parse(editJson);
       const token = getAdminToken();
       const res = await fetch(`${BACKEND_URL}/api/db-admin/table/${encodeURIComponent(selectedTable)}/update`, {
         method: "POST",
@@ -881,7 +883,7 @@ export default function AdminPage() {
         body: JSON.stringify({
           keyColumn,
           keyValue,
-          row: parsed,
+          row: insertForm,
         }),
       });
       const data = await res.json();
@@ -2954,125 +2956,149 @@ export default function AdminPage() {
 
         <TabsContent value="db">
           <div className="space-y-4">
-            <div className="grid gap-4 md:grid-cols-[260px,1fr]">
-              <Card className="h-full">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <DatabaseIcon className="h-5 w-5" />
+            <div className="grid gap-4 md:grid-cols-[280px,1fr]">
+              <Card className="h-full bg-card/50 border-white/5">
+                <CardHeader className="pb-4">
+                  <CardTitle className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
+                    <DatabaseIcon className="h-4 w-4" />
                     Tables
                   </CardTitle>
-                  <CardDescription>Select a table to view and edit rows</CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full mb-2"
-                    onClick={fetchDbTables}
-                    disabled={dbTablesLoading}
-                  >
-                    {dbTablesLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    Refresh Tables
-                  </Button>
-                  <Button
-                    size="sm"
-                    className="w-full mb-2"
-                    onClick={() => setCreateTableDialogOpen(true)}
-                  >
-                    Create Table
-                  </Button>
-                  <div className="border rounded-md max-h-[480px] overflow-auto">
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Input 
+                      placeholder="Filter tables..." 
+                      className="h-8 text-xs bg-black/20 border-white/10"
+                      value={tableSearch}
+                      onChange={(e) => setTableSearch(e.target.value)}
+                    />
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-1 h-8 text-[10px] uppercase font-bold"
+                        onClick={fetchDbTables}
+                        disabled={dbTablesLoading}
+                      >
+                        <RefreshCw className={`mr-1 h-3 w-3 ${dbTablesLoading ? 'animate-spin' : ''}`} />
+                        Refresh
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="flex-1 h-8 text-[10px] uppercase font-bold bg-[#00ff88] hover:bg-[#00ff88]/90 text-black"
+                        onClick={() => setCreateTableDialogOpen(true)}
+                      >
+                        <Plus className="mr-1 h-3 w-3" />
+                        Create
+                      </Button>
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-1 mt-4 max-h-[600px] overflow-y-auto custom-scrollbar pr-1">
                     {dbTables.length === 0 && !dbTablesLoading && (
-                      <div className="p-3 text-sm text-muted-foreground">No tables found in public schema.</div>
+                      <div className="p-3 text-xs text-muted-foreground text-center">No tables found.</div>
                     )}
-                    {dbTables.map((t) => (
+                    {dbTables
+                      .filter(t => t.toLowerCase().includes(tableSearch.toLowerCase()))
+                      .map((t) => (
                       <button
                         key={t}
                         onClick={() => loadTableData(t, 0)}
-                        className={`w-full text-left px-3 py-2 text-sm border-b last:border-b-0 hover:bg-muted ${
-                          selectedTable === t ? "bg-muted font-semibold" : ""
+                        className={`w-full text-left px-3 py-2 text-xs rounded-md transition-all duration-200 ${
+                          selectedTable === t 
+                            ? "bg-[#00ff88]/10 text-[#00ff88] font-bold border border-[#00ff88]/20" 
+                            : "text-muted-foreground hover:bg-white/5 hover:text-white"
                         }`}
                       >
-                        {t}
+                        <div className="flex items-center gap-2">
+                          <div className={`h-1.5 w-1.5 rounded-full ${selectedTable === t ? 'bg-[#00ff88]' : 'bg-transparent'}`} />
+                          {t}
+                        </div>
                       </button>
                     ))}
                   </div>
                 </CardContent>
               </Card>
 
-              <Card className="h-full">
-                <CardHeader>
-                  <CardTitle>
-                    {selectedTable ? `Table: ${selectedTable}` : "Select a table"}
-                  </CardTitle>
-                  <CardDescription>
-                    View, insert, edit, and delete rows from the selected table
-                  </CardDescription>
+              <Card className="h-full border-white/5 bg-black/20 overflow-hidden flex flex-col">
+                <CardHeader className="border-b border-white/5 bg-white/5 pb-4">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div>
+                      <CardTitle className="text-xl font-bold flex items-center gap-2">
+                        {selectedTable ? (
+                          <>
+                            <DatabaseIcon className="h-5 w-5 text-[#00ff88]" />
+                            {selectedTable}
+                          </>
+                        ) : "Select a table"}
+                      </CardTitle>
+                      <CardDescription className="text-xs">
+                        {selectedTable ? `Manage records in ${selectedTable}` : "Choose a table from the sidebar to manage data"}
+                      </CardDescription>
+                    </div>
+                    {selectedTable && (
+                      <div className="flex items-center gap-2">
+                        <div className="relative">
+                          <Input 
+                            placeholder="Filter rows..." 
+                            className="h-8 w-48 text-xs bg-black/20 border-white/10 pl-8"
+                            value={dbSearch}
+                            onChange={(e) => setDbSearch(e.target.value)}
+                          />
+                          <svg className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 text-[10px] uppercase font-bold border-white/10"
+                          onClick={() => setAddColumnDialogOpen(true)}
+                        >
+                          Add Column
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="h-8 text-[10px] uppercase font-bold bg-[#00ff88] hover:bg-[#00ff88]/90 text-black"
+                          onClick={openInsertRow}
+                        >
+                          <Plus className="mr-1 h-3 w-3" />
+                          Insert Row
+                        </Button>
+                      </div>
+                    )}
+                  </div>
                 </CardHeader>
-                <CardContent className="space-y-4">
+                <CardContent className="p-0 flex-1 flex flex-col overflow-hidden">
                   {dbError && (
-                    <div className="text-sm text-red-500">
+                    <div className="p-4 bg-red-500/10 border-b border-red-500/20 text-xs text-red-400 flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4" />
                       {dbError}
                     </div>
                   )}
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-xs text-muted-foreground">
-                      Limit {dbLimit} · Offset {dbOffset}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setAddColumnDialogOpen(true)}
-                        disabled={!selectedTable}
-                      >
-                        Add Column
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => selectedTable && loadTableData(selectedTable, Math.max(dbOffset - dbLimit, 0))}
-                        disabled={!selectedTable || dbLoading || dbOffset === 0}
-                      >
-                        Previous
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => selectedTable && loadTableData(selectedTable, dbOffset + dbLimit)}
-                        disabled={!selectedTable || dbLoading || dbRows.length < dbLimit}
-                      >
-                        Next
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={openInsertRow}
-                        disabled={!selectedTable}
-                      >
-                        Add Row
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="overflow-auto border rounded-md">
+                  
+                  <div className="flex-1 overflow-auto custom-scrollbar">
                     {dbLoading ? (
-                      <div className="p-4 text-center text-sm text-muted-foreground">
-                        Loading table data...
+                      <div className="h-64 flex flex-col items-center justify-center gap-3 opacity-50">
+                        <Loader2 className="h-8 w-8 animate-spin text-[#00ff88]" />
+                        <p className="text-xs uppercase tracking-widest">Fetching records...</p>
                       </div>
                     ) : !selectedTable ? (
-                      <div className="p-4 text-center text-sm text-muted-foreground">
-                        Select a table from the left panel.
+                      <div className="h-64 flex flex-col items-center justify-center gap-4 text-muted-foreground">
+                        <DatabaseIcon className="h-12 w-12 opacity-10" />
+                        <p className="text-sm font-medium">Select a table from the sidebar</p>
                       </div>
                     ) : (
                       <Table>
-                        <TableHeader>
-                          <TableRow>
+                        <TableHeader className="bg-white/5 sticky top-0 z-10">
+                          <TableRow className="hover:bg-transparent border-white/5">
                             {dbColumns.map((col) => (
-                              <TableHead key={col.column_name} className="text-xs">
-                                {col.column_name}
+                              <TableHead key={col.column_name} className="py-3 text-[10px] uppercase font-bold text-muted-foreground whitespace-nowrap">
+                                <div className="flex items-center gap-1.5">
+                                  {col.column_name}
+                                  <span className="text-[9px] font-normal opacity-40 lowercase">({col.data_type})</span>
+                                </div>
                               </TableHead>
                             ))}
-                            <TableHead className="text-right text-xs">Actions</TableHead>
+                            <TableHead className="py-3 text-right text-[10px] uppercase font-bold text-muted-foreground sticky right-0 bg-zinc-900 shadow-[-10px_0_10px_-10px_rgba(0,0,0,0.5)]">Actions</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -3080,35 +3106,51 @@ export default function AdminPage() {
                             <TableRow>
                               <TableCell
                                 colSpan={dbColumns.length + 1}
-                                className="text-xs text-muted-foreground text-center"
+                                className="h-32 text-center text-muted-foreground text-xs"
                               >
-                                No rows found in this page.
+                                No records found in this table.
                               </TableCell>
                             </TableRow>
                           ) : (
-                            dbRows.map((row, idx) => (
-                              <TableRow key={idx}>
+                            dbRows
+                              .filter(row => {
+                                if (!dbSearch) return true;
+                                return Object.values(row).some(val => 
+                                  String(val).toLowerCase().includes(dbSearch.toLowerCase())
+                                );
+                              })
+                              .map((row, idx) => (
+                              <TableRow key={idx} className="hover:bg-white/5 border-white/5 group transition-colors">
                                 {dbColumns.map((col) => (
-                                  <TableCell key={col.column_name} className="text-xs max-w-[260px] truncate">
-                                    {String(row[col.column_name] ?? "")}
+                                  <TableCell key={col.column_name} className="py-3 text-xs max-w-[200px] truncate font-mono text-muted-foreground group-hover:text-white">
+                                    {row[col.column_name] === null ? (
+                                      <span className="opacity-20 italic">null</span>
+                                    ) : typeof row[col.column_name] === 'boolean' ? (
+                                      <Badge variant="outline" className={`text-[10px] px-1 h-4 ${row[col.column_name] ? 'border-green-500/30 text-green-500 bg-green-500/5' : 'border-red-500/30 text-red-500 bg-red-500/5'}`}>
+                                        {String(row[col.column_name])}
+                                      </Badge>
+                                    ) : (
+                                      String(row[col.column_name])
+                                    )}
                                   </TableCell>
                                 ))}
-                                <TableCell className="text-right">
-                                  <div className="flex justify-end gap-2">
+                                <TableCell className="py-3 text-right sticky right-0 bg-transparent group-hover:bg-zinc-800 transition-colors shadow-[-10px_0_10px_-10px_rgba(0,0,0,0.5)]">
+                                  <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                     <Button
-                                      variant="outline"
+                                      variant="ghost"
                                       size="icon"
+                                      className="h-7 w-7 text-blue-400 hover:text-blue-300 hover:bg-blue-500/10"
                                       onClick={() => openEditRow(row)}
                                     >
-                                      <Edit className="h-4 w-4" />
+                                      <Edit className="h-3.5 w-3.5" />
                                     </Button>
                                     <Button
-                                      variant="outline"
+                                      variant="ghost"
                                       size="icon"
-                                      className="text-red-600 border-red-200 hover:bg-red-50"
+                                      className="h-7 w-7 text-red-400 hover:text-red-300 hover:bg-red-500/10"
                                       onClick={() => handleDeleteRow(row)}
                                     >
-                                      <Trash2 className="h-4 w-4" />
+                                      <Trash2 className="h-3.5 w-3.5" />
                                     </Button>
                                   </div>
                                 </TableCell>
@@ -3119,6 +3161,37 @@ export default function AdminPage() {
                       </Table>
                     )}
                   </div>
+
+                  {/* Table Footer / Pagination */}
+                  {selectedTable && (
+                    <div className="border-t border-white/5 bg-white/5 p-3 flex items-center justify-between">
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold">
+                        Showing {dbOffset + 1} - {dbOffset + dbRows.length} Records
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-[10px] uppercase font-bold border-white/10 bg-black/20"
+                          onClick={() => loadTableData(selectedTable, Math.max(dbOffset - dbLimit, 0))}
+                          disabled={dbLoading || dbOffset === 0}
+                        >
+                          <ChevronLeft className="h-3 w-3 mr-1" />
+                          Previous
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-[10px] uppercase font-bold border-white/10 bg-black/20"
+                          onClick={() => loadTableData(selectedTable, dbOffset + dbLimit)}
+                          disabled={dbLoading || dbRows.length < dbLimit}
+                        >
+                          Next
+                          <ChevronRight className="h-3 w-3 ml-1" />
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -3182,59 +3255,45 @@ export default function AdminPage() {
           </div>
 
           <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-            <DialogContent className="max-w-3xl">
+            <DialogContent className="max-w-2xl bg-zinc-950 border-white/10 text-white">
               <DialogHeader>
-                <DialogTitle>Edit Row</DialogTitle>
+                <DialogTitle className="flex items-center gap-2">
+                  <Edit className="h-5 w-5 text-blue-400" />
+                  Edit Record
+                </DialogTitle>
+                <DialogDescription className="text-zinc-400">
+                  Modify the fields below for the selected row in {selectedTable}
+                </DialogDescription>
               </DialogHeader>
-              <div className="space-y-2">
-                <Label>Row JSON</Label>
-                <Textarea
-                  value={editJson}
-                  onChange={(e) => setEditJson(e.target.value)}
-                  className="font-mono text-xs h-64"
-                />
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={handleSaveRow}>
-                  Save Changes
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-
-          <Dialog open={insertDialogOpen} onOpenChange={setInsertDialogOpen}>
-            <DialogContent className="max-w-3xl">
-              <DialogHeader>
-                <DialogTitle>Insert Row into {selectedTable}</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 max-h-[60vh] overflow-y-auto p-1">
+              <div className="grid grid-cols-1 gap-4 py-4 max-h-[60vh] overflow-y-auto custom-scrollbar pr-2">
                 {dbColumns.map(col => (
-                  <div key={col.column_name} className="grid grid-cols-3 items-center gap-4">
-                    <Label htmlFor={col.column_name} className="text-right">
-                      {col.column_name}
-                      <span className="text-muted-foreground text-xs ml-1">({col.data_type})</span>
-                    </Label>
+                  <div key={col.column_name} className="space-y-2 p-3 rounded-lg bg-white/5 border border-white/5">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor={`edit-${col.column_name}`} className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                        {col.column_name}
+                        <span className="ml-2 text-[10px] font-normal lowercase opacity-50">({col.data_type})</span>
+                      </Label>
+                      {col.is_nullable === 'NO' && <Badge className="bg-red-500/10 text-red-500 border-red-500/20 h-4 text-[9px]">Required</Badge>}
+                    </div>
                     {col.data_type.includes('boolean') ? (
-                      <Switch
-                        id={col.column_name}
-                        checked={insertForm[col.column_name] || false}
-                        onCheckedChange={(checked) => setInsertForm({ ...insertForm, [col.column_name]: checked })}
-                        className="col-span-2"
-                      />
+                      <div className="flex items-center gap-3">
+                        <Switch
+                          id={`edit-${col.column_name}`}
+                          checked={insertForm[col.column_name] || false}
+                          onCheckedChange={(checked) => setInsertForm({ ...insertForm, [col.column_name]: checked })}
+                        />
+                        <span className="text-sm font-mono">{String(insertForm[col.column_name] || false)}</span>
+                      </div>
                     ) : col.data_type.includes('text') || col.data_type.includes('json') ? (
                       <Textarea
-                        id={col.column_name}
+                        id={`edit-${col.column_name}`}
                         value={insertForm[col.column_name] ?? ''}
                         onChange={(e) => setInsertForm({ ...insertForm, [col.column_name]: e.target.value })}
-                        placeholder={col.is_nullable === 'YES' ? 'Optional' : 'Required'}
-                        className="col-span-2 font-mono text-xs"
+                        className="bg-black/40 border-white/10 text-xs font-mono min-h-[80px]"
                       />
                     ) : (
                       <Input
-                        id={col.column_name}
+                        id={`edit-${col.column_name}`}
                         type={col.data_type.includes('int') || col.data_type.includes('numeric') ? 'number' : 'text'}
                         value={insertForm[col.column_name] ?? ''}
                         onChange={(e) => {
@@ -3243,19 +3302,85 @@ export default function AdminPage() {
                             : e.target.value;
                           setInsertForm({ ...insertForm, [col.column_name]: value });
                         }}
-                        placeholder={col.is_nullable === 'YES' ? 'Optional' : 'Required'}
-                        className="col-span-2"
+                        className="bg-black/40 border-white/10 text-xs font-mono h-9"
                       />
                     )}
                   </div>
                 ))}
               </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setInsertDialogOpen(false)}>
+              <DialogFooter className="border-t border-white/5 pt-4">
+                <Button variant="ghost" onClick={() => setEditDialogOpen(false)} className="text-xs hover:bg-white/5">
                   Cancel
                 </Button>
-                <Button onClick={handleInsertRow}>
-                  Insert
+                <Button onClick={handleSaveRow} className="bg-blue-600 hover:bg-blue-700 text-xs font-bold px-8">
+                  Save Changes
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={insertDialogOpen} onOpenChange={setInsertDialogOpen}>
+            <DialogContent className="max-w-2xl bg-zinc-950 border-white/10 text-white">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Plus className="h-5 w-5 text-[#00ff88]" />
+                  Insert New Record
+                </DialogTitle>
+                <DialogDescription className="text-zinc-400">
+                  Add a new row to {selectedTable}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="grid grid-cols-1 gap-4 py-4 max-h-[60vh] overflow-y-auto custom-scrollbar pr-2">
+                {dbColumns.map(col => (
+                  <div key={col.column_name} className="space-y-2 p-3 rounded-lg bg-white/5 border border-white/5">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor={`insert-${col.column_name}`} className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                        {col.column_name}
+                        <span className="ml-2 text-[10px] font-normal lowercase opacity-50">({col.data_type})</span>
+                      </Label>
+                      {col.is_nullable === 'NO' && <Badge className="bg-red-500/10 text-red-500 border-red-500/20 h-4 text-[9px]">Required</Badge>}
+                    </div>
+                    {col.data_type.includes('boolean') ? (
+                      <div className="flex items-center gap-3">
+                        <Switch
+                          id={`insert-${col.column_name}`}
+                          checked={insertForm[col.column_name] || false}
+                          onCheckedChange={(checked) => setInsertForm({ ...insertForm, [col.column_name]: checked })}
+                        />
+                        <span className="text-sm font-mono">{String(insertForm[col.column_name] || false)}</span>
+                      </div>
+                    ) : col.data_type.includes('text') || col.data_type.includes('json') ? (
+                      <Textarea
+                        id={`insert-${col.column_name}`}
+                        value={insertForm[col.column_name] ?? ''}
+                        onChange={(e) => setInsertForm({ ...insertForm, [col.column_name]: e.target.value })}
+                        className="bg-black/40 border-white/10 text-xs font-mono min-h-[80px]"
+                        placeholder={col.is_nullable === 'YES' ? 'Optional' : 'Required'}
+                      />
+                    ) : (
+                      <Input
+                        id={`insert-${col.column_name}`}
+                        type={col.data_type.includes('int') || col.data_type.includes('numeric') ? 'number' : 'text'}
+                        value={insertForm[col.column_name] ?? ''}
+                        onChange={(e) => {
+                          const value = col.data_type.includes('int') || col.data_type.includes('numeric')
+                            ? e.target.value === '' ? null : Number(e.target.value)
+                            : e.target.value;
+                          setInsertForm({ ...insertForm, [col.column_name]: value });
+                        }}
+                        className="bg-black/40 border-white/10 text-xs font-mono h-9"
+                        placeholder={col.is_nullable === 'YES' ? 'Optional' : 'Required'}
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+              <DialogFooter className="border-t border-white/5 pt-4">
+                <Button variant="ghost" onClick={() => setInsertDialogOpen(false)} className="text-xs hover:bg-white/5">
+                  Cancel
+                </Button>
+                <Button onClick={handleInsertRow} className="bg-[#00ff88] hover:bg-[#00ff88]/90 text-black text-xs font-bold px-8">
+                  Insert Record
                 </Button>
               </DialogFooter>
             </DialogContent>
