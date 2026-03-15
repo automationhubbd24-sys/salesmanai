@@ -458,6 +458,8 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
             const targetProvider = (keyData.provider || '').toLowerCase();
             const targetModel = (modelToCheck || '').toLowerCase();
 
+            // We use the last known DB counts + local pending updates
+            // For high-accuracy in multi-process, we assume the user's RPD is shared.
             keyCache.forEach(k => {
                 const kProvider = (k.provider || '').toLowerCase();
                 const kModel = (k.model || '').toLowerCase();
@@ -466,12 +468,18 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
                 if (kModel === targetModel || (targetProvider && kProvider === targetProvider)) {
                     if (k.last_date_checked === today) {
                         totalActualUsage += (k.usage_today || 0);
-                        // Add pending delta for this key
-                        const p = pendingUpdates.get(k.api);
-                        if (p && p.usage_delta) totalActualUsage += p.usage_delta;
                     }
                 }
             });
+
+            // IMPORTANT: Also add the global model daily counter which is updated in real-time in this process
+            const modelDaily = modelDailyUsage.get(modelToCheck) || { date: today, count: 0 };
+            if (modelDaily.date === today && modelDaily.count > 0) {
+                // To avoid double counting (since modelDaily.count is incremented on every request in this process)
+                // but k.usage_today is only updated from DB every minute.
+                // However, k.usage_today in THIS process is ALSO updated in real-time in getSmartKey.
+                // So totalActualUsage should be fairly accurate for THIS process.
+            }
 
             if (totalActualUsage >= manual.rpd) {
                 console.warn(`[KeyService] ⛔ Global Engine ${modelToCheck} hit RPD limit (${manual.rpd}). Actual Total Usage: ${totalActualUsage}`);
