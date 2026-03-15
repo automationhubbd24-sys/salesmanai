@@ -128,18 +128,19 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
       let url = `${BACKEND_URL}/api/whatsapp/sessions`;
       
       // FIX: Ensure team_owner is used even on initial mount if stored in localStorage
-      const storedTeamOwner = localStorage.getItem('active_team_owner');
-      const effectiveTeamOwner = (viewMode === 'team') ? (activeTeam?.owner_email || storedTeamOwner) : null;
+      const storedTeamOwner = localStorage.getItem('active_wa_team_owner') || localStorage.getItem('active_team_owner');
+      let effectiveTeamOwner = (viewMode === 'team') ? (activeTeam?.owner_email || storedTeamOwner) : null;
 
-      if (viewMode === 'team') {
-          if (effectiveTeamOwner) {
-              url += `?team_owner=${encodeURIComponent(effectiveTeamOwner)}`;
-          } else {
-              // If in team mode but no owner found, don't fetch personal sessions
-              setSessions([]);
-              setLoading(false);
-              return;
-          }
+      // If in team mode but no owner found, default back to personal to avoid empty dashboard
+      if (viewMode === 'team' && !effectiveTeamOwner) {
+          console.warn("No active team owner found in team mode, falling back to personal");
+          setViewMode('personal');
+          localStorage.setItem('whatsapp_view_mode', 'personal');
+          effectiveTeamOwner = null;
+      }
+
+      if (effectiveTeamOwner) {
+          url += `?team_owner=${encodeURIComponent(effectiveTeamOwner)}`;
       }
 
       const res = await fetch(url, {

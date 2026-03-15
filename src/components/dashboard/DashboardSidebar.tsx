@@ -104,6 +104,10 @@ export function DashboardSidebar({ isMobile, onLinkClick }: { isMobile?: boolean
     localStorage.removeItem("active_wa_session_id");
     localStorage.removeItem("auth_token");
     localStorage.removeItem("auth_user");
+    localStorage.removeItem("messenger_view_mode");
+    localStorage.removeItem("active_team_owner");
+    localStorage.removeItem("whatsapp_view_mode");
+    localStorage.removeItem("active_wa_team_owner");
     toast.success("Logged out successfully");
     navigate("/login");
   };

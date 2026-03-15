@@ -37,7 +37,7 @@ router.get('/pages', async (req, res) => {
             const { rows } = await pgClient.query(
                 `SELECT p.*, u.message_credit AS user_message_credit
                  FROM page_access_token_message p
-                 LEFT JOIN user_configs u ON u.user_id::text = p.user_id::text
+                 LEFT JOIN user_configs u ON LOWER(u.email) = LOWER(p.email)
                  WHERE LOWER(p.email) = LOWER($1) OR p.user_id::text = $2`,
                 [userEmail, userId]
             );
@@ -76,7 +76,7 @@ router.get('/pages', async (req, res) => {
             const { rows: sharedData } = await pgClient.query(
                 `SELECT p.*, u.message_credit AS user_message_credit
                  FROM page_access_token_message p
-                 LEFT JOIN user_configs u ON u.user_id::text = p.user_id::text
+                 LEFT JOIN user_configs u ON LOWER(u.email) = LOWER(p.email)
                  WHERE p.page_id = ANY($1::text[])`,
                 [sharedPageIds]
             );
