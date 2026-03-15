@@ -676,6 +676,7 @@ async function getSmartKey(provider, model = 'default') {
 
     const minGapMs = KEY_MIN_GAP_MS > 0 ? (KEY_MIN_GAP_MS + Math.floor(Math.random() * (KEY_MIN_GAP_JITTER_MS + 1))) : 0;
     const now = Date.now();
+    const today = new Date().toISOString().split('T')[0];
 
     // Check unusable (RPM/RPD)
     for (let i = 0; i < validKeys.length; i++) {
@@ -704,7 +705,6 @@ async function getSmartKey(provider, model = 'default') {
             globalKeyPointers.set(mapKey, (actualIndex + 1) % validKeys.length);
             
             // --- ATOMIC TIMESTAMP RECORDING ---
-            const today = new Date().toISOString().split('T')[0];
             
             const modelName = String(model || candidateKey.model || 'default');
 
