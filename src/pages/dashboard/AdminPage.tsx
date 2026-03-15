@@ -182,6 +182,25 @@ export default function AdminPage() {
   const [enginePage, setEnginePage] = useState(1);
   const [engineTotal, setEngineTotal] = useState(0);
   const [engineSearch, setEngineSearch] = useState("");
+  const [engineStatusFilter, setEngineStatusFilter] = useState("all"); // New: Filter for Active/Locked/Dead
+
+  // Countdown Helper for Locked Keys
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const formatCountdown = (cooldownUntil: string) => {
+    const expiry = new Date(cooldownUntil).getTime();
+    const diff = expiry - now;
+    if (diff <= 0) return "Ready";
+    
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    const secs = Math.floor((diff % (1000 * 60)) / 1000);
+    return `${hours}h ${mins}m ${secs}s`;
+  };
   const [engineRevealedKeys, setEngineRevealedKeys] = useState<Record<number, string>>({});
   const [rotationLogs, setRotationLogs] = useState<any[]>([]);
 
@@ -2474,100 +2493,148 @@ export default function AdminPage() {
           </Card>
 
           {/* Key List */}
-          <Card className="border-white/10">
-            <CardHeader className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-              <div>
-                <CardTitle className="flex items-center gap-2">
-                  <Server className="h-5 w-5" /> Active Rotation Pool
-                </CardTitle>
-                <CardDescription>Keys currently being used by the API Engine (Showing top 10).</CardDescription>
-              </div>
-              <div className="flex items-center gap-2 w-full md:w-auto">
-                <Input
-                  placeholder="Search key or provider..."
-                  value={engineSearch}
-                  onChange={(e) => setEngineSearch(e.target.value)}
-                  className="w-full md:w-[220px]"
-                />
-                <Select value={engineFilter} onValueChange={setEngineFilter}>
-                  <SelectTrigger className="w-[150px]">
-                    <SelectValue placeholder="Filter Provider" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Providers</SelectItem>
-                    <SelectItem value="google">Google Gemini</SelectItem>
-                    <SelectItem value="openrouter">OpenRouter</SelectItem>
-                    <SelectItem value="groq">Groq</SelectItem>
-                    <SelectItem value="openai">OpenAI</SelectItem>
-                    <SelectItem value="mistral">Mistral</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Button variant="outline" size="sm" onClick={() => fetchEngineData(enginePage)}>
-                  <RefreshCw className="h-4 w-4 mr-2" /> Refresh
-                </Button>
+          <Card className="bg-card/40 backdrop-blur-md border-white/5 shadow-2xl overflow-hidden">
+            <CardHeader className="border-b border-white/5 bg-white/5 py-6">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <CardTitle className="text-xl font-bold flex items-center gap-2">
+                    <Server className="h-5 w-5 text-blue-400" />
+                    Active Key Rotation Pool
+                  </CardTitle>
+                  <CardDescription className="text-xs">Manage API keys used by the rotation engine</CardDescription>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="relative">
+                    <Input
+                      placeholder="Search keys..."
+                      className="h-9 w-48 bg-black/40 border-white/10 pl-9 text-xs focus:ring-1 focus:ring-blue-500/50"
+                      value={engineSearch}
+                      onChange={(e) => setEngineSearch(e.target.value)}
+                    />
+                    <svg className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                  </div>
+                  <Select value={engineFilter} onValueChange={setEngineFilter}>
+                    <SelectTrigger className="h-9 w-36 bg-black/40 border-white/10 text-xs">
+                      <SelectValue placeholder="Provider" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Providers</SelectItem>
+                      <SelectItem value="google">Google Gemini</SelectItem>
+                      <SelectItem value="openrouter">OpenRouter</SelectItem>
+                      <SelectItem value="groq">Groq</SelectItem>
+                      <SelectItem value="openai">OpenAI</SelectItem>
+                      <SelectItem value="mistral">Mistral</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Select value={engineStatusFilter} onValueChange={setEngineStatusFilter}>
+                    <SelectTrigger className="h-9 w-32 bg-black/40 border-white/10 text-xs">
+                      <SelectValue placeholder="Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Status</SelectItem>
+                      <SelectItem value="active">Active Only</SelectItem>
+                      <SelectItem value="locked">Locked Only</SelectItem>
+                      <SelectItem value="dead">Dead Only</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button variant="outline" size="sm" className="h-9 border-white/10 bg-black/20 text-xs font-bold uppercase" onClick={() => fetchEngineData(enginePage)}>
+                    <RefreshCw className={`h-3.5 w-3.5 mr-2 ${engineLoading ? 'animate-spin' : ''}`} />
+                    Sync
+                  </Button>
+                </div>
               </div>
             </CardHeader>
-            <CardContent>
-              <div className="rounded-md border border-white/10 overflow-hidden">
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
                 <Table>
-                  <TableHeader className="bg-muted/50">
-                    <TableRow>
-                      <TableHead>Provider</TableHead>
-                      <TableHead>Key (Preview)</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Usage (Today)</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                  <TableHeader className="bg-white/5">
+                    <TableRow className="hover:bg-transparent border-white/10">
+                      <TableHead className="py-4 text-[10px] uppercase font-bold text-muted-foreground">Provider</TableHead>
+                      <TableHead className="py-4 text-[10px] uppercase font-bold text-muted-foreground">Key Preview</TableHead>
+                      <TableHead className="py-4 text-[10px] uppercase font-bold text-muted-foreground">Health Status</TableHead>
+                      <TableHead className="py-4 text-[10px] uppercase font-bold text-muted-foreground">Usage Today</TableHead>
+                      <TableHead className="py-4 text-right text-[10px] uppercase font-bold text-muted-foreground">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
-                <TableBody>
-                  {engineKeys.map((k) => {
-                    const revealedKey = engineRevealedKeys[k.id];
-                    return (
-                      <TableRow key={k.id}>
-                        <TableCell className="capitalize font-medium">{k.provider}</TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">
-                          {revealedKey || k.api}
-                        </TableCell>
-                        <TableCell>
-                          {k.cooldown_until && new Date(k.cooldown_until) > new Date() ? (
-                            <div className="flex flex-col gap-1">
-                              <Badge variant="outline" className="bg-amber-500/10 text-amber-400 border-amber-500/20 w-fit">
-                                <AlertTriangle className="mr-1 h-3 w-3" /> Locked (Cooldown)
+                  <TableBody>
+                    {engineKeys
+                      .filter(k => {
+                        const matchesSearch = k.api.toLowerCase().includes(engineSearch.toLowerCase()) || k.provider.toLowerCase().includes(engineSearch.toLowerCase());
+                        const isLocked = k.cooldown_until && new Date(k.cooldown_until).getTime() > now;
+                        
+                        let matchesStatus = true;
+                        if (engineStatusFilter === 'active') matchesStatus = k.status === 'active' && !isLocked;
+                        else if (engineStatusFilter === 'locked') matchesStatus = !!isLocked;
+                        else if (engineStatusFilter === 'dead') matchesStatus = k.status !== 'active';
+                        
+                        return matchesSearch && matchesStatus;
+                      })
+                      .map((k) => {
+                        const revealedKey = engineRevealedKeys[k.id];
+                        const isLocked = k.cooldown_until && new Date(k.cooldown_until).getTime() > now;
+                        return (
+                          <TableRow key={k.id} className="hover:bg-white/5 border-white/5 transition-colors group">
+                            <TableCell className="py-4">
+                              <Badge variant="outline" className="text-[10px] font-black uppercase tracking-widest h-5 border-white/10 text-white/80">
+                                {k.provider}
                               </Badge>
-                              <span className="text-[10px] text-amber-500/70 font-mono">
-                                Ends: {new Date(k.cooldown_until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                              </span>
-                            </div>
-                          ) : (
-                            <Badge variant={k.status === 'active' ? 'default' : 'destructive'} className={k.status === 'active' ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' : ''}>
-                              {k.status}
-                            </Badge>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex flex-col">
-                            <span className="font-medium text-primary text-lg">{k.usage_today || 0}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <Button variant="outline" size="sm" onClick={() => toggleRevealKey(k.id)}>
-                              {engineRevealedKeys[k.id] ? "Hide" : "Show"}
-                            </Button>
-                            <Button variant="outline" size="sm" onClick={() => copyEngineKey(k.id)}>
-                              Copy
-                            </Button>
-                            <Button variant="ghost" size="icon" onClick={() => deleteEngineKey(k.id)} className="text-red-400 hover:text-red-300 hover:bg-red-900/20">
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                  {engineKeys.length === 0 && (
+                            </TableCell>
+                            <TableCell className="py-4">
+                              <code className="text-xs font-mono text-muted-foreground group-hover:text-blue-400 transition-colors">
+                                {revealedKey || k.api}
+                              </code>
+                            </TableCell>
+                            <TableCell className="py-4">
+                              {isLocked ? (
+                                <div className="flex flex-col gap-1">
+                                  <Badge variant="outline" className="bg-amber-500/10 text-amber-500 border-amber-500/20 h-5 text-[10px] font-black uppercase tracking-tighter w-fit">
+                                    <AlertTriangle className="mr-1 h-3 w-3" /> Locked
+                                  </Badge>
+                                  <span className="text-[10px] text-amber-500/80 font-mono font-bold">
+                                    {formatCountdown(k.cooldown_until!)}
+                                  </span>
+                                </div>
+                              ) : (
+                                <Badge 
+                                  variant="outline" 
+                                  className={`text-[10px] font-black uppercase tracking-tighter h-5 ${k.status === 'active' ? 'border-green-500/30 text-green-500 bg-green-500/5' : 'border-red-500/30 text-red-500 bg-red-500/5'}`}
+                                >
+                                  {k.status}
+                                </Badge>
+                              )}
+                            </TableCell>
+                            <TableCell className="py-4">
+                              <div className="flex flex-col">
+                                <span className="font-black text-white text-lg leading-none">{k.usage_today || 0}</span>
+                                <span className="text-[9px] uppercase font-bold text-muted-foreground opacity-40">Requests</span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="py-4 text-right">
+                              <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-blue-400 hover:bg-blue-500/10"
+                                  onClick={() => toggleRevealKey(k.id)}
+                                >
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-red-400 hover:bg-red-500/10"
+                                  onClick={() => deleteEngineKey(k.id)}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    {engineKeys.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={5} className="h-64 text-center text-muted-foreground italic">
                           No API keys found in rotation pool.
                         </TableCell>
                       </TableRow>

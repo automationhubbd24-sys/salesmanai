@@ -43,13 +43,10 @@ const pendingUpdates = new Map(); // apiKey -> { usage_delta, token_delta, last_
 // Function declaration MUST be hoisted or defined before call
 async function updateKeyCache(force = false) {
     const now = Date.now();
-    // Refresh cache ONLY if not exists, forced, or TTL expired (1 min).
     if (!force && keyCache.length > 0 && (now - lastCacheUpdate < CACHE_TTL)) {
         return;
     }
 
-    // --- CRITICAL: Always flush pending updates BEFORE fetching from DB ---
-    // This ensures in-memory increments are not lost when we replace the cache object.
     if (pendingUpdates.size > 0) {
         await flushUsageStats();
     }
@@ -57,12 +54,16 @@ async function updateKeyCache(force = false) {
     try {
         const pgClient = require('./pgClient');
         
-        // --- PROACTIVE CLEANUP: Clear expired cooldowns in DB ---
+        // --- SMART AUTO-RESET: Clear expired 24h locks and cooldowns in DB ---
+        // Any key whose cooldown_until is in the past will be unlocked automatically
         const nowIso = new Date().toISOString();
-        await pgClient.query(
-            "UPDATE api_list SET cooldown_until = NULL WHERE cooldown_until < $1",
+        const resetResult = await pgClient.query(
+            "UPDATE api_list SET cooldown_until = NULL, status = 'active' WHERE cooldown_until < $1 AND status != 'disabled'",
             [nowIso]
-        ).catch(e => console.warn("[KeyService] Expired cooldown cleanup failed:", e.message));
+        );
+        if (resetResult.rowCount > 0) {
+            console.log(`[KeyService] ♻️ Auto-reset ${resetResult.rowCount} keys whose 24h lock/cooldown expired.`);
+        }
 
         const result = await pgClient.query(
             "SELECT * FROM api_list WHERE status = 'active' ORDER BY id ASC"
@@ -333,10 +334,11 @@ async function handleApiKeyError(key, error, modelName = null) {
         if (isDailyQuota) {
             console.warn(`[KeyService] 🚨 Daily Quota Exceeded for ${key.substring(0,8)}... Locking for 24h.`);
             await markKeyAsQuotaExceeded(key);
-            // NO MODEL LOCKING: Every key is from a different project, so we MUST try the next one.
         } else {
-            console.warn(`[KeyService] ⏳ Rate Limit (RPM) hit for ${key.substring(0,8)}... Cooldown 2 min.`);
-            await markKeyAsDead(key, 2 * 60 * 1000, 'rate_limit_rpm');
+            console.warn(`[KeyService] ⏳ Rate Limit (RPM) hit for ${key.substring(0,8)}... Locking for 24h (User Preference).`);
+            // Lock for 24h as per user requirement even for RPM hits to be safe
+            const twentyFourHours = 24 * 60 * 60 * 1000;
+            await markKeyAsDead(key, twentyFourHours, 'rate_limit_24h_lock');
         }
         return;
     }
