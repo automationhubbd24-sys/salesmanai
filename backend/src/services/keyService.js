@@ -319,17 +319,12 @@ async function checkLockStatus(pageId, senderId) {
 
 // REMOVED lockModelTemporarily to avoid global model restrictions
 
-const modelStrikeMap = new Map(); // Key: modelName, Value: { strikes: number, last_strike: number }
-
 async function handleApiKeyError(key, error, modelName = null) {
     if (!key) return;
     const errorStr = String(error).toLowerCase();
-    const now = Date.now();
     
     // --- SMART 429 DETECTION (FOR ALL PROVIDERS) ---
-    // This logic now applies to Gemini, OpenRouter, Groq, Mistral, etc.
     if (errorStr.includes('429') || errorStr.includes('too many requests')) {
-        // Check if it's a Daily Quota (RPD) or just a Rate Limit (RPM)
         const isDailyQuota = errorStr.includes('perday') || 
                              errorStr.includes('quota exceeded') || 
                              errorStr.includes('quotavalue') ||
@@ -338,26 +333,7 @@ async function handleApiKeyError(key, error, modelName = null) {
         if (isDailyQuota) {
             console.warn(`[KeyService] 🚨 Daily Quota Exceeded for ${key.substring(0,8)}... Locking for 24h.`);
             await markKeyAsQuotaExceeded(key);
-
-            // --- MODEL STRIKE SYSTEM ---
-            // If 3 different keys for the SAME model fail with Daily Quota within 5 mins,
-            // we lock the whole model for 1 hour to prevent "trying all 180 keys".
-            if (modelName) {
-                const strike = modelStrikeMap.get(modelName) || { strikes: 0, last_strike: 0 };
-                // Reset if last strike was > 5 mins ago
-                if (now - strike.last_strike > 5 * 60 * 1000) strike.strikes = 0;
-                
-                strike.strikes += 1;
-                strike.last_strike = now;
-                modelStrikeMap.set(modelName, strike);
-
-                if (strike.strikes >= 3) {
-                    console.error(`[KeyService] ⛔ Model ${modelName} hit 3 Quota Strikes. Locking GLOBALLY for 1 hour.`);
-                    lockModelTemporarily(modelName, 60 * 60 * 1000);
-                    strike.strikes = 0; // Reset for next cycle
-                    modelStrikeMap.set(modelName, strike);
-                }
-            }
+            // NO MODEL LOCKING: Every key is from a different project, so we MUST try the next one.
         } else {
             console.warn(`[KeyService] ⏳ Rate Limit (RPM) hit for ${key.substring(0,8)}... Cooldown 2 min.`);
             await markKeyAsDead(key, 2 * 60 * 1000, 'rate_limit_rpm');
@@ -473,66 +449,6 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
     if (rphLimit > 0 && validHourTimestamps.length >= rphLimit) {
         console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPH limit (${rphLimit}) in last 1h 10m`);
         return false;
-    }
-
-    // --- 2. MODEL-LEVEL GLOBAL LIMITS (STRICT ENFORCEMENT) ---
-    // User request: Ensure global model limits (RPD/RPM) are honored regardless of size.
-    if (manual && manual.source === 'global_engine') {
-        // Strict Model RPD (Daily Limit across ALL keys)
-        if (manual.rpd > 0) {
-            // Bulletproof: Sum up actual usage from all active keys in cache for this model/provider
-            let totalActualUsage = 0;
-            const targetProvider = (keyData.provider || '').toLowerCase();
-            const targetModel = (modelToCheck || '').toLowerCase();
-
-            // We use the last known DB counts + local pending updates
-            // For high-accuracy in multi-process, we assume the user's RPD is shared.
-            keyCache.forEach(k => {
-                const kProvider = (k.provider || '').toLowerCase();
-                const kModel = (k.model || '').toLowerCase();
-                
-                // Match by model if specified, or by provider
-                if (kModel === targetModel || (targetProvider && kProvider === targetProvider)) {
-                    if (k.last_date_checked === today) {
-                        totalActualUsage += (k.usage_today || 0);
-                    }
-                }
-            });
-
-            // IMPORTANT: Also add the global model daily counter which is updated in real-time in this process
-            const modelDaily = modelDailyUsage.get(modelToCheck) || { date: today, count: 0 };
-            if (modelDaily.date === today && modelDaily.count > 0) {
-                // To avoid double counting (since modelDaily.count is incremented on every request in this process)
-                // but k.usage_today is only updated from DB every minute.
-                // However, k.usage_today in THIS process is ALSO updated in real-time in getSmartKey.
-                // So totalActualUsage should be fairly accurate for THIS process.
-            }
-
-            if (totalActualUsage >= manual.rpd) {
-                console.warn(`[KeyService] ⛔ Global Engine ${modelToCheck} hit RPD limit (${manual.rpd}). Actual Total Usage: ${totalActualUsage}`);
-                return false;
-            }
-        }
-        // Strict Model RPM (Minute Limit across ALL keys)
-        if (manual.rpm > 0) {
-            const mTimestamps = modelUsageTimestamps.get(modelToCheck) || [];
-            const oneMinuteAgo = now - RPM_WINDOW_MS;
-            const mValid = mTimestamps.filter(ts => ts > oneMinuteAgo);
-            if (mValid.length >= manual.rpm) {
-                console.warn(`[KeyService] ⛔ Global Engine ${modelToCheck} hit RPM limit (${manual.rpm}). Current: ${mValid.length}`);
-                return false;
-            }
-        }
-        // Strict Model RPH (Hourly Limit across ALL keys)
-        if (manual.rph > 0) {
-            const mHourTimestamps = modelUsageHourTimestamps.get(modelToCheck) || [];
-            const oneHourAgo = now - RPH_WINDOW_MS;
-            const mValidHour = mHourTimestamps.filter(ts => ts > oneHourAgo);
-            if (mValidHour.length >= manual.rph) {
-                console.warn(`[KeyService] ⛔ Global Engine ${modelToCheck} hit RPH limit (${manual.rph}). Current: ${mValidHour.length}`);
-                return false;
-            }
-        }
     }
 
     return true;
