@@ -29,6 +29,7 @@ interface Product {
     description: string;
     keywords?: string;
     image_url: string | null;
+    additional_images?: string[] | null;
     variants: Variant[];
     is_active: boolean;
     price?: number;
@@ -102,6 +103,7 @@ export default function ProductsPage() {
     const [imagePreview, setImagePreview] = useState<string | null>(null);
     const [productImages, setProductImages] = useState<File[]>([]);
     const [imagePreviews, setImagePreviews] = useState<string[]>([]);
+    const [existingAdditionalImages, setExistingAdditionalImages] = useState<string[]>([]);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const openImagePicker = () => {
         if (fileInputRef.current) {
@@ -440,26 +442,53 @@ export default function ProductsPage() {
     const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
             const incoming = Array.from(e.target.files);
-            const merged = [...productImages, ...incoming].slice(0, 10);
-            setProductImages(merged);
-            const previews = merged.map(f => URL.createObjectURL(f));
-            setImagePreviews(previews);
-            // Primary image (first one) for backend
-            setProductImage(merged[0] || null);
-            setImagePreview(previews[0] || null);
+            
+            // Limit to 10 total images
+            const maxNew = 10 - imagePreviews.length;
+            if (maxNew <= 0) return;
+            const limited = incoming.slice(0, maxNew);
+            
+            const newProductImages = [...productImages, ...limited];
+            setProductImages(newProductImages);
+            
+            const newFilePreviews = limited.map(f => URL.createObjectURL(f));
+            setImagePreviews(prev => [...prev, ...newFilePreviews]);
+            
+            // Update primary image if none existed
+            if (!imagePreview && newFilePreviews.length > 0) {
+                setImagePreview(newFilePreviews[0]);
+                setProductImage(limited[0]);
+            }
         }
     };
 
     const removeImageAt = (index: number) => {
-        const newFiles = [...productImages];
-        const newPreviews = [...imagePreviews];
-        newFiles.splice(index, 1);
-        newPreviews.splice(index, 1);
-        setProductImages(newFiles);
+        const previewToRemove = imagePreviews[index];
+        
+        // 1. Update Previews
+        const newPreviews = imagePreviews.filter((_, i) => i !== index);
         setImagePreviews(newPreviews);
-        // Adjust primary
-        setProductImage(newFiles[0] || null);
-        setImagePreview(newPreviews[0] || null);
+        
+        // 2. If it was a new file, remove from productImages
+        if (previewToRemove?.startsWith('blob:')) {
+            const existingCount = imagePreviews.length - productImages.length;
+            const fileIndex = index - existingCount;
+            if (fileIndex >= 0) {
+                const newFiles = productImages.filter((_, i) => i !== fileIndex);
+                setProductImages(newFiles);
+                if (previewToRemove === imagePreview) {
+                    setImagePreview(newPreviews[0] || null);
+                    setProductImage(newFiles[0] || null);
+                }
+            }
+        } else {
+            // 3. If it was an existing URL
+            if (previewToRemove === imagePreview) {
+                setImagePreview(newPreviews[0] || null);
+            }
+            const newExisting = existingAdditionalImages.filter(url => url !== previewToRemove);
+            setExistingAdditionalImages(newExisting);
+        }
     };
 
     const normalizeKeywords = (value: string) => {
@@ -579,7 +608,9 @@ export default function ProductsPage() {
 
         setProductStock(product.stock?.toString() || "0");
         setImagePreview(product.image_url || null);
-        setImagePreviews(product.image_url ? [product.image_url] : []);
+        const additional = Array.isArray(product.additional_images) ? product.additional_images : [];
+        setExistingAdditionalImages(additional);
+        setImagePreviews(product.image_url ? [product.image_url, ...additional] : additional);
         setProductImages([]);
 
         const messengerIdsRaw = parseAssignment(product.allowed_messenger_ids);
@@ -720,6 +751,7 @@ export default function ProductsPage() {
             formData.append("allowed_wa_sessions", JSON.stringify(finalWASessions));
             formData.append("variants", JSON.stringify(metadata.variants));
             formData.append("page_id", String(metadata.page_id || ""));
+            formData.append("existing_additional_images", JSON.stringify(existingAdditionalImages));
 
             // --- FILES LAST (Best practice for Multer) ---
             if (productImage) {
@@ -965,6 +997,7 @@ export default function ProductsPage() {
         setImagePreview(null);
         setProductImages([]);
         setImagePreviews([]);
+        setExistingAdditionalImages([]);
         
         // --- MANUAL SELECTION REQUIRED ---
         // As per user instruction: "add kroar somoi o sekan tekei add korte hobe auto nibe na"

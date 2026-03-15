@@ -756,22 +756,41 @@ exports.updateProduct = async (req, res) => {
 
         // 1. Handle Image Upload if present
         let imageUrl = undefined; // undefined means no change
-        if (req.file) {
+        let additionalImages = undefined;
+
+        const envBaseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL;
+        const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+        const host = req.get('host');
+        const reqBaseUrl = `${protocol}://${host}`;
+        const baseUrl = envBaseUrl || reqBaseUrl;
+
+        // Handle Main Image (req.files.image)
+        if (req.files && req.files.image && req.files.image[0]) {
             try {
-                // VPS FIX: Prefer PUBLIC_BASE_URL from env, then BACKEND_URL, then construct from request
-                const envBaseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL;
-                
-                // Construct reliable request-based URL (handling proxies)
-                const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-                const host = req.get('host');
-                const reqBaseUrl = `${protocol}://${host}`;
-                
-                const baseUrl = envBaseUrl || reqBaseUrl;
-                
-                console.log(`[ProductUpdate] Uploading for Effective User (Owner): ${userId}`);
+                console.log(`[ProductUpdate] Uploading Main Image for Owner: ${userId}`);
+                imageUrl = await imageService.uploadProductImage(req.files.image[0].buffer, req.files.image[0].mimetype, userId, baseUrl);
+            } catch (imgError) {
+                return res.status(500).json({ error: "Main image upload failed: " + imgError.message });
+            }
+        } else if (req.file) {
+            // Fallback for single file upload middleware
+            try {
                 imageUrl = await imageService.uploadProductImage(req.file.buffer, req.file.mimetype, userId, baseUrl);
             } catch (imgError) {
                 return res.status(500).json({ error: "Image upload failed: " + imgError.message });
+            }
+        }
+
+        // Handle Additional Images (req.files.images)
+        if (req.files && req.files.images) {
+            try {
+                console.log(`[ProductUpdate] Uploading ${req.files.images.length} Additional Images for Owner: ${userId}`);
+                const uploadPromises = req.files.images.map(file => 
+                    imageService.uploadProductImage(file.buffer, file.mimetype, userId, baseUrl)
+                );
+                additionalImages = await Promise.all(uploadPromises);
+            } catch (imgError) {
+                console.error("[ProductUpdate] Additional images upload failed:", imgError);
             }
         }
 
@@ -788,6 +807,30 @@ exports.updateProduct = async (req, res) => {
         if (req.body.is_combo !== undefined) updates.is_combo = req.body.is_combo === 'true' || req.body.is_combo === true;
         if (req.body.allow_description !== undefined) updates.allow_description = req.body.allow_description === 'true' || req.body.allow_description === true;
         if (req.body.combo_items !== undefined) updates.combo_items = req.body.combo_items;
+
+        // Handle Additional Images Sync (Combine existing with new)
+        if (additionalImages !== undefined || req.body.existing_additional_images !== undefined) {
+            let finalAdditional = [];
+            
+            // 1. Get existing ones from body (JSON string or array)
+            if (req.body.existing_additional_images) {
+                try {
+                    finalAdditional = typeof req.body.existing_additional_images === 'string' 
+                        ? JSON.parse(req.body.existing_additional_images) 
+                        : req.body.existing_additional_images;
+                } catch (e) {
+                    finalAdditional = [req.body.existing_additional_images];
+                }
+            }
+
+            // 2. Append newly uploaded ones
+            if (additionalImages && additionalImages.length > 0) {
+                finalAdditional = [...finalAdditional, ...additionalImages];
+            }
+
+            updates.additional_images = finalAdditional;
+            console.log(`[ProductUpdate] Final Additional Images Count: ${finalAdditional.length}`);
+        }
 
         if (req.body.variants !== undefined) {
             if (Array.isArray(req.body.variants)) {
