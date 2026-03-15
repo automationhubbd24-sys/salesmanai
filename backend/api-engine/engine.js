@@ -411,8 +411,12 @@ router.post('/v1/chat/completions', async (req, res) => {
                 });
 
                 if (response.status >= 400) {
-                    if ([429, 401, 403].includes(response.status)) {
-                        // User Request: All Dead/Locked keys should reset after 24h
+                    if ([429].includes(response.status)) {
+                        // Rate Limit hit: Lock for 2 minutes only
+                        const twoMinutes = 2 * 60 * 1000;
+                        keyService.markKeyAsDead(keyData.key, twoMinutes, `upstream_429_2m`);
+                    } else if ([401, 403].includes(response.status)) {
+                        // Auth error: Lock for 24h as key might be dead
                         const twentyFourHours = 24 * 60 * 60 * 1000;
                         keyService.markKeyAsDead(keyData.key, twentyFourHours, `upstream_${response.status}_24h`);
                     }
@@ -425,9 +429,9 @@ router.post('/v1/chat/completions', async (req, res) => {
                 if (provider === 'google' || provider === 'gemini') {
                     const streamError = parseStreamError(firstChunk);
                     if (streamError) {
-                        // User Request: All Dead/Locked keys should reset after 24h
-                        const twentyFourHours = 24 * 60 * 60 * 1000;
-                        keyService.markKeyAsDead(keyData.key, twentyFourHours, 'stream_error_24h');
+                        // Rate Limit in stream: Lock for 2 minutes
+                        const twoMinutes = 2 * 60 * 1000;
+                        keyService.markKeyAsDead(keyData.key, twoMinutes, 'stream_429_2m');
                         if (response.data && response.data.destroy) response.data.destroy();
                         lastError = { error: streamError };
                         continue;

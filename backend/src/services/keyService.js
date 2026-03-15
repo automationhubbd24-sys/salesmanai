@@ -151,9 +151,12 @@ process.on('SIGINT', async () => {
 // --- Default Limits Map (Fallback if DB values are null) ---
 // Based on typical Free Tier limits as of early 2025
 const DEFAULT_LIMITS = {
-    // Gemini Limits (Based on User Info)
-    'gemini-2.5-flash': { rpm: 5, rpd: 20 }, 
-    'gemini-2.5-flash-lite': { rpm: 5, rpd: 20 }, 
+    // Gemini Limits (Based on Official Docs)
+    'gemini-1.5-flash': { rpm: 15, rpd: 1500 }, 
+    'gemini-1.5-flash-8b': { rpm: 15, rpd: 1500 }, 
+    'gemini-2.0-flash-exp': { rpm: 10, rpd: 1500 },
+    'gemini-2.0-flash-lite-preview-02-05': { rpm: 10, rpd: 1500 },
+    'gemini-2.0-flash': { rpm: 10, rpd: 1500 }, 
 
     
     // Groq Limits (Based on Official Docs)
@@ -192,17 +195,17 @@ async function report429(modelName, apiKey = null) {
         }
 
         if (state.strikes === 0) {
-            // First offense -> 24 Hours
+            // First offense -> 2 Minutes (Smart Skip)
             state.strikes = 1;
-            const duration = 24 * 60 * 60 * 1000;
-            await markKeyAsDead(apiKey, duration, '429_rate_limit_1st');
-            console.warn(`[KeyService] 🔒 Locking KEY ${apiKey.substring(0,8)}... for 24h (First 429)`);
+            const duration = 2 * 60 * 1000;
+            await markKeyAsDead(apiKey, duration, '429_rate_limit_1st_2m');
+            console.warn(`[KeyService] 🔒 Locking KEY ${apiKey.substring(0,8)}... for 2 minutes (First 429)`);
         } else {
-            // Second offense -> 24 Hours
+            // Second offense -> 10 Minutes (Increased Cool-off)
             state.strikes = 2;
-            const duration = 24 * 60 * 60 * 1000;
-            await markKeyAsDead(apiKey, duration, '429_rate_limit_2nd');
-            console.warn(`[KeyService] 🔒 Locking KEY ${apiKey.substring(0,8)}... for 24h (Repeated 429)`);
+            const duration = 10 * 60 * 1000;
+            await markKeyAsDead(apiKey, duration, '429_rate_limit_2nd_10m');
+            console.warn(`[KeyService] 🔒 Locking KEY ${apiKey.substring(0,8)}... for 10 minutes (Repeated 429)`);
         }
         
         state.last_429 = now;
@@ -345,10 +348,10 @@ async function handleApiKeyError(key, error, modelName = null) {
             console.warn(`[KeyService] 🚨 Daily Quota Exceeded for ${key.substring(0,8)}... Locking for 24h.`);
             await markKeyAsQuotaExceeded(key);
         } else {
-            console.warn(`[KeyService] ⏳ Rate Limit (429) hit for ${key.substring(0,8)}... Locking for 24h (User Preference).`);
-            // Lock for 24h as per user requirement even for RPM hits to be safe
-            const twentyFourHours = 24 * 60 * 60 * 1000;
-            await markKeyAsDead(key, twentyFourHours, 'rate_limit_24h_lock');
+            console.warn(`[KeyService] ⏳ Rate Limit (429 - RPM/TPM) hit for ${key.substring(0,8)}... Locking for 2 MINUTES (Smart Skip).`);
+            // Lock for 2 minutes for RPM hits to allow recovery without losing the key for a whole day
+            const twoMinutes = 2 * 60 * 1000;
+            await markKeyAsDead(key, twoMinutes, 'rate_limit_rpm_2m_lock');
         }
         
         // --- FORCE CACHE REFRESH AFTER LOCK ---
@@ -691,9 +694,11 @@ async function getSmartKey(provider, model = 'default') {
 
     // 2. SEQUENTIAL ROTATION LOGIC (Persistent & High-Performance)
     const mapKey = `${provider}:${model}`;
-    let currentIndex = globalKeyPointers.get(mapKey) || 0;
     
-    // If index out of bounds, reset to 0
+    // ATOMIC INDEX MANAGEMENT: Get and increment pointer immediately to avoid parallel duplicates
+    let currentIndex = globalKeyPointers.get(mapKey) || 0;
+    globalKeyPointers.set(mapKey, (currentIndex + 1) % validKeys.length);
+    
     if (currentIndex >= validKeys.length) currentIndex = 0;
 
     const minGapMs = KEY_MIN_GAP_MS > 0 ? (KEY_MIN_GAP_MS + Math.floor(Math.random() * (KEY_MIN_GAP_JITTER_MS + 1))) : 0;
@@ -702,6 +707,7 @@ async function getSmartKey(provider, model = 'default') {
 
     // Check unusable (RPM/RPD)
     for (let i = 0; i < validKeys.length; i++) {
+        // We start from the index we just reserved
         const actualIndex = (currentIndex + i) % validKeys.length;
         const candidateKey = validKeys[actualIndex];
 
@@ -734,7 +740,7 @@ async function getSmartKey(provider, model = 'default') {
 
         // Check usable (RPM/RPD)
         if (isKeyWithinLimits(candidateKey, model)) {
-            // Update Pointer (O(1))
+            // Update Pointer (O(1)) - Record the NEXT index for the NEXT request
             globalKeyPointers.set(mapKey, (actualIndex + 1) % validKeys.length);
             
             // --- ATOMIC TIMESTAMP RECORDING ---

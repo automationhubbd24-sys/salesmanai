@@ -249,11 +249,11 @@ async function handleAiError(error, apiKey, model) {
             }
         } else {
             // It's likely an RPM/TPM limit hit (temporary)
-            console.warn(`[AI] 🔒 Rate Limit (RPM/TPM) hit for key ${apiKey.substring(0, 8)}... marking as DEAD (24h Lock).`);
+            console.warn(`[AI] 🔒 Rate Limit (RPM/TPM) hit for key ${apiKey.substring(0, 8)}... marking as DEAD (2 MINUTES Lock).`);
             if (keyService.markKeyAsDead) {
-                // User Request: All Dead/Locked keys should reset after 24h
-                const twentyFourHours = 24 * 60 * 60 * 1000;
-                await keyService.markKeyAsDead(apiKey, twentyFourHours, `rate_limit_${model}_24h`);
+                // RPM/TPM hits should only lock for a short duration
+                const twoMinutes = 2 * 60 * 1000;
+                await keyService.markKeyAsDead(apiKey, twoMinutes, `rate_limit_${model}_2m`);
             }
         }
         return;
