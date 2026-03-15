@@ -25,6 +25,8 @@ interface ApiKey {
   usage_today: number;
   last_used_at: string;
   rph_limit?: number;
+  rpm_limit?: number;
+  rpd_limit?: number;
   cooldown_until?: string | null;
 }
 
@@ -2379,8 +2381,10 @@ export default function AdminPage() {
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-col">
-                            <span className="font-medium">{k.usage_today || 0}</span>
-                            {k.rph_limit && <span className="text-[10px] text-muted-foreground">Limit: {k.rph_limit} RPD</span>}
+                            <span className="font-medium text-primary">{k.usage_today || 0}</span>
+                            {k.rpd_limit && k.rpd_limit > 0 && (
+                                <span className="text-[9px] text-muted-foreground bg-white/5 px-1 rounded w-fit">Limit: {k.rpd_limit} RPD</span>
+                            )}
                           </div>
                         </TableCell>
                         <TableCell className="text-right">

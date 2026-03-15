@@ -879,7 +879,7 @@ module.exports = {
                     id: k.id,
                     provider: k.provider,
                     api: k.api.substring(0, 12) + '***', // Mask key for safety
-                    status: k.status,
+                    status: pending.status || k.status,
                     usage_today: (k.usage_today || 0) + (pending.usage_delta || 0),
                     last_used_at: k.last_used_at,
                     rph_limit: k.rph_limit,
@@ -887,7 +887,7 @@ module.exports = {
                     rpd_limit: k.rpd_limit,
                     current_rpm: summary.rpm,
                     current_rph: summary.rph,
-                    cooldown_until: k.cooldown_until
+                    cooldown_until: pending.cooldown_until || k.cooldown_until
                 };
             })
         };
