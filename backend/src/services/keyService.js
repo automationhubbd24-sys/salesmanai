@@ -873,18 +873,21 @@ module.exports = {
             limit,
             keys: paginatedKeys.map(k => {
                 const summary = getKeyUsageSummary(k.api);
+                const pending = pendingUpdates.get(k.api) || { usage_delta: 0 };
+                
                 return {
                     id: k.id,
                     provider: k.provider,
                     api: k.api.substring(0, 12) + '***', // Mask key for safety
                     status: k.status,
-                    usage_today: k.usage_today,
+                    usage_today: (k.usage_today || 0) + (pending.usage_delta || 0),
                     last_used_at: k.last_used_at,
                     rph_limit: k.rph_limit,
                     rpm_limit: k.rpm_limit,
                     rpd_limit: k.rpd_limit,
                     current_rpm: summary.rpm,
-                    current_rph: summary.rph
+                    current_rph: summary.rph,
+                    cooldown_until: k.cooldown_until
                 };
             })
         };

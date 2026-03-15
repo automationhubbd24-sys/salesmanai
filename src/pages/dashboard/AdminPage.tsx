@@ -25,6 +25,7 @@ interface ApiKey {
   usage_today: number;
   last_used_at: string;
   rph_limit?: number;
+  cooldown_until?: string | null;
 }
 
 interface EngineStats {
@@ -180,6 +181,7 @@ export default function AdminPage() {
   const [engineTotal, setEngineTotal] = useState(0);
   const [engineSearch, setEngineSearch] = useState("");
   const [engineRevealedKeys, setEngineRevealedKeys] = useState<Record<number, string>>({});
+  const [rotationLogs, setRotationLogs] = useState<any[]>([]);
 
   const [geminiModel, setGeminiModel] = useState("");
   const [geminiMessage, setGeminiMessage] = useState("hi from SalesmanChatbot key test");
@@ -544,6 +546,15 @@ export default function AdminPage() {
       });
       if (configRes.ok) setEngineConfigs(await configRes.json());
 
+      // Fetch Rotation Logs
+      const logsRes = await fetch(`${BACKEND_URL}/api/api-list/logs`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (logsRes.ok) {
+        const logsData = await logsRes.json();
+        if (logsData.success) setRotationLogs(logsData.logs || []);
+      }
+
       // Fetch Global Engine Configs
       const globalConfigRes = await fetch(`${BACKEND_URL}/api/api-list/config`, {
         headers: { Authorization: `Bearer ${token}` }
@@ -639,6 +650,15 @@ export default function AdminPage() {
     }, 300);
     return () => clearTimeout(timer);
   }, [engineSearch, isAuthenticated]);
+
+  // Auto-refresh engine pool data (Active Rotation Pool)
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const interval = setInterval(() => {
+      fetchEngineData(enginePage);
+    }, 10000); // 10 seconds
+    return () => clearInterval(interval);
+  }, [isAuthenticated, enginePage, engineFilter, engineSearch]);
 
   const updateEngineConfig = async (name: string, config: Partial<EngineConfig>) => {
     try {
@@ -2347,11 +2367,22 @@ export default function AdminPage() {
                           {revealedKey || k.api}
                         </TableCell>
                         <TableCell>
-                          <Badge variant={k.status === 'active' ? 'default' : 'destructive'} className={k.status === 'active' ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' : ''}>
-                            {k.status}
-                          </Badge>
+                          {k.cooldown_until && new Date(k.cooldown_until) > new Date() ? (
+                            <Badge variant="outline" className="bg-amber-500/10 text-amber-400 border-amber-500/20">
+                              <AlertTriangle className="mr-1 h-3 w-3" /> Locked (Cooldown)
+                            </Badge>
+                          ) : (
+                            <Badge variant={k.status === 'active' ? 'default' : 'destructive'} className={k.status === 'active' ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' : ''}>
+                              {k.status}
+                            </Badge>
+                          )}
                         </TableCell>
-                        <TableCell>{k.usage_today || 0}</TableCell>
+                        <TableCell>
+                          <div className="flex flex-col">
+                            <span className="font-medium">{k.usage_today || 0}</span>
+                            {k.rph_limit && <span className="text-[10px] text-muted-foreground">Limit: {k.rph_limit} RPD</span>}
+                          </div>
+                        </TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-2">
                             <Button variant="outline" size="sm" onClick={() => toggleRevealKey(k.id)}>
@@ -2429,6 +2460,37 @@ export default function AdminPage() {
                   </div>
                 </div>
               )}
+            </CardContent>
+          </Card>
+
+          {/* Rotation Logs */}
+          <Card className="border-white/10 bg-black/20">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-sm font-bold">
+                <Activity className="h-4 w-4 text-[#00ff88]" /> Recent Rotation Events
+              </CardTitle>
+              <CardDescription className="text-[10px]">Real-time key switching logs from the API Engine.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar text-[11px]">
+                {rotationLogs.length > 0 ? (
+                  rotationLogs.map((log, i) => (
+                    <div key={i} className="flex items-center justify-between py-1.5 border-b border-white/5 last:border-0 hover:bg-white/5 px-2 rounded-sm transition-colors">
+                      <div className="flex items-center gap-3">
+                        <span className="text-muted-foreground w-16">{new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+                        <Badge variant="outline" className="text-[9px] uppercase border-white/10 px-1 py-0 h-4">{log.provider}</Badge>
+                        <span className="font-mono text-primary/80">{log.key}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground">Index:</span>
+                        <span className="bg-white/10 px-1.5 rounded font-bold text-white">{log.index}/{log.total}</span>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-center py-4 text-muted-foreground">No rotation events yet. Start using the API to see logs.</div>
+                )}
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
