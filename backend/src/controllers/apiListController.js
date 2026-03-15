@@ -4,21 +4,13 @@ const aiService = require('../services/aiService');
 
 exports.list = async (req, res) => {
     try {
-        const result = await pgClient.query(
-            'SELECT id, provider, api, model, status, usage_today, rph_limit, rpm_limit, rpd_limit, cooldown_until FROM api_list ORDER BY id DESC'
-        );
+        const { provider, page, limit, q } = req.query;
+        const pageNum = parseInt(page) || 1;
+        const limitNum = parseInt(limit) || 10;
         
-        // Enrich with current in-memory usage stats
-        const enrichedItems = result.rows.map(item => {
-            const summary = keyService.getKeyUsageSummary(item.api);
-            return {
-                ...item,
-                current_rpm: summary.rpm,
-                current_rph: summary.rph
-            };
-        });
-
-        res.json({ success: true, items: enrichedItems });
+        const poolData = keyService.getActiveRotationPool(provider, pageNum, limitNum, q);
+        
+        res.json({ success: true, ...poolData });
     } catch (error) {
         console.error('apiList list error:', error);
         res.status(500).json({ success: false, error: error.message });
