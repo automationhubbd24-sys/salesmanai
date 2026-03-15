@@ -30,7 +30,7 @@ export default defineConfig(() => ({
         manualChunks: {
           'vendor-react': ['react', 'react-dom', 'react-router-dom'],
           'vendor-ui': ['@radix-ui/react-tabs', '@radix-ui/react-select', 'lucide-react'],
-          'vendor-utils': ['axios', 'date-fns', 'clsx', 'tailwind-merge'],
+          'vendor-utils': ['date-fns', 'clsx', 'tailwind-merge'],
         },
       },
     },
