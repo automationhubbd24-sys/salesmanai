@@ -20,6 +20,7 @@ router.get('/pages', async (req, res) => {
             const payload = jwt.verify(token, secret);
             userId = payload.sub;
             userEmail = payload.email;
+            console.log(`[GET /pages] JWT Payload - ID: ${userId}, Email: ${userEmail}`);
         }
 
         if (!userId) {
