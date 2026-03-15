@@ -253,11 +253,12 @@ async function markKeyAsDead(keyOrObj, duration = DEFAULT_COOLDOWN, reason = 'un
     // --- IMMEDIATE DB UPDATE for status/cooldown ---
     try {
         const pgClient = require('./pgClient');
+        // Update both cooldown_until AND status to 'locked' for visual clarity in Admin Panel
         const res = await pgClient.query(
-            "UPDATE api_list SET cooldown_until = $1, last_used_at = NOW() WHERE api = $2",
+            "UPDATE api_list SET cooldown_until = $1, status = 'locked', last_used_at = NOW() WHERE api = $2",
             [expiryDate.toISOString(), key]
         );
-        console.log(`[KeyService] 💾 Persisted lock for ${key.substring(0,8)}... until ${expiryDate.toISOString()}. Rows affected: ${res.rowCount}`);
+        console.log(`[KeyService] 💾 Persisted lock for ${key.substring(0,8)}... until ${expiryDate.toISOString()}. Status set to 'locked'. Rows affected: ${res.rowCount}`);
     } catch (err) {
         console.error(`[KeyService] Failed to immediately persist dead key status:`, err.message);
     }
@@ -325,7 +326,12 @@ async function handleApiKeyError(key, error, modelName = null) {
     const errorStr = String(error).toLowerCase();
     
     // --- SMART 429 DETECTION (FOR ALL PROVIDERS) ---
-    if (errorStr.includes('429') || errorStr.includes('too many requests')) {
+    // Added '429 status code (no body)' and other common variants
+    if (errorStr.includes('429') || 
+        errorStr.includes('too many requests') || 
+        errorStr.includes('rate limit') ||
+        errorStr.includes('status code 429')) {
+        
         const isDailyQuota = errorStr.includes('perday') || 
                              errorStr.includes('quota exceeded') || 
                              errorStr.includes('quotavalue') ||
@@ -335,11 +341,15 @@ async function handleApiKeyError(key, error, modelName = null) {
             console.warn(`[KeyService] 🚨 Daily Quota Exceeded for ${key.substring(0,8)}... Locking for 24h.`);
             await markKeyAsQuotaExceeded(key);
         } else {
-            console.warn(`[KeyService] ⏳ Rate Limit (RPM) hit for ${key.substring(0,8)}... Locking for 24h (User Preference).`);
+            console.warn(`[KeyService] ⏳ Rate Limit (429) hit for ${key.substring(0,8)}... Locking for 24h (User Preference).`);
             // Lock for 24h as per user requirement even for RPM hits to be safe
             const twentyFourHours = 24 * 60 * 60 * 1000;
             await markKeyAsDead(key, twentyFourHours, 'rate_limit_24h_lock');
         }
+        
+        // --- FORCE CACHE REFRESH AFTER LOCK ---
+        // This ensures the local memory cache and DB are in sync immediately
+        await updateKeyCache(true);
         return;
     }
 
