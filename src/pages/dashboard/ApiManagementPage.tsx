@@ -14,6 +14,10 @@ interface ApiItem {
     provider: string;
     api: string;
     status?: string;
+    usage_today?: number;
+    current_rpm?: number;
+    current_rph?: number;
+    cooldown_until?: string | null;
 }
 
 interface GlobalConfig {
@@ -296,6 +300,7 @@ export default function ApiManagementPage() {
                                 <TableRow className="border-white/10 hover:bg-transparent">
                                     <TableHead className="text-white/60">Provider</TableHead>
                                     <TableHead className="text-white/60">Key (Masked)</TableHead>
+                                    <TableHead className="text-white/60">Usage (Today)</TableHead>
                                     <TableHead className="text-white/60">Status</TableHead>
                                     <TableHead className="text-right text-white/60">Actions</TableHead>
                                 </TableRow>
@@ -312,8 +317,15 @@ export default function ApiManagementPage() {
                                             <TableCell className="font-mono text-xs text-white/40">
                                                 {api.api ? `${api.api.substring(0, 8)}...${api.api.substring(api.api.length - 4)}` : '******'}
                                             </TableCell>
+                                            <TableCell className="text-white/60 font-mono text-sm">
+                                                {api.usage_today || 0}
+                                            </TableCell>
                                             <TableCell>
-                                                {api.status === "active" ? (
+                                                {api.cooldown_until && new Date(api.cooldown_until).getTime() > Date.now() ? (
+                                                    <div className="flex items-center gap-2 text-orange-400 text-[10px] uppercase font-bold tracking-widest">
+                                                        <div className="h-1.5 w-1.5 rounded-full bg-orange-400 animate-pulse" /> Locked (Cooldown)
+                                                    </div>
+                                                ) : api.status === "active" ? (
                                                     <div className="flex items-center gap-2 text-green-400 text-[10px] uppercase font-bold tracking-widest">
                                                         <div className="h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse" /> Active
                                                     </div>

@@ -5,7 +5,7 @@ const aiService = require('../services/aiService');
 exports.list = async (req, res) => {
     try {
         const result = await pgClient.query(
-            'SELECT id, provider, api, model, status, usage_today, rph_limit, rpm_limit, rpd_limit FROM api_list ORDER BY id DESC'
+            'SELECT id, provider, api, model, status, usage_today, rph_limit, rpm_limit, rpd_limit, cooldown_until FROM api_list ORDER BY id DESC'
         );
         
         // Enrich with current in-memory usage stats
