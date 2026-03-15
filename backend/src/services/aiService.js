@@ -249,10 +249,11 @@ async function handleAiError(error, apiKey, model) {
             }
         } else {
             // It's likely an RPM/TPM limit hit (temporary)
-            console.warn(`[AI] 🔒 Rate Limit (RPM/TPM) hit for key ${apiKey.substring(0, 8)}... marking as DEAD (70s Short cooldown).`);
+            console.warn(`[AI] 🔒 Rate Limit (RPM/TPM) hit for key ${apiKey.substring(0, 8)}... marking as DEAD (24h Lock).`);
             if (keyService.markKeyAsDead) {
-                // Short cooldown for RPM/TPM limits (70 seconds to match our window)
-                await keyService.markKeyAsDead(apiKey, 70 * 1000, `rate_limit_${model}`);
+                // User Request: All Dead/Locked keys should reset after 24h
+                const twentyFourHours = 24 * 60 * 60 * 1000;
+                await keyService.markKeyAsDead(apiKey, twentyFourHours, `rate_limit_${model}_24h`);
             }
         }
         return;
@@ -271,17 +272,19 @@ async function handleAiError(error, apiKey, model) {
         console.error(`[AI] 💀 Authentication Failed for Key: ${apiKey.substring(0, 8)}... | Full Msg: ${errorMsg} | Response: ${responseMessage}`);
 
         if (keyService.markKeyAsDead) {
-            // Mark as dead for 30 days to avoid retrying bad keys
-            await keyService.markKeyAsDead(apiKey, 30 * 24 * 60 * 60 * 1000, 'authentication_failed'); 
+            // User Request: All Dead/Locked keys should reset after 24h
+            const twentyFourHours = 24 * 60 * 60 * 1000;
+            await keyService.markKeyAsDead(apiKey, twentyFourHours, 'authentication_failed_24h'); 
         }
         return;
     }
 
     // 3. General API Error (Network, Timeout, 500, etc.)
     if (statusCode >= 500 || errorMsg.includes('timeout') || errorMsg.includes('network')) {
-        console.warn(`[AI] ⚠️ General API Error for key ${apiKey.substring(0, 8)}... cooldown for 10 minutes.`);
+        console.warn(`[AI] ⚠️ General API Error for key ${apiKey.substring(0, 8)}... cooldown for 24h.`);
         if (keyService.markKeyAsDead) {
-            await keyService.markKeyAsDead(apiKey, 10 * 60 * 1000, 'api_error'); // 10 minutes cooldown
+            const twentyFourHours = 24 * 60 * 60 * 1000;
+            await keyService.markKeyAsDead(apiKey, twentyFourHours, 'api_error_24h'); // 24h cooldown
         }
         return;
     }

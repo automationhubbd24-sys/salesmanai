@@ -18,7 +18,7 @@ const GEMINI_RPM_LIMIT = 4; // Strict limit: 4 requests per 60s
 const GEMINI_RPD_LIMIT = 18; // Strict limit: 18 requests per 24h
 
 const deadKeys = new Map();
-const DEFAULT_COOLDOWN = 60 * 1000; // 1 Minute default for RPM/TPM
+const DEFAULT_COOLDOWN = 24 * 60 * 60 * 1000; // 24 Hours default for all locks as per User Request
 const KEY_MIN_GAP_MS = process.env.KEY_MIN_GAP_MS ? parseInt(process.env.KEY_MIN_GAP_MS, 10) : 900;
 const KEY_MIN_GAP_JITTER_MS = process.env.KEY_MIN_GAP_JITTER_MS ? parseInt(process.env.KEY_MIN_GAP_JITTER_MS, 10) : 400;
 
@@ -55,11 +55,18 @@ async function updateKeyCache(force = false) {
         const pgClient = require('./pgClient');
         
         // --- SMART AUTO-RESET: Clear expired 24h locks and cooldowns in DB ---
-        // Any key whose cooldown_until is in the past will be unlocked automatically
+        // Any key whose cooldown_until is in the past OR was last used > 24h ago and is not active/disabled
         const nowIso = new Date().toISOString();
+        const twentyFourHoursAgo = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+        
         const resetResult = await pgClient.query(
-            "UPDATE api_list SET cooldown_until = NULL, status = 'active' WHERE cooldown_until < $1 AND status != 'disabled'",
-            [nowIso]
+            `UPDATE api_list 
+             SET cooldown_until = NULL, status = 'active' 
+             WHERE (cooldown_until < $1) 
+                OR (status IN ('locked', 'dead') AND (cooldown_until IS NULL OR cooldown_until < $1) AND last_used_at < $2)
+                OR (status IN ('locked', 'dead') AND last_used_at IS NULL)
+             AND status != 'disabled'`,
+            [nowIso, twentyFourHoursAgo]
         );
         if (resetResult.rowCount > 0) {
             console.log(`[KeyService] ♻️ Auto-reset ${resetResult.rowCount} keys whose 24h lock/cooldown expired.`);
@@ -185,17 +192,17 @@ async function report429(modelName, apiKey = null) {
         }
 
         if (state.strikes === 0) {
-            // First offense -> 70 Seconds (Match RPM window)
+            // First offense -> 24 Hours
             state.strikes = 1;
-            const duration = 70 * 1000;
+            const duration = 24 * 60 * 60 * 1000;
             await markKeyAsDead(apiKey, duration, '429_rate_limit_1st');
-            console.warn(`[KeyService] 🔒 Locking KEY ${apiKey.substring(0,8)}... for 70s (First 429)`);
+            console.warn(`[KeyService] 🔒 Locking KEY ${apiKey.substring(0,8)}... for 24h (First 429)`);
         } else {
-            // Second offense -> 10 Minutes (User has many keys, so 10 mins is fine to let it cool down)
+            // Second offense -> 24 Hours
             state.strikes = 2;
-            const duration = 10 * 60 * 1000;
+            const duration = 24 * 60 * 60 * 1000;
             await markKeyAsDead(apiKey, duration, '429_rate_limit_2nd');
-            console.warn(`[KeyService] 🔒 Locking KEY ${apiKey.substring(0,8)}... for 10 MINUTES (Repeated 429)`);
+            console.warn(`[KeyService] 🔒 Locking KEY ${apiKey.substring(0,8)}... for 24h (Repeated 429)`);
         }
         
         state.last_429 = now;
@@ -351,8 +358,10 @@ async function handleApiKeyError(key, error, modelName = null) {
     }
 
     if (errorStr.includes('401') || errorStr.includes('invalid api key') || errorStr.includes('expired')) {
-        console.error(`[KeyService] 💀 Key ${key.substring(0,8)}... is DEAD (401/Invalid).`);
-        await markKeyAsDead(key, 30 * 24 * 60 * 60 * 1000, 'invalid_key'); // 30 days
+        console.error(`[KeyService] 💀 Key ${key.substring(0,8)}... is DEAD (401/Invalid). Locking for 24h.`);
+        // User Request: All Dead/Locked keys should reset after 24h
+        const twentyFourHours = 24 * 60 * 60 * 1000;
+        await markKeyAsDead(key, twentyFourHours, 'invalid_key_24h_reset'); 
         return;
     }
 }
@@ -598,7 +607,9 @@ async function updateKeyStatusFromHeaders(apiKey, headers) {
         }
         
         if (timeoutMs > 0) {
-            await markKeyAsDead(apiKey, timeoutMs, 'header_limit');
+            // User Request: All locks should be 24h
+            const twentyFourHours = 24 * 60 * 60 * 1000;
+            await markKeyAsDead(apiKey, Math.max(timeoutMs, twentyFourHours), 'header_limit_24h_min');
         }
     }
 }

@@ -412,7 +412,9 @@ router.post('/v1/chat/completions', async (req, res) => {
 
                 if (response.status >= 400) {
                     if ([429, 401, 403].includes(response.status)) {
-                        keyService.markKeyAsDead(keyData.key, 60000, `upstream_${response.status}`);
+                        // User Request: All Dead/Locked keys should reset after 24h
+                        const twentyFourHours = 24 * 60 * 60 * 1000;
+                        keyService.markKeyAsDead(keyData.key, twentyFourHours, `upstream_${response.status}_24h`);
                     }
                     lastError = response.data;
                     if (response.data && response.data.destroy) response.data.destroy();
@@ -423,7 +425,9 @@ router.post('/v1/chat/completions', async (req, res) => {
                 if (provider === 'google' || provider === 'gemini') {
                     const streamError = parseStreamError(firstChunk);
                     if (streamError) {
-                        keyService.markKeyAsDead(keyData.key, 60000, 'stream_error');
+                        // User Request: All Dead/Locked keys should reset after 24h
+                        const twentyFourHours = 24 * 60 * 60 * 1000;
+                        keyService.markKeyAsDead(keyData.key, twentyFourHours, 'stream_error_24h');
                         if (response.data && response.data.destroy) response.data.destroy();
                         lastError = { error: streamError };
                         continue;
