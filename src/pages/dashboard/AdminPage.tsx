@@ -183,6 +183,7 @@ export default function AdminPage() {
   const [engineTotal, setEngineTotal] = useState(0);
   const [engineSearch, setEngineSearch] = useState("");
   const [engineStatusFilter, setEngineStatusFilter] = useState("all"); 
+  const [engineProviderFilter, setEngineProviderFilter] = useState<'all' | 'google' | 'openrouter' | 'groq' | 'openai' | 'mistral'>('all');
   const [engineItemsPerPage] = useState(10); // Client-side pagination limit
 
   // Countdown Helper for Locked Keys
@@ -2532,6 +2533,19 @@ export default function AdminPage() {
                       <SelectItem value="dead">Dead</SelectItem>
                     </SelectContent>
                   </Select>
+                  <Select value={engineProviderFilter} onValueChange={(v) => setEngineProviderFilter(v as any)}>
+                    <SelectTrigger className="h-9 w-40 bg-black/40 border-white/10 text-xs">
+                      <SelectValue placeholder="Provider" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Providers</SelectItem>
+                      <SelectItem value="google">Google Gemini</SelectItem>
+                      <SelectItem value="openrouter">OpenRouter</SelectItem>
+                      <SelectItem value="groq">Groq</SelectItem>
+                      <SelectItem value="openai">OpenAI</SelectItem>
+                      <SelectItem value="mistral">Mistral</SelectItem>
+                    </SelectContent>
+                  </Select>
                   <Button variant="outline" size="icon" className="h-9 w-9 border-white/10 bg-black/20" onClick={() => fetchEngineData(1)}>
                     <RefreshCw className={`h-4 w-4 ${engineStatsLoading ? 'animate-spin' : ''}`} />
                   </Button>
@@ -2548,8 +2562,8 @@ export default function AdminPage() {
                   if (engineStatusFilter === 'active') matchesStatus = k.status === 'active' && !isLocked;
                   else if (engineStatusFilter === 'locked') matchesStatus = !!isLocked;
                   else if (engineStatusFilter === 'dead') matchesStatus = k.status !== 'active';
-                  
-                  return matchesSearch && matchesStatus;
+                  const matchesProvider = engineProviderFilter === 'all' || k.provider === engineProviderFilter;
+                  return matchesSearch && matchesStatus && matchesProvider;
                 });
 
                 const startIndex = (enginePage - 1) * engineItemsPerPage;
@@ -2720,36 +2734,7 @@ export default function AdminPage() {
             </CardContent>
           </Card>
 
-          {/* Rotation Logs */}
-          <Card className="border-white/10 bg-black/20">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-sm font-bold">
-                <Activity className="h-4 w-4 text-[#00ff88]" /> Recent Rotation Events
-              </CardTitle>
-              <CardDescription className="text-[10px]">Real-time key switching logs from the API Engine.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar text-[11px]">
-                {rotationLogs.length > 0 ? (
-                  rotationLogs.map((log, i) => (
-                    <div key={i} className="flex items-center justify-between py-1.5 border-b border-white/5 last:border-0 hover:bg-white/5 px-2 rounded-sm transition-colors">
-                      <div className="flex items-center gap-3">
-                        <span className="text-muted-foreground w-16">{new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
-                        <Badge variant="outline" className="text-[9px] uppercase border-white/10 px-1 py-0 h-4">{log.provider}</Badge>
-                        <span className="font-mono text-primary/80">{log.key}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-muted-foreground">Index:</span>
-                        <span className="bg-white/10 px-1.5 rounded font-bold text-white">{log.index}/{log.total}</span>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-center py-4 text-muted-foreground">No rotation events yet. Start using the API to see logs.</div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+          
         </TabsContent>
 
         <TabsContent value="gemini" className="space-y-4">

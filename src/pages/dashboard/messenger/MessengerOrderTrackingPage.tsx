@@ -24,6 +24,9 @@ import { cn } from "@/lib/utils";
 import { Calendar as CalendarIcon, Download, ShoppingBag, Copy, Check, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { BACKEND_URL } from "@/config";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 
 interface Order {
   id: string;
@@ -51,6 +54,12 @@ export default function MessengerOrderTrackingPage() {
   const inFlightRef = useRef<AbortController | null>(null);
 
   const activePageId = currentPage?.page_id || null;
+  const activeDbId = currentPage?.db_id || (typeof window !== "undefined" ? Number(localStorage.getItem("active_fb_db_id") || 0) : 0);
+  const [emailEnabled, setEmailEnabled] = useState(false);
+  const [adminEmail, setAdminEmail] = useState("");
+  const [emailSaving, setEmailSaving] = useState(false);
+  const [reminderEnabled, setReminderEnabled] = useState(false);
+  const [reminderDelay, setReminderDelay] = useState(4);
 
   const updateOrderStatus = async (orderId: string, newStatus: string) => {
     const token = localStorage.getItem("auth_token");
@@ -93,6 +102,62 @@ Phone: ${order.number || 'N/A'}`;
   useEffect(() => {
     ordersRef.current = orders;
   }, [orders]);
+
+  const fetchEmailConfig = useCallback(async () => {
+    try {
+      const token = localStorage.getItem("auth_token");
+      if (!token || !activeDbId) return;
+      const res = await fetch(`${BACKEND_URL}/messenger/config/${activeDbId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      setEmailEnabled(Boolean(data.order_email_confirmation_enabled));
+      setAdminEmail(data.admin_notification_email || "");
+      setReminderEnabled(Boolean(data.order_reminder_enabled));
+      setReminderDelay(Number(data.order_reminder_delay_hours || 4));
+    } catch (e) {
+      console.warn("Failed to load email config", e);
+    }
+  }, [activeDbId]);
+
+  useEffect(() => {
+    fetchEmailConfig();
+  }, [fetchEmailConfig]);
+
+  const handleSaveEmailConfig = async () => {
+    if (!activeDbId) {
+      toast.error("No connected page configuration found");
+      return;
+    }
+    setEmailSaving(true);
+    try {
+      const token = localStorage.getItem("auth_token");
+      if (!token) throw new Error("Please login again");
+      const res = await fetch(`${BACKEND_URL}/messenger/config/${activeDbId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          order_email_confirmation_enabled: emailEnabled,
+          admin_notification_email: adminEmail,
+          order_reminder_enabled: reminderEnabled,
+          order_reminder_delay_hours: reminderDelay
+        })
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Failed with status ${res.status}`);
+      }
+      toast.success("Order email notification settings updated");
+    } catch (e: any) {
+      toast.error(e.message || "Failed to save settings");
+    } finally {
+      setEmailSaving(false);
+    }
+  };
 
   const fetchOrders = useCallback(async (showLoading = true) => {
     const token = localStorage.getItem("auth_token");
@@ -225,6 +290,61 @@ Phone: ${order.number || 'N/A'}`;
 
   return (
     <div className="space-y-6">
+      <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <CardTitle className="text-lg">Order Notifications</CardTitle>
+              <CardDescription>Control email confirmations and smart reminders.</CardDescription>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <Label className="text-sm">Email</Label>
+                <Switch checked={emailEnabled} onCheckedChange={setEmailEnabled} />
+              </div>
+              <div className="flex items-center gap-2">
+                <Label className="text-sm">Reminder</Label>
+                <Switch checked={reminderEnabled} onCheckedChange={setReminderEnabled} />
+              </div>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {emailEnabled && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="md:col-span-2 space-y-2">
+                <Label>Your Notification Email</Label>
+                <Input
+                  placeholder="admin@example.com"
+                  value={adminEmail}
+                  onChange={(e) => setAdminEmail(e.target.value)}
+                  className="h-10"
+                />
+              </div>
+              <div className="flex md:items-end">
+                <Button onClick={handleSaveEmailConfig} disabled={emailSaving} className="w-full md:w-auto">
+                  {emailSaving ? "Saving..." : "Save"}
+                </Button>
+              </div>
+            </div>
+          )}
+          {reminderEnabled && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label>Reminder Delay (Hours)</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={reminderDelay}
+                  onChange={(e) => setReminderDelay(Math.max(1, Math.min(20, Number(e.target.value) || 4)))}
+                  className="h-10 w-32"
+                />
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
       <div className="flex items-center justify-between">
         <div>
            <h2 className="text-3xl font-bold tracking-tight">Messenger Order Tracking</h2>

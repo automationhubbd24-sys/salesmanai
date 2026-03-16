@@ -104,6 +104,11 @@ export default function MessengerSettingsPage() {
   // Order Notification Settings
   const [orderEmailEnabled, setOrderEmailEnabled] = useState<boolean>(false);
   const [adminNotificationEmail, setAdminNotificationEmail] = useState<string>("");
+
+  // Smart Order Reminder Settings
+  const [orderReminderEnabled, setOrderReminderEnabled] = useState<boolean>(false);
+  const [orderReminderDelay, setOrderReminderDelay] = useState<number>(4);
+  const [orderReminderMessage, setOrderReminderMessage] = useState<string>("স্যার, আপনি [PRODUCT] টি নিতে চেয়েছিলেন, আপনি কি অর্ডারটি কনফার্ম করতে চান?");
   
   // New State for Optimization
   const [optimizing, setOptimizing] = useState(false);
@@ -241,6 +246,10 @@ export default function MessengerSettingsPage() {
           setEmbedEnabled(Boolean(dbRow.embed_enabled));
           setSemanticThreshold(dbRow.semantic_cache_threshold ? Number(dbRow.semantic_cache_threshold) : 0.96);
           
+          setOrderReminderEnabled(Boolean(dbRow.order_reminder_enabled));
+          setOrderReminderDelay(dbRow.order_reminder_delay_hours || 4);
+          setOrderReminderMessage(dbRow.order_reminder_message || "স্যার, আপনি [PRODUCT] টি নিতে চেয়েছিলেন, আপনি কি অর্ডারটি কনফার্ম করতে চান?");
+
           setOrderEmailEnabled(Boolean(pageRow.order_email_confirmation_enabled));
           setAdminNotificationEmail(pageRow.admin_notification_email || "");
       }
@@ -453,7 +462,10 @@ export default function MessengerSettingsPage() {
           semantic_cache_threshold: semanticThreshold,
           embed_enabled: embedEnabled,
           order_email_confirmation_enabled: orderEmailEnabled,
-          admin_notification_email: adminNotificationEmail
+          admin_notification_email: adminNotificationEmail,
+          order_reminder_enabled: orderReminderEnabled,
+          order_reminder_delay_hours: orderReminderDelay,
+          order_reminder_message: orderReminderMessage
         })
       });
 
@@ -1261,6 +1273,62 @@ export default function MessengerSettingsPage() {
                                     />
                                     <p className="text-xs text-muted-foreground">
                                         We will send a copy of every new order to this email.
+                                    </p>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="border-t border-white/5 pt-6 space-y-4">
+                        <div className="flex items-center justify-between">
+                            <div className="space-y-1">
+                                <Label className="text-base">Smart Order Reminder</Label>
+                                <p className="text-sm text-muted-foreground">
+                                    Automatically follow up with customers who started an order but didn't finish.
+                                </p>
+                            </div>
+                            <Switch 
+                                checked={orderReminderEnabled}
+                                onCheckedChange={setOrderReminderEnabled}
+                            />
+                        </div>
+
+                        {orderReminderEnabled && (
+                            <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                                <div className="space-y-1.5">
+                                    <Label>Reminder Delay <span className="text-amber-600 dark:text-amber-400 font-normal ml-2">(1–20 hours)</span></Label>
+                                    <div className="flex items-center space-x-4">
+                                        <Input 
+                                            type="number" 
+                                            value={orderReminderDelay} 
+                                            onChange={(e) => {
+                                                const raw = Number(e.target.value) || 1;
+                                                const clamped = Math.max(1, Math.min(20, raw));
+                                                setOrderReminderDelay(clamped);
+                                            }} 
+                                            min={1} 
+                                            max={20}
+                                            className="w-24 font-mono"
+                                        />
+                                        <span className="text-sm text-muted-foreground">hours of inactivity</span>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground">
+                                        System will wait this long before sending the first reminder. (Max 24h window applies).
+                                    </p>
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    <Label htmlFor="reminder-msg">Reminder Message Template</Label>
+                                    <Textarea 
+                                        id="reminder-msg"
+                                        placeholder="Hello [NAME], you forgot to complete your order for [PRODUCT]..."
+                                        value={orderReminderMessage}
+                                        onChange={(e) => setOrderReminderMessage(e.target.value)}
+                                        className="min-h-[80px]"
+                                    />
+                                    <p className="text-xs text-muted-foreground flex items-center gap-1">
+                                        <Sparkles className="w-3 h-3" />
+                                        AI will automatically rewrite this for each customer to avoid Facebook spam detection.
                                     </p>
                                 </div>
                             </div>

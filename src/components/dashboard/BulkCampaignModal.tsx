@@ -59,7 +59,7 @@ export function BulkCampaignModal({ pageId, platform, trigger }: BulkCampaignMod
         <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
                 {trigger || (
-                    <Button variant="outline" className="gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700 border-none shadow-md">
+                    <Button variant="default" className="gap-2 bg-primary hover:bg-primary/90 text-black border-none shadow-md">
                         <Send className="w-4 h-4" />
                         SEND BULK MESSAGE
                     </Button>
@@ -68,7 +68,7 @@ export function BulkCampaignModal({ pageId, platform, trigger }: BulkCampaignMod
             <DialogContent className="sm:max-w-[500px]">
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2">
-                        <Send className="w-5 h-5 text-blue-600" />
+                        <Send className="w-5 h-5 text-primary" />
                         Send Bulk Message ({platform === 'messenger' ? 'Messenger' : 'WhatsApp'})
                     </DialogTitle>
                 </DialogHeader>
@@ -135,7 +135,7 @@ export function BulkCampaignModal({ pageId, platform, trigger }: BulkCampaignMod
                     <Button 
                         onClick={handleStartCampaign} 
                         disabled={loading || !message.trim()} 
-                        className="w-full h-12 text-lg bg-blue-600 hover:bg-blue-700"
+                        className="w-full h-12 text-lg bg-primary hover:bg-primary/90 text-black"
                     >
                         {loading ? (
                             <>

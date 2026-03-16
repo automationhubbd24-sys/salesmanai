@@ -421,7 +421,8 @@ router.put('/config/:id', async (req, res) => {
             'block_emoji', 'unblock_emoji', 'check_conversion', 'text_prompt', 'image_prompt', 'wait',
             'memory_context_name', 'order_lock_minutes', 'audio_detection',
             'semantic_cache_enabled', 'semantic_cache_threshold', 'embed_enabled',
-            'order_email_confirmation_enabled', 'admin_notification_email'
+            'order_email_confirmation_enabled', 'admin_notification_email',
+            'order_reminder_enabled', 'order_reminder_delay_hours', 'order_reminder_message'
         ];
 
         // Ensure new columns exist (Migration on the fly)
