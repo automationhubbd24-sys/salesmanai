@@ -18,6 +18,36 @@ class MarketingService {
     async startCampaign(campaignData) {
         const { userId, pageId, platform, message, imageUrl, excludeBuyers, range } = campaignData;
 
+        // 0. Ensure tables exist (On-the-fly migration)
+        try {
+            await query(`
+                CREATE TABLE IF NOT EXISTS bulk_campaigns (
+                    id SERIAL PRIMARY KEY,
+                    user_id UUID,
+                    page_id TEXT,
+                    platform TEXT,
+                    message TEXT,
+                    image_url TEXT,
+                    exclude_buyers BOOLEAN DEFAULT TRUE,
+                    status TEXT DEFAULT 'processing',
+                    total_messages INTEGER DEFAULT 0,
+                    sent_messages INTEGER DEFAULT 0,
+                    failed_messages INTEGER DEFAULT 0,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+                CREATE TABLE IF NOT EXISTS bulk_messages (
+                    id SERIAL PRIMARY KEY,
+                    campaign_id INTEGER REFERENCES bulk_campaigns(id) ON DELETE CASCADE,
+                    recipient_id TEXT,
+                    status TEXT,
+                    error_message TEXT,
+                    sent_at TIMESTAMPTZ DEFAULT NOW()
+                );
+            `);
+        } catch (e) {
+            console.warn("[Marketing] Migration failed:", e.message);
+        }
+
         // 1. Create campaign record
         const campaignRes = await query(
             `INSERT INTO bulk_campaigns (user_id, page_id, platform, message, image_url, exclude_buyers, status)

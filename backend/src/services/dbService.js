@@ -1437,6 +1437,15 @@ async function saveWhatsAppOrderTracking(orderData) {
     }
 
     try {
+        await query(`
+            ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS customer_email text;
+            ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS status text DEFAULT 'ongoing';
+        `);
+    } catch (e) {
+        console.warn("[DB] whatsapp_order_tracking migration failed:", e.message);
+    }
+
+    try {
         let { session_name, sender_id, product_name, number, location, product_quantity, price, customer_email } = orderData;
         
         // SMART MERGE: Last 1 hour
@@ -2001,7 +2010,27 @@ async function saveOrderTracking(orderData) {
         return null;
     }
 
-    console.log(`[Order] Smart Update/Save for ${sender_id}...`);
+    try {
+        await query(`
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='customer_name') THEN
+                    ALTER TABLE fb_order_tracking ADD COLUMN customer_name text;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='customer_email') THEN
+                    ALTER TABLE fb_order_tracking ADD COLUMN customer_email text;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='status') THEN
+                    ALTER TABLE fb_order_tracking ADD COLUMN status text DEFAULT 'ongoing';
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='is_locked') THEN
+                    ALTER TABLE fb_order_tracking ADD COLUMN is_locked boolean DEFAULT false;
+                END IF;
+            END $$;
+        `);
+    } catch (e) {
+        console.warn("[DB] fb_order_tracking migration failed:", e.message);
+    }
 
     try {
         // --- 2. SMART AGENT DECISION (Merge into existing incomplete order) ---

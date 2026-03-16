@@ -345,10 +345,10 @@ async function handleApiKeyError(key, error, modelName = null) {
                              errorStr.includes('daily limit');
 
         if (isDailyQuota) {
-            console.warn(`[KeyService] 🚨 Daily Quota Exceeded for ${key.substring(0,8)}... Locking for 24h.`);
+            console.warn(`[KeyService] 🚨 Daily Quota Exceeded for ${key}... Locking for 24h.`);
             await markKeyAsQuotaExceeded(key);
         } else {
-            console.warn(`[KeyService] ⏳ Rate Limit (429 - RPM/TPM) hit for ${key.substring(0,8)}... Locking for 2 MINUTES (Smart Skip).`);
+            console.warn(`[KeyService] ⏳ Rate Limit (429 - RPM/TPM) hit for ${key}... Locking for 2 MINUTES (Smart Skip).`);
             // Lock for 2 minutes for RPM hits to allow recovery without losing the key for a whole day
             const twoMinutes = 2 * 60 * 1000;
             await markKeyAsDead(key, twoMinutes, 'rate_limit_rpm_2m_lock');
@@ -425,7 +425,7 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
     
     // Check if rpdLimit is hit
     if (rpdLimit > 0 && keyData.last_date_checked === today && effectiveUsageToday >= rpdLimit) {
-        console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPD limit (${rpdLimit}). Usage: ${effectiveUsageToday}. Marking as Locked.`);
+        console.warn(`[KeyService] ⛔ Key ${keyData.api} hit RPD limit (${rpdLimit}). Usage: ${effectiveUsageToday}. Marking as Locked.`);
         // Proactively lock it for 24h if it hit the limit in isKeyWithinLimits
         markKeyAsDead(keyData.api, 24 * 60 * 60 * 1000, 'rpd_limit_reached_strict').catch(e => {});
         return false;
@@ -452,7 +452,7 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
     // STRICT CHECK: If total requests in last minute >= Limit
     // Only check if rpmLimit is a valid positive number
     if (rpmLimit > 0 && validTimestamps.length >= rpmLimit) {
-        console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPM limit (${rpmLimit}) in last 70s`);
+        console.warn(`[KeyService] ⛔ Key ${keyData.api} hit RPM limit (${rpmLimit}) in last 70s`);
         return false;
     }
 
@@ -724,7 +724,7 @@ async function getSmartKey(provider, model = 'default') {
         const effectiveUsageToday = dbUsage + pending.usage_delta;
 
         if (rpdLimit > 0 && effectiveUsageToday >= rpdLimit) {
-            console.warn(`[KeyService] ⛔ Key ${candidateKey.api.substring(0,8)}... hit RPD limit (${rpdLimit}). Locking.`);
+            console.warn(`[KeyService] ⛔ Key ${candidateKey.api} hit RPD limit (${rpdLimit}). Locking.`);
             await markKeyAsDead(candidateKey.api, 24 * 60 * 60 * 1000, 'rpd_limit_reached_hard');
             continue;
         }
@@ -758,7 +758,7 @@ async function getSmartKey(provider, model = 'default') {
         current.last_used_at = candidateKey.last_used_at;
         pendingUpdates.set(candidateKey.api, current);
 
-        console.log(`[KeyService] ✅ Selected Key: ${candidateKey.api.substring(0,8)}... (Index: ${actualIndex + 1}/${validKeys.length}, RPM: ${activeRpmCount + 1}/${rpmLimit || '∞'})`);
+        console.log(`[KeyService] ✅ Selected Key: ${candidateKey.api} (Index: ${actualIndex + 1}/${validKeys.length}, RPM: ${activeRpmCount + 1}/${rpmLimit || '∞'})`);
         addRotationLog(provider, model, candidateKey.api, actualIndex + 1, validKeys.length);
 
         return {

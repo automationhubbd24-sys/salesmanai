@@ -8,6 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Send, Image as ImageIcon, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import axios from 'axios';
+import { BACKEND_URL } from "@/config";
 
 interface BulkCampaignModalProps {
     pageId: string;
@@ -31,8 +32,8 @@ export function BulkCampaignModal({ pageId, platform, trigger }: BulkCampaignMod
 
         setLoading(true);
         try {
-            const token = localStorage.getItem('token');
-            const response = await axios.post('/api/marketing/campaign/start', {
+            const token = localStorage.getItem('auth_token');
+            const response = await axios.post(`${BACKEND_URL}/api/marketing/campaign/start`, {
                 page_id: pageId,
                 platform,
                 message,
