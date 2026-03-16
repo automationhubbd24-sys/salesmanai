@@ -21,13 +21,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
-import { Calendar as CalendarIcon, Download, ShoppingBag, Copy, Check, AlertCircle, RefreshCw } from "lucide-react";
+import { Calendar as CalendarIcon, Download, ShoppingBag, Copy, Check, AlertCircle, RefreshCw, Bell } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "react-router-dom";
 import { BACKEND_URL } from "@/config";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
+import { OrderNotificationModal } from "@/components/dashboard/OrderNotificationModal";
 
 interface Order {
   id: string;
@@ -51,9 +49,6 @@ export default function WhatsAppOrderTrackingPage() {
 
   const activeSessionName = currentSession?.session_name || null;
   const activeDbId = (currentSession as any)?.wp_db_id || (typeof window !== "undefined" ? Number(localStorage.getItem("active_wp_db_id") || 0) : 0);
-  const [emailEnabled, setEmailEnabled] = useState(false);
-  const [adminEmail, setAdminEmail] = useState("");
-  const [emailSaving, setEmailSaving] = useState(false);
 
   const fetchOrders = useCallback(async (showLoading = true) => {
     if (!activeSessionName) return;
@@ -158,55 +153,6 @@ Phone: ${order.number || 'N/A'}`;
     fetchOrders();
   }, [fetchOrders]);
 
-  const fetchEmailConfig = useCallback(async () => {
-    try {
-      const token = localStorage.getItem("auth_token");
-      if (!token || !activeDbId) return;
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${activeDbId}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      setEmailEnabled(Boolean(data.order_email_confirmation_enabled));
-      setAdminEmail(data.admin_notification_email || "");
-    } catch (e) {
-      console.warn("Failed to load email config", e);
-    }
-  }, [activeDbId]);
-
-  useEffect(() => {
-    fetchEmailConfig();
-  }, [fetchEmailConfig]);
-
-  const handleSaveEmailConfig = async () => {
-    if (!activeDbId) {
-      toast.error("No connected session configuration found");
-      return;
-    }
-    setEmailSaving(true);
-    try {
-      const token = localStorage.getItem("auth_token");
-      if (!token) throw new Error("Please login again");
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${activeDbId}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          order_email_confirmation_enabled: emailEnabled,
-          admin_notification_email: adminEmail
-        })
-      });
-      if (!res.ok) throw new Error("Failed to save settings");
-      toast.success("Order email notification settings updated");
-    } catch (e: any) {
-      toast.error(e.message || "Failed to save settings");
-    } finally {
-      setEmailSaving(false);
-    }
-  };
-
   if (contextLoading && !activeSessionName) {
     return (
       <div className="flex items-center justify-center h-[60vh]">
@@ -260,37 +206,6 @@ Phone: ${order.number || 'N/A'}`;
 
   return (
     <div className="space-y-6">
-      <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <div className="space-y-1">
-              <CardTitle className="text-lg">Order Email Notifications</CardTitle>
-              <CardDescription>Send confirmation emails to customers and notifications to you.</CardDescription>
-            </div>
-            <Switch checked={emailEnabled} onCheckedChange={setEmailEnabled} />
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {emailEnabled && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="md:col-span-2 space-y-2">
-                <Label>Your Notification Email</Label>
-                <Input
-                  placeholder="admin@example.com"
-                  value={adminEmail}
-                  onChange={(e) => setAdminEmail(e.target.value)}
-                  className="h-10"
-                />
-              </div>
-              <div className="flex md:items-end">
-                <Button onClick={handleSaveEmailConfig} disabled={emailSaving} className="w-full md:w-auto">
-                  {emailSaving ? "Saving..." : "Save"}
-                </Button>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
       <div className="flex items-center justify-between">
         <div>
            <h2 className="text-3xl font-bold tracking-tight">Order Tracking</h2>
@@ -298,6 +213,9 @@ Phone: ${order.number || 'N/A'}`;
              View and manage customer orders collected by the bot.
            </p>
         </div>
+        {activeDbId > 0 && (
+          <OrderNotificationModal dbId={activeDbId} platform="whatsapp" />
+        )}
       </div>
 
       <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10 shadow-[0_18px_40px_rgba(0,0,0,0.35)] border-l-4 border-l-[#00ff88]">

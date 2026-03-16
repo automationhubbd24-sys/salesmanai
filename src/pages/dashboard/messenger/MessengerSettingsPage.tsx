@@ -1249,39 +1249,6 @@ export default function MessengerSettingsPage() {
                     <div className="border-t border-white/5 pt-6 space-y-4">
                         <div className="flex items-center justify-between">
                             <div className="space-y-1">
-                                <Label className="text-base">Order Email Notifications</Label>
-                                <p className="text-sm text-muted-foreground">
-                                    Send order confirmation emails to customers and notifications to you.
-                                </p>
-                            </div>
-                            <Switch 
-                                checked={orderEmailEnabled}
-                                onCheckedChange={setOrderEmailEnabled}
-                            />
-                        </div>
-
-                        {orderEmailEnabled && (
-                            <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
-                                <div className="space-y-1.5">
-                                    <Label htmlFor="admin-email">Your Notification Email</Label>
-                                    <Input 
-                                        id="admin-email"
-                                        placeholder="admin@example.com"
-                                        value={adminNotificationEmail}
-                                        onChange={(e) => setAdminNotificationEmail(e.target.value)}
-                                        className="max-w-md"
-                                    />
-                                    <p className="text-xs text-muted-foreground">
-                                        We will send a copy of every new order to this email.
-                                    </p>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="border-t border-white/5 pt-6 space-y-4">
-                        <div className="flex items-center justify-between">
-                            <div className="space-y-1">
                                 <Label className="text-base">Smart Order Reminder</Label>
                                 <p className="text-sm text-muted-foreground">
                                     Automatically follow up with customers who started an order but didn't finish.
