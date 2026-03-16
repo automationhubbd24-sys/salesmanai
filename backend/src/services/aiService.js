@@ -3118,5 +3118,7 @@ module.exports = {
     processImageWithVision,
     transcribeAudio,
     refreshGlobalEngineConfigCache,
-    clearGlobalConfigCache
+    clearGlobalConfigCache,
+    getProxyUrl,
+    createProxyAgent
 };

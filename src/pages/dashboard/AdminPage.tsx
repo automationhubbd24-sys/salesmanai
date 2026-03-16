@@ -2886,8 +2886,8 @@ export default function AdminPage() {
                         <span className="text-white truncate max-w-[200px] ml-2" title={testerDebug?.key}>{testerDebug?.key}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-muted-foreground">Proxy/IP Node:</span>
-                        <span className="text-green-400">{testerDebug?.proxy || "Direct"}</span>
+                        <span className="text-muted-foreground">Engine Node:</span>
+                        <span className="text-green-400 font-bold">{testerDebug?.proxy || "Direct/Manual"}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Model:</span>

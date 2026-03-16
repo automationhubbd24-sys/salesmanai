@@ -147,27 +147,49 @@ exports.testKeyRotation = async (req, res) => {
 
         let keyToUse;
         let proxyToUse;
+        let proxyInfo = "Direct (No Proxy)";
         let modelToUse = model || 'default';
 
+        // ROTATION ENGINE SIMULATION
         if (manualKey) {
             // Use manually provided key
             keyToUse = manualKey;
-            proxyToUse = null; // Direct connection for manual test
-            console.log(`[AdminTester] 🧪 Testing MANUAL ${provider} key: ${keyToUse}`);
-        } else {
-            // Use getSmartKey to handle rotation and proxy selection from pool
-            const keyInfo = await keyService.getSmartKey(provider, model || 'default');
             
-            if (!keyInfo || !keyInfo.api) {
+            // SIMULATE ENGINE PROXY ROTATION
+            // Our engine uses proxies for branded models or specific providers
+            const isBranded = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(modelToUse);
+            if (isBranded || provider === 'google' || provider === 'gemini' || provider === 'groq') {
+                const proxyUrl = aiService.getProxyUrl(modelToUse);
+                if (proxyUrl) {
+                    proxyToUse = proxyUrl;
+                    const session = proxyUrl.includes('-session-') ? proxyUrl.split('-session-')[1]?.split(':')[0] : 'rotator';
+                    proxyInfo = `Rotating Proxy (Session: ${session})`;
+                }
+            }
+            
+            console.log(`[AdminTester] 🧪 Testing MANUAL ${provider} key: ${keyToUse.substring(0,8)}... | Proxy: ${proxyInfo}`);
+        } else {
+            // Use getSmartKey to handle rotation from pool
+            const keyInfo = await keyService.getSmartKey(provider, modelToUse);
+            
+            if (!keyInfo || !keyInfo.key) {
                 return res.status(500).json({ success: false, error: 'No active keys found for this provider/model in pool' });
             }
-            keyToUse = keyInfo.api;
-            proxyToUse = keyInfo.proxy;
-            modelToUse = model || keyInfo.model;
-            console.log(`[AdminTester] 🧪 Testing POOL ${provider} with key: ${keyToUse} (Proxy: ${proxyToUse || 'None'})`);
+            keyToUse = keyInfo.key;
+            modelToUse = keyInfo.model || modelToUse;
+
+            // Resolve Proxy for Pool Key (Same logic as main engine)
+            const proxyUrl = aiService.getProxyUrl(modelToUse);
+            if (proxyUrl) {
+                proxyToUse = proxyUrl;
+                const session = proxyUrl.includes('-session-') ? proxyUrl.split('-session-')[1]?.split(':')[0] : 'rotator';
+                proxyInfo = `Rotating Proxy (Session: ${session})`;
+            }
+
+            console.log(`[AdminTester] 🧪 Testing POOL ${provider} with key: ${keyToUse.substring(0,8)}... | Proxy: ${proxyInfo}`);
         }
 
-        // Prepare the payload for aiService
+        // Execute using the actual generateResponse engine
         const result = await aiService.generateResponse({
             pageId: 'ExternalAPI',
             userId: 'AdminTester',
@@ -180,7 +202,7 @@ exports.testKeyRotation = async (req, res) => {
                 chat_model: modelToUse,
                 api_key: keyToUse,
                 is_external_api: true,
-                user_id: 1, // System admin ID
+                user_id: 1, 
                 page_id: 'ExternalAPI'
             },
             platform: 'external_api'
@@ -192,7 +214,7 @@ exports.testKeyRotation = async (req, res) => {
             debug: {
                 key: keyToUse,
                 model: modelToUse,
-                proxy: proxyToUse || 'Direct/Manual',
+                proxy: proxyInfo,
                 usage: result.token_usage
             }
         });
