@@ -61,7 +61,17 @@ async function updateKeyCache(force = false) {
         
         const resetResult = await pgClient.query(
             `UPDATE api_list 
-             SET cooldown_until = NULL, status = 'active', usage_today = 0, usage_tokens_today = 0 
+             SET 
+                status = 'active', 
+                cooldown_until = NULL,
+                usage_today = CASE 
+                    WHEN (cooldown_until IS NOT NULL AND (cooldown_until - last_used_at) >= interval '20 hours') THEN 0 
+                    ELSE usage_today 
+                END,
+                usage_tokens_today = CASE 
+                    WHEN (cooldown_until IS NOT NULL AND (cooldown_until - last_used_at) >= interval '20 hours') THEN 0 
+                    ELSE usage_tokens_today 
+                END
              WHERE (cooldown_until < $1) 
                 OR (status IN ('locked', 'dead') AND (cooldown_until IS NULL OR cooldown_until < $1) AND last_used_at < $2)
                 OR (status IN ('locked', 'dead') AND last_used_at IS NULL)
