@@ -2,7 +2,8 @@ import { useEffect, useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { MessageSquare, RefreshCw, AlertCircle, Calendar as CalendarIcon, Zap, Lock, Unlock, Download } from "lucide-react";
+import { MessageSquare, RefreshCw, AlertCircle, Calendar as CalendarIcon, Zap, Lock, Unlock, Download, Send } from "lucide-react";
+import { BulkCampaignModal } from "@/components/dashboard/BulkCampaignModal";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Link } from "react-router-dom";
@@ -412,6 +413,10 @@ export default function WhatsAppConversionPage() {
                 <Button onClick={handleDownload} disabled={loading} variant="outline" size="icon">
                     <Download className="h-4 w-4" />
                 </Button>
+                
+                {activeSessionName && (
+                  <BulkCampaignModal pageId={activeSessionName} platform="whatsapp" />
+                )}
             </div>
         </div>
 

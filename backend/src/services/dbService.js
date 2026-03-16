@@ -8,7 +8,9 @@ async function getPageConfig(pageId) {
               fb.semantic_cache_enabled, 
               fb.semantic_cache_threshold, 
               fb.embed_enabled,
-              fb.semantic_cache_autosave
+              fb.semantic_cache_autosave,
+              fb.order_email_confirmation_enabled,
+              fb.admin_notification_email
        FROM page_access_token_message pam
        LEFT JOIN fb_message_database fb ON CAST(fb.page_id AS TEXT) = CAST(pam.page_id AS TEXT)
        WHERE CAST(pam.page_id AS TEXT) = CAST($1 AS TEXT) LIMIT 1`,
@@ -1435,9 +1437,11 @@ async function saveWhatsAppOrderTracking(orderData) {
     }
 
     try {
+        let { session_name, sender_id, product_name, number, location, product_quantity, price, customer_email } = orderData;
+        
         // SMART MERGE: Last 1 hour
         const recentOrder = await query(
-            `SELECT id, product_name, number, location, product_quantity, price 
+            `SELECT id, product_name, number, location, product_quantity, price, customer_email 
              FROM whatsapp_order_tracking 
              WHERE session_name = $1::text AND sender_id = $2::text 
              AND created_at >= NOW() - INTERVAL '1 hour'
@@ -1471,6 +1475,10 @@ async function saveWhatsAppOrderTracking(orderData) {
                 updates.push(`price = $${idx++}::text`);
                 values.push(price);
             }
+            if (customer_email) {
+                updates.push(`customer_email = $${idx++}::text`);
+                values.push(customer_email);
+            }
 
             if (updates.length > 0) {
                 values.push(existing.id);
@@ -1493,10 +1501,10 @@ async function saveWhatsAppOrderTracking(orderData) {
 
         const result = await query(
             `INSERT INTO whatsapp_order_tracking
-                (session_name, sender_id, product_name, number, location, product_quantity, price)
-             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text)
+                (session_name, sender_id, product_name, number, location, product_quantity, price, customer_email)
+             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text)
              RETURNING *`,
-            [session_name || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null]
+            [session_name || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null, customer_email || null]
         );
         return result.rows[0];
     } catch (error) {
@@ -1923,7 +1931,8 @@ async function saveOrder(orderData) {
             number: orderData.phone,
             location: orderData.address,
             product_quantity: orderData.quantity,
-            price: orderData.price
+            price: orderData.price,
+            customer_email: orderData.customer_email
         });
     } else {
         return await saveOrderTracking({
@@ -1934,7 +1943,9 @@ async function saveOrder(orderData) {
             location: orderData.address,
             product_quantity: orderData.quantity,
             price: orderData.price,
-            sender_number: orderData.phone
+            sender_number: orderData.phone,
+            customer_email: orderData.customer_email,
+            customer_name: orderData.customer_name
         });
     }
 }
@@ -1956,7 +1967,7 @@ async function updateContactPhone(pageId, senderId, phone) {
 
 // 12. Save Order Tracking (Messenger)
 async function saveOrderTracking(orderData) {
-    let { page_id, sender_id, product_name, number, location, product_quantity, price, sender_number } = orderData;
+    let { page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, customer_email } = orderData;
     
     // --- 1. SMART DATA CLEANING (Filter out templates like "নাম: ঠিকানা:") ---
     const cleanValue = (val) => {
@@ -2048,9 +2059,13 @@ async function saveOrderTracking(orderData) {
                             WHEN $8::text IS NOT NULL AND $8::text <> 'Pending' AND $8::text <> 'Unknown' AND $8::text <> '' THEN $8::text
                             ELSE customer_name
                         END,
+                        customer_email = CASE
+                            WHEN $9::text IS NOT NULL AND $9::text <> '' THEN $9::text
+                            ELSE customer_email
+                        END,
                         updated_at = NOW()
                      WHERE id = $7::bigint`,
-                    [product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderId, orderData.customer_name || null]
+                    [product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderId, orderData.customer_name || null, customer_email || null]
                 );
                 return { id: orderId, status: 'updated' };
             }
@@ -2065,10 +2080,10 @@ async function saveOrderTracking(orderData) {
 
         const result = await query(
             `INSERT INTO fb_order_tracking
-                (page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, created_at, status, is_locked, customer_name)
-             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, NOW(), 'ongoing', FALSE, $9::text)
+                (page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, created_at, status, is_locked, customer_name, customer_email)
+             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, NOW(), 'ongoing', FALSE, $9::text, $10::text)
              RETURNING *`,
-            [page_id || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderData.customer_name || null]
+            [page_id || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderData.customer_name || null, customer_email || null]
         );
         return result.rows[0];
 

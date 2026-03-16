@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -90,6 +91,10 @@ export default function WhatsAppSettingsPage() {
   const [semanticCacheEnabled, setSemanticCacheEnabled] = useState<boolean>(false);
   const [embedEnabled, setEmbedEnabled] = useState<boolean>(false);
   const [semanticThreshold, setSemanticThreshold] = useState<number>(0.96);
+  
+  // Order Notification Settings
+  const [orderEmailEnabled, setOrderEmailEnabled] = useState<boolean>(false);
+  const [adminNotificationEmail, setAdminNotificationEmail] = useState<string>("");
   
   // Optimization
   const [optimizing, setOptimizing] = useState(false);
@@ -187,6 +192,9 @@ export default function WhatsAppSettingsPage() {
       setSemanticCacheEnabled(Boolean(dbRow.semantic_cache_enabled));
       setEmbedEnabled(Boolean(dbRow.embed_enabled));
       setSemanticThreshold(dbRow.semantic_cache_threshold ? Number(dbRow.semantic_cache_threshold) : 0.96);
+
+      setOrderEmailEnabled(Boolean(dbRow.order_email_confirmation_enabled));
+      setAdminNotificationEmail(dbRow.admin_notification_email || "");
 
       // Credits (Joined from user_configs)
       const credits = Number(dbRow.message_credit || 0);
@@ -371,7 +379,9 @@ export default function WhatsAppSettingsPage() {
           check_conversion: historyLimit,
           semantic_cache_enabled: semanticCacheEnabled,
           semantic_cache_threshold: semanticThreshold,
-          embed_enabled: embedEnabled
+          embed_enabled: embedEnabled,
+          order_email_confirmation_enabled: orderEmailEnabled,
+          admin_notification_email: adminNotificationEmail
         })
       });
 
@@ -852,6 +862,39 @@ export default function WhatsAppSettingsPage() {
                         <p className="text-sm text-muted-foreground">
                             Controls how many previous messages the AI remembers for context. (Default: 10)
                         </p>
+                    </div>
+
+                    <div className="border-t border-white/5 pt-6 space-y-4">
+                        <div className="flex items-center justify-between">
+                            <div className="space-y-1">
+                                <Label className="text-base">Order Email Notifications</Label>
+                                <p className="text-sm text-muted-foreground">
+                                    Send order confirmation emails to customers and notifications to you.
+                                </p>
+                            </div>
+                            <Switch 
+                                checked={orderEmailEnabled}
+                                onCheckedChange={setOrderEmailEnabled}
+                            />
+                        </div>
+
+                        {orderEmailEnabled && (
+                            <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                                <div className="space-y-1.5">
+                                    <Label htmlFor="admin-email">Your Notification Email</Label>
+                                    <Input 
+                                        id="admin-email"
+                                        placeholder="admin@example.com"
+                                        value={adminNotificationEmail}
+                                        onChange={(e) => setAdminNotificationEmail(e.target.value)}
+                                        className="max-w-md"
+                                    />
+                                    <p className="text-xs text-muted-foreground">
+                                        We will send a copy of every new order to this email.
+                                    </p>
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     <Button 

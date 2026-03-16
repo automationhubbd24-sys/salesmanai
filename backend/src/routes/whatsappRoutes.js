@@ -608,7 +608,9 @@ router.put('/config/:id', async (req, res) => {
             'cheap_engine',
             'semantic_cache_enabled',
             'semantic_cache_threshold',
-            'embed_enabled'
+            'embed_enabled',
+            'order_email_confirmation_enabled',
+            'admin_notification_email'
         ];
 
         // Ensure new columns exist

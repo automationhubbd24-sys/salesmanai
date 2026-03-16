@@ -1,4 +1,5 @@
 const dbService = require('./dbService');
+const emailService = require('./emailService');
 
 /**
  * Normalizes a Bangladeshi phone number to 01XXXXXXXXX format.
@@ -90,6 +91,11 @@ async function orchestrateOrder(params) {
         extracted.phone = normalizeBdPhone(extracted.phone || extracted.number || extracted.mobile);
     }
 
+    // Extract Email if provided
+    if (extracted.email || extracted.customer_email) {
+        extracted.email = (extracted.email || extracted.customer_email).toLowerCase().trim();
+    }
+
     // Handle Intent: Status Check
     if (intent === 'status_check') {
         // Logic for checking status could go here
@@ -114,14 +120,44 @@ async function orchestrateOrder(params) {
             address: extracted.address || extracted.location || 'Pending',
             quantity: extracted.quantity || '1',
             price: extracted.price ? parsePrice(extracted.price) : null,
-            customer_name: extracted.customer_name || extracted.name || 'Pending'
+            customer_name: extracted.customer_name || extracted.name || 'Pending',
+            customer_email: extracted.email || null
         };
 
         try {
             const result = await dbService.saveOrder(savePayload);
-            return { 
-                status: 'SUCCESS', 
-                orderId: result?.id, 
+            
+            // --- NEW: Email Notifications ---
+            if (result) {
+                try {
+                    const config = platform === 'whatsapp' 
+                        ? await dbService.getWhatsAppConfig(pageId)
+                        : await dbService.getPageConfig(pageId);
+                        
+                    if (config && config.order_email_confirmation_enabled) {
+                        const orderData = {
+                            ...savePayload,
+                            platform
+                        };
+
+                        // Send to Customer if email was provided
+                        if (savePayload.customer_email) {
+                            await emailService.sendOrderConfirmation(orderData);
+                        }
+
+                        // Send to Admin if email is configured
+                        if (config.admin_notification_email) {
+                            await emailService.sendAdminOrderNotification(config.admin_notification_email, orderData);
+                        }
+                    }
+                } catch (emailErr) {
+                    console.warn('[Order Email] Failed to trigger notifications:', emailErr.message);
+                }
+            }
+
+            return {
+                status: 'SUCCESS',
+                orderId: result?.id,
                 isNew: result?.status !== 'updated',
                 capturedFields: Object.keys(extracted).filter(k => extracted[k])
             };
