@@ -56,9 +56,6 @@ async function updateKeyCache(force = false) {
         
         // --- SMART AUTO-RESET: Clear expired 24h locks and cooldowns in DB ---
         // Any key whose cooldown_until is in the past OR was last used > 24h ago and is not active/disabled
-        const nowIso = new Date().toISOString();
-        const twentyFourHoursAgo = new Date(now - 24 * 60 * 60 * 1000).toISOString();
-        
         const resetResult = await pgClient.query(
             `UPDATE api_list 
              SET 
@@ -72,11 +69,12 @@ async function updateKeyCache(force = false) {
                     WHEN (cooldown_until IS NOT NULL AND (cooldown_until - last_used_at) >= interval '20 hours') THEN 0 
                     ELSE usage_tokens_today 
                 END
-             WHERE (cooldown_until < $1) 
-                OR (status IN ('locked', 'dead') AND (cooldown_until IS NULL OR cooldown_until < $1) AND last_used_at < $2)
+             WHERE (
+                (cooldown_until IS NOT NULL AND cooldown_until < NOW()) 
+                OR (status IN ('locked', 'dead') AND (cooldown_until IS NULL OR cooldown_until < NOW()) AND last_used_at < (NOW() - interval '24 hours'))
                 OR (status IN ('locked', 'dead') AND last_used_at IS NULL)
-             AND status != 'disabled'`,
-            [nowIso, twentyFourHoursAgo]
+             )
+             AND status != 'disabled'`
         );
         if (resetResult.rowCount > 0) {
             console.log(`[KeyService] ♻️ Auto-reset ${resetResult.rowCount} keys whose 24h lock/cooldown expired.`);
