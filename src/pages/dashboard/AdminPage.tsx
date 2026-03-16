@@ -1336,6 +1336,7 @@ export default function AdminPage() {
   const [testerDebug, setTesterDebug] = useState<any>(null);
   const [testerProvider, setTesterProvider] = useState("google");
   const [testerModel, setTesterModel] = useState("gemini-2.5-flash");
+  const [testerManualKey, setTesterManualKey] = useState("");
   const [testerMessage, setTesterMessage] = useState("Hello, are you working?");
 
   const handleRunTester = async () => {
@@ -1354,7 +1355,8 @@ export default function AdminPage() {
         body: JSON.stringify({
           provider: testerProvider,
           model: testerModel,
-          message: testerMessage
+          message: testerMessage,
+          manualKey: testerManualKey
         })
       });
 
@@ -1772,7 +1774,7 @@ export default function AdminPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-3">
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                 <div className="space-y-2">
                   <Label>Provider</Label>
                   <Select value={testerProvider} onValueChange={setTesterProvider}>
@@ -1798,7 +1800,16 @@ export default function AdminPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>Message</Label>
+                  <Label>Manual API Key (Optional)</Label>
+                  <Input
+                    value={testerManualKey}
+                    onChange={(e) => setTesterManualKey(e.target.value)}
+                    placeholder="Paste key to test directly..."
+                    className="bg-black/40 border-white/10"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Test Message</Label>
                   <Input
                     value={testerMessage}
                     onChange={(e) => setTesterMessage(e.target.value)}

@@ -139,27 +139,40 @@ exports.saveGlobalConfig = async (req, res) => {
 
 exports.testKeyRotation = async (req, res) => {
     try {
-        const { provider, model, message } = req.body;
+        const { provider, model, message, manualKey } = req.body;
         
         if (!provider || !message) {
             return res.status(400).json({ success: false, error: 'Provider and message are required' });
         }
 
-        // Use getSmartKey to handle rotation and proxy selection
-        const keyInfo = await keyService.getSmartKey(provider, model || 'default');
-        
-        if (!keyInfo || !keyInfo.api) {
-            return res.status(500).json({ success: false, error: 'No active keys found for this provider/model' });
-        }
+        let keyToUse;
+        let proxyToUse;
+        let modelToUse = model || 'default';
 
-        console.log(`[AdminTester] 🧪 Testing ${provider} with key: ${keyInfo.api} (Proxy: ${keyInfo.proxy || 'None'})`);
+        if (manualKey) {
+            // Use manually provided key
+            keyToUse = manualKey;
+            proxyToUse = null; // Direct connection for manual test
+            console.log(`[AdminTester] 🧪 Testing MANUAL ${provider} key: ${keyToUse}`);
+        } else {
+            // Use getSmartKey to handle rotation and proxy selection from pool
+            const keyInfo = await keyService.getSmartKey(provider, model || 'default');
+            
+            if (!keyInfo || !keyInfo.api) {
+                return res.status(500).json({ success: false, error: 'No active keys found for this provider/model in pool' });
+            }
+            keyToUse = keyInfo.api;
+            proxyToUse = keyInfo.proxy;
+            modelToUse = model || keyInfo.model;
+            console.log(`[AdminTester] 🧪 Testing POOL ${provider} with key: ${keyToUse} (Proxy: ${proxyToUse || 'None'})`);
+        }
 
         // Prepare the payload for aiService
         const result = await aiService.generateText(message, {
             provider: provider,
-            model: model || keyInfo.model,
-            apiKey: keyInfo.api,
-            proxy: keyInfo.proxy,
+            model: modelToUse,
+            apiKey: keyToUse,
+            proxy: proxyToUse,
             maxTokens: 500
         });
 
@@ -167,9 +180,9 @@ exports.testKeyRotation = async (req, res) => {
             success: true, 
             response: result.text,
             debug: {
-                key: keyInfo.api,
-                model: model || keyInfo.model,
-                proxy: keyInfo.proxy || 'Direct',
+                key: keyToUse,
+                model: modelToUse,
+                proxy: proxyToUse || 'Direct/Manual',
                 usage: result.usage
             }
         });
