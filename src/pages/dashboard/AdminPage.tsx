@@ -1330,6 +1330,50 @@ export default function AdminPage() {
     }
   };
 
+  // API Tester States
+  const [testerLoading, setTesterLoading] = useState(false);
+  const [testerResponse, setTesterResponse] = useState<string | null>(null);
+  const [testerDebug, setTesterDebug] = useState<any>(null);
+  const [testerProvider, setTesterProvider] = useState("google");
+  const [testerModel, setTesterModel] = useState("gemini-2.5-flash");
+  const [testerMessage, setTesterMessage] = useState("Hello, are you working?");
+
+  const handleRunTester = async () => {
+    setTesterLoading(true);
+    setTesterResponse(null);
+    setTesterDebug(null);
+
+    try {
+      const token = getAdminToken();
+      const response = await fetch(`${BACKEND_URL}/api/api-list/test-key`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          provider: testerProvider,
+          model: testerModel,
+          message: testerMessage
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || "Tester failed");
+      }
+
+      setTesterResponse(data.response);
+      setTesterDebug(data.debug);
+      toast.success("Test request successful");
+    } catch (error: any) {
+      toast.error(error.message);
+    } finally {
+      setTesterLoading(false);
+    }
+  };
+
   const handleRunGeminiTest = async () => {
     setGeminiLoading(true);
     setGeminiError(null);
@@ -1713,6 +1757,108 @@ export default function AdminPage() {
                   </TableBody>
                 </Table>
               </div>
+            </CardContent>
+          </Card>
+
+          {/* API Tester Section */}
+          <Card className="bg-card border-border border-t-4 border-t-blue-500">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Cpu className="h-5 w-5 text-blue-500" />
+                Live API Tester (Rotation & Proxy)
+              </CardTitle>
+              <CardDescription>
+                Test your API Pool using the actual Rotation Engine and Proxy logic. This simulates exactly how the chatbot calls the AI.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-3">
+                <div className="space-y-2">
+                  <Label>Provider</Label>
+                  <Select value={testerProvider} onValueChange={setTesterProvider}>
+                    <SelectTrigger className="bg-black/40 border-white/10">
+                      <SelectValue placeholder="Select Provider" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="google">Google Gemini</SelectItem>
+                      <SelectItem value="openai">OpenAI</SelectItem>
+                      <SelectItem value="groq">Groq</SelectItem>
+                      <SelectItem value="openrouter">OpenRouter</SelectItem>
+                      <SelectItem value="mistral">Mistral</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Model (Override)</Label>
+                  <Input
+                    value={testerModel}
+                    onChange={(e) => setTesterModel(e.target.value)}
+                    placeholder="e.g. gemini-2.5-flash"
+                    className="bg-black/40 border-white/10"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Message</Label>
+                  <Input
+                    value={testerMessage}
+                    onChange={(e) => setTesterMessage(e.target.value)}
+                    placeholder="Write something to test..."
+                    className="bg-black/40 border-white/10"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <Button 
+                  onClick={handleRunTester} 
+                  disabled={testerLoading}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-8"
+                >
+                  {testerLoading ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Sending Request...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="mr-2 h-4 w-4" />
+                      Test Rotation Engine
+                    </>
+                  )}
+                </Button>
+              </div>
+
+              {testerResponse && (
+                <div className="grid gap-4 md:grid-cols-2 mt-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                  <div className="space-y-2">
+                    <Label className="text-blue-400 font-bold">AI Response</Label>
+                    <div className="p-4 rounded-lg bg-black/60 border border-blue-500/20 text-sm leading-relaxed min-h-[100px] whitespace-pre-wrap">
+                      {testerResponse}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-orange-400 font-bold">Engine Debug Info</Label>
+                    <div className="p-4 rounded-lg bg-black/60 border border-orange-500/20 font-mono text-xs space-y-2 overflow-x-auto">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Selected Key:</span>
+                        <span className="text-white truncate max-w-[200px] ml-2" title={testerDebug?.key}>{testerDebug?.key}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Proxy/IP Node:</span>
+                        <span className="text-green-400">{testerDebug?.proxy || "Direct"}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Model Used:</span>
+                        <span className="text-blue-400">{testerDebug?.model}</span>
+                      </div>
+                      <div className="flex justify-between border-t border-white/5 pt-2 mt-2">
+                        <span className="text-muted-foreground">Total Tokens:</span>
+                        <span className="text-yellow-400">{testerDebug?.usage?.total_tokens || 0}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

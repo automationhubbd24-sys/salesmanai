@@ -137,3 +137,46 @@ exports.saveGlobalConfig = async (req, res) => {
     }
 };
 
+exports.testKeyRotation = async (req, res) => {
+    try {
+        const { provider, model, message } = req.body;
+        
+        if (!provider || !message) {
+            return res.status(400).json({ success: false, error: 'Provider and message are required' });
+        }
+
+        // Use getSmartKey to handle rotation and proxy selection
+        const keyInfo = await keyService.getSmartKey(provider, model || 'default');
+        
+        if (!keyInfo || !keyInfo.api) {
+            return res.status(500).json({ success: false, error: 'No active keys found for this provider/model' });
+        }
+
+        console.log(`[AdminTester] 🧪 Testing ${provider} with key: ${keyInfo.api} (Proxy: ${keyInfo.proxy || 'None'})`);
+
+        // Prepare the payload for aiService
+        const result = await aiService.generateText(message, {
+            provider: provider,
+            model: model || keyInfo.model,
+            apiKey: keyInfo.api,
+            proxy: keyInfo.proxy,
+            maxTokens: 500
+        });
+
+        res.json({ 
+            success: true, 
+            response: result.text,
+            debug: {
+                key: keyInfo.api,
+                model: model || keyInfo.model,
+                proxy: keyInfo.proxy || 'Direct',
+                usage: result.usage
+            }
+        });
+
+    } catch (error) {
+        console.error('testKeyRotation error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
