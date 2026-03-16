@@ -388,7 +388,7 @@ router.put('/config/:id', async (req, res) => {
         const pageRow = pageResult.rows[0];
         let allowed = false;
 
-        if (pageRow && pageRow.email === userEmail) {
+        if (pageRow && pageRow.email && userEmail && pageRow.email.toLowerCase() === userEmail.toLowerCase()) {
             allowed = true;
         }
 
@@ -441,6 +441,21 @@ router.put('/config/:id', async (req, res) => {
                     END IF;
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='embed_enabled') THEN
                         ALTER TABLE fb_message_database ADD COLUMN embed_enabled boolean DEFAULT false;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='order_email_confirmation_enabled') THEN
+                        ALTER TABLE fb_message_database ADD COLUMN order_email_confirmation_enabled boolean DEFAULT false;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='admin_notification_email') THEN
+                        ALTER TABLE fb_message_database ADD COLUMN admin_notification_email text;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='order_reminder_enabled') THEN
+                        ALTER TABLE fb_message_database ADD COLUMN order_reminder_enabled boolean DEFAULT false;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='order_reminder_delay_hours') THEN
+                        ALTER TABLE fb_message_database ADD COLUMN order_reminder_delay_hours integer DEFAULT 4;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='order_reminder_message') THEN
+                        ALTER TABLE fb_message_database ADD COLUMN order_reminder_message text;
                     END IF;
                 END $$;
             `);

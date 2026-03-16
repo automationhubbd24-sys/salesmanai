@@ -191,7 +191,7 @@ router.get('/config/:id', async (req, res) => {
         const row = configResult.rows[0];
 
         let allowed = false;
-        if (row.user_id === userId || row.email === userEmail) {
+        if (row.user_id === userId || (row.email && userEmail && row.email.toLowerCase() === userEmail.toLowerCase())) {
             allowed = true;
         }
 
@@ -557,7 +557,7 @@ router.put('/config/:id', async (req, res) => {
         const row = configResult.rows[0];
 
         let allowed = false;
-        if (row.user_id === userId || row.email === userEmail) {
+        if (row.user_id === userId || (row.email && userEmail && row.email.toLowerCase() === userEmail.toLowerCase())) {
             allowed = true;
         }
 
@@ -618,8 +618,10 @@ router.put('/config/:id', async (req, res) => {
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS semantic_cache_enabled boolean DEFAULT false`);
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS semantic_cache_threshold numeric DEFAULT 0.96`);
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS embed_enabled boolean DEFAULT false`);
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS order_email_confirmation_enabled boolean DEFAULT false`);
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS admin_notification_email text`);
         } catch (e) {
-            console.warn("[WhatsApp] Failed to add semantic cache columns:", e.message);
+            console.warn("[WhatsApp] Failed to add migration columns:", e.message);
         }
 
         const updates = {};
