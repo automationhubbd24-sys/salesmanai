@@ -168,22 +168,32 @@ exports.testKeyRotation = async (req, res) => {
         }
 
         // Prepare the payload for aiService
-        const result = await aiService.generateText(message, {
-            provider: provider,
-            model: modelToUse,
-            apiKey: keyToUse,
-            proxy: proxyToUse,
-            maxTokens: 500
+        const result = await aiService.generateResponse({
+            pageId: 'ExternalAPI',
+            userId: 'AdminTester',
+            userMessage: message,
+            history: [],
+            imageUrls: [],
+            audioUrls: [],
+            config: {
+                ai: provider,
+                chat_model: modelToUse,
+                api_key: keyToUse,
+                is_external_api: true,
+                user_id: 1, // System admin ID
+                page_id: 'ExternalAPI'
+            },
+            platform: 'external_api'
         });
 
         res.json({ 
             success: true, 
-            response: result.text,
+            response: result.reply,
             debug: {
                 key: keyToUse,
                 model: modelToUse,
                 proxy: proxyToUse || 'Direct/Manual',
-                usage: result.usage
+                usage: result.token_usage
             }
         });
 

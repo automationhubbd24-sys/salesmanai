@@ -1621,7 +1621,7 @@ export default function AdminPage() {
           <TabsTrigger value="finance" className="data-[state=active]:bg-primary data-[state=active]:text-black transition-all">Finance</TabsTrigger>
           <TabsTrigger value="engine" className="data-[state=active]:bg-primary data-[state=active]:text-black transition-all">Engine Test</TabsTrigger>
           <TabsTrigger value="api-engine" className="data-[state=active]:bg-primary data-[state=active]:text-black transition-all">API Engine</TabsTrigger>
-          <TabsTrigger value="gemini" className="data-[state=active]:bg-primary data-[state=active]:text-black transition-all">Gemini Monitor</TabsTrigger>
+          <TabsTrigger value="gemini" className="text-red-400 font-bold data-[state=active]:bg-red-500 data-[state=active]:text-white transition-all">INVALID API TEST</TabsTrigger>
           <TabsTrigger value="cache" className="text-blue-400 font-bold data-[state=active]:bg-blue-500 data-[state=active]:text-white transition-all">Semantic Cache</TabsTrigger>
           <TabsTrigger value="db" className="data-[state=active]:bg-[#00ff88] data-[state=active]:text-black transition-all font-bold">Database Admin</TabsTrigger>
           <TabsTrigger value="openrouter" className="data-[state=active]:bg-primary data-[state=active]:text-black transition-all">OpenRouter Config</TabsTrigger>
@@ -2785,11 +2785,11 @@ export default function AdminPage() {
 
         <TabsContent value="gemini" className="space-y-6">
           {/* 1. Single API Key Tester (Direct Input) */}
-          <Card className="bg-card border-border border-t-4 border-t-blue-500 shadow-xl">
+          <Card className="bg-card border-border border-t-4 border-t-red-500 shadow-xl">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-xl font-bold">
-                <Cpu className="h-6 w-6 text-blue-500" />
-                Single API Key Tester
+              <CardTitle className="flex items-center gap-2 text-xl font-bold text-red-400">
+                <Cpu className="h-6 w-6" />
+                INVALID API TESTER
               </CardTitle>
               <CardDescription>
                 Paste any API Key here to test it instantly with the Rotation & Proxy engine.
@@ -2844,7 +2844,7 @@ export default function AdminPage() {
                   <Button 
                     onClick={handleRunTester} 
                     disabled={testerLoading || !testerManualKey}
-                    className="bg-blue-600 hover:bg-blue-700 text-white px-10 shadow-lg shadow-blue-500/20"
+                    className="bg-blue-600 hover:bg-blue-700 text-white px-10 shadow-lg shadow-red-500/20"
                   >
                     {testerLoading ? (
                       <>
@@ -2895,188 +2895,12 @@ export default function AdminPage() {
                       </div>
                       <div className="flex justify-between pt-2 mt-2 border-t border-white/5">
                         <span className="text-muted-foreground">Tokens:</span>
-                        <span className="text-yellow-400 font-bold">{testerDebug?.usage?.total_tokens || 0}</span>
+                        <span className="text-yellow-400 font-bold">{testerDebug?.usage || 0}</span>
                       </div>
                     </div>
                   </div>
                 </div>
               )}
-            </CardContent>
-          </Card>
-
-          <Card className="bg-card border-border">
-            <CardHeader>
-              <CardTitle>API Pool Monitor</CardTitle>
-              <CardDescription>
-                Test all keys from api_list and auto‑mark failed keys as dead if enabled.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-3">
-                <div className="space-y-2">
-                  <Label>Provider</Label>
-                  <Select value={geminiProviderFilter} onValueChange={setGeminiProviderFilter}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="All Providers" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Providers</SelectItem>
-                      <SelectItem value="google">Google Gemini</SelectItem>
-                      <SelectItem value="openrouter">OpenRouter</SelectItem>
-                      <SelectItem value="groq">Groq</SelectItem>
-                      <SelectItem value="openai">OpenAI</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Model Override (Optional)</Label>
-                  <Input
-                    value={geminiModel}
-                    onChange={(e) => setGeminiModel(e.target.value)}
-                    placeholder="leave empty for per‑key model"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Test Message</Label>
-                  <Input
-                    value={geminiMessage}
-                    onChange={(e) => setGeminiMessage(e.target.value)}
-                    placeholder="hi from SalesmanChatbot key test"
-                  />
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-4">
-                <Button onClick={handleRunGeminiTest} disabled={geminiLoading}>
-                  {geminiLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Run API Pool Test
-                </Button>
-                <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <input
-                    type="checkbox"
-                    checked={geminiMarkDead}
-                    onChange={(e) => setGeminiMarkDead(e.target.checked)}
-                  />
-                  Mark failed keys as dead
-                </label>
-                {geminiResults.length > 0 && (
-                  <div className="text-sm text-muted-foreground">
-                    Total: {geminiResults.length} | Failed: {geminiResults.filter(r => !r.success).length}
-                  </div>
-                )}
-              </div>
-              {geminiError && (
-                <div className="text-sm text-red-500">
-                  {geminiError}
-                </div>
-              )}
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-[32px]">
-                        <input
-                          type="checkbox"
-                          className="h-3 w-3"
-                          checked={
-                            geminiResults.length > 0 &&
-                            geminiResults
-                              .filter((r) => !r.success)
-                              .every((r) => geminiSelectedIds.includes(r.id))
-                          }
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setGeminiSelectedIds(
-                                geminiResults.filter((r) => !r.success).map((r) => r.id)
-                              );
-                            } else {
-                              setGeminiSelectedIds([]);
-                            }
-                          }}
-                        />
-                      </TableHead>
-                      <TableHead>ID</TableHead>
-                      <TableHead>Provider</TableHead>
-                      <TableHead>Model</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Error</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {geminiResults.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={6} className="text-center">
-                          No results yet. Run a test to see key status.
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      geminiResults.map((r) => (
-                        <TableRow key={r.id} className={!r.success ? "bg-destructive/5" : ""}>
-                          <TableCell>
-                            <input
-                              type="checkbox"
-                              className="h-3 w-3"
-                              disabled={r.success}
-                              checked={geminiSelectedIds.includes(r.id)}
-                              onChange={() => {
-                                if (r.success) return;
-                                setGeminiSelectedIds((prev) =>
-                                  prev.includes(r.id)
-                                    ? prev.filter((id) => id !== r.id)
-                                    : [...prev, r.id]
-                                );
-                              }}
-                            />
-                          </TableCell>
-                          <TableCell className="font-mono text-xs">{r.id}</TableCell>
-                          <TableCell className="capitalize">{r.provider}</TableCell>
-                          <TableCell>{r.model || "-"}</TableCell>
-                          <TableCell>
-                            {r.success ? (
-                              <Badge className="bg-green-600 text-white">OK</Badge>
-                            ) : (
-                              <Badge variant="destructive">Failed</Badge>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-xs max-w-[240px] truncate">
-                            {r.error || "-"}
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
-              {geminiResults.some((r) => !r.success) && (
-                <div className="flex items-center justify-between pt-2">
-                  <div className="text-xs text-muted-foreground">
-                    Selected failed: {geminiSelectedIds.filter((id) =>
-                      geminiResults.some((r) => r.id === id && !r.success)
-                    ).length}
-                  </div>
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={handleDeleteFailedGeminiKeys}
-                    disabled={
-                      geminiSelectedIds.filter((id) =>
-                        geminiResults.some((r) => r.id === id && !r.success)
-                      ).length === 0
-                    }
-                  >
-                    <Trash2 className="mr-2 h-4 w-4" />
-                    Delete Selected Failed
-                  </Button>
-                </div>
-              )}
-              <div className="mt-4 border rounded-md p-2 bg-muted/40 max-h-64 overflow-y-auto text-xs font-mono">
-                {geminiLog.length === 0 ? (
-                  <div className="text-muted-foreground">No logs yet.</div>
-                ) : (
-                  geminiLog.map((line, index) => (
-                    <div key={index}>{line}</div>
-                  ))
-                )}
-              </div>
             </CardContent>
           </Card>
         </TabsContent>
