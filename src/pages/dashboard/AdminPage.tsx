@@ -1761,117 +1761,6 @@ export default function AdminPage() {
               </div>
             </CardContent>
           </Card>
-
-          {/* API Tester Section */}
-          <Card className="bg-card border-border border-t-4 border-t-blue-500">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Cpu className="h-5 w-5 text-blue-500" />
-                Live API Tester (Rotation & Proxy)
-              </CardTitle>
-              <CardDescription>
-                Test your API Pool using the actual Rotation Engine and Proxy logic. This simulates exactly how the chatbot calls the AI.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                <div className="space-y-2">
-                  <Label>Provider</Label>
-                  <Select value={testerProvider} onValueChange={setTesterProvider}>
-                    <SelectTrigger className="bg-black/40 border-white/10">
-                      <SelectValue placeholder="Select Provider" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="google">Google Gemini</SelectItem>
-                      <SelectItem value="openai">OpenAI</SelectItem>
-                      <SelectItem value="groq">Groq</SelectItem>
-                      <SelectItem value="openrouter">OpenRouter</SelectItem>
-                      <SelectItem value="mistral">Mistral</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Model (Override)</Label>
-                  <Input
-                    value={testerModel}
-                    onChange={(e) => setTesterModel(e.target.value)}
-                    placeholder="e.g. gemini-2.5-flash"
-                    className="bg-black/40 border-white/10"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Manual API Key (Optional)</Label>
-                  <Input
-                    value={testerManualKey}
-                    onChange={(e) => setTesterManualKey(e.target.value)}
-                    placeholder="Paste key to test directly..."
-                    className="bg-black/40 border-white/10"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Test Message</Label>
-                  <Input
-                    value={testerMessage}
-                    onChange={(e) => setTesterMessage(e.target.value)}
-                    placeholder="Write something to test..."
-                    className="bg-black/40 border-white/10"
-                  />
-                </div>
-              </div>
-
-              <div className="flex justify-end">
-                <Button 
-                  onClick={handleRunTester} 
-                  disabled={testerLoading}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-8"
-                >
-                  {testerLoading ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Sending Request...
-                    </>
-                  ) : (
-                    <>
-                      <Send className="mr-2 h-4 w-4" />
-                      Test Rotation Engine
-                    </>
-                  )}
-                </Button>
-              </div>
-
-              {testerResponse && (
-                <div className="grid gap-4 md:grid-cols-2 mt-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                  <div className="space-y-2">
-                    <Label className="text-blue-400 font-bold">AI Response</Label>
-                    <div className="p-4 rounded-lg bg-black/60 border border-blue-500/20 text-sm leading-relaxed min-h-[100px] whitespace-pre-wrap">
-                      {testerResponse}
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-orange-400 font-bold">Engine Debug Info</Label>
-                    <div className="p-4 rounded-lg bg-black/60 border border-orange-500/20 font-mono text-xs space-y-2 overflow-x-auto">
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Selected Key:</span>
-                        <span className="text-white truncate max-w-[200px] ml-2" title={testerDebug?.key}>{testerDebug?.key}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Proxy/IP Node:</span>
-                        <span className="text-green-400">{testerDebug?.proxy || "Direct"}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Model Used:</span>
-                        <span className="text-blue-400">{testerDebug?.model}</span>
-                      </div>
-                      <div className="flex justify-between border-t border-white/5 pt-2 mt-2">
-                        <span className="text-muted-foreground">Total Tokens:</span>
-                        <span className="text-yellow-400">{testerDebug?.usage?.total_tokens || 0}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
         </TabsContent>
 
         {/* Finance Tab */}
@@ -2894,7 +2783,127 @@ export default function AdminPage() {
           
         </TabsContent>
 
-        <TabsContent value="gemini" className="space-y-4">
+        <TabsContent value="gemini" className="space-y-6">
+          {/* 1. Single API Key Tester (Direct Input) */}
+          <Card className="bg-card border-border border-t-4 border-t-blue-500 shadow-xl">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-xl font-bold">
+                <Cpu className="h-6 w-6 text-blue-500" />
+                Single API Key Tester
+              </CardTitle>
+              <CardDescription>
+                Paste any API Key here to test it instantly with the Rotation & Proxy engine.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold text-blue-400">1. Provider</Label>
+                  <Select value={testerProvider} onValueChange={setTesterProvider}>
+                    <SelectTrigger className="bg-black/60 border-blue-500/30 focus:ring-blue-500">
+                      <SelectValue placeholder="Select Provider" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="google">Google Gemini</SelectItem>
+                      <SelectItem value="openai">OpenAI</SelectItem>
+                      <SelectItem value="groq">Groq</SelectItem>
+                      <SelectItem value="openrouter">OpenRouter</SelectItem>
+                      <SelectItem value="mistral">Mistral</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold text-blue-400">2. Model (Override)</Label>
+                  <Input
+                    value={testerModel}
+                    onChange={(e) => setTesterModel(e.target.value)}
+                    placeholder="e.g. gemini-2.5-flash"
+                    className="bg-black/60 border-blue-500/30 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="space-y-2 lg:col-span-2">
+                  <Label className="text-sm font-semibold text-yellow-400">3. Paste API Key to Test</Label>
+                  <Input
+                    value={testerManualKey}
+                    onChange={(e) => setTesterManualKey(e.target.value)}
+                    placeholder="Enter the API Key you want to verify..."
+                    className="bg-black/60 border-yellow-500/40 focus:ring-yellow-500 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold text-blue-400">4. Test Message</Label>
+                <div className="flex gap-4">
+                  <Input
+                    value={testerMessage}
+                    onChange={(e) => setTesterMessage(e.target.value)}
+                    placeholder="Write something to test..."
+                    className="bg-black/60 border-blue-500/30 focus:ring-blue-500 flex-1"
+                  />
+                  <Button 
+                    onClick={handleRunTester} 
+                    disabled={testerLoading || !testerManualKey}
+                    className="bg-blue-600 hover:bg-blue-700 text-white px-10 shadow-lg shadow-blue-500/20"
+                  >
+                    {testerLoading ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Testing...
+                      </>
+                    ) : (
+                      <>
+                        <Send className="mr-2 h-4 w-4" />
+                        Run Test
+                      </>
+                    )}
+                  </Button>
+                </div>
+                {!testerManualKey && <p className="text-[10px] text-muted-foreground italic">* Please paste an API key to enable testing.</p>}
+              </div>
+
+              {testerResponse && (
+                <div className="grid gap-4 md:grid-cols-2 mt-6 animate-in fade-in slide-in-from-top-4 duration-500">
+                  <div className="space-y-2">
+                    <Label className="text-blue-400 font-bold flex items-center gap-2">
+                      <CheckCircle className="h-4 w-4" /> AI Response
+                    </Label>
+                    <div className="p-4 rounded-lg bg-black/80 border border-blue-500/30 text-sm leading-relaxed min-h-[120px] whitespace-pre-wrap shadow-inner">
+                      {testerResponse}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-orange-400 font-bold flex items-center gap-2">
+                      <Activity className="h-4 w-4" /> Engine Logs
+                    </Label>
+                    <div className="p-4 rounded-lg bg-black/80 border border-orange-500/30 font-mono text-xs space-y-3 overflow-x-auto shadow-inner">
+                      <div className="flex justify-between items-center pb-2 border-b border-white/5">
+                        <span className="text-muted-foreground">Test Status:</span>
+                        <span className="text-green-400 font-bold">SUCCESS ✅</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Key Used:</span>
+                        <span className="text-white truncate max-w-[200px] ml-2" title={testerDebug?.key}>{testerDebug?.key}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Proxy/IP Node:</span>
+                        <span className="text-green-400">{testerDebug?.proxy || "Direct"}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Model:</span>
+                        <span className="text-blue-400">{testerDebug?.model}</span>
+                      </div>
+                      <div className="flex justify-between pt-2 mt-2 border-t border-white/5">
+                        <span className="text-muted-foreground">Tokens:</span>
+                        <span className="text-yellow-400 font-bold">{testerDebug?.usage?.total_tokens || 0}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           <Card className="bg-card border-border">
             <CardHeader>
               <CardTitle>API Pool Monitor</CardTitle>
