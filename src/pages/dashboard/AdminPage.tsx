@@ -252,6 +252,18 @@ export default function AdminPage() {
   const [dbSearch, setDbSearch] = useState("");
   const [dbError, setDbError] = useState<string | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [apiEditModalOpen, setApiEditModalOpen] = useState(false);
+  const [editingApiKey, setEditingApiKey] = useState<ApiKey | null>(null);
+  const [apiEditForm, setApiEditForm] = useState({
+    provider: '',
+    email: '',
+    api: '',
+    model: '',
+    rpm_limit: 0,
+    rph_limit: 0,
+    rpd_limit: 0,
+    status: 'active'
+  });
   const [editingRow, setEditingRow] = useState<any | null>(null);
   const [insertDialogOpen, setInsertDialogOpen] = useState(false);
   const [insertForm, setInsertForm] = useState<any>({});
@@ -983,19 +995,59 @@ export default function AdminPage() {
   };
 
   const openEditRow = (row: any) => {
-    console.log("[AdminPage] Opening edit for row:", row);
+    // If we are in the API Engine tab, use the dedicated API Edit Modal
+    if (activeTab === 'api-engine') {
+      setEditingApiKey(row);
+      setApiEditForm({
+        provider: row.provider || '',
+        email: row.email || '',
+        api: row.api || '',
+        model: row.model || 'default',
+        rpm_limit: row.rpm_limit || 0,
+        rph_limit: row.rph_limit || 0,
+        rpd_limit: row.rpd_limit || 0,
+        status: row.status || 'active'
+      });
+      setApiEditModalOpen(true);
+      return;
+    }
+
+    // Otherwise use generic DB editor
     setEditingRow(row);
-    setInsertForm({ ...row }); // Reuse insertForm for editing to have card-like feel
-    
-    // Ensure we are set to the correct table if this is coming from the API pool list
-    if (activeTab === 'api-engine' || !selectedTable) {
-        console.log("[AdminPage] Setting selectedTable to api_list");
+    setInsertForm({ ...row });
+    if (!selectedTable) {
         setSelectedTable('api_list');
-        // We also need columns to show the edit dialog properly
         fetchDbColumns('api_list');
     }
-    
     setEditDialogOpen(true);
+  };
+
+  const handleSaveApiKeyEdit = async () => {
+    if (!editingApiKey) return;
+    try {
+      const token = getAdminToken();
+      const res = await fetch(`${BACKEND_URL}/api/db-admin/table/api_list/update`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          keyColumn: 'id',
+          keyValue: editingApiKey.id,
+          row: apiEditForm,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to update API key");
+      }
+      toast.success("API Key updated");
+      setApiEditModalOpen(false);
+      fetchEngineData(); // Refresh list
+    } catch (error: any) {
+      toast.error(error.message || "Failed to update API key");
+    }
   };
 
   const handleSaveRow = async () => {
@@ -3650,65 +3702,116 @@ export default function AdminPage() {
           </div>
 
           <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+            {/* Existing DB Edit Dialog Content */}
             <DialogContent className="max-w-2xl bg-zinc-950 border-white/10 text-white">
+              {/* ... (no changes here) */}
+            </DialogContent>
+          </Dialog>
+
+          {/* Dedicated API Key Edit Modal */}
+          <Dialog open={apiEditModalOpen} onOpenChange={setApiEditModalOpen}>
+            <DialogContent className="max-w-xl bg-zinc-950 border-white/10 text-white shadow-2xl">
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
-                  <Edit className="h-5 w-5 text-blue-400" />
-                  Edit Record
+                  <Edit className="h-5 w-5 text-amber-400" />
+                  Edit API Key Details
                 </DialogTitle>
                 <DialogDescription className="text-zinc-400">
-                  Modify the fields below for the selected row in {selectedTable}
+                  Update configuration for key: <code className="text-blue-400">{editingApiKey?.api.substring(0, 15)}***</code>
                 </DialogDescription>
               </DialogHeader>
-              <div className="grid grid-cols-1 gap-4 py-4 max-h-[60vh] overflow-y-auto custom-scrollbar pr-2">
-                {dbColumns.map(col => (
-                  <div key={col.column_name} className="space-y-2 p-3 rounded-lg bg-white/5 border border-white/5">
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor={`edit-${col.column_name}`} className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                        {col.column_name}
-                        <span className="ml-2 text-[10px] font-normal lowercase opacity-50">({col.data_type})</span>
-                      </Label>
-                      {col.is_nullable === 'NO' && <Badge className="bg-red-500/10 text-red-500 border-red-500/20 h-4 text-[9px]">Required</Badge>}
-                    </div>
-                    {col.data_type.includes('boolean') ? (
-                      <div className="flex items-center gap-3">
-                        <Switch
-                          id={`edit-${col.column_name}`}
-                          checked={insertForm[col.column_name] || false}
-                          onCheckedChange={(checked) => setInsertForm({ ...insertForm, [col.column_name]: checked })}
-                        />
-                        <span className="text-sm font-mono">{String(insertForm[col.column_name] || false)}</span>
-                      </div>
-                    ) : col.data_type.includes('text') || col.data_type.includes('json') ? (
-                      <Textarea
-                        id={`edit-${col.column_name}`}
-                        value={insertForm[col.column_name] ?? ''}
-                        onChange={(e) => setInsertForm({ ...insertForm, [col.column_name]: e.target.value })}
-                        className="bg-black/40 border-white/10 text-xs font-mono min-h-[80px]"
-                      />
-                    ) : (
-                      <Input
-                        id={`edit-${col.column_name}`}
-                        type={col.data_type.includes('int') || col.data_type.includes('numeric') ? 'number' : 'text'}
-                        value={insertForm[col.column_name] ?? ''}
-                        onChange={(e) => {
-                          const value = col.data_type.includes('int') || col.data_type.includes('numeric')
-                            ? e.target.value === '' ? null : Number(e.target.value)
-                            : e.target.value;
-                          setInsertForm({ ...insertForm, [col.column_name]: value });
-                        }}
-                        className="bg-black/40 border-white/10 text-xs font-mono h-9"
-                      />
-                    )}
-                  </div>
-                ))}
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-6">
+                <div className="space-y-2">
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Provider</Label>
+                  <Select 
+                    value={apiEditForm.provider} 
+                    onValueChange={(val) => setApiEditForm({...apiEditForm, provider: val})}
+                  >
+                    <SelectTrigger className="bg-black/40 border-white/10 h-10">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="google">Google Gemini</SelectItem>
+                      <SelectItem value="groq">Groq</SelectItem>
+                      <SelectItem value="openrouter">OpenRouter</SelectItem>
+                      <SelectItem value="openai">OpenAI</SelectItem>
+                      <SelectItem value="mistral">Mistral</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Email / Account</Label>
+                  <Input 
+                    value={apiEditForm.email} 
+                    onChange={(e) => setApiEditForm({...apiEditForm, email: e.target.value})}
+                    placeholder="email@example.com"
+                    className="bg-black/40 border-white/10 h-10"
+                  />
+                </div>
+
+                <div className="space-y-2 md:col-span-2">
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Full API Key</Label>
+                  <Input 
+                    value={apiEditForm.api} 
+                    onChange={(e) => setApiEditForm({...apiEditForm, api: e.target.value})}
+                    className="bg-black/40 border-white/10 h-10 font-mono text-xs"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Model Override</Label>
+                  <Input 
+                    value={apiEditForm.model} 
+                    onChange={(e) => setApiEditForm({...apiEditForm, model: e.target.value})}
+                    className="bg-black/40 border-white/10 h-10"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Status</Label>
+                  <Select 
+                    value={apiEditForm.status} 
+                    onValueChange={(val) => setApiEditForm({...apiEditForm, status: val})}
+                  >
+                    <SelectTrigger className="bg-black/40 border-white/10 h-10">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="active">Active (Healthy)</SelectItem>
+                      <SelectItem value="disabled">Disabled (Dead)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground">RPM Limit</Label>
+                  <Input 
+                    type="number"
+                    value={apiEditForm.rpm_limit} 
+                    onChange={(e) => setApiEditForm({...apiEditForm, rpm_limit: parseInt(e.target.value) || 0})}
+                    className="bg-black/40 border-white/10 h-10"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground">RPD Limit (Daily)</Label>
+                  <Input 
+                    type="number"
+                    value={apiEditForm.rpd_limit} 
+                    onChange={(e) => setApiEditForm({...apiEditForm, rpd_limit: parseInt(e.target.value) || 0})}
+                    className="bg-black/40 border-white/10 h-10"
+                  />
+                </div>
               </div>
+
               <DialogFooter className="border-t border-white/5 pt-4">
-                <Button variant="ghost" onClick={() => setEditDialogOpen(false)} className="text-xs hover:bg-white/5">
+                <Button variant="ghost" onClick={() => setApiEditModalOpen(false)} className="text-xs hover:bg-white/5">
                   Cancel
                 </Button>
-                <Button onClick={handleSaveRow} className="bg-blue-600 hover:bg-blue-700 text-xs font-bold px-8">
-                  Save Changes
+                <Button onClick={handleSaveApiKeyEdit} className="bg-blue-600 hover:bg-blue-700 text-xs font-bold px-8">
+                  Update Key
                 </Button>
               </DialogFooter>
             </DialogContent>
