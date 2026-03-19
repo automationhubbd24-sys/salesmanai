@@ -2769,7 +2769,12 @@ export default function AdminPage() {
             <CardContent className="p-0">
               {(() => {
                 const filtered = engineKeys.filter(k => {
-                  const matchesSearch = k.api.toLowerCase().includes(engineSearch.toLowerCase()) || k.provider.toLowerCase().includes(engineSearch.toLowerCase());
+                  const q = engineSearch.toLowerCase();
+                  const matchesSearch = 
+                    k.api.toLowerCase().includes(q) || 
+                    k.provider.toLowerCase().includes(q) ||
+                    (k.email && k.email.toLowerCase().includes(q));
+                  
                   const isLocked = k.cooldown_until && new Date(k.cooldown_until).getTime() > now;
                   
                   let matchesStatus = true;

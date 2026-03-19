@@ -991,7 +991,8 @@ module.exports = {
             ? keys.filter(k => {
                 const provider = (k.provider || '').toLowerCase();
                 const api = (k.api || '').toLowerCase();
-                return provider.includes(query) || api.includes(query);
+                const email = (k.email || '').toLowerCase();
+                return provider.includes(query) || api.includes(query) || email.includes(query);
             })
             : keys;
 
