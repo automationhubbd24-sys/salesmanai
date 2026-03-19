@@ -2998,12 +2998,229 @@ export default function AdminPage() {
                         </div>
                       </div>
                     )}
+
+                    {/* Dedicated API Key Edit Modal */}
+                    <Dialog open={apiEditModalOpen} onOpenChange={setApiEditModalOpen}>
+                      <DialogContent className="max-w-xl bg-zinc-950 border-white/10 text-white shadow-2xl">
+                        <DialogHeader>
+                          <DialogTitle className="flex items-center gap-2">
+                            <Edit className="h-5 w-5 text-amber-400" />
+                            Edit API Key Details
+                          </DialogTitle>
+                          <DialogDescription className="text-zinc-400">
+                            Update configuration for key: <code className="text-blue-400">{editingApiKey?.api.substring(0, 15)}***</code>
+                          </DialogDescription>
+                        </DialogHeader>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-6">
+                          <div className="space-y-2">
+                            <Label className="text-[10px] font-black uppercase text-muted-foreground">Provider</Label>
+                            <Select 
+                              value={apiEditForm.provider} 
+                              onValueChange={(val) => setApiEditForm({...apiEditForm, provider: val})}
+                            >
+                              <SelectTrigger className="bg-black/40 border-white/10 h-10">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="google">Google Gemini</SelectItem>
+                                <SelectItem value="groq">Groq</SelectItem>
+                                <SelectItem value="openrouter">OpenRouter</SelectItem>
+                                <SelectItem value="openai">OpenAI</SelectItem>
+                                <SelectItem value="mistral">Mistral</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label className="text-[10px] font-black uppercase text-muted-foreground">Email / Account</Label>
+                            <Input 
+                              value={apiEditForm.email} 
+                              onChange={(e) => setApiEditForm({...apiEditForm, email: e.target.value})}
+                              placeholder="email@example.com"
+                              className="bg-black/40 border-white/10 h-10"
+                            />
+                          </div>
+
+                          <div className="space-y-2 md:col-span-2">
+                            <Label className="text-[10px] font-black uppercase text-muted-foreground">Full API Key</Label>
+                            <Input 
+                              value={apiEditForm.api} 
+                              onChange={(e) => setApiEditForm({...apiEditForm, api: e.target.value})}
+                              className="bg-black/40 border-white/10 h-10 font-mono text-xs"
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label className="text-[10px] font-black uppercase text-muted-foreground">Model Override</Label>
+                            <Input 
+                              value={apiEditForm.model} 
+                              onChange={(e) => setApiEditForm({...apiEditForm, model: e.target.value})}
+                              className="bg-black/40 border-white/10 h-10"
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label className="text-[10px] font-black uppercase text-muted-foreground">Status</Label>
+                            <Select 
+                              value={apiEditForm.status} 
+                              onValueChange={(val) => setApiEditForm({...apiEditForm, status: val})}
+                            >
+                              <SelectTrigger className="bg-black/40 border-white/10 h-10">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="active">Active (Healthy)</SelectItem>
+                                <SelectItem value="disabled">Disabled (Dead)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label className="text-[10px] font-black uppercase text-muted-foreground">RPM Limit</Label>
+                            <Input 
+                              type="number"
+                              value={apiEditForm.rpm_limit} 
+                              onChange={(e) => setApiEditForm({...apiEditForm, rpm_limit: parseInt(e.target.value) || 0})}
+                              className="bg-black/40 border-white/10 h-10"
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label className="text-[10px] font-black uppercase text-muted-foreground">RPD Limit (Daily)</Label>
+                            <Input 
+                              type="number"
+                              value={apiEditForm.rpd_limit} 
+                              onChange={(e) => setApiEditForm({...apiEditForm, rpd_limit: parseInt(e.target.value) || 0})}
+                              className="bg-black/40 border-white/10 h-10"
+                            />
+                          </div>
+                        </div>
+
+                        <DialogFooter className="border-t border-white/5 pt-4">
+                          <Button variant="ghost" onClick={() => setApiEditModalOpen(false)} className="text-xs hover:bg-white/5">
+                            Cancel
+                          </Button>
+                          <Button onClick={handleSaveApiKeyEdit} className="bg-blue-600 hover:bg-blue-700 text-xs font-bold px-8">
+                            Update Key
+                          </Button>
+                        </DialogFooter>
+                      </DialogContent>
+                    </Dialog>
                   </>
                 );
               })()}
             </CardContent>
           </Card>
 
+          {/* Dedicated API Key Edit Modal */}
+          <Dialog open={apiEditModalOpen} onOpenChange={setApiEditModalOpen}>
+            <DialogContent className="max-w-xl bg-zinc-950 border-white/10 text-white shadow-2xl">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Edit className="h-5 w-5 text-amber-400" />
+                  Edit API Key Details
+                </DialogTitle>
+                <DialogDescription className="text-zinc-400">
+                  Update configuration for key: <code className="text-blue-400">{editingApiKey?.api.substring(0, 15)}***</code>
+                </DialogDescription>
+              </DialogHeader>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-6">
+                <div className="space-y-2">
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Provider</Label>
+                  <Select 
+                    value={apiEditForm.provider} 
+                    onValueChange={(val) => setApiEditForm({...apiEditForm, provider: val})}
+                  >
+                    <SelectTrigger className="bg-black/40 border-white/10 h-10">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="google">Google Gemini</SelectItem>
+                      <SelectItem value="groq">Groq</SelectItem>
+                      <SelectItem value="openrouter">OpenRouter</SelectItem>
+                      <SelectItem value="openai">OpenAI</SelectItem>
+                      <SelectItem value="mistral">Mistral</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Email / Account</Label>
+                  <Input 
+                    value={apiEditForm.email} 
+                    onChange={(e) => setApiEditForm({...apiEditForm, email: e.target.value})}
+                    placeholder="email@example.com"
+                    className="bg-black/40 border-white/10 h-10"
+                  />
+                </div>
+
+                <div className="space-y-2 md:col-span-2">
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Full API Key</Label>
+                  <Input 
+                    value={apiEditForm.api} 
+                    onChange={(e) => setApiEditForm({...apiEditForm, api: e.target.value})}
+                    className="bg-black/40 border-white/10 h-10 font-mono text-xs"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Model Override</Label>
+                  <Input 
+                    value={apiEditForm.model} 
+                    onChange={(e) => setApiEditForm({...apiEditForm, model: e.target.value})}
+                    className="bg-black/40 border-white/10 h-10"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Status</Label>
+                  <Select 
+                    value={apiEditForm.status} 
+                    onValueChange={(val) => setApiEditForm({...apiEditForm, status: val})}
+                  >
+                    <SelectTrigger className="bg-black/40 border-white/10 h-10">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="active">Active (Healthy)</SelectItem>
+                      <SelectItem value="disabled">Disabled (Dead)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground">RPM Limit</Label>
+                  <Input 
+                    type="number"
+                    value={apiEditForm.rpm_limit} 
+                    onChange={(e) => setApiEditForm({...apiEditForm, rpm_limit: parseInt(e.target.value) || 0})}
+                    className="bg-black/40 border-white/10 h-10"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground">RPD Limit (Daily)</Label>
+                  <Input 
+                    type="number"
+                    value={apiEditForm.rpd_limit} 
+                    onChange={(e) => setApiEditForm({...apiEditForm, rpd_limit: parseInt(e.target.value) || 0})}
+                    className="bg-black/40 border-white/10 h-10"
+                  />
+                </div>
+              </div>
+
+              <DialogFooter className="border-t border-white/5 pt-4">
+                <Button variant="ghost" onClick={() => setApiEditModalOpen(false)} className="text-xs hover:bg-white/5">
+                  Cancel
+                </Button>
+                <Button onClick={handleSaveApiKeyEdit} className="bg-blue-600 hover:bg-blue-700 text-xs font-bold px-8">
+                  Update Key
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
           
         </TabsContent>
 
@@ -3716,115 +3933,6 @@ export default function AdminPage() {
             {/* Existing DB Edit Dialog Content */}
             <DialogContent className="max-w-2xl bg-zinc-950 border-white/10 text-white">
               {/* ... (no changes here) */}
-            </DialogContent>
-          </Dialog>
-
-          {/* Dedicated API Key Edit Modal */}
-          <Dialog open={apiEditModalOpen} onOpenChange={setApiEditModalOpen}>
-            <DialogContent className="max-w-xl bg-zinc-950 border-white/10 text-white shadow-2xl">
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  <Edit className="h-5 w-5 text-amber-400" />
-                  Edit API Key Details
-                </DialogTitle>
-                <DialogDescription className="text-zinc-400">
-                  Update configuration for key: <code className="text-blue-400">{editingApiKey?.api.substring(0, 15)}***</code>
-                </DialogDescription>
-              </DialogHeader>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-6">
-                <div className="space-y-2">
-                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Provider</Label>
-                  <Select 
-                    value={apiEditForm.provider} 
-                    onValueChange={(val) => setApiEditForm({...apiEditForm, provider: val})}
-                  >
-                    <SelectTrigger className="bg-black/40 border-white/10 h-10">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="google">Google Gemini</SelectItem>
-                      <SelectItem value="groq">Groq</SelectItem>
-                      <SelectItem value="openrouter">OpenRouter</SelectItem>
-                      <SelectItem value="openai">OpenAI</SelectItem>
-                      <SelectItem value="mistral">Mistral</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Email / Account</Label>
-                  <Input 
-                    value={apiEditForm.email} 
-                    onChange={(e) => setApiEditForm({...apiEditForm, email: e.target.value})}
-                    placeholder="email@example.com"
-                    className="bg-black/40 border-white/10 h-10"
-                  />
-                </div>
-
-                <div className="space-y-2 md:col-span-2">
-                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Full API Key</Label>
-                  <Input 
-                    value={apiEditForm.api} 
-                    onChange={(e) => setApiEditForm({...apiEditForm, api: e.target.value})}
-                    className="bg-black/40 border-white/10 h-10 font-mono text-xs"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Model Override</Label>
-                  <Input 
-                    value={apiEditForm.model} 
-                    onChange={(e) => setApiEditForm({...apiEditForm, model: e.target.value})}
-                    className="bg-black/40 border-white/10 h-10"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Status</Label>
-                  <Select 
-                    value={apiEditForm.status} 
-                    onValueChange={(val) => setApiEditForm({...apiEditForm, status: val})}
-                  >
-                    <SelectTrigger className="bg-black/40 border-white/10 h-10">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="active">Active (Healthy)</SelectItem>
-                      <SelectItem value="disabled">Disabled (Dead)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label className="text-[10px] font-black uppercase text-muted-foreground">RPM Limit</Label>
-                  <Input 
-                    type="number"
-                    value={apiEditForm.rpm_limit} 
-                    onChange={(e) => setApiEditForm({...apiEditForm, rpm_limit: parseInt(e.target.value) || 0})}
-                    className="bg-black/40 border-white/10 h-10"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label className="text-[10px] font-black uppercase text-muted-foreground">RPD Limit (Daily)</Label>
-                  <Input 
-                    type="number"
-                    value={apiEditForm.rpd_limit} 
-                    onChange={(e) => setApiEditForm({...apiEditForm, rpd_limit: parseInt(e.target.value) || 0})}
-                    className="bg-black/40 border-white/10 h-10"
-                  />
-                </div>
-              </div>
-
-              <DialogFooter className="border-t border-white/5 pt-4">
-                <Button variant="ghost" onClick={() => setApiEditModalOpen(false)} className="text-xs hover:bg-white/5">
-                  Cancel
-                </Button>
-                <Button onClick={handleSaveApiKeyEdit} className="bg-blue-600 hover:bg-blue-700 text-xs font-bold px-8">
-                  Update Key
-                </Button>
-              </DialogFooter>
             </DialogContent>
           </Dialog>
 
