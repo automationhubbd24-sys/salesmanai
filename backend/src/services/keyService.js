@@ -72,8 +72,7 @@ const modelUsageHourTimestamps = new Map(); // Key: modelName, Value: Array of t
 const modelDailyUsage = new Map(); // Key: modelName, Value: { date: string, count: number }
 
 const modelIndexMap = new Map();
-
-const shuffledPools = new Map(); // Stores shuffled arrays per provider:model
+const globalKeyPointers = new Map(); // mapKey -> lastUsedIndex
 const pendingUpdates = new Map(); // apiKey -> { usage_delta, token_delta, last_used_at, status, cooldown_until }
 let flushPromise = null;
 
@@ -692,7 +691,6 @@ async function updateKeyStatusFromHeaders(apiKey, headers) {
 // User Requirement: "total api jodi 1 - 100 ta take tahole 100 cross kore then 1 e asbe"
 // Solution: O(1) Sequential Rotation with Atomic Reservation.
 
-const globalKeyPointers = new Map(); 
 const rotationLogs = []; 
 const MAX_ROTATION_LOGS = 50;
 
@@ -745,8 +743,7 @@ async function getSmartKey(provider, model = 'default') {
     }
 
     const mapKey = `${provider}:${model}`;
-    let currentIndex = globalKeyPointers.get(mapKey) || 0;
-
+    
     // 1. Get Candidate Keys from Cache
     let candidates = [];
     if (model !== 'default' && keysByModel.has(model)) {
@@ -760,31 +757,25 @@ async function getSmartKey(provider, model = 'default') {
         if (!candidates || candidates.length === 0) return null;
     }
 
-    // Filter alive keys for this specific pool
-    const currentValidKeys = candidates.filter(k => isKeyAlive(k.api));
-    if (currentValidKeys.length === 0) return null;
-
-    // 2. SHUFFLED CYCLE MANAGEMENT
-    let shuffledPool = shuffledPools.get(mapKey);
-
-    // If no pool exists OR we completed a full cycle (pointer wrapped to 0) OR pool size changed
-    if (!shuffledPool || currentIndex === 0 || currentIndex >= shuffledPool.length || shuffledPool.length !== currentValidKeys.length) {
-        console.log(`[KeyService] 🎲 Shuffling API pool for ${mapKey} (New Cycle Start)`);
-        // Create a new shuffled pool from currently valid keys
-        shuffledPool = [...currentValidKeys].sort(() => Math.random() - 0.5);
-        shuffledPools.set(mapKey, shuffledPool);
-        currentIndex = 0; // Reset pointer for the new shuffled pool
-    }
-
+    // 2. STRICT SEQUENTIAL ROTATION (O(1) Scale for 10k+ Keys)
+    const totalKeys = candidates.length;
+    let currentIndex = globalKeyPointers.get(mapKey) || 0;
+    
     const now = Date.now();
     const today = getPacificDate();
 
-    for (let i = 0; i < shuffledPool.length; i++) {
-        const actualIndex = (currentIndex + i) % shuffledPool.length;
-        const candidateKey = shuffledPool[actualIndex];
+    for (let i = 0; i < totalKeys; i++) {
+        const actualIndex = (currentIndex + i) % totalKeys;
+        const candidateKey = candidates[actualIndex];
 
         // Skip if key became dead during the cycle
-        if (!isKeyAlive(candidateKey.api)) continue;
+        if (!isKeyAlive(candidateKey.api)) {
+            // Smart Skip: If this was the current pointer, advance it so next request doesn't waste time checking it
+            if (i === 0) {
+                globalKeyPointers.set(mapKey, (actualIndex + 1) % totalKeys);
+            }
+            continue;
+        }
 
         // --- HARD CHECK: PRE-RESERVE RPM SLOT TO PREVENT RACE CONDITIONS ---
         const tsList = keyUsageTimestamps.get(candidateKey.api) || [];
@@ -841,8 +832,8 @@ async function getSmartKey(provider, model = 'default') {
 
         // --- KEY SELECTED: ATOMIC UPDATES ---
         
-        // Update Rotation Pointer for NEXT request
-        const nextIndex = (actualIndex + 1) % shuffledPool.length;
+        // Update Rotation Pointer for NEXT request (Strict Sequential)
+        const nextIndex = (actualIndex + 1) % totalKeys;
         globalKeyPointers.set(mapKey, nextIndex);
 
         // Record Timestamp immediately (Atomic Reservation)
@@ -874,8 +865,8 @@ async function getSmartKey(provider, model = 'default') {
         // to ensure the UI shows the latest state instantly.
         flushUsageStats().catch(e => console.error(`[KeyService] Immediate flush failed: ${e.message}`));
 
-        console.log(`[KeyService] ✅ Selected Key: ${candidateKey.api} (Index: ${actualIndex + 1}/${shuffledPool.length}, RPM: ${activeRpmCount + 1}/${rpmLimit || '∞'})`);
-        addRotationLog(provider, model, candidateKey.api, actualIndex + 1, shuffledPool.length);
+        console.log(`[KeyService] ✅ Selected Key: ${candidateKey.api} (Index: ${actualIndex + 1}/${totalKeys}, RPM: ${activeRpmCount + 1}/${rpmLimit || '∞'})`);
+        addRotationLog(provider, model, candidateKey.api, actualIndex + 1, totalKeys);
 
         return {
             key: candidateKey.api,

@@ -2901,9 +2901,17 @@ export default function AdminPage() {
                                         variant="ghost"
                                         size="icon"
                                         className="h-8 w-8 text-muted-foreground hover:text-white hover:bg-white/5"
-                                        onClick={() => {
-                                          navigator.clipboard.writeText(revealedKey || k.api);
-                                          toast.success("Key copied to clipboard");
+                                        onClick={async () => {
+                                          let value = engineRevealedKeys[k.id];
+                                          if (!value) {
+                                            value = await fetchEngineKeyValue(k.id);
+                                          }
+                                          if (value) {
+                                            navigator.clipboard.writeText(value);
+                                            toast.success("Key copied to clipboard");
+                                          } else {
+                                            toast.error("Failed to copy key");
+                                          }
                                         }}
                                         title="Copy Key"
                                       >
