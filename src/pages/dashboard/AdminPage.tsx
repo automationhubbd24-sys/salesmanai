@@ -943,21 +943,53 @@ export default function AdminPage() {
       const res = await fetch(`${BACKEND_URL}/api/db-admin/table/${encodeURIComponent(tableName)}/columns`, {
         headers: { Authorization: `Bearer ${token}` }
       });
+      
+      if (!res.ok) {
+        // Fallback for api_list if API fails (e.g. 404 on live server)
+        if (tableName === 'api_list') {
+          setDbColumns([
+            { column_name: 'id', data_type: 'integer', is_nullable: 'NO' },
+            { column_name: 'provider', data_type: 'text', is_nullable: 'NO' },
+            { column_name: 'api', data_type: 'text', is_nullable: 'NO' },
+            { column_name: 'model', data_type: 'text', is_nullable: 'YES' },
+            { column_name: 'email', data_type: 'text', is_nullable: 'YES' },
+            { column_name: 'status', data_type: 'text', is_nullable: 'NO' },
+            { column_name: 'rpm_limit', data_type: 'integer', is_nullable: 'YES' },
+            { column_name: 'rph_limit', data_type: 'integer', is_nullable: 'YES' },
+            { column_name: 'rpd_limit', data_type: 'integer', is_nullable: 'YES' }
+          ]);
+          return;
+        }
+        throw new Error("Failed to fetch columns");
+      }
+
       const data = await res.json();
       if (data.success) {
         setDbColumns(data.columns || []);
       }
     } catch (error) {
       console.error("Failed to fetch columns", error);
+      // Hard fallback if everything fails
+      if (tableName === 'api_list') {
+        setDbColumns([
+          { column_name: 'id', data_type: 'integer', is_nullable: 'NO' },
+          { column_name: 'provider', data_type: 'text', is_nullable: 'NO' },
+          { column_name: 'api', data_type: 'text', is_nullable: 'NO' },
+          { column_name: 'email', data_type: 'text', is_nullable: 'YES' },
+          { column_name: 'status', data_type: 'text', is_nullable: 'NO' }
+        ]);
+      }
     }
   };
 
   const openEditRow = (row: any) => {
+    console.log("[AdminPage] Opening edit for row:", row);
     setEditingRow(row);
     setInsertForm({ ...row }); // Reuse insertForm for editing to have card-like feel
     
     // Ensure we are set to the correct table if this is coming from the API pool list
     if (activeTab === 'api-engine' || !selectedTable) {
+        console.log("[AdminPage] Setting selectedTable to api_list");
         setSelectedTable('api_list');
         // We also need columns to show the edit dialog properly
         fetchDbColumns('api_list');
@@ -2812,7 +2844,7 @@ export default function AdminPage() {
                                     </div>
                                   </TableCell>
                                   <TableCell className="py-4 text-right">
-                                    <div className="flex justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <div className="flex justify-end gap-1.5 opacity-100 transition-opacity">
                                       <Button
                                         variant="ghost"
                                         size="icon"
