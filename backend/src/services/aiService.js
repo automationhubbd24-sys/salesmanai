@@ -2170,13 +2170,14 @@ ${productContext || "No specific product context provided yet."}
 
     // --- FALLBACK & RETRY LOGIC FOR SYSTEM ENGINES (SAME MODEL FIRST) ---
     let retryCount = 0;
-    const MAX_RETRIES = 10; // Try more keys if we have many
+    const MAX_RETRIES = 15; // Increased to 15 to try more keys if we have many (e.g. 10k+)
     let lastError = null;
     let attemptedKeys = new Set();
 
     while (retryCount <= MAX_RETRIES) {
         let currentModel = defaultModel;
         let apiKey = null;
+        let finalProvider = null;
 
         try {
             // 1. Resolve Modality for Chat Engine
@@ -2184,7 +2185,7 @@ ${productContext || "No specific product context provided yet."}
             let isAudio = false; 
 
             let resolved = await resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio);
-            let finalProvider = resolved.finalProvider;
+            finalProvider = resolved.finalProvider;
             let finalModel = resolved.finalModel;
 
             currentModel = finalModel;
@@ -2192,29 +2193,27 @@ ${productContext || "No specific product context provided yet."}
             // 2. Get Next Smart Key (Round-Robin)
             let keyData = await keyService.getSmartKey(finalProvider, currentModel);
             
+            // If no model-specific key, try default pool
             if (!keyData || !keyData.key || attemptedKeys.has(keyData.key)) {
-                 // Try fallback to default if no specific model keys
                  keyData = await keyService.getSmartKey(finalProvider, 'default');
             }
 
+            // If we still have no key or it's one we already tried in this loop, we are exhausted
             if (!keyData || !keyData.key || attemptedKeys.has(keyData.key)) {
-                // If we still have no key, it means all keys for this provider/model are locked
-                throw new Error(`All API keys for ${finalProvider}/${currentModel} are currently LOCKED. Please add more keys or wait 24h.`);
+                console.warn(`[AI] Pool ${finalProvider}/${currentModel} exhausted after ${attemptedKeys.size} attempts.`);
+                throw new Error(`All API keys for ${finalProvider}/${currentModel} are currently LOCKED or rate-limited. Tried ${attemptedKeys.size} keys. Please add more keys.`);
             }
 
             apiKey = keyData.key;
             attemptedKeys.add(apiKey);
 
             let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
-            // ... baseURL logic remains ...
-            
             if (finalProvider === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
             else if (finalProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
             else if (finalProvider === 'openai') baseURL = 'https://api.openai.com/v1';
             else if (finalProvider === 'mistral') baseURL = 'https://api.mistral.ai/v1';
             else if (finalProvider === 'xai') baseURL = 'https://api.x.ai/v1';
             else if (finalProvider === 'google' || finalProvider === 'gemini') baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
-            else baseURL = 'https://api.openai.com/v1'; // Default to OpenAI compatible for others
             
             const isBrandedEngine = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(resolved.targetEngineName);
             
@@ -2242,26 +2241,40 @@ ${productContext || "No specific product context provided yet."}
                 foundProducts: [],
                 userId: userId,
                 temperature: (pageConfig.is_external_api ? 0.7 : 0.2),
-                pageId: pageId // Pass Page ID for order tracking
+                pageId: pageId 
             });
 
             return finalize({ ...result, sentiment: 'neutral' });
 
         } catch (err) {
-            console.error(`[AI] Phase 2 Logic Attempt ${retryCount} Failed:`, err.message);
+            const errorMsg = (err.message || '').toLowerCase();
+            const statusCode = err.status || (err.response ? err.response.status : null);
+            
+            console.error(`[AI Retry Loop] Attempt ${retryCount + 1} Failed with Key ${apiKey ? apiKey.substring(0,8) : 'NONE'}... | Status: ${statusCode} | Msg: ${errorMsg}`);
             lastError = err;
             
-            // Mark the failing key as dead so it's not picked up in the next retry
-            // We use the apiKey that was actually tried in this iteration
+            // Mark the failing key as dead immediately
             if (apiKey) {
-                handleAiError(err, apiKey, currentModel);
+                await handleAiError(err, apiKey, currentModel);
             }
 
-            retryCount++;
-            if (retryCount > MAX_RETRIES) break;
-            
-            // Wait a bit before retrying
-            await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+            // Decide if we should retry
+            // Retry on 429, 401 (invalid key), 5xx, or network errors
+            const isRetryable = statusCode === 429 || statusCode === 401 || statusCode >= 500 || 
+                                errorMsg.includes('limit') || errorMsg.includes('quota') || 
+                                errorMsg.includes('key') || errorMsg.includes('timeout') || 
+                                errorMsg.includes('network');
+
+            if (isRetryable) {
+                retryCount++;
+                if (retryCount > MAX_RETRIES) break;
+                // Wait a tiny bit (exponential backoff not needed here because we switch to a NEW key immediately)
+                await new Promise(resolve => setTimeout(resolve, 200)); 
+                continue;
+            } else {
+                // Non-retryable error (e.g. 400 Bad Request), fail immediately
+                break;
+            }
         }
     }
 

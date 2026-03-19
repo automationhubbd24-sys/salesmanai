@@ -2930,7 +2930,10 @@ export default function AdminPage() {
                                         variant="ghost"
                                         size="icon"
                                         className="h-8 w-8 text-amber-400 hover:text-amber-300 hover:bg-amber-500/10"
-                                        onClick={() => openEditRow(k)}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          openEditRow(k);
+                                        }}
                                         title="Edit Key/Email"
                                       >
                                         <Edit className="h-4 w-4" />

@@ -727,156 +727,172 @@ function getKeyUsageSummary(apiKey) {
 
 // --- NEW: MUTEX-LIKE LOCK FOR KEY SELECTION ---
 let isSelectingKey = false;
+const keySelectionQueue = [];
+
+async function acquireSelectionLock() {
+    if (!isSelectingKey) {
+        isSelectingKey = true;
+        return;
+    }
+    return new Promise(resolve => keySelectionQueue.push(resolve));
+}
+
+function releaseSelectionLock() {
+    if (keySelectionQueue.length > 0) {
+        const next = keySelectionQueue.shift();
+        next();
+    } else {
+        isSelectingKey = false;
+    }
+}
 
 async function getSmartKey(provider, model = 'default') {
-    // Avoid blocking if cache is fresh
-    if (typeof updateKeyCache === 'function') {
-        const now = Date.now();
-        if (now - lastCacheUpdate > CACHE_TTL) {
-            await updateKeyCache();
-        }
-    }
-    
-    if (isModelLocked(model)) {
-        console.warn(`[KeyService] Model ${model} is globally LOCKED.`);
-        return null;
-    }
-
-    const mapKey = `${provider}:${model}`;
-    
-    // 1. Get Candidate Keys from Cache
-    let candidates = [];
-    if (model !== 'default' && keysByModel.has(model)) {
-        candidates = keysByModel.get(model);
-    } else if (keysByProvider.has(provider)) {
-        candidates = keysByProvider.get(provider);
-    }
-    
-    if (!candidates || candidates.length === 0) {
-        if (keysByProvider.has(provider)) candidates = keysByProvider.get(provider);
-        if (!candidates || candidates.length === 0) return null;
-    }
-
-    // 2. STRICT SEQUENTIAL ROTATION (O(1) Scale for 10k+ Keys)
-    const totalKeys = candidates.length;
-    let currentIndex = globalKeyPointers.get(mapKey) || 0;
-    
-    const now = Date.now();
-    const today = getPacificDate();
-
-    for (let i = 0; i < totalKeys; i++) {
-        const actualIndex = (currentIndex + i) % totalKeys;
-        const candidateKey = candidates[actualIndex];
-
-        // Skip if key became dead during the cycle
-        if (!isKeyAlive(candidateKey.api)) {
-            // Smart Skip: If this was the current pointer, advance it so next request doesn't waste time checking it
-            if (i === 0) {
-                globalKeyPointers.set(mapKey, (actualIndex + 1) % totalKeys);
+    await acquireSelectionLock();
+    try {
+        // Avoid blocking if cache is fresh
+        if (typeof updateKeyCache === 'function') {
+            const now = Date.now();
+            if (now - lastCacheUpdate > CACHE_TTL) {
+                await updateKeyCache();
             }
-            continue;
         }
-
-        // --- HARD CHECK: PRE-RESERVE RPM SLOT TO PREVENT RACE CONDITIONS ---
-        const tsList = keyUsageTimestamps.get(candidateKey.api) || [];
-        const rpmThreshold = now - RPM_WINDOW_MS;
-        const activeRpmCount = tsList.filter(ts => ts > rpmThreshold).length;
-
-        // --- GET LIMITS (Take the MORE RESTRICTIVE one between Key-specific and Global Engine config) ---
-        const globalLim = model !== 'default' ? dynamicLimits.get(String(model)) : null;
         
-        const rpmLimit = Math.min(
-            parseInt(candidateKey.rpm_limit) || 99999, 
-            (globalLim && globalLim.rpm > 0) ? globalLim.rpm : 99999
-        );
-        const rphLimit = Math.min(
-            parseInt(candidateKey.rph_limit) || 99999, 
-            (globalLim && globalLim.rph > 0) ? globalLim.rph : 99999
-        );
-        const rpdLimit = Math.min(
-            parseInt(candidateKey.rpd_limit) || 99999, 
-            (globalLim && globalLim.rpd > 0) ? globalLim.rpd : 99999
-        );
-
-        // Check RPM
-        if (rpmLimit < 99999 && activeRpmCount >= rpmLimit) {
-            // console.log(`[KeyService] Skip ${candidateKey.api.substring(0,8)} (RPM Limit: ${activeRpmCount}/${rpmLimit})`);
-            continue;
+        if (isModelLocked(model)) {
+            console.warn(`[KeyService] Model ${model} is globally LOCKED.`);
+            return null;
         }
 
-        // Check RPH (Requests Per Hour)
-        const hourTsList = keyUsageHourTimestamps.get(candidateKey.api) || [];
-        const oneHourAgo = now - (60 * 60 * 1000 + 60 * 1000); // 1h 1m buffer
-        const activeRphCount = hourTsList.filter(ts => ts > oneHourAgo).length;
-
-        if (rphLimit < 99999 && activeRphCount >= rphLimit) {
-            // console.log(`[KeyService] Skip ${candidateKey.api.substring(0,8)} (RPH Limit: ${activeRphCount}/${rphLimit})`);
-            continue;
+        const mapKey = `${provider}:${model}`;
+        
+        // 1. Get Candidate Keys from Cache
+        let candidates = [];
+        if (model !== 'default' && keysByModel.has(model)) {
+            candidates = keysByModel.get(model);
+        } else if (keysByProvider.has(provider)) {
+            candidates = keysByProvider.get(provider);
+        }
+        
+        if (!candidates || candidates.length === 0) {
+            if (keysByProvider.has(provider)) candidates = keysByProvider.get(provider);
+            if (!candidates || candidates.length === 0) return null;
         }
 
-        // Check RPD
-        const pending = pendingUpdates.get(candidateKey.api) || { usage_delta: 0 };
-        const dbUsage = candidateKey.last_date_checked === today ? (Number(candidateKey.usage_today) || 0) : 0;
-        const effectiveUsageToday = dbUsage + pending.usage_delta;
+        // 2. STRICT SEQUENTIAL ROTATION (O(1) Scale for 10k+ Keys)
+        const totalKeys = candidates.length;
+        let currentIndex = globalKeyPointers.get(mapKey) || 0;
+        
+        const now = Date.now();
+        const today = getPacificDate();
 
-        if (rpdLimit < 99999 && effectiveUsageToday >= rpdLimit) {
-            console.warn(`[KeyService] ⛔ Key ${candidateKey.api.substring(0,8)}... hit RPD limit (${rpdLimit}). Usage: ${effectiveUsageToday}. Locking.`);
-            // Update local state to prevent immediate re-selection
-            candidateKey.status = 'locked';
-            candidateKey.cooldown_until = new Date(Date.now() + getMsUntilPacificMidnight()).toISOString();
+        for (let i = 0; i < totalKeys; i++) {
+            const actualIndex = (currentIndex + i) % totalKeys;
+            const candidateKey = candidates[actualIndex];
+
+            // Skip if key became dead during the cycle
+            if (!isKeyAlive(candidateKey.api)) {
+                // Smart Skip: If this was the current pointer, advance it so next request doesn't waste time checking it
+                if (i === 0) {
+                    globalKeyPointers.set(mapKey, (actualIndex + 1) % totalKeys);
+                }
+                continue;
+            }
+
+            // --- HARD CHECK: PRE-RESERVE RPM SLOT TO PREVENT RACE CONDITIONS ---
+            const tsList = keyUsageTimestamps.get(candidateKey.api) || [];
+            const rpmThreshold = now - 60000; // Strict 60s window for RPM
+            const activeRpmCount = tsList.filter(ts => ts > rpmThreshold).length;
+
+            // --- GET LIMITS (Take the MORE RESTRICTIVE one between Key-specific and Global Engine config) ---
+            const globalLim = model !== 'default' ? dynamicLimits.get(String(model)) : null;
             
-            // Persist to DB immediately
-            markKeyAsDead(candidateKey.api, getMsUntilPacificMidnight(), `rpd_limit_reached_hard_${rpdLimit}`).catch(e => {});
-            continue;
+            const rpmLimit = Math.min(
+                parseInt(candidateKey.rpm_limit) || 99999, 
+                (globalLim && globalLim.rpm > 0) ? globalLim.rpm : 99999
+            );
+            const rphLimit = Math.min(
+                parseInt(candidateKey.rph_limit) || 99999, 
+                (globalLim && globalLim.rph > 0) ? globalLim.rph : 99999
+            );
+            const rpdLimit = Math.min(
+                parseInt(candidateKey.rpd_limit) || 99999, 
+                (globalLim && globalLim.rpd > 0) ? globalLim.rpd : 99999
+            );
+
+            // Check RPM
+            if (rpmLimit < 99999 && activeRpmCount >= rpmLimit) {
+                continue;
+            }
+
+            // Check RPH (Requests Per Hour)
+            const hourTsList = keyUsageHourTimestamps.get(candidateKey.api) || [];
+            const oneHourAgo = now - (60 * 60 * 1000); // Strict 1h window
+            const activeRphCount = hourTsList.filter(ts => ts > oneHourAgo).length;
+
+            if (rphLimit < 99999 && activeRphCount >= rphLimit) {
+                continue;
+            }
+
+            // Check RPD
+            const pending = pendingUpdates.get(candidateKey.api) || { usage_delta: 0 };
+            const dbUsage = candidateKey.last_date_checked === today ? (Number(candidateKey.usage_today) || 0) : 0;
+            const effectiveUsageToday = dbUsage + pending.usage_delta;
+
+            if (rpdLimit < 99999 && effectiveUsageToday >= rpdLimit) {
+                console.warn(`[KeyService] ⛔ Key ${candidateKey.api.substring(0,8)}... hit RPD limit (${rpdLimit}). Usage: ${effectiveUsageToday}. Locking.`);
+                candidateKey.status = 'locked';
+                candidateKey.cooldown_until = new Date(Date.now() + getMsUntilPacificMidnight()).toISOString();
+                markKeyAsDead(candidateKey.api, getMsUntilPacificMidnight(), `rpd_limit_reached_hard_${rpdLimit}`).catch(e => {});
+                continue;
+            }
+
+            // --- KEY SELECTED: ATOMIC UPDATES ---
+            
+            // Update Rotation Pointer for NEXT request (Strict Sequential)
+            const nextIndex = (actualIndex + 1) % totalKeys;
+            globalKeyPointers.set(mapKey, nextIndex);
+
+            // Record Timestamp immediately (Atomic Reservation)
+            const updatedTsList = tsList.filter(ts => ts > rpmThreshold);
+            updatedTsList.push(now);
+            keyUsageTimestamps.set(candidateKey.api, updatedTsList);
+
+            const updatedHourList = hourTsList.filter(ts => ts > oneHourAgo);
+            updatedHourList.push(now);
+            keyUsageHourTimestamps.set(candidateKey.api, updatedHourList);
+
+            // Update Usage Stats
+            candidateKey.usage_count = (Number(candidateKey.usage_count) || 0) + 1;
+            if (candidateKey.last_date_checked === today) {
+                candidateKey.usage_today = (Number(candidateKey.usage_today) || 0) + 1;
+            } else {
+                candidateKey.last_date_checked = today;
+                candidateKey.usage_today = 1;
+            }
+            candidateKey.last_used_at = new Date().toISOString();
+
+            // Track Delta for Persistence
+            const current = pendingUpdates.get(candidateKey.api) || { usage_delta: 0, token_delta: 0 };
+            current.usage_delta = (current.usage_delta || 0) + 1;
+            current.last_used_at = candidateKey.last_used_at;
+            pendingUpdates.set(candidateKey.api, current);
+
+            flushUsageStats().catch(e => console.error(`[KeyService] Immediate flush failed: ${e.message}`));
+
+            console.log(`[KeyService] ✅ Selected Key: ${candidateKey.api} (Index: ${actualIndex + 1}/${totalKeys}, RPM: ${activeRpmCount + 1}/${rpmLimit || '∞'})`);
+            addRotationLog(provider, model, candidateKey.api, actualIndex + 1, totalKeys);
+
+            return {
+                key: candidateKey.api,
+                provider: candidateKey.provider,
+                model: candidateKey.model || model
+            };
         }
 
-        // --- KEY SELECTED: ATOMIC UPDATES ---
-        
-        // Update Rotation Pointer for NEXT request (Strict Sequential)
-        const nextIndex = (actualIndex + 1) % totalKeys;
-        globalKeyPointers.set(mapKey, nextIndex);
-
-        // Record Timestamp immediately (Atomic Reservation)
-        tsList.push(now);
-        keyUsageTimestamps.set(candidateKey.api, tsList);
-
-        const hourList = keyUsageHourTimestamps.get(candidateKey.api) || [];
-        hourList.push(now);
-        keyUsageHourTimestamps.set(candidateKey.api, hourList);
-
-        // Update Usage Stats
-        candidateKey.usage_count = (Number(candidateKey.usage_count) || 0) + 1;
-        if (candidateKey.last_date_checked === today) {
-            candidateKey.usage_today = (Number(candidateKey.usage_today) || 0) + 1;
-        } else {
-            candidateKey.last_date_checked = today;
-            candidateKey.usage_today = 1;
-        }
-        candidateKey.last_used_at = new Date().toISOString();
-
-        // Track Delta for Persistence
-        const current = pendingUpdates.get(candidateKey.api) || { usage_delta: 0, token_delta: 0 };
-        current.usage_delta = (current.usage_delta || 0) + 1;
-        current.last_used_at = candidateKey.last_used_at;
-        pendingUpdates.set(candidateKey.api, current);
-
-        // --- NEW: FORCED IMMEDIATE FLUSH FOR ACCURACY ---
-        // Instead of waiting 30s, we flush usage to DB immediately after selection
-        // to ensure the UI shows the latest state instantly.
-        flushUsageStats().catch(e => console.error(`[KeyService] Immediate flush failed: ${e.message}`));
-
-        console.log(`[KeyService] ✅ Selected Key: ${candidateKey.api} (Index: ${actualIndex + 1}/${totalKeys}, RPM: ${activeRpmCount + 1}/${rpmLimit || '∞'})`);
-        addRotationLog(provider, model, candidateKey.api, actualIndex + 1, totalKeys);
-
-        return {
-            key: candidateKey.api,
-            provider: candidateKey.provider,
-            model: candidateKey.model || model
-        };
+        console.warn(`[KeyService] ⚠️ All ${candidates.length} keys exhausted for ${provider}/${model}`);
+        return null;
+    } finally {
+        releaseSelectionLock();
     }
-
-    console.warn(`[KeyService] ⚠️ All ${currentValidKeys.length} keys exhausted for ${provider}/${model}`);
-    return null;
 }
 
 // --- 24. Initialization ---
