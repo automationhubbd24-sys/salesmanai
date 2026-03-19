@@ -16,6 +16,7 @@ router.put('/semantic-cache/update/:id', adminAuthMiddleware, dbAdminController.
 router.delete('/semantic-cache/delete/:id', adminAuthMiddleware, dbAdminController.deleteSemanticCacheEntry);
 
 router.get('/table/:table', adminAuthMiddleware, dbAdminController.getTableData);
+router.get('/table/:table/columns', adminAuthMiddleware, dbAdminController.getTableColumns);
 router.get('/embedding-config', adminAuthMiddleware, dbAdminController.getEmbeddingGlobalConfig);
 router.post('/embedding-config', adminAuthMiddleware, dbAdminController.saveEmbeddingGlobalConfig);
 router.post('/table', adminAuthMiddleware, dbAdminController.createTable);

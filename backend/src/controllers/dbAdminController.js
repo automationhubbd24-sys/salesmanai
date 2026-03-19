@@ -60,6 +60,32 @@ exports.getTableData = async (req, res) => {
     }
 };
 
+exports.getTableColumns = async (req, res) => {
+    try {
+        const table = req.params.table;
+        if (!isSafeIdentifier(table)) {
+            return res.status(400).json({ success: false, error: 'Invalid table name' });
+        }
+
+        const columnsResult = await pgClient.query(
+            `SELECT column_name, data_type, is_nullable
+             FROM information_schema.columns
+             WHERE table_schema = 'public'
+               AND table_name = $1
+             ORDER BY ordinal_position`,
+            [table]
+        );
+
+        res.json({
+            success: true,
+            columns: columnsResult.rows,
+        });
+    } catch (error) {
+        console.error('DB Admin getTableColumns error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
 exports.insertRow = async (req, res) => {
     try {
         const table = req.params.table;

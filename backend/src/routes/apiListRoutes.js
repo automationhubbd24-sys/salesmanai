@@ -32,6 +32,7 @@ router.post('/refresh-global-config-cache', adminAuthMiddleware, async (req, res
 
 router.get('/', adminAuthMiddleware, apiListController.list);
 router.get('/rotation-logs', adminAuthMiddleware, apiListController.getRotationLogs);
+router.get('/logs', adminAuthMiddleware, apiListController.getRotationLogs); // Alias for frontend compatibility
 router.post('/test-key', adminAuthMiddleware, apiListController.testKeyRotation);
 router.post('/', adminAuthMiddleware, apiListController.create);
 router.delete('/:id', adminAuthMiddleware, apiListController.remove);
