@@ -1637,12 +1637,18 @@ STRICT RULES:
         }
 
         if (replyText && shouldBlockOutgoingReply(replyText)) {
+            // IMPROVEMENT: If the reply is a technical JSON, don't save the full JSON to FB/WA logs
+            // Just save a clean marker.
+            const cleanErrorMsg = replyText.includes('token_usage') 
+                ? `[AI Blocked Technical Response] (Empty reply detected)`
+                : `[Blocked Internal Error] ${replyText.substring(0, 100)}...`;
+
             await dbService.saveFbChat({
                 page_id: pageId,
                 sender_id: pageId,
                 recipient_id: senderId,
                 message_id: `fail_${Date.now()}`,
-                text: `[Blocked Internal Error] ${replyText}`,
+                text: cleanErrorMsg,
                 timestamp: Date.now(),
                 status: 'ai_ignored',
                 reply_by: 'bot'

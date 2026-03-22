@@ -1476,6 +1476,15 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             
             const isRequestBilling = pageConfig.billing_mode === 'request' || pageConfig.is_external_api === true;
             const displayModel = pageConfig.display_model || pageConfig.chat_model || result.model || 'unknown';
+            
+            // Enforce Branded Identity: Always use the target branded model name in result
+            // This ensures that technical names like gemini-2.5-flash don't leak into logs.
+            if (resolved && resolved.targetEngineName) {
+                result.model = resolved.targetEngineName;
+            } else {
+                result.model = displayModel;
+            }
+
             const usageTokens = isRequestBilling ? 1 : (result.token_usage || 0);
             const cost = isRequestBilling
                 ? dbService.calculateRequestCost(displayModel, 1)
