@@ -277,12 +277,15 @@ async function handleAiError(error, apiKey, model) {
         return;
     }
 
-    // 3. General API Error (Network, Timeout, 500, etc.)
-    if (statusCode >= 500 || errorMsg.includes('timeout') || errorMsg.includes('network')) {
-        console.warn(`[AI] ⚠️ General API Error for key ${apiKey.substring(0, 8)}... cooldown for 24h.`);
+    // 3. Infrastructure Error (Network, Timeout, 500, 502, 503, 504)
+    if (statusCode >= 500 || errorMsg.includes('timeout') || errorMsg.includes('network') || errorMsg.includes('econnrefused') || errorMsg.includes('econnreset')) {
+        console.warn(`[AI] 🌐 Infrastructure Error for key ${apiKey.substring(0, 8)}... | Status: ${statusCode} | Msg: ${errorMsg}`);
+        console.log(`[AI] ⏳ Applying SOFT COOLDOWN (2 minutes) - Key is likely fine, infrastructure/proxy issue.`);
+        
         if (keyService.markKeyAsDead) {
-            const twentyFourHours = 24 * 60 * 60 * 1000;
-            await keyService.markKeyAsDead(apiKey, twentyFourHours, 'api_error_24h'); // 24h cooldown
+            // Apply a short 2-minute cooldown instead of 24h for network/proxy issues
+            const twoMinutes = 2 * 60 * 1000;
+            await keyService.markKeyAsDead(apiKey, twoMinutes, `infra_error_soft_lock_${statusCode || 'network'}`);
         }
         return;
     }
