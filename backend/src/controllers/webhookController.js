@@ -1839,6 +1839,34 @@ STRICT RULES:
         // Detect if ANY form of image tag exists in the text
         const hasTagsInText = tagRegex.test(replyText) || strictImageRegex.test(replyText) || brokenTagRegex.test(replyText);
         
+        // --- IMPROVEMENT: GLOBAL ERROR LOGGER (Webhook Level) ---
+        // If we reach here and still don't have a replyText, it means the AI service failed silently or was blocked.
+        // We must log the reason to DB for visibility.
+        if (!replyText) {
+            try {
+                const lastError = (aiResponse && aiResponse.error) ? String(aiResponse.error) : "Unknown AI Service Error";
+                const lastModel = (aiResponse && aiResponse.model) ? aiResponse.model : "unknown";
+                
+                console.log(`[AI Failsafe] No reply for ${senderId}. Reason: ${lastError}`);
+                
+                // Only log if it's NOT an intended silence (reply_text explicitly null/empty from AI is handled elsewhere)
+                if (lastError !== "NONE" && !lastError.includes('silence')) {
+                    await dbService.saveFbChat({
+                        page_id: pageId,
+                        sender_id: pageId,
+                        recipient_id: senderId,
+                        message_id: `err_${Date.now()}`,
+                        text: `[System Error]: ${lastError}`,
+                        timestamp: Date.now(),
+                        status: 'ai_ignored',
+                        reply_by: 'bot'
+                    });
+                }
+            } catch (e) {
+                console.error(`[AI Failsafe] Logging failed:`, e.message);
+            }
+        }
+
         // Reset regex indices
         tagRegex.lastIndex = 0;
         strictImageRegex.lastIndex = 0;

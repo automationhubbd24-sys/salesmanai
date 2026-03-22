@@ -1216,7 +1216,17 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
             const params = {
                 model: targetModel,
                 messages: messages,
-                temperature: temperature
+                temperature: temperature,
+                // --- FIX: Safety Settings Bypass (BLOCK_NONE) ---
+                // Prevents Gemini from blocking responses for sensitive/health topics.
+                // This ensures AI always replies even for personal/vulnerable user messages.
+                safetySettings: [
+                    { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+                    { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+                    { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+                    { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+                    { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_NONE' }
+                ]
             };
 
             // Only send tools if they exist - DISABLED BY USER REQUEST
