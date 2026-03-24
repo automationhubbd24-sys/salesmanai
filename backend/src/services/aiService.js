@@ -459,9 +459,18 @@ async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, default
     // 4. APPLY GLOBAL CONFIG (Secondary Priority - 2nd Screenshot)
     if (gConfig) {
         // Only apply if not already set by branded config or if branded config was default
-        engineTextModel = engineTextModel === targetEngineName ? (gConfig.text_model || engineTextModel) : engineTextModel;
-        engineVisionModel = engineVisionModel === targetEngineName ? (gConfig.vision_model || engineVisionModel) : engineVisionModel;
-        engineVoiceModel = engineVoiceModel === targetEngineName ? (gConfig.voice_model || engineVoiceModel) : engineVoiceModel;
+        // A model is considered "default" if it's still the branded engine name
+        const brandedEngineNames = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'];
+        
+        if (brandedEngineNames.includes(engineTextModel) && gConfig.text_model) {
+            engineTextModel = gConfig.text_model;
+        }
+        if (brandedEngineNames.includes(engineVisionModel) && gConfig.vision_model) {
+            engineVisionModel = gConfig.vision_model;
+        }
+        if (brandedEngineNames.includes(engineVoiceModel) && gConfig.voice_model) {
+            engineVoiceModel = gConfig.voice_model;
+        }
 
         if (gConfig.text_provider_override && gConfig.text_provider_override !== 'default' && gConfig.text_provider_override !== 'none') 
             textProvider = gConfig.text_provider_override;
