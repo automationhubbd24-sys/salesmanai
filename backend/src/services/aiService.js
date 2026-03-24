@@ -408,42 +408,48 @@ async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, default
         const brandedEngineNames = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'];
 
         // --- Handle Vision Override ---
-        if (brandedConfig.image_provider_override && brandedConfig.image_provider_override !== 'default') {
-            if (brandedEngineNames.includes(brandedConfig.image_provider_override)) {
+        const vOverride = brandedConfig.image_provider_override;
+        if (vOverride && vOverride !== 'default' && vOverride !== 'none') {
+            if (brandedEngineNames.includes(vOverride)) {
                 // If the override points to another branded engine, resolve its settings
-                const overrideConfig = await getBrandedEngineConfig(brandedConfig.image_provider_override);
+                const overrideConfig = await getBrandedEngineConfig(vOverride);
                 if (overrideConfig) {
                     visionProvider = overrideConfig.provider || visionProvider;
                     // If target engine has no provider set, use hardcoded defaults for it
                     if (!overrideConfig.provider) {
-                        if (brandedConfig.image_provider_override === 'salesmanchatbot-pro') visionProvider = 'google';
-                        else if (brandedConfig.image_provider_override === 'salesmanchatbot-flash') visionProvider = 'openrouter';
-                        else if (brandedConfig.image_provider_override === 'salesmanchatbot-lite') visionProvider = 'groq';
+                        if (vOverride === 'salesmanchatbot-pro') visionProvider = 'google';
+                        else if (vOverride === 'salesmanchatbot-flash') visionProvider = 'openrouter';
+                        else if (vOverride === 'salesmanchatbot-lite') visionProvider = 'groq';
                     }
                     engineVisionModel = overrideConfig.image_model || overrideConfig.text_model || engineVisionModel;
+                    console.log(`[AI] Branded Engine Vision Override Applied: ${vOverride} -> ${visionProvider}/${engineVisionModel}`);
                 }
             } else {
-                visionProvider = brandedConfig.image_provider_override;
+                visionProvider = vOverride;
+                console.log(`[AI] Direct Provider Vision Override Applied: ${visionProvider}`);
             }
         }
 
         // --- Handle Voice Override ---
-        if (brandedConfig.voice_provider_override && brandedConfig.voice_provider_override !== 'default') {
-            if (brandedEngineNames.includes(brandedConfig.voice_provider_override)) {
+        const voiceOverride = brandedConfig.voice_provider_override;
+        if (voiceOverride && voiceOverride !== 'default' && voiceOverride !== 'none') {
+            if (brandedEngineNames.includes(voiceOverride)) {
                 // If the override points to another branded engine, resolve its settings
-                const overrideConfig = await getBrandedEngineConfig(brandedConfig.voice_provider_override);
+                const overrideConfig = await getBrandedEngineConfig(voiceOverride);
                 if (overrideConfig) {
                     voiceProvider = overrideConfig.provider || voiceProvider;
                     // If target engine has no provider set, use hardcoded defaults for it
                     if (!overrideConfig.provider) {
-                        if (brandedConfig.voice_provider_override === 'salesmanchatbot-pro') voiceProvider = 'google';
-                        else if (brandedConfig.voice_provider_override === 'salesmanchatbot-flash') voiceProvider = 'openrouter';
-                        else if (brandedConfig.voice_provider_override === 'salesmanchatbot-lite') voiceProvider = 'groq';
+                        if (voiceOverride === 'salesmanchatbot-pro') voiceProvider = 'google';
+                        else if (voiceOverride === 'salesmanchatbot-flash') voiceProvider = 'openrouter';
+                        else if (voiceOverride === 'salesmanchatbot-lite') voiceProvider = 'groq';
                     }
                     engineVoiceModel = overrideConfig.voice_model || overrideConfig.text_model || engineVoiceModel;
+                    console.log(`[AI] Branded Engine Voice Override Applied: ${voiceOverride} -> ${voiceProvider}/${engineVoiceModel}`);
                 }
             } else {
-                voiceProvider = brandedConfig.voice_provider_override;
+                voiceProvider = voiceOverride;
+                console.log(`[AI] Direct Provider Voice Override Applied: ${voiceProvider}`);
             }
         }
     }
@@ -455,14 +461,14 @@ async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, default
         engineVisionModel = engineVisionModel === targetEngineName ? (gConfig.vision_model || engineVisionModel) : engineVisionModel;
         engineVoiceModel = engineVoiceModel === targetEngineName ? (gConfig.voice_model || engineVoiceModel) : engineVoiceModel;
 
-        if (gConfig.text_provider_override && gConfig.text_provider_override !== 'default') 
+        if (gConfig.text_provider_override && gConfig.text_provider_override !== 'default' && gConfig.text_provider_override !== 'none') 
             textProvider = gConfig.text_provider_override;
         
         // Vision/Voice Global Overrides (only if branded override wasn't set)
-        if (visionProvider === targetProvider && gConfig.vision_provider_override && gConfig.vision_provider_override !== 'default') 
+        if (visionProvider === targetProvider && gConfig.vision_provider_override && gConfig.vision_provider_override !== 'default' && gConfig.vision_provider_override !== 'none') 
             visionProvider = gConfig.vision_provider_override;
         
-        if (voiceProvider === targetProvider && gConfig.voice_provider_override && gConfig.voice_provider_override !== 'default') 
+        if (voiceProvider === targetProvider && gConfig.voice_provider_override && gConfig.voice_provider_override !== 'default' && gConfig.voice_provider_override !== 'none') 
             voiceProvider = gConfig.voice_provider_override;
 
         if (keyService.setManualLimit) {
