@@ -421,8 +421,8 @@ async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, default
                         else if (vOverride === 'salesmanchatbot-flash') visionProvider = 'openrouter';
                         else if (vOverride === 'salesmanchatbot-lite') visionProvider = 'groq';
                     }
-                    // IMPORTANT: When overriding with another engine, we MUST use its specific model
-                    engineVisionModel = overrideConfig.image_model || overrideConfig.text_model || engineVisionModel;
+                    // Priority: 1. Model set in current engine, 2. Model set in override engine, 3. Current engine default
+                    engineVisionModel = brandedConfig.image_model || overrideConfig.image_model || overrideConfig.text_model || engineVisionModel;
                     console.log(`[AI] Branded Engine Vision Override Applied: ${vOverride} -> ${visionProvider}/${engineVisionModel}`);
                 }
             } else {
@@ -445,8 +445,8 @@ async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, default
                         else if (voiceOverride === 'salesmanchatbot-flash') voiceProvider = 'openrouter';
                         else if (voiceOverride === 'salesmanchatbot-lite') voiceProvider = 'groq';
                     }
-                    // IMPORTANT: When overriding with another engine, we MUST use its specific model
-                    engineVoiceModel = overrideConfig.voice_model || overrideConfig.text_model || engineVoiceModel;
+                    // Priority: 1. Model set in current engine, 2. Model set in override engine, 3. Current engine default
+                    engineVoiceModel = brandedConfig.voice_model || overrideConfig.voice_model || overrideConfig.text_model || engineVoiceModel;
                     console.log(`[AI] Branded Engine Voice Override Applied: ${voiceOverride} -> ${voiceProvider}/${engineVoiceModel}`);
                 }
             } else {
