@@ -137,7 +137,8 @@ async function sendMessage(pageId, recipientId, text, accessToken) {
             return await sendWithRetry(payload);
         }
     } catch (error) {
-        console.error(`Error sending FB message for page ${pageId}:`, error.response ? JSON.stringify(error.response.data, null, 2) : error.message);
+        const errData = error.response ? (error.response.data || 'No data') : error.message;
+        console.error(`Error sending FB message for page ${pageId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
         await handleFacebookError(error, pageId);
         throw error;
     }
@@ -227,8 +228,11 @@ async function sendImageUpload(pageId, recipientId, imageUrl, accessToken) {
         
         return response.data;
     } catch (error) {
-        console.error(`Error uploading image for page ${pageId}:`, error.response ? JSON.stringify(error.response.data, null, 2) : error.message);
-        // Fallback to URL method if upload fails (e.g. file too big)
+        // SAFE LOGGING: Avoid circular structure issues by logging specific fields
+        const errData = error.response ? (error.response.data || 'No data') : error.message;
+        console.error(`Error uploading image for page ${pageId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
+        
+        // Fallback to URL method if upload fails (e.g. file too big or 404 on download)
         console.log('Falling back to URL send method...');
         return sendImageMessage(pageId, recipientId, imageUrl, accessToken);
     }
@@ -255,7 +259,8 @@ async function sendImageMessage(pageId, recipientId, imageUrl, accessToken) {
         const response = await axios.post(url, payload);
         return response.data;
     } catch (error) {
-        console.error(`Error sending image for page ${pageId}:`, error.response ? JSON.stringify(error.response.data, null, 2) : error.message);
+        const errData = error.response ? (error.response.data || 'No data') : error.message;
+        console.error(`Error sending image for page ${pageId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
         throw error;
     }
 }
@@ -282,7 +287,8 @@ async function sendCarouselMessage(pageId, recipientId, elements, accessToken) {
         const response = await axios.post(url, payload);
         return response.data;
     } catch (error) {
-        console.error(`Error sending carousel for page ${pageId}:`, error.response ? JSON.stringify(error.response.data, null, 2) : error.message);
+        const errData = error.response ? (error.response.data || 'No data') : error.message;
+        console.error(`Error sending carousel for page ${pageId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
         throw error;
     }
 }
@@ -297,7 +303,8 @@ async function replyToComment(commentId, message, accessToken) {
         const response = await axios.post(url, { message: message });
         return response.data;
     } catch (error) {
-        console.error(`Error replying to comment ${commentId}:`, error.response ? JSON.stringify(error.response.data, null, 2) : error.message);
+        const errData = error.response ? (error.response.data || 'No data') : error.message;
+        console.error(`Error replying to comment ${commentId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
         throw error;
     }
 }
@@ -309,7 +316,8 @@ async function getCommentReplies(commentId, accessToken) {
         const response = await axios.get(url);
         return response.data.data || [];
     } catch (error) {
-        console.error(`Error getting comment replies ${commentId}:`, error.response ? JSON.stringify(error.response.data, null, 2) : error.message);
+        const errData = error.response ? (error.response.data || 'No data') : error.message;
+        console.error(`Error getting comment replies ${commentId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
         return [];
     }
 }

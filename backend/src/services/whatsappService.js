@@ -342,7 +342,8 @@ async function getPairingCode(sessionName, phoneNumber) {
         }
         
         // Handle Rate Limiting (Too Many Requests)
-        if (error.response && (error.response.status === 429 || (error.response.data && JSON.stringify(error.response.data).toLowerCase().includes('rate limit')))) {
+        const errDataStr = error.response && error.response.data ? (typeof error.response.data === 'string' ? error.response.data : JSON.stringify(error.response.data)) : "";
+        if (error.response && (error.response.status === 429 || errDataStr.toLowerCase().includes('rate limit'))) {
              throw new Error("Too many pairing attempts. WhatsApp has temporarily blocked this number. Please wait 5-10 minutes and try again.");
         }
 
