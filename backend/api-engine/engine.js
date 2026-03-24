@@ -207,6 +207,11 @@ router.post('/config', adminAuthMiddleware, async (req, res) => {
             );
         }
 
+        // Clear cache so changes take effect immediately
+        if (aiService.clearBrandedEngineCache) {
+            await aiService.clearBrandedEngineCache(name);
+        }
+
         res.json({ success: true });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });

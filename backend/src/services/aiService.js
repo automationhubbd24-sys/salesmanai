@@ -347,10 +347,29 @@ function clearGlobalConfigCache(provider = null) {
 
 async function refreshGlobalEngineConfigCache(provider = null) {
     clearGlobalConfigCache(provider);
+    
+    // Also clear branded engine cache when a full refresh is requested
+    if (!provider) {
+        brandedEngineConfigCache.clear();
+        console.log(`[AI] Cleared ALL Global and Branded Engine Caches.`);
+    } else {
+        console.log(`[AI] Cleared Global Engine Cache for: ${provider}`);
+    }
+
     if (provider) {
         return getGlobalEngineConfig(provider);
     }
     return true;
+}
+
+async function clearBrandedEngineCache(name = null) {
+    if (name) {
+        brandedEngineConfigCache.delete(name);
+        console.log(`[AI] Cleared Branded Engine Cache for: ${name}`);
+    } else {
+        brandedEngineConfigCache.clear();
+        console.log(`[AI] Cleared ALL Branded Engine Caches.`);
+    }
 }
 
 async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio) {
@@ -3269,6 +3288,7 @@ module.exports = {
     processImageWithVision,
     transcribeAudio,
     refreshGlobalEngineConfigCache,
+    clearBrandedEngineCache,
     clearGlobalConfigCache,
     getProxyUrl,
     createProxyAgent
