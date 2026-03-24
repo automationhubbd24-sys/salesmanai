@@ -421,6 +421,7 @@ async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, default
                         else if (vOverride === 'salesmanchatbot-flash') visionProvider = 'openrouter';
                         else if (vOverride === 'salesmanchatbot-lite') visionProvider = 'groq';
                     }
+                    // IMPORTANT: When overriding with another engine, we MUST use its specific model
                     engineVisionModel = overrideConfig.image_model || overrideConfig.text_model || engineVisionModel;
                     console.log(`[AI] Branded Engine Vision Override Applied: ${vOverride} -> ${visionProvider}/${engineVisionModel}`);
                 }
@@ -444,6 +445,7 @@ async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, default
                         else if (voiceOverride === 'salesmanchatbot-flash') voiceProvider = 'openrouter';
                         else if (voiceOverride === 'salesmanchatbot-lite') voiceProvider = 'groq';
                     }
+                    // IMPORTANT: When overriding with another engine, we MUST use its specific model
                     engineVoiceModel = overrideConfig.voice_model || overrideConfig.text_model || engineVoiceModel;
                     console.log(`[AI] Branded Engine Voice Override Applied: ${voiceOverride} -> ${voiceProvider}/${engineVoiceModel}`);
                 }
@@ -472,12 +474,14 @@ async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, default
             voiceProvider = gConfig.voice_provider_override;
 
         if (keyService.setManualLimit) {
-            // ... limits enforcement logic ...
-            if (gConfig.text_rpm || gConfig.text_rpd || gConfig.text_rph) 
+            // Only set limits if the model being used is the one defined in the global config
+            if (engineTextModel === gConfig.text_model && (gConfig.text_rpm || gConfig.text_rpd || gConfig.text_rph)) 
                 keyService.setManualLimit(engineTextModel, { rpm: gConfig.text_rpm, rpd: gConfig.text_rpd, rph: gConfig.text_rph, source: 'global_engine' });
-            if (gConfig.vision_rpm || gConfig.vision_rpd || gConfig.vision_rph) 
+            
+            if (engineVisionModel === gConfig.vision_model && (gConfig.vision_rpm || gConfig.vision_rpd || gConfig.vision_rph)) 
                 keyService.setManualLimit(engineVisionModel, { rpm: gConfig.vision_rpm, rpd: gConfig.vision_rpd, rph: gConfig.vision_rph, source: 'global_engine' });
-            if (gConfig.voice_rpm || gConfig.voice_rpd || gConfig.voice_rph) 
+            
+            if (engineVoiceModel === gConfig.voice_model && (gConfig.voice_rpm || gConfig.voice_rpd || gConfig.voice_rph)) 
                 keyService.setManualLimit(engineVoiceModel, { rpm: gConfig.voice_rpm, rpd: gConfig.voice_rpd, rph: gConfig.voice_rph, source: 'global_engine' });
         }
     }
