@@ -322,6 +322,9 @@ router.post('/v1/chat/completions', async (req, res) => {
     const isVision = imageUrls.length > 0;
     const isAudio = audioUrls.length > 0;
 
+    // Determine if proxy should be used (Only for branded models)
+    const useProxyForThisRequest = isBranded || req.body.is_system_engine === true;
+
     if (isBranded) {
         try {
             const mockConfig = { chat_model: model, cheap_engine: true };
@@ -355,9 +358,6 @@ router.post('/v1/chat/completions', async (req, res) => {
 
     // Update body with resolved model
     req.body.model = modelToUse;
-
-    // Determined Key logic
-    const isSystemEngine = req.body.is_system_engine !== false; 
 
     // --- MULTI-MODAL PRE-PROCESSING ---
     let preProcessedContext = "";
@@ -397,26 +397,15 @@ router.post('/v1/chat/completions', async (req, res) => {
                 const keyData = await keyService.getSmartKey(provider, modelToUse);
                 if (!keyData) break;
 
-                // Proxy only for system keys to save costs
+                // Proxy only for branded engines to save costs and avoid 429/400 errors for direct keys
                 let agent = undefined;
-                if (isSystemEngine) {
+                if (useProxyForThisRequest) {
                     const proxyUrl = getProxyUrl(model);
-                    if (!proxyUrl) throw new Error("STRICT PROXY: System Engine requires proxy.");
+                    if (!proxyUrl) throw new Error("STRICT PROXY: Branded Engine requires proxy.");
                     agent = new HttpsProxyAgent(proxyUrl);
                     if (agent) {
-                        console.log(`[API Engine] 🌐 Using Bright Data Proxy for SalesmanChatbot Engine (Model: ${model})`);
-                        // Optional: Log IP for debugging
-                        axios.get('https://lumtest.com/myip.json', { 
-                            httpsAgent: agent, 
-                            httpAgent: agent, 
-                            proxy: false, 
-                            timeout: 15000,
-                            headers: {
-                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                            }
-                        })
-                            .then(res => console.log(`[API Engine IP] IP: ${res.data.ip} | Country: ${res.data.country}`))
-                            .catch(e => console.warn(`[API Engine Proxy Error] Session: ${model} | Error: ${e.message}`));
+                        console.log(`[API Engine] 🌐 Using Bright Data Proxy for Branded Engine: ${model}`);
+                        // ... log IP ...
                     }
                 }
 
@@ -502,26 +491,15 @@ router.post('/v1/chat/completions', async (req, res) => {
             });
         }
 
-    // Proxy ONLY if it's a branded engine (User requirement: affordable costs)
+    // Proxy ONLY for branded engines to save costs and avoid 429/400 errors for direct keys
     let agent = undefined;
-    if (isBranded) {
+    if (useProxyForThisRequest) {
         const proxyUrl = getProxyUrl(model); 
         if (!proxyUrl) throw new Error("STRICT PROXY: Branded Engine requires proxy.");
         agent = new HttpsProxyAgent(proxyUrl);
         if (agent) {
             console.log(`[API Engine] 🌐 Using Bright Data Proxy for Branded Engine: ${model}`);
-            // Optional: Log IP for debugging
-            axios.get('https://lumtest.com/myip.json', { 
-                httpsAgent: agent, 
-                httpAgent: agent, 
-                proxy: false, 
-                timeout: 15000,
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                }
-            })
-                .then(res => console.log(`[API Engine IP] IP: ${res.data.ip} | Country: ${res.data.country}`))
-                .catch(e => console.warn(`[API Engine Proxy Error] Session: ${model} | Error: ${e.message}`));
+            // ... log IP ...
         }
     }
 

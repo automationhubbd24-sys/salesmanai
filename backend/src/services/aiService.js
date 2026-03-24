@@ -2161,9 +2161,9 @@ ${productContext || "No specific product context provided yet."}
                 }
 
                 // Determine if proxy should be used
-                // User Request: Always use proxy for Google/Gemini/Groq if it's an external API or branded model
+                // User Request: Proxy ONLY for branded models to save costs and avoid 429/400 errors for direct keys.
                 const isBranded = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(modelToUse);
-                const useProxy = isBranded || currentProvider.includes('google') || currentProvider.includes('gemini') || currentProvider.includes('groq');
+                const useProxy = isBranded; 
                 
                 let proxyAgent = null;
                 if (useProxy) {
