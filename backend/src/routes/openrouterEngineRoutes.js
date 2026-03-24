@@ -1,0 +1,18 @@
+const express = require('express');
+const router = express.Router();
+const openrouterEngineController = require('../controllers/openrouterEngineController');
+const openrouterConfigController = require('../controllers/openrouterConfigController');
+
+router.post('/chat/completions', openrouterEngineController.handleChatCompletion);
+router.post('/update', openrouterEngineController.forceUpdate); // Manual trigger for update
+
+// --- Config & Testing Routes ---
+router.get('/config', openrouterConfigController.getConfig);
+router.post('/config', openrouterConfigController.saveConfig);
+router.post('/test-model', openrouterConfigController.testModel);
+router.post('/gemini/test-keys', openrouterConfigController.testGeminiPool);
+router.post('/gemini/delete-keys', openrouterConfigController.deleteGeminiKeys);
+router.post('/pool/test-keys', openrouterConfigController.testApiPool);
+router.post('/pool/delete-keys', openrouterConfigController.deleteApiKeys);
+
+module.exports = router;
