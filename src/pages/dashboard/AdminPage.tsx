@@ -728,7 +728,10 @@ export default function AdminPage() {
   }, [isAuthenticated, enginePage, engineFilter, engineSearch]);
   */
 
-  const updateEngineConfig = async (name: string, config: Partial<EngineConfig>) => {
+  const updateEngineConfig = async (name: string, config: Partial<EngineConfig>, silent = false) => {
+    // Optimistically update local state
+    setEngineConfigs(prev => prev.map(c => c.name === name ? { ...c, ...config } : c));
+
     try {
       const token = getAdminToken();
       const res = await fetch(`${BACKEND_URL}/api/api-engine/config`, {
@@ -740,11 +743,11 @@ export default function AdminPage() {
         body: JSON.stringify({ name, ...config })
       });
       if (res.ok) {
-        toast.success(`Updated ${name} configuration`);
-        fetchEngineData();
+        if (!silent) toast.success(`Updated ${name} configuration`);
+        // fetchEngineData(); // Don't refetch on every change to avoid UI jumps
       }
     } catch (error) {
-      toast.error("Failed to update engine configuration");
+      if (!silent) toast.error("Failed to update engine configuration");
     }
   };
 
@@ -2269,7 +2272,7 @@ export default function AdminPage() {
                       </Label>
                       <Input 
                         value={config.text_model} 
-                        onChange={(e) => updateEngineConfig(config.name, { text_model: e.target.value })}
+                        onChange={(e) => updateEngineConfig(config.name, { text_model: e.target.value }, true)}
                         className="h-9 text-xs bg-black/20 border-white/10 font-mono"
                       />
                     </div>
@@ -2279,7 +2282,7 @@ export default function AdminPage() {
                       </Label>
                       <Input 
                         value={config.voice_model} 
-                        onChange={(e) => updateEngineConfig(config.name, { voice_model: e.target.value })}
+                        onChange={(e) => updateEngineConfig(config.name, { voice_model: e.target.value }, true)}
                         className="h-9 text-xs bg-black/20 border-white/10 font-mono"
                       />
                     </div>
@@ -2289,7 +2292,7 @@ export default function AdminPage() {
                       </Label>
                       <Input 
                         value={config.image_model} 
-                        onChange={(e) => updateEngineConfig(config.name, { image_model: e.target.value })}
+                        onChange={(e) => updateEngineConfig(config.name, { image_model: e.target.value }, true)}
                         className="h-9 text-xs bg-black/20 border-white/10 font-mono"
                       />
                     </div>

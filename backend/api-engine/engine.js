@@ -156,31 +156,57 @@ router.post('/config', adminAuthMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'name is required' });
         }
 
-        await pgClient.query(
-            `
-            INSERT INTO engine_configs 
-                (name, provider, text_model, voice_model, image_model, voice_provider_override, image_provider_override, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+        // Build dynamic update query to only update provided fields
+        const fields = [];
+        const values = [name];
+        let paramIdx = 2;
+
+        if (provider !== undefined) { fields.push(`provider = $${paramIdx++}`); values.push(provider); }
+        if (text_model !== undefined) { fields.push(`text_model = $${paramIdx++}`); values.push(text_model); }
+        if (voice_model !== undefined) { fields.push(`voice_model = $${paramIdx++}`); values.push(voice_model); }
+        if (image_model !== undefined) { fields.push(`image_model = $${paramIdx++}`); values.push(image_model); }
+        if (voice_provider_override !== undefined) { fields.push(`voice_provider_override = $${paramIdx++}`); values.push(voice_provider_override); }
+        if (image_provider_override !== undefined) { fields.push(`image_provider_override = $${paramIdx++}`); values.push(image_provider_override); }
+
+        if (fields.length === 0) {
+            return res.json({ success: true, message: 'No fields to update' });
+        }
+
+        const query = `
+            INSERT INTO engine_configs (name, provider, text_model, voice_model, image_model, voice_provider_override, image_provider_override, updated_at)
+            VALUES ($1, 
+                ${provider !== undefined ? '$2' : 'NULL'}, 
+                ${text_model !== undefined ? '$' + (values.indexOf(text_model) + 1) : 'NULL'},
+                ${voice_model !== undefined ? '$' + (values.indexOf(voice_model) + 1) : 'NULL'},
+                ${image_model !== undefined ? '$' + (values.indexOf(image_model) + 1) : 'NULL'},
+                ${voice_provider_override !== undefined ? '$' + (values.indexOf(voice_provider_override) + 1) : 'NULL'},
+                ${image_provider_override !== undefined ? '$' + (values.indexOf(image_provider_override) + 1) : 'NULL'},
+                NOW()
+            )
             ON CONFLICT (name)
             DO UPDATE SET
-                provider = COALESCE(EXCLUDED.provider, engine_configs.provider),
-                text_model = COALESCE(EXCLUDED.text_model, engine_configs.text_model),
-                voice_model = COALESCE(EXCLUDED.voice_model, engine_configs.voice_model),
-                image_model = COALESCE(EXCLUDED.image_model, engine_configs.image_model),
-                voice_provider_override = EXCLUDED.voice_provider_override,
-                image_provider_override = EXCLUDED.image_provider_override,
+                ${fields.join(', ')},
                 updated_at = NOW()
-            `,
-            [
-                String(name),
-                provider !== undefined ? provider : null,
-                text_model !== undefined ? text_model : null,
-                voice_model !== undefined ? voice_model : null,
-                image_model !== undefined ? image_model : null,
-                voice_provider_override !== undefined ? voice_provider_override : null,
-                image_provider_override !== undefined ? image_provider_override : null
-            ]
-        );
+        `;
+
+        // Actually, let's use a simpler approach for the INSERT part to avoid param index confusion
+        const simpleUpdateQuery = `
+            UPDATE engine_configs 
+            SET ${fields.join(', ')}, updated_at = NOW()
+            WHERE name = $1
+        `;
+        
+        const updateRes = await pgClient.query(simpleUpdateQuery, values);
+        
+        if (updateRes.rowCount === 0) {
+            // If row doesn't exist, do a full insert with defaults
+            await pgClient.query(
+                `INSERT INTO engine_configs (name, provider, text_model, voice_model, image_model, voice_provider_override, image_provider_override)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                [name, provider || null, text_model || null, voice_model || null, image_model || null, voice_provider_override || null, image_provider_override || null]
+            );
+        }
+
         res.json({ success: true });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
