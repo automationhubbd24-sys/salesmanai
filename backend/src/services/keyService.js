@@ -76,6 +76,66 @@ const globalKeyPointers = new Map(); // mapKey -> lastUsedIndex
 const pendingUpdates = new Map(); // apiKey -> { usage_delta, token_delta, last_used_at, status, cooldown_until }
 let flushPromise = null;
 
+// --- SMART ROTATION HELPERS (User Request: Email-first Rotation) ---
+
+/**
+ * Shuffles an array in place using Fisher-Yates algorithm.
+ */
+function shuffleArray(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
+}
+
+/**
+ * Interleaves API keys by email to ensure consecutive requests use different emails.
+ * Step 1: Group keys by email.
+ * Step 2: Shuffle email order.
+ * Step 3: Shuffle keys within each email group.
+ * Step 4: Interleave keys from each group.
+ */
+function smartInterleaveByEmail(keys) {
+    if (!keys || keys.length <= 1) return keys;
+
+    // 1. Group by Email
+    const groups = new Map();
+    keys.forEach(k => {
+        const email = (k.email || 'unknown').toLowerCase();
+        if (!groups.has(email)) groups.set(email, []);
+        groups.get(email).push(k);
+    });
+
+    // 2. Shuffle Email List
+    const emails = Array.from(groups.keys());
+    shuffleArray(emails);
+
+    // 3. Shuffle keys within each group
+    emails.forEach(email => {
+        shuffleArray(groups.get(email));
+    });
+
+    // 4. Interleave
+    const interleaved = [];
+    let hasMore = true;
+    let round = 0;
+
+    while (hasMore) {
+        hasMore = false;
+        emails.forEach(email => {
+            const group = groups.get(email);
+            if (round < group.length) {
+                interleaved.push(group[round]);
+                hasMore = true;
+            }
+        });
+        round++;
+    }
+
+    return interleaved;
+}
+
 // --- 3. KEY CACHE MANAGEMENT ---
 // Function declaration MUST be hoisted or defined before call
 async function updateKeyCache(force = false) {
@@ -161,6 +221,21 @@ async function updateKeyCache(force = false) {
 
         keyCache = activeRows;
         keyCacheMap = newMap;
+
+        // --- SMART INTERLEAVING BY EMAIL (User Request) ---
+        // We interleave the keys in providerMap and modelMap so that Sequential Rotation naturally picks different emails.
+        providerMap.forEach((keys, provider) => {
+            providerMap.set(provider, smartInterleaveByEmail(keys));
+            
+            // Debug Log: First 5 interleaved keys for this provider
+            const debugList = providerMap.get(provider).slice(0, 5).map(k => `${k.email}(${k.api.substring(0,6)})`).join(' -> ');
+            console.log(`[KeyService] Interleaved Pool for ${provider}: ${debugList}... (Total: ${keys.length})`);
+        });
+
+        modelMap.forEach((keys, model) => {
+            modelMap.set(model, smartInterleaveByEmail(keys));
+        });
+
         keysByProvider = providerMap;
         keysByModel = modelMap;
         lastCacheUpdate = now;
