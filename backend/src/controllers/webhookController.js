@@ -1887,10 +1887,26 @@ STRICT RULES:
                 Object.keys(promptProductMap).forEach(name => {
                     if (mentionedViaTag.has(name.toLowerCase())) {
                         const product = promptProductMap[name];
-                        if (product && product.image_url) {
-                            const fullUrl = normalizeImageUrl(product.image_url);
-                            if (fullUrl && !extractedImages.some(img => img.url === fullUrl)) {
-                                extractedImages.push({ url: fullUrl, title: product.name || name, description: product.description || '' });
+                        if (product) {
+                            if (product.image_url) {
+                                const fullUrl = normalizeImageUrl(product.image_url);
+                                if (fullUrl && !extractedImages.some(img => img.url === fullUrl)) {
+                                    extractedImages.push({ url: fullUrl, title: product.name || name, description: product.description || '' });
+                                }
+                            }
+                            // Also add additional images for Tier 1 tags
+                            let additional = [];
+                            if (Array.isArray(product.additional_images)) additional = product.additional_images;
+                            else if (typeof product.additional_images === 'string') {
+                                try { additional = JSON.parse(product.additional_images); } catch(e) { additional = product.additional_images.split(',').map(s => s.trim()); }
+                            }
+                            if (Array.isArray(additional)) {
+                                additional.forEach(url => {
+                                    const normUrl = normalizeImageUrl(url);
+                                    if (normUrl && !extractedImages.some(img => img.url === normUrl)) {
+                                        extractedImages.push({ url: normUrl, title: product.name || name, description: product.description || '' });
+                                    }
+                                });
                             }
                         }
                     }
@@ -1953,11 +1969,30 @@ STRICT RULES:
                             replyText = `${replyText}\n\n${details}`;
                         }
                     }
-                    if ((aiResponse.action === "SEND_PHOTO" || aiResponse.action === "SEND_BOTH") && product.image_url) {
-                        const fullUrl = normalizeImageUrl(product.image_url);
-                        if (fullUrl) {
-                            extractedImages.push({ url: fullUrl, title: product.name, description: product.description || '' });
+                    if (aiResponse.action === "SEND_PHOTO" || aiResponse.action === "SEND_BOTH") {
+                        const urls = [];
+                        if (product.image_url) {
+                            const fullUrl = normalizeImageUrl(product.image_url);
+                            if (fullUrl) urls.push(fullUrl);
                         }
+                        
+                        let additional = [];
+                        if (Array.isArray(product.additional_images)) additional = product.additional_images;
+                        else if (typeof product.additional_images === 'string') {
+                            try { additional = JSON.parse(product.additional_images); } catch(e) { additional = product.additional_images.split(',').map(s => s.trim()); }
+                        }
+                        if (Array.isArray(additional)) {
+                            additional.forEach(u => {
+                                const nU = normalizeImageUrl(u);
+                                if (nU && !urls.includes(nU)) urls.push(nU);
+                            });
+                        }
+
+                        urls.forEach(u => {
+                            if (!extractedImages.some(img => img.url === u)) {
+                                extractedImages.push({ url: u, title: product.name, description: product.description || '' });
+                            }
+                        });
                     }
                 }
             } catch (err) {
@@ -1969,13 +2004,33 @@ STRICT RULES:
         if (extractedImages.length === 0) {
             console.log(`[Image Selection] TIER 3: Falling back to JSON image_urls/tools.`);
             if (Array.isArray(aiResponse.image_urls)) {
-                aiResponse.image_urls.forEach(url => {
+                for (const url of aiResponse.image_urls) {
                     if (url && typeof url === 'string' && url.startsWith('http')) {
                         if (!extractedImages.some(img => img.url === url)) {
                             extractedImages.push({ url: url, title: 'Product Image' });
                         }
+                        // TRY TO RESOLVE ADDITIONAL IMAGES FROM THIS URL
+                        try {
+                            const products = await dbService.searchProducts(pageConfig.user_id, '', pageId);
+                            const matched = products.find(p => p.image_url === url);
+                            if (matched) {
+                                let additional = [];
+                                if (Array.isArray(matched.additional_images)) additional = matched.additional_images;
+                                else if (typeof matched.additional_images === 'string') {
+                                    try { additional = JSON.parse(matched.additional_images); } catch(e) { additional = matched.additional_images.split(',').map(s => s.trim()); }
+                                }
+                                if (Array.isArray(additional)) {
+                                    additional.forEach(u => {
+                                        const nU = normalizeImageUrl(u);
+                                        if (nU && !extractedImages.some(img => img.url === nU)) {
+                                            extractedImages.push({ url: nU, title: matched.name || 'Additional Image' });
+                                        }
+                                    });
+                                }
+                            }
+                        } catch (e) {}
                     }
-                });
+                }
             }
             aiResponse.images.forEach(img => {
                 const url = typeof img === 'string' ? img : img.url;
@@ -2208,8 +2263,6 @@ STRICT RULES:
             }
         }
 
-        await facebookService.sendTypingAction(senderId, pageConfig.page_access_token, 'typing_off');
-
         // 7. Save History & Lead
         // Save User Message (Combined with Context)
         await dbService.saveChatMessage(sessionId, 'user', finalUserMessage);
@@ -2268,28 +2321,11 @@ STRICT RULES:
         } else {
             console.log(`[Credit] Skipped deduction for Page ${pageId} (Own API Mode)`);
         }
-
     } catch (error) {
-        console.error("Error processing event:", error);
-        dbService.logError(error, 'Webhook Controller - Message Processing', { pageId, senderId, sessionId });
-        
-        // Log Critical Error to DB for Admin Visibility
-        try {
-            if (pageId && senderId) {
-                await dbService.saveFbChat({
-                    page_id: pageId,
-                    sender_id: pageId,
-                    recipient_id: senderId,
-                    message_id: `err_${Date.now()}`,
-                    text: `[CRITICAL SYSTEM ERROR] ${error.message}`,
-                    timestamp: Date.now(),
-                    status: 'system_critical',
-                    reply_by: 'system'
-                });
-            }
-        } catch (dbErr) {
-            console.error("Failed to log critical error to DB:", dbErr);
-        }
+        console.error(`[Webhook Process Error] ${senderId}:`, error.message);
+        if (typeof logToFile === 'function') logToFile(`[Webhook Error] ${error.message}`);
+    } finally {
+        await facebookService.sendTypingAction(senderId, pageConfig.page_access_token, 'typing_off');
     }
 }
 

@@ -2464,7 +2464,34 @@ STRICT RULES:
         
         // 1. Structured Images from AI (Priority)
         if (aiResponse.images && Array.isArray(aiResponse.images)) {
-            extractedImages = [...aiResponse.images];
+            for (const img of aiResponse.images) {
+                const url = typeof img === 'string' ? img : img.url;
+                if (url) {
+                    if (!extractedImages.some(i => i.url === url)) {
+                        extractedImages.push(typeof img === 'string' ? { url, title: 'Product Image' } : img);
+                    }
+                    // Resolve additional images if it's a known product image
+                    try {
+                        const products = await dbService.searchProducts(pageConfig.user_id, '', sessionName);
+                        const matched = products.find(p => p.image_url === url);
+                        if (matched) {
+                            let additional = [];
+                            if (Array.isArray(matched.additional_images)) additional = matched.additional_images;
+                            else if (typeof matched.additional_images === 'string') {
+                                try { additional = JSON.parse(matched.additional_images); } catch(e) { additional = matched.additional_images.split(',').map(s => s.trim()); }
+                            }
+                            if (Array.isArray(additional)) {
+                                additional.forEach(u => {
+                                    const nU = normalizeImageUrl(u);
+                                    if (nU && !extractedImages.some(i => i.url === nU)) {
+                                        extractedImages.push({ url: nU, title: matched.name || 'Additional Image' });
+                                    }
+                                });
+                            }
+                        }
+                    } catch (e) {}
+                }
+            }
         }
         
         // --- AUTO-INJECTION FROM foundProducts DISABLED ---
