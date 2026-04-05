@@ -178,12 +178,12 @@ export default function WhatsAppSettingsPage() {
       setMode(isManaged ? "managed" : "own");
       setActiveMode(isManaged ? "managed" : "own");
 
-      const rawModel = dbRow.chat_model || "openrouter/auto";
+      const rawModel = dbRow.chat_model || dbRow.chatmodel || "openrouter/auto";
       const displayModel = rawModel.replace(":free", "");
 
       // AI Settings
       form.reset({
-        provider: dbRow.ai_provider || "openrouter",
+        provider: dbRow.ai_provider || dbRow.ai || "openrouter",
         api_key: isManaged ? "" : apiKey,
         chatmodel: displayModel,
         text_prompt: dbRow.text_prompt || "",
@@ -587,7 +587,6 @@ export default function WhatsAppSettingsPage() {
                                     form.setValue("chatmodel", "salesmanchatbot-pro");
                                   }
                                 }} 
-                                defaultValue={field.value}
                                 value={field.value}
                               >
                                 <FormControl>

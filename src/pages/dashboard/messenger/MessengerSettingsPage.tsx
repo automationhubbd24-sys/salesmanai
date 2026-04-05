@@ -230,15 +230,15 @@ export default function MessengerSettingsPage() {
           setMode(isManaged ? "managed" : "own");
           setActiveMode(isManaged ? "managed" : "own");
 
-          const rawModel = pageRow.chat_model || "openrouter/auto";
+          const rawModel = dbRow.chat_model || dbRow.chatmodel || pageRow.chat_model || "openrouter/auto";
           const displayModel = rawModel.replace(":free", "");
 
           form.reset({
-            provider: pageRow.ai || "openrouter",
+            provider: dbRow.ai_provider || dbRow.ai || pageRow.ai || "openrouter",
             api_key: isManaged ? "" : apiKey,
             chatmodel: displayModel,
             text_prompt: dbRow.text_prompt || "",
-            base_url: pageRow.custom_base_url || "",
+            base_url: dbRow.custom_base_url || pageRow.custom_base_url || "",
           });
 
           setWait(dbRow.wait !== undefined && dbRow.wait !== null ? Number(dbRow.wait) : 8);
