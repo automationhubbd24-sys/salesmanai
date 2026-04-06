@@ -1325,7 +1325,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                                 if (orderService && orderService.orchestrateOrder) {
                                     // Use orchestrateOrder which is the standard way this project saves orders
                                     await orderService.orchestrateOrder({
-                                        pageId: pageConfig.page_id || pageId || pageConfig.id,
+                                        pageId: pageConfig?.page_id || pageId || pageConfig?.id,
                                         senderId: userId,
                                         platform: platform || 'messenger',
                                         intent: 'upsert',

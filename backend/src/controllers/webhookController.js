@@ -78,7 +78,8 @@ async function getCachedPageData(pageId) {
         return { config: null, prompts: null };
     }
 
-    return cached || { config: null, prompts: null };
+    if (cached) return cached;
+    return { config: null, prompts: null };
 }
 
 // Helper to track bot replies for echo filtering
@@ -755,17 +756,17 @@ async function queueMessage(event, entryPageId = null) {
 
 // Core Logic Function (Debounced)
 async function processBufferedMessages(sessionId, pageId, senderId, messages) {
-    try {
-        // 1. Fetch Config (Fast Path)
-        const pageData = await getCachedPageData(pageId);
-        const pageConfig = pageData?.config;
-        const pagePrompts = pageData?.prompts;
-        
-        if (!pageConfig) {
-            console.log(`Page ${pageId} not configured. Stopping.`);
-            return;
-        }
+    // 1. Fetch Config (Fast Path)
+    const pageData = await getCachedPageData(pageId);
+    const pageConfig = pageData?.config;
+    const pagePrompts = pageData?.prompts;
+    
+    if (!pageConfig) {
+        console.warn(`[AI] Page ${pageId} config not found in cache. This might be a temporary error.`);
+        return;
+    }
 
+    try {
         // Reconstruct Combined Message & Extract Metadata
         let combinedText = "";
         let replyToId = null;
