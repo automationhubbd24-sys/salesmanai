@@ -44,6 +44,55 @@ function getProxyUrl(modelName = 'default') {
     return url;
 }
 
+function getDynamicUserAgent() {
+    const agents = [
+        {
+            ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            ch: '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+            platform: '"Windows"'
+        },
+        {
+            ua: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+            ch: '"Chromium";v="121", "Not(A:Brand";v="24", "Google Chrome";v="121"',
+            platform: '"macOS"'
+        },
+        {
+            ua: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            ch: '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+            platform: '"Linux"'
+        }
+    ];
+    return agents[Math.floor(Math.random() * agents.length)];
+}
+
+function getStealthHeaders(apiKey, isOpenRouter = false) {
+    const agent = getDynamicUserAgent();
+    
+    // Create headers in a FIXED, REALISTIC order to mimic a real browser
+    // Node.js objects maintain insertion order for string keys
+    const headers = {};
+    
+    headers['User-Agent'] = agent.ua;
+    headers['Accept'] = 'application/json, text/plain, */*';
+    headers['Accept-Language'] = 'en-US,en;q=0.9';
+    headers['Content-Type'] = 'application/json';
+    headers['Authorization'] = `Bearer ${apiKey}`;
+
+    if (isOpenRouter) {
+        headers['HTTP-Referer'] = 'https://n8n.io';
+        headers['X-Title'] = 'n8n';
+    }
+
+    headers['Sec-CH-UA'] = agent.ch;
+    headers['Sec-CH-UA-Mobile'] = '?0';
+    headers['Sec-CH-UA-Platform'] = agent.platform;
+    headers['Sec-Fetch-Site'] = 'cross-site';
+    headers['Sec-Fetch-Mode'] = 'cors';
+    headers['Sec-Fetch-Dest'] = 'empty';
+
+    return headers;
+}
+
 /**
  * Creates an HttpsProxyAgent and logs IP info for debugging
  * @param {string} proxyUrl - Full proxy URL
@@ -59,7 +108,6 @@ function createProxyAgent(proxyUrl) {
         agent.proxySessionName = sessionName;
         
         // Log IP Info for Debugging (Non-blocking)
-        // Using Bright Data's official test service to avoid 400 errors
         const service = 'https://lumtest.com/myip.json';
 
         axios.get(service, { 
@@ -68,7 +116,7 @@ function createProxyAgent(proxyUrl) {
             proxy: false,
             timeout: 15000, 
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                'User-Agent': getDynamicUserAgent()
             }
         })
             .then(res => {
@@ -1175,6 +1223,11 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
 
         console.log(`[AI Request] ${model} | Proxy: ${proxyAgent?.proxySessionName || 'NONE'} | URL: ${baseURL}`);
 
+        // --- STEALTH: REQUEST JITTER ---
+        // Random delay between 800ms and 2500ms to mimic human typing/thinking
+        const jitter = Math.floor(Math.random() * 1700) + 800;
+        await new Promise(resolve => setTimeout(resolve, jitter));
+
         try {
             let responseMessage;
             let toolCalls = [];
@@ -1185,7 +1238,8 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 apiKey: apiKey, 
                 baseURL: baseURL,
                 timeout: isGoogle ? 40000 : 30000,
-                ...(proxyAgent ? { httpAgent: proxyAgent, httpsAgent: proxyAgent } : {})
+                ...(proxyAgent ? { httpAgent: proxyAgent, httpsAgent: proxyAgent } : {}),
+                defaultHeaders: getStealthHeaders(apiKey, baseURL.includes('openrouter'))
             });
 
             // Defensive params for Google/Gemini
@@ -2406,12 +2460,7 @@ Rules:
             };
 
             const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', payload, {
-                headers: { 
-                    'Authorization': `Bearer ${apiKey}`,
-                    'Content-Type': 'application/json',
-                    'HTTP-Referer': 'https://orderly-conversations.com', 
-                    'X-Title': 'Orderly Conversations'
-                },
+                headers: getStealthHeaders(apiKey, true),
                 timeout: 40000 // Increased timeout for heavy models
             });
 
@@ -2774,14 +2823,9 @@ Rules:
         };
 
         const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', payload, {
-            headers: { 
-                'Authorization': `Bearer ${apiKey}`,
-                'Content-Type': 'application/json',
-                'HTTP-Referer': 'https://orderly-conversations.com', 
-                'X-Title': 'Orderly Conversations'
-            },
-            timeout: 40000
-        });
+                headers: getStealthHeaders(apiKey, true),
+                timeout: 40000
+            });
 
         const result = response.data?.choices?.[0]?.message?.content;
         const usage = response.data?.usage?.total_tokens || 0;

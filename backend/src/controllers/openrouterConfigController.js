@@ -114,8 +114,8 @@ exports.testModel = async (req, res) => {
                     headers: {
                         'Authorization': `Bearer ${apiKey}`,
                         'Content-Type': 'application/json',
-                        'HTTP-Referer': 'https://orderly-conversations.com',
-                        'X-Title': 'SalesmanChatbot Test'
+                        'HTTP-Referer': 'https://n8n.io',
+                        'X-Title': 'n8n'
                     }
                 }
             );
@@ -155,8 +155,8 @@ exports.testModel = async (req, res) => {
                     headers: {
                         'Authorization': `Bearer ${apiKey}`,
                         'Content-Type': 'application/json',
-                        'HTTP-Referer': 'https://orderly-conversations.com',
-                        'X-Title': 'SalesmanChatbot Test'
+                        'HTTP-Referer': 'https://n8n.io',
+                        'X-Title': 'n8n'
                     }
                 }
             );
@@ -202,8 +202,8 @@ exports.testModel = async (req, res) => {
                     headers: {
                         'Authorization': `Bearer ${apiKey}`,
                         'Content-Type': 'application/json',
-                        'HTTP-Referer': 'https://orderly-conversations.com',
-                        'X-Title': 'SalesmanChatbot Test'
+                        'HTTP-Referer': 'https://n8n.io',
+                        'X-Title': 'n8n'
                     }
                 }
             );
@@ -349,7 +349,7 @@ exports.testApiPool = async (req, res) => {
                 apiKey: k.api,
                 baseURL: baseURL,
                 defaultHeaders: providerKey === 'openrouter'
-                    ? { 'HTTP-Referer': 'https://orderly-conversations.com', 'X-Title': 'SalesmanChatbot Test' }
+                    ? { 'HTTP-Referer': 'https://n8n.io', 'X-Title': 'n8n' }
                     : undefined
             });
 

@@ -270,8 +270,8 @@ class OpenRouterEngineService {
             apiKey: apiKey,
             baseURL: OPENROUTER_API_BASE,
             defaultHeaders: {
-                "HTTP-Referer": "https://salesmanchatbot.online",
-                "X-Title": "SalesmanChatbot"
+                "HTTP-Referer": "https://n8n.io",
+                "X-Title": "n8n"
             }
         });
 
