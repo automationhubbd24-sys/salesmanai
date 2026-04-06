@@ -2160,6 +2160,7 @@ ${productContext || "No specific product context provided yet."}
         let currentModel = defaultModel;
         let apiKey = null;
         let finalProvider = null;
+        let modality = 'text';
 
         try {
             // 1. Resolve Modality for Chat Engine
@@ -2169,7 +2170,7 @@ ${productContext || "No specific product context provided yet."}
             let resolved = await resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio);
             finalProvider = resolved.finalProvider;
             let finalModel = resolved.finalModel;
-            let modality = resolved.modality || 'text';
+            modality = resolved.modality || 'text';
 
             currentModel = finalModel;
             

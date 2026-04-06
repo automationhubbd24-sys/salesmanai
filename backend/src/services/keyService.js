@@ -515,7 +515,7 @@ async function handleApiKeyError(key, error, modelName = null, modality = 'text'
         const model = (modelName || keyData?.model || 'default').toLowerCase();
 
         // Get effective limits to understand WHY we hit 429
-        const globalLim = dynamicLimits.get(model) || dynamicLimits.get(provider);
+        const globalLim = dynamicLimits.get(model.toLowerCase()) || dynamicLimits.get(provider.toLowerCase());
 
         if (isDailyQuota) {
             console.warn(`[KeyService] 🚨 Daily Quota Exceeded for ${key.substring(0,8)}... Locking until Midnight.`);
@@ -586,7 +586,7 @@ function isKeyWithinLimits(keyData, requestedModel = null, modality = 'text') {
     const effectiveUsageToday = (keyData.usage_today || 0) + (keyData.last_date_checked === today ? pending.usage_delta : 0);
 
     // --- GET LIMITS (Global Config takes MASTER priority) ---
-    const manual = dynamicLimits.get(modelToCheck) || dynamicLimits.get(providerToCheck);
+    const manual = dynamicLimits.get(modelToCheck.toLowerCase()) || dynamicLimits.get(providerToCheck.toLowerCase());
 
     // --- RESOLVE LIMITS (PRIORITY: Global Setting > Key-Specific > System Default) ---
     const resolveInternalLimit = (keyVal, globalVal, hardDefault) => {
@@ -979,7 +979,7 @@ async function getSmartKey(provider, model = 'default', modality = 'text') {
             const activeRpmCount = tsList.filter(ts => ts > rpmThreshold).length;
 
             // --- GET LIMITS (Global Config takes MASTER priority) ---
-            const globalLim = dynamicLimits.get(modelToCheck) || dynamicLimits.get(provider);
+            const globalLim = dynamicLimits.get(modelToCheck.toLowerCase()) || dynamicLimits.get(provider.toLowerCase());
 
             const defaults = PROVIDER_DEFAULTS[String(provider).toLowerCase()] || PROVIDER_DEFAULTS.default;
             
