@@ -2155,22 +2155,22 @@ ${productContext || "No specific product context provided yet."}
     const MAX_RETRIES = 15; // Increased to 15 to try more keys if we have many (e.g. 10k+)
     let lastError = null;
     let attemptedKeys = new Set();
+    let modality = 'text'; // Define modality outside the loop to avoid ReferenceError in catch block
 
     while (retryCount <= MAX_RETRIES) {
         let currentModel = defaultModel;
         let apiKey = null;
         let finalProvider = null;
-        let modality = 'text';
 
         try {
             // 1. Resolve Modality for Chat Engine
             let isVision = (imageUrls && imageUrls.length > 0);
-            let isAudio = false; 
+            let isAudio = (audioUrls && audioUrls.length > 0); 
 
             let resolved = await resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio);
             finalProvider = resolved.finalProvider;
             let finalModel = resolved.finalModel;
-            modality = resolved.modality || 'text';
+            modality = resolved.modality || (isVision ? 'vision' : (isAudio ? 'voice' : 'text'));
 
             currentModel = finalModel;
             
@@ -2228,7 +2228,20 @@ ${productContext || "No specific product context provided yet."}
                 pageId: pageId 
             });
 
-            return finalize({ ...result, sentiment: 'neutral' });
+            // --- RECORD SUCCESSFUL USAGE (TOKEN TRACKING) ---
+            let tokensToRecord = result.token_usage || 0;
+            if (tokensToRecord === 0 && result.reply) {
+                // Fallback: Estimate tokens if provider didn't return them
+                tokensToRecord = estimateTokenUsage(messages, result.reply, 0);
+            }
+
+            if (apiKey && tokensToRecord > 0) {
+                keyService.recordKeyUsage(apiKey, tokensToRecord).catch(e => {
+                    console.error(`[AI] Token recording failed:`, e.message);
+                });
+            }
+
+            return finalize({ ...result, token_usage: tokensToRecord, sentiment: 'neutral' });
 
         } catch (err) {
             const errorMsg = (err.message || '').toLowerCase();
@@ -2240,6 +2253,18 @@ ${productContext || "No specific product context provided yet."}
             // Mark the failing key as dead immediately
             if (apiKey) {
                 await handleAiError(err, apiKey, currentModel, modality);
+                
+                // --- TOKEN TRACKING FOR FAILED ATTEMPTS (PHASE 2) ---
+                const estimatedInputTokens = estimateTokenUsage(messages, '', 0);
+                try {
+                    await dbService.saveAIUsageLog({
+                        user_id: pageConfig.user_id,
+                        model: currentModel || 'unknown',
+                        tokens: estimatedInputTokens,
+                        cost: 0, 
+                        context: `failed_attempt_p2_retry_${retryCount}`
+                    });
+                } catch(e) {}
             }
 
             // Decide if we should retry
@@ -2698,6 +2723,11 @@ Rules:
         console.warn(`[Vision] Attempt 1 Failed: ${errMsg}`);
         errors.push(`${pageConfig.cheap_engine === false ? 'Own API' : 'Gemini Attempt 1'}: ${errMsg}`);
         
+        // --- NEW: AUTO-ROTATE KEY ON FAILURE ---
+        if (typeof apiKey !== 'undefined' && apiKey) {
+            await handleAiError(error, apiKey, model, 'vision');
+        }
+
         // STOP if Own API (Paid User) - Return Error Text instead of Throwing so AI knows
         if (pageConfig && pageConfig.cheap_engine === false) {
              return { text: `[Vision Analysis Failed] Error: ${errMsg}`, usage: 0 };
@@ -2758,6 +2788,11 @@ Rules:
         if (!result) throw new Error("Empty response from OpenRouter");
 
         logDebug(`[Vision] Success with ${model}: ${result.substring(0, 30)}... Usage: ${usage}`);
+
+        // --- RECORD SUCCESSFUL USAGE (TOKEN TRACKING) ---
+        if (apiKey && usage > 0) {
+            keyService.recordKeyUsage(apiKey, usage).catch(e => {});
+        }
         
         // --- BRANDING PERSISTENCE ---
         let returnModel = model;
@@ -2775,6 +2810,11 @@ Rules:
         const errMsg = error.response?.data?.error?.message || error.message;
         console.warn(`[Vision] Attempt 3 Failed: ${errMsg}`);
         errors.push(`OpenRouter Vision: ${errMsg}`);
+        
+        // --- NEW: AUTO-ROTATE KEY ON FAILURE ---
+        if (typeof apiKey !== 'undefined' && apiKey) {
+            await handleAiError(error, apiKey, model, 'vision');
+        }
     }
 
     // FINAL FAILURE LOGGING
@@ -3214,6 +3254,11 @@ async function transcribeAudio(audioUrl, config) {
                  console.warn(`[Audio] ${option.name} Failed:`, status, data);
              } else {
                  console.warn(`[Audio] ${option.name} Failed:`, e.message);
+             }
+
+             // --- NEW: AUTO-ROTATE KEY ON FAILURE ---
+             if (typeof apiKey !== 'undefined' && apiKey) {
+                 await handleAiError(e, apiKey, option.model, 'voice');
              }
         }
     }

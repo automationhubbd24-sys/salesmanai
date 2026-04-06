@@ -530,11 +530,12 @@ async function handleApiKeyError(key, error, modelName = null, modality = 'text'
         return;
     }
 
-    if (errorStr.includes('401') || errorStr.includes('invalid api key') || errorStr.includes('expired')) {
-        console.error(`[KeyService] 💀 Key ${key.substring(0,8)}... is DEAD (401/Invalid). Locking for 24h.`);
+    if (errorStr.includes('401') || errorStr.includes('invalid api key') || errorStr.includes('expired') || 
+        errorStr.includes('402') || errorStr.includes('insufficient balance') || errorStr.includes('billing')) {
+        console.error(`[KeyService] 💀 Key ${key.substring(0,8)}... is DEAD (401/402/Invalid). Locking for 24h.`);
         // User Request: All Dead/Locked keys should reset after 24h
         const twentyFourHours = 24 * 60 * 60 * 1000;
-        await markKeyAsDead(key, twentyFourHours, 'invalid_key_24h_reset'); 
+        await markKeyAsDead(key, twentyFourHours, 'invalid_or_no_balance_24h_reset'); 
         return;
     }
 }
