@@ -318,12 +318,12 @@ process.on('SIGINT', async () => {
 // Based on typical Free Tier limits as of early 2025
 const DEFAULT_LIMITS = {
     // Gemini Limits (Based on Official Docs - Restricted per User Request)
-    'gemini-1.5-flash': { rpm: GEMINI_RPM_LIMIT, rph: GEMINI_RPH_LIMIT, rpd: GEMINI_RPD_LIMIT }, 
-    'gemini-1.5-flash-8b': { rpm: GEMINI_RPM_LIMIT, rph: GEMINI_RPH_LIMIT, rpd: GEMINI_RPD_LIMIT }, 
-    'gemini-2.0-flash-exp': { rpm: GEMINI_RPM_LIMIT, rph: GEMINI_RPH_LIMIT, rpd: GEMINI_RPD_LIMIT },
-    'gemini-2.0-flash-lite-preview-02-05': { rpm: GEMINI_RPM_LIMIT, rph: GEMINI_RPH_LIMIT, rpd: GEMINI_RPD_LIMIT },
-    'gemini-2.0-flash': { rpm: GEMINI_RPM_LIMIT, rph: GEMINI_RPH_LIMIT, rpd: GEMINI_RPD_LIMIT }, 
-    'google-gemini': { rpm: GEMINI_RPM_LIMIT, rph: GEMINI_RPH_LIMIT, rpd: GEMINI_RPD_LIMIT },
+    'gemini-1.5-flash': { rpm: 1, rph: 1, rpd: 15 }, 
+    'gemini-1.5-flash-8b': { rpm: 1, rph: 1, rpd: 15 }, 
+    'gemini-2.0-flash-exp': { rpm: 1, rph: 1, rpd: 15 },
+    'gemini-2.0-flash-lite-preview-02-05': { rpm: 1, rph: 1, rpd: 15 },
+    'gemini-2.0-flash': { rpm: 1, rph: 1, rpd: 15 }, 
+    'google-gemini': { rpm: 1, rph: 1, rpd: 15 },
     
     // Groq Limits (Based on Official Docs)
     'llama-3.3-70b-versatile': { rpm: 30, rpd: 1000 }, 
