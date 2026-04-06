@@ -964,27 +964,28 @@ async function getSmartKey(provider, model = 'default') {
             const resolveLimit = (keyVal, globalVal, hardDefault) => {
                 let resolved = 99999;
                 
-                // 1. Check Key-specific limit
-                if (keyVal !== undefined && keyVal !== null) {
-                    const kv = parseInt(keyVal);
-                    if (kv > 0) resolved = Math.min(resolved, kv);
-                    else if (kv === 0) return 99999; // Explicitly unlimited on key
+                // 1. GLOBAL SETTING (User's Master Control)
+                const gv = (globalVal !== undefined && globalVal !== null) ? parseInt(globalVal) : null;
+                if (gv !== null && gv > 0) {
+                    resolved = gv; // Global limit is the master cap
+                } else if (gv === 0) {
+                    resolved = 99999; // Explicitly Unlimited in Global settings
                 }
                 
-                // 2. Check Global Engine limit
-                if (globalVal !== undefined && globalVal !== null) {
-                    const gv = parseInt(globalVal);
-                    if (gv > 0) resolved = Math.min(resolved, gv);
-                    else if (gv === 0) return 99999; // Explicitly unlimited in global settings
+                // 2. KEY-SPECIFIC LIMIT (Can only REDUCE the global cap, not increase it)
+                const kv = (keyVal !== undefined && keyVal !== null) ? parseInt(keyVal) : null;
+                if (kv !== null && kv > 0) {
+                    resolved = Math.min(resolved, kv);
                 }
                 
-                // 3. Apply Hardcoded Defaults only if no explicit setting was found OR if it's Gemini
+                // 3. APPLY HARDCODED DEFAULTS (Only if nothing was explicitly set)
+                if (resolved === 99999 && kv === null && gv === null && hardDefault) {
+                    resolved = hardDefault;
+                }
+                
+                // 4. FINAL STRICT CAP FOR GEMINI (If applicable)
                 if (isGemini && hardDefault) {
                     resolved = Math.min(resolved, hardDefault);
-                } else if (resolved === 99999 && hardDefault && !isGemini) {
-                    // Fallback for non-Gemini only if absolutely nothing else was set
-                    // But wait, if user didn't set anything, we use DAILY_USAGE_LIMIT for RPD
-                    // For RPM/RPH we don't really have a global fallback other than Gemini
                 }
                 
                 return resolved;
