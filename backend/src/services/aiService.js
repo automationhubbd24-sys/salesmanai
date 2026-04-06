@@ -235,56 +235,19 @@ function formatBrandedError(error, brandName = 'ChatModel') {
  * @param {Error} error - The error object from the API call.
  * @param {string} apiKey - The API key that failed.
  * @param {string} model - The model being used.
+ * @param {string} modality - The modality (text/vision/voice).
  */
-async function handleAiError(error, apiKey, model) {
+async function handleAiError(error, apiKey, model, modality = 'text') {
     if (!apiKey) return;
     
     const errorMsg = (error.message || '').toLowerCase();
-    const responseError = error.response?.data?.error || {};
-    const errorCode = `${responseError.code || responseError.type || responseError.status || ''}`.toLowerCase();
     const statusCode = error.status || (error.response ? error.response.status : null);
-    const responseMessage = (responseError.message || '').toLowerCase();
 
     console.error(`[AI Error Handler] Handling error for key ${apiKey.substring(0, 8)}... | Status: ${statusCode} | Msg: ${errorMsg}`);
 
-    // 1. Quota / Rate Limit (429)
-    if (statusCode === 429 || errorMsg.includes('429') || errorMsg.includes('limit') || errorMsg.includes('quota') || errorMsg.includes('exhausted') || errorMsg.includes('too many requests')) {
-        // User Request: Always lock for 24h (until Pacific Midnight) on any 429 error
-        console.warn(`[AI] 🔒 Rate Limit (429) hit for key ${apiKey.substring(0, 8)}... marking as EXCEEDED until Pacific Midnight.`);
-        if (keyService.markKeyAsQuotaExceeded) {
-            await keyService.markKeyAsQuotaExceeded(apiKey);
-        }
-        return;
-    }
-
-    // 2. Invalid Key / Auth (401 / 403)
-    if (statusCode === 401 || statusCode === 403 || errorMsg.includes('401') || errorMsg.includes('403') || errorMsg.includes('invalid') || errorMsg.includes('key') || errorMsg.includes('authentication') || errorMsg.includes('unauthorized')) {
-        if (errorCode.includes('consumer_suspended') || responseMessage.includes('suspended')) {
-            if (keyService.markKeyAsSuspended) {
-                await keyService.markKeyAsSuspended(apiKey, 'consumer_suspended');
-            }
-            return;
-        }
-        
-        // --- LOG THE FULL ERROR FOR AUTH FAILURES ---
-        console.error(`[AI] 💀 Authentication Failed for Key: ${apiKey.substring(0, 8)}... | Full Msg: ${errorMsg} | Response: ${responseMessage}`);
-
-        if (keyService.markKeyAsDead) {
-            // User Request: All Dead/Locked keys should reset after 24h
-            const twentyFourHours = 24 * 60 * 60 * 1000;
-            await keyService.markKeyAsDead(apiKey, twentyFourHours, 'authentication_failed_24h'); 
-        }
-        return;
-    }
-
-    // 3. General API Error (Network, Timeout, 500, etc.)
-    if (statusCode >= 500 || errorMsg.includes('timeout') || errorMsg.includes('network')) {
-        console.warn(`[AI] ⚠️ General API Error for key ${apiKey.substring(0, 8)}... cooldown for 24h.`);
-        if (keyService.markKeyAsDead) {
-            const twentyFourHours = 24 * 60 * 60 * 1000;
-            await keyService.markKeyAsDead(apiKey, twentyFourHours, 'api_error_24h'); // 24h cooldown
-        }
-        return;
+    // Delegate to KeyService for smart handling (429, 401, etc.)
+    if (keyService.handleApiKeyError) {
+        await keyService.handleApiKeyError(apiKey, error, model, modality);
     }
 }
 
@@ -375,37 +338,38 @@ async function clearBrandedEngineCache(name = null) {
 async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio) {
     let targetEngineName = defaultModel || 'salesmanchatbot-pro';
 
-    // 1. Fetch Branded Config
+    // 1. Fetch Branded Config (User's choice in Frontend)
     const brandedConfig = await getBrandedEngineConfig(targetEngineName);
     
     if (!brandedConfig) {
-        console.warn(`[AI] No branded config found for ${targetEngineName}. Using fallback defaults.`);
-        // Hardcoded defaults if DB record missing
-        if (targetEngineName === 'salesmanchatbot-pro') {
-            return { finalProvider: 'google', finalModel: 'gemini-2.5-flash', targetEngineName };
-        } else if (targetEngineName === 'salesmanchatbot-flash') {
-            return { finalProvider: 'openrouter', finalModel: 'mistral-large-2512', targetEngineName };
-        } else {
-            return { finalProvider: 'groq', finalModel: 'llama-3.3-70b-versatile', targetEngineName };
-        }
+        console.error(`[AI] CRITICAL: No configuration found for engine: ${targetEngineName}. Blocking request.`);
+        throw new Error(`Engine ${targetEngineName} is not configured in the dashboard.`);
     }
 
-    // 2. Resolve based on modality
-    let finalProvider = brandedConfig.text_provider || brandedConfig.provider || 'google';
-    let finalModel = brandedConfig.text_model || targetEngineName;
+    // 2. Resolve based on modality (Text/Voice/Image)
+    let finalProvider = brandedConfig.text_provider || brandedConfig.provider;
+    let finalModel = brandedConfig.text_model;
+    let modality = 'text';
 
     if (isAudio) {
-        finalProvider = brandedConfig.voice_provider || brandedConfig.text_provider || brandedConfig.provider || 'google';
-        finalModel = brandedConfig.voice_model || brandedConfig.text_model || finalModel;
+        finalProvider = brandedConfig.voice_provider || finalProvider;
+        finalModel = brandedConfig.voice_model || finalModel;
+        modality = 'voice';
     } else if (isVision) {
-        finalProvider = brandedConfig.image_provider || brandedConfig.text_provider || brandedConfig.provider || 'google';
-        finalModel = brandedConfig.image_model || brandedConfig.text_model || finalModel;
+        finalProvider = brandedConfig.image_provider || finalProvider;
+        finalModel = brandedConfig.image_model || finalModel;
+        modality = 'vision';
+    }
+
+    if (!finalProvider || !finalModel) {
+        console.error(`[AI] CRITICAL: Missing provider/model for ${targetEngineName} (${modality}).`);
+        throw new Error(`Engine ${targetEngineName} is missing ${modality} configuration.`);
     }
 
     // 3. Apply Global Config (Rate Limits and Overrides)
     const gConfig = await getGlobalEngineConfig(finalProvider);
     if (gConfig) {
-        // If Global Config has a hard override for this provider, apply it
+        // Apply Global Overrides if set
         if (isAudio && gConfig.voice_provider_override && gConfig.voice_provider_override !== 'default') {
             finalProvider = gConfig.voice_provider_override;
             if (gConfig.voice_model) finalModel = gConfig.voice_model;
@@ -417,17 +381,20 @@ async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, default
             if (gConfig.text_model) finalModel = gConfig.text_model;
         }
 
-        // Apply Manual Limits to KeyService
+        // Apply Manual Limits to KeyService (Modality-aware)
         if (keyService.setManualLimit) {
             const limit = {
                 rpm: isAudio ? gConfig.voice_rpm : (isVision ? gConfig.vision_rpm : gConfig.text_rpm),
                 rpd: isAudio ? gConfig.voice_rpd : (isVision ? gConfig.vision_rpd : gConfig.text_rpd),
                 rph: isAudio ? gConfig.voice_rph : (isVision ? gConfig.vision_rph : gConfig.text_rph),
+                tpm: isAudio ? gConfig.voice_tpm : (isVision ? gConfig.vision_tpm : gConfig.text_tpm),
+                tpd: isAudio ? gConfig.voice_tpd : (isVision ? gConfig.vision_tpd : gConfig.text_tpd),
+                tpmo: isAudio ? gConfig.voice_tpmo : (isVision ? gConfig.vision_tpmo : gConfig.text_tpmo),
                 source: 'global_engine'
             };
-            if (limit.rpm || limit.rpd || limit.rph) {
-                keyService.setManualLimit(finalModel, limit);
-            }
+            
+            // Set limit using model:modality format to avoid conflicts
+            keyService.setManualLimit(`${finalModel}:${modality}`, limit);
         }
     }
 
@@ -435,12 +402,13 @@ async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, default
         finalModel = finalModel.split(',')[0].trim();
     }
 
-    console.log(`[AI] Engine Resolved: ${targetEngineName} -> ${finalProvider}/${finalModel} (Audio: ${isAudio}, Vision: ${isVision})`);
+    console.log(`[AI] Engine Resolved: ${targetEngineName} -> ${finalProvider}/${finalModel} (${modality})`);
 
     return { 
         finalProvider,
         finalModel,
         targetEngineName,
+        modality, // Pass modality for key selection
         gConfig
     };
 }
@@ -2201,15 +2169,16 @@ ${productContext || "No specific product context provided yet."}
             let resolved = await resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio);
             finalProvider = resolved.finalProvider;
             let finalModel = resolved.finalModel;
+            let modality = resolved.modality || 'text';
 
             currentModel = finalModel;
             
             // 2. Get Next Smart Key (Round-Robin)
-            let keyData = await keyService.getSmartKey(finalProvider, currentModel);
+            let keyData = await keyService.getSmartKey(finalProvider, currentModel, modality);
             
             // If no model-specific key, try default pool
             if (!keyData || !keyData.key || attemptedKeys.has(keyData.key)) {
-                 keyData = await keyService.getSmartKey(finalProvider, 'default');
+                 keyData = await keyService.getSmartKey(finalProvider, 'default', modality);
             }
 
             // If we still have no key or it's one we already tried in this loop, we are exhausted
@@ -2269,7 +2238,7 @@ ${productContext || "No specific product context provided yet."}
             
             // Mark the failing key as dead immediately
             if (apiKey) {
-                await handleAiError(err, apiKey, currentModel);
+                await handleAiError(err, apiKey, currentModel, modality);
             }
 
             // Decide if we should retry
@@ -2377,10 +2346,11 @@ Rules:
         try {
             const provider = 'openrouter';
             const model = customOptions.model;
+            const modality = 'vision';
             console.log(`[Vision] Priority Attempt: ${model} (${provider})`);
 
-            let keyData = await keyService.getSmartKey(provider, model);
-            if (!keyData || !keyData.key) keyData = await keyService.getSmartKey(provider, 'default');
+            let keyData = await keyService.getSmartKey(provider, model, modality);
+            if (!keyData || !keyData.key) keyData = await keyService.getSmartKey(provider, 'default', modality);
             if (!keyData || !keyData.key) throw new Error("No Key found for OpenRouter");
 
             const apiKey = keyData.key;
@@ -2517,8 +2487,9 @@ Rules:
              }
 
              // Use System Key for Provider
-             let keyData = await keyService.getSmartKey(provider, model);
-             if (!keyData || !keyData.key) keyData = await keyService.getSmartKey(provider, 'default');
+             const modality = 'vision';
+             let keyData = await keyService.getSmartKey(provider, model, modality);
+             if (!keyData || !keyData.key) keyData = await keyService.getSmartKey(provider, 'default', modality);
              if (keyData && keyData.key) apiKey = keyData.key;
         }
 
@@ -2737,11 +2708,12 @@ Rules:
         const provider = 'openrouter';
         // User Update: Use the vision model from pageConfig (set via Admin API Engine)
         const model = pageConfig.vision_model || pageConfig.chat_model || 'qwen/qwen-2.5-vl-7b-instruct:free';
+        const modality = 'vision';
         
         console.log(`[Vision] Attempt 3: ${model} (${provider})`);
 
-        let keyData = await keyService.getSmartKey(provider, model);
-        if (!keyData || !keyData.key) keyData = await keyService.getSmartKey(provider, 'default');
+        let keyData = await keyService.getSmartKey(provider, model, modality);
+        if (!keyData || !keyData.key) keyData = await keyService.getSmartKey(provider, 'default', modality);
         if (!keyData || !keyData.key) throw new Error("No Key found for OpenRouter");
 
         const apiKey = keyData.key;
@@ -3026,8 +2998,9 @@ async function transcribeAudio(audioUrl, config) {
             console.log(`[Audio] Attempting Transcription with ${option.name}...`);
             
             let apiKey = option.key;
+            const modality = 'voice';
             if (!apiKey) {
-                const keyData = await keyService.getSmartKey(option.provider, option.model);
+                const keyData = await keyService.getSmartKey(option.provider, option.model, modality);
                 if (!keyData || !keyData.key) {
                      console.warn(`[Audio] No system key found for ${option.name}`);
                      continue;

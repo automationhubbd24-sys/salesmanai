@@ -157,6 +157,8 @@ exports.saveGlobalConfig = async (req, res) => {
 
         if (result.rowCount > 0) {
             aiService.clearGlobalConfigCache(provider);
+            // Trigger keyService to refresh its dynamicLimits map from DB
+            await keyService.updateKeyCache(true);
         }
 
         res.json({ success: true, config: result.rows[0] });
@@ -199,7 +201,8 @@ exports.testKeyRotation = async (req, res) => {
             console.log(`[AdminTester] 🧪 Testing MANUAL ${provider} key: ${keyToUse.substring(0,8)}... | Proxy: ${proxyInfo}`);
         } else {
             // Use getSmartKey to handle rotation from pool
-            const keyInfo = await keyService.getSmartKey(provider, modelToUse);
+            const modality = 'text'; // Admin test is usually text
+            const keyInfo = await keyService.getSmartKey(provider, modelToUse, modality);
             
             if (!keyInfo || !keyInfo.key) {
                 return res.status(500).json({ success: false, error: 'No active keys found for this provider/model in pool' });

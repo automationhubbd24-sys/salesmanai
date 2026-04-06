@@ -45,14 +45,18 @@ let keysByModel = new Map();
 let lastCacheUpdate = 0;
 const CACHE_TTL = 15 * 1000; // Updated to 15 Seconds for higher accuracy in multi-process environments
 
-const DAILY_USAGE_LIMIT = 15; // Strict limit: 15 requests per 24h
+// --- PROVIDER-SPECIFIC HARDCODED DEFAULTS (User Request) ---
+const PROVIDER_DEFAULTS = {
+    google:  { rpm: 1, rph: 1, rpd: 15, tpm: 250000, tpd: 999999, tpmo: 999999 },
+    gemini:  { rpm: 1, rph: 1, rpd: 15, tpm: 250000, tpd: 999999, tpmo: 999999 },
+    mistral: { rpm: 999999, rph: 999999, rpd: 999999, tpm: 50000, tpd: 999999, tpmo: 4000000 },
+    groq:    { rpm: 30, rph: 999999, rpd: 1000, tpm: 15000, tpd: 500000, tpmo: 999999 },
+    default: { rpm: 999999, rph: 999999, rpd: 999999, tpm: 999999, tpd: 999999, tpmo: 999999 }
+};
+
 const STATUS_ACTIVE = 'active';
 const STATUS_DISABLED = 'disabled';
 const DISABLE_DURATION_MS = 24 * 60 * 60 * 1000;
-
-const GEMINI_RPM_LIMIT = 1; // Strict limit: 1 request per 60s
-const GEMINI_RPH_LIMIT = 1; // Strict limit: 1 request per 1h
-const GEMINI_RPD_LIMIT = 15; // Strict limit: 15 requests per 24h
 
 const deadKeys = new Map();
 const DEFAULT_COOLDOWN = 24 * 60 * 60 * 1000; // 24 Hours default for all locks as per User Request
@@ -245,6 +249,40 @@ async function updateKeyCache(force = false) {
 
         keysByProvider = providerMap;
         keysByModel = modelMap;
+
+        // --- NEW: LOAD GLOBAL LIMITS FROM api_engine_configs (User Request) ---
+        // We sync limits set in 'Global Provider Models Configuration' UI to dynamicLimits map.
+        const configResult = await pgClient.query("SELECT * FROM api_engine_configs");
+        if (configResult.rows && configResult.rows.length > 0) {
+            configResult.rows.forEach(cfg => {
+                const provider = String(cfg.provider || '').toLowerCase();
+                const modalities = ['text', 'vision', 'voice'];
+                modalities.forEach(mod => {
+                    const modelName = (cfg[`${mod}_model`] || '').toLowerCase();
+                    const limits = {
+                        rpm: cfg[`${mod}_rpm`],
+                        rpd: cfg[`${mod}_rpd`],
+                        rph: cfg[`${mod}_rph`],
+                        tpm: cfg[`${mod}_tpm`],
+                        tpd: cfg[`${mod}_tpd`],
+                        tpmo: cfg[`${mod}_tpmo`],
+                        source: 'global_config'
+                    };
+
+                    if (modelName) {
+                        // Store only global model-level limits (Unify Text/Vision/Voice for the same model)
+                        dynamicLimits.set(modelName, limits);
+                    }
+                    
+                    // Also set as provider fallback
+                    if (mod === 'text' && provider) {
+                        dynamicLimits.set(provider, limits);
+                    }
+                });
+            });
+            console.log(`[KeyService] 🧠 Synced Modality-Aware Global Limits for ${configResult.rows.length} providers.`);
+        }
+
         lastCacheUpdate = now;
 
         // --- OPTIMIZED ROTATION POINTERS ---
@@ -457,12 +495,11 @@ async function checkLockStatus(pageId, senderId) {
 
 // REMOVED lockModelTemporarily to avoid global model restrictions
 
-async function handleApiKeyError(key, error, modelName = null) {
+async function handleApiKeyError(key, error, modelName = null, modality = 'text') {
     if (!key) return;
     const errorStr = String(error).toLowerCase();
     
     // --- SMART 429 DETECTION (FOR ALL PROVIDERS) ---
-    // Added '429 status code (no body)' and other common variants
     if (errorStr.includes('429') || 
         errorStr.includes('too many requests') || 
         errorStr.includes('rate limit') ||
@@ -473,18 +510,22 @@ async function handleApiKeyError(key, error, modelName = null) {
                              errorStr.includes('quotavalue') ||
                              errorStr.includes('daily limit');
 
+        const keyData = keyCacheMap.get(key);
+        const provider = (keyData?.provider || 'unknown').toLowerCase();
+        const model = (modelName || keyData?.model || 'default').toLowerCase();
+
+        // Get effective limits to understand WHY we hit 429
+        const globalLim = dynamicLimits.get(model) || dynamicLimits.get(provider);
+
         if (isDailyQuota) {
-            console.warn(`[KeyService] 🚨 Daily Quota Exceeded for ${key}... Locking for 24h.`);
+            console.warn(`[KeyService] 🚨 Daily Quota Exceeded for ${key.substring(0,8)}... Locking until Midnight.`);
             await markKeyAsQuotaExceeded(key);
         } else {
-            console.warn(`[KeyService] ⏳ Rate Limit (429 - RPM/TPM) hit for ${key}... Locking for 2 MINUTES (Smart Skip).`);
-            // Lock for 2 minutes for RPM hits to allow recovery without losing the key for a whole day
-            const twoMinutes = 2 * 60 * 1000;
-            await markKeyAsDead(key, twoMinutes, 'rate_limit_rpm_2m_lock');
+            // User Request: Always lock for 24h (until Pacific Midnight) on any 429 error
+            console.warn(`[KeyService] 🔒 Rate Limit (429) hit for key ${key.substring(0,8)}... marking as EXCEEDED until Pacific Midnight.`);
+            await markKeyAsQuotaExceeded(key);
         }
         
-        // --- FORCE CACHE REFRESH AFTER LOCK ---
-        // This ensures the local memory cache and DB are in sync immediately
         await updateKeyCache(true);
         return;
     }
@@ -527,9 +568,11 @@ function isKeyAlive(key) {
 }
 
 // 4. Rate Limit Verification (STRICT MODE)
-function isKeyWithinLimits(keyData, requestedModel = null) {
+function isKeyWithinLimits(keyData, requestedModel = null, modality = 'text') {
+    const modelToCheck = (requestedModel || keyData.model || 'default').toLowerCase();
+    const providerToCheck = (keyData.provider || 'unknown').toLowerCase();
+    
     // Check if the entire model is locked (due to repeated 429s)
-    const modelToCheck = requestedModel || keyData.model;
     if (isModelLocked(modelToCheck)) {
         return false;
     }
@@ -542,19 +585,18 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
     const pending = pendingUpdates.get(keyData.api) || { usage_delta: 0 };
     const effectiveUsageToday = (keyData.usage_today || 0) + (keyData.last_date_checked === today ? pending.usage_delta : 0);
 
-    // Only enforce limits if explicitly set in DB (keyData.rpd_limit / rpm_limit).
-    // If not set (null/0), check for Dynamic Model Overrides (from Frontend).
-    const manual = requestedModel ? dynamicLimits.get(String(requestedModel)) : null;
+    // --- GET LIMITS (Global Config takes MASTER priority) ---
+    const manual = dynamicLimits.get(modelToCheck) || dynamicLimits.get(providerToCheck);
 
     // --- RESOLVE LIMITS (PRIORITY: Global Setting > Key-Specific > System Default) ---
     const resolveInternalLimit = (keyVal, globalVal, hardDefault) => {
-        // 1. GLOBAL SETTING (User's Master Control)
+        // 1. GLOBAL SETTING (User's Master Control) - Overrides EVERYTHING if set
         const gv = (globalVal !== undefined && globalVal !== null) ? parseInt(globalVal) : null;
         if (gv !== null) {
-            return gv > 0 ? gv : 999999999; // 0 or -1 means unlimited
+            return gv > 0 ? gv : 999999999; // 0 means Unlimited
         }
         
-        // 2. KEY-SPECIFIC LIMIT
+        // 2. KEY-SPECIFIC LIMIT (Used only if Global is not set)
         const kv = (keyVal !== undefined && keyVal !== null) ? parseInt(keyVal) : null;
         if (kv !== null) {
             return kv > 0 ? kv : 999999999;
@@ -564,14 +606,14 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
         return (hardDefault && hardDefault > 0) ? hardDefault : 999999999;
     };
 
-    const isGemini = (keyData.provider === 'google' || keyData.provider === 'gemini');
+    const defaults = PROVIDER_DEFAULTS[String(keyData.provider).toLowerCase()] || PROVIDER_DEFAULTS.default;
 
-    const rpdLimit = resolveInternalLimit(keyData.rpd_limit, manual?.rpd, isGemini ? GEMINI_RPD_LIMIT : DAILY_USAGE_LIMIT);
-    const rpmLimit = resolveInternalLimit(keyData.rpm_limit, manual?.rpm, isGemini ? GEMINI_RPM_LIMIT : null);
-    const rphLimit = resolveInternalLimit(keyData.rph_limit, manual?.rph, isGemini ? GEMINI_RPH_LIMIT : null);
-    const tpmLimit = resolveInternalLimit(keyData.tpm_limit, manual?.tpm, null);
-    const tpdLimit = resolveInternalLimit(keyData.tpd_limit, manual?.tpd, null);
-    const tpmoLimit = resolveInternalLimit(keyData.tpmo_limit, manual?.tpmo, null);
+    const rpdLimit = resolveInternalLimit(keyData.rpd_limit, manual?.rpd, defaults.rpd);
+    const rpmLimit = resolveInternalLimit(keyData.rpm_limit, manual?.rpm, defaults.rpm);
+    const rphLimit = resolveInternalLimit(keyData.rph_limit, manual?.rph, defaults.rph);
+    const tpmLimit = resolveInternalLimit(keyData.tpm_limit, manual?.tpm, defaults.tpm);
+    const tpdLimit = resolveInternalLimit(keyData.tpd_limit, manual?.tpd, defaults.tpd);
+    const tpmoLimit = resolveInternalLimit(keyData.tpmo_limit, manual?.tpmo, defaults.tpmo);
 
     // --- 1. REQUEST-LEVEL CHECKS ---
     // Check RPD
@@ -878,7 +920,7 @@ function releaseSelectionLock() {
     }
 }
 
-async function getSmartKey(provider, model = 'default') {
+async function getSmartKey(provider, model = 'default', modality = 'text') {
     await acquireSelectionLock();
     try {
         // Avoid blocking if cache is fresh
@@ -889,17 +931,19 @@ async function getSmartKey(provider, model = 'default') {
             }
         }
         
-        if (isModelLocked(model)) {
-            console.warn(`[KeyService] Model ${model} is globally LOCKED.`);
+        const modelToCheck = (model && model !== 'default') ? model : 'default';
+        
+        if (isModelLocked(modelToCheck)) {
+            console.warn(`[KeyService] Model ${modelToCheck} is globally LOCKED.`);
             return null;
         }
 
-        const mapKey = `${provider}:${model}`;
+        const mapKey = `${provider}:${modelToCheck}`;
         
         // 1. Get Candidate Keys from Cache
         let candidates = [];
-        if (model !== 'default' && keysByModel.has(model)) {
-            candidates = keysByModel.get(model);
+        if (modelToCheck !== 'default' && keysByModel.has(modelToCheck)) {
+            candidates = keysByModel.get(modelToCheck);
         } else if (keysByProvider.has(provider)) {
             candidates = keysByProvider.get(provider);
         }
@@ -934,56 +978,44 @@ async function getSmartKey(provider, model = 'default') {
             const rpmThreshold = now - 60000; // Strict 60s window for RPM
             const activeRpmCount = tsList.filter(ts => ts > rpmThreshold).length;
 
-            // --- GET LIMITS (Take the MORE RESTRICTIVE one among Key-specific, Global Engine config, and Hardcoded Defaults) ---
-            const globalLim = model !== 'default' ? dynamicLimits.get(String(model)) : null;
-            const isGemini = provider === 'google' || provider === 'gemini';
+            // --- GET LIMITS (Global Config takes MASTER priority) ---
+            const globalLim = dynamicLimits.get(modelToCheck) || dynamicLimits.get(provider);
+
+            const defaults = PROVIDER_DEFAULTS[String(provider).toLowerCase()] || PROVIDER_DEFAULTS.default;
             
-            // Helper to resolve limit: 0 = Unlimited (99999), null/undefined = Use Default
+            // Helper to resolve limit: 0 = Unlimited (999999), null/undefined = Use Default
             const resolveLimit = (keyVal, globalVal, hardDefault) => {
-                let resolved = 99999;
-                
-                // 1. GLOBAL SETTING (User's Master Control)
+                // 1. GLOBAL SETTING (User's Master Control) - Overrides EVERYTHING if set
                 const gv = (globalVal !== undefined && globalVal !== null) ? parseInt(globalVal) : null;
-                if (gv !== null && gv > 0) {
-                    resolved = gv; // Global limit is the master cap
-                } else if (gv === 0) {
-                    resolved = 99999; // Explicitly Unlimited in Global settings
+                if (gv !== null) {
+                    return gv > 0 ? gv : 999999; // 0 means Unlimited
                 }
                 
-                // 2. KEY-SPECIFIC LIMIT (Can only REDUCE the global cap, not increase it)
+                // 2. KEY-SPECIFIC LIMIT (Used only if Global is not set)
                 const kv = (keyVal !== undefined && keyVal !== null) ? parseInt(keyVal) : null;
-                if (kv !== null && kv > 0) {
-                    resolved = Math.min(resolved, kv);
+                if (kv !== null) {
+                    return kv > 0 ? kv : 999999;
                 }
                 
-                // 3. APPLY HARDCODED DEFAULTS (Only if nothing was explicitly set)
-                if (resolved === 99999 && kv === null && gv === null && hardDefault) {
-                    resolved = hardDefault;
-                }
-                
-                // 4. FINAL STRICT CAP FOR GEMINI (If applicable)
-                if (isGemini && hardDefault) {
-                    resolved = Math.min(resolved, hardDefault);
-                }
-                
-                return resolved;
+                // 3. APPLY HARDCODED DEFAULTS
+                return (hardDefault && hardDefault > 0) ? hardDefault : 999999;
             };
 
-            const rpmLimit = resolveLimit(candidateKey.rpm_limit, globalLim?.rpm, isGemini ? GEMINI_RPM_LIMIT : null);
-             const rphLimit = resolveLimit(candidateKey.rph_limit, globalLim?.rph, isGemini ? GEMINI_RPH_LIMIT : null);
-             const rpdLimit = resolveLimit(candidateKey.rpd_limit, globalLim?.rpd, isGemini ? GEMINI_RPD_LIMIT : DAILY_USAGE_LIMIT);
- 
-             const tpmLimit = resolveLimit(candidateKey.tpm_limit, globalLim?.tpm, null);
-             const tpdLimit = resolveLimit(candidateKey.tpd_limit, globalLim?.tpd, null);
-             const tpmoLimit = resolveLimit(candidateKey.tpmo_limit, globalLim?.tpmo, null);
+            const rpmLimit = resolveLimit(candidateKey.rpm_limit, globalLim?.rpm, defaults.rpm);
+            const rphLimit = resolveLimit(candidateKey.rph_limit, globalLim?.rph, defaults.rph);
+            const rpdLimit = resolveLimit(candidateKey.rpd_limit, globalLim?.rpd, defaults.rpd);
+
+            const tpmLimit = resolveLimit(candidateKey.tpm_limit, globalLim?.tpm, defaults.tpm);
+            const tpdLimit = resolveLimit(candidateKey.tpd_limit, globalLim?.tpd, defaults.tpd);
+            const tpmoLimit = resolveLimit(candidateKey.tpmo_limit, globalLim?.tpmo, defaults.tpmo);
 
             // Check RPM
-            if (rpmLimit < 99999 && activeRpmCount >= rpmLimit) {
+            if (rpmLimit < 999999 && activeRpmCount >= rpmLimit) {
                 continue;
             }
 
             // Check TPM (Tokens Per Minute)
-            if (tpmLimit < 99999) {
+            if (tpmLimit < 999999) {
                 const tokenTsList = keyTokenUsageTimestamps.get(candidateKey.api) || [];
                 const activeTpmCount = tokenTsList.filter(item => item.ts > now - TPM_WINDOW_MS).reduce((acc, item) => acc + item.tokens, 0);
                 if (activeTpmCount >= tpmLimit) {
@@ -996,7 +1028,7 @@ async function getSmartKey(provider, model = 'default') {
             const oneHourAgo = now - (60 * 60 * 1000); // Strict 1h window
             const activeRphCount = hourTsList.filter(ts => ts > oneHourAgo).length;
 
-            if (rphLimit < 99999 && activeRphCount >= rphLimit) {
+            if (rphLimit < 999999 && activeRphCount >= rphLimit) {
                 continue;
             }
 
@@ -1007,7 +1039,7 @@ async function getSmartKey(provider, model = 'default') {
             const dbUsage = candidateKey.last_date_checked === today ? (Number(candidateKey.usage_today) || 0) : 0;
             const effectiveUsageToday = dbUsage + pending.usage_delta;
 
-            if (rpdLimit < 99999 && effectiveUsageToday >= rpdLimit) {
+            if (rpdLimit < 999999 && effectiveUsageToday >= rpdLimit) {
                 console.warn(`[KeyService] ⛔ Key ${candidateKey.api.substring(0,8)}... hit RPD limit (${rpdLimit}). Usage: ${effectiveUsageToday}. Locking.`);
                 candidateKey.status = 'locked';
                 candidateKey.cooldown_until = new Date(Date.now() + getMsUntilPacificMidnight()).toISOString();
@@ -1019,7 +1051,7 @@ async function getSmartKey(provider, model = 'default') {
             const dbTokensToday = candidateKey.last_date_checked === today ? (Number(candidateKey.usage_tokens_today) || 0) : 0;
             const effectiveTokensToday = dbTokensToday + pending.token_delta;
 
-            if (tpdLimit < 99999 && effectiveTokensToday >= tpdLimit) {
+            if (tpdLimit < 999999 && effectiveTokensToday >= tpdLimit) {
                 console.warn(`[KeyService] ⛔ Key ${candidateKey.api.substring(0,8)}... hit TPD limit (${tpdLimit}). Current: ${effectiveTokensToday}`);
                 continue;
             }
@@ -1029,7 +1061,7 @@ async function getSmartKey(provider, model = 'default') {
             const dbTokensMonth = candidateKey.last_month_checked === thisMonth ? (Number(candidateKey.usage_tokens_month) || 0) : 0;
             const effectiveTokensMonth = dbTokensMonth + pending.token_delta;
 
-            if (tpmoLimit < 99999 && effectiveTokensMonth >= tpmoLimit) {
+            if (tpmoLimit < 999999 && effectiveTokensMonth >= tpmoLimit) {
                 console.warn(`[KeyService] ⛔ Key ${candidateKey.api.substring(0,8)}... hit TPMo limit (${tpmoLimit}). Current: ${effectiveTokensMonth}`);
                 continue;
             }
@@ -1203,8 +1235,9 @@ module.exports = {
             limit,
             keys: paginatedKeys.map(k => {
                 const summary = getKeyUsageSummary(k.api);
-                const pending = pendingUpdates.get(k.api) || { usage_delta: 0 };
+                const pending = pendingUpdates.get(k.api) || { usage_delta: 0, token_delta: 0 };
                 const dbUsage = k.last_date_checked === today ? (k.usage_today || 0) : 0;
+                const dbTokens = k.last_date_checked === today ? (k.usage_tokens_today || 0) : 0;
                 
                 return {
                     id: k.id,
@@ -1213,6 +1246,8 @@ module.exports = {
                     email: k.email,
                     status: pending.status || k.status,
                     usage_today: dbUsage + (pending.usage_delta || 0),
+                    usage_tokens_today: dbTokens + (pending.token_delta || 0),
+                    usage_count: (Number(k.usage_count) || 0) + (pending.usage_delta || 0),
                     last_used_at: k.last_used_at,
                     rph_limit: k.rph_limit,
                     rpm_limit: k.rpm_limit,

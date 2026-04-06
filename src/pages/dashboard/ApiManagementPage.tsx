@@ -18,6 +18,8 @@ interface ApiItem {
     api: string;
     status?: string;
     usage_today?: number;
+    usage_tokens_today?: number;
+    usage_count?: number;
     current_rpm?: number;
     current_rph?: number;
     rph_limit?: number;
@@ -511,13 +513,21 @@ export default function ApiManagementPage() {
                                                                 <TableCell className="font-bold text-sm capitalize">{api.provider}</TableCell>
                                                                 <TableCell className="font-mono text-[11px] text-white/40">{api.api ? `${api.api.substring(0, 12)}...` : '******'}</TableCell>
                                                                 <TableCell>
-                                                                    <div className="space-y-1 w-24">
-                                                                        <div className="flex justify-between text-[9px] font-bold text-white/40">
-                                                                            <span>{rpmUsage} RPM</span>
-                                                                            <span>{api.usage_today || 0} D</span>
+                                                                    <div className="space-y-2 w-32">
+                                                                        {/* Today */}
+                                                                        <div className="bg-white/5 p-1.5 rounded border border-white/5">
+                                                                            <div className="flex justify-between text-[9px] font-bold text-white/60 mb-1">
+                                                                                <span>{api.usage_today || 0} Req</span>
+                                                                                <span className="text-emerald-400">{(api.usage_tokens_today ? (api.usage_tokens_today / 1000).toFixed(1) : '0')}k Tokens</span>
+                                                                            </div>
+                                                                            <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
+                                                                                <div className={cn("h-full transition-all", rpmPercent > 80 ? "bg-red-500" : "bg-[#00ff88]")} style={{ width: `${rpmPercent}%` }} />
+                                                                            </div>
                                                                         </div>
-                                                                        <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
-                                                                            <div className={cn("h-full transition-all", rpmPercent > 80 ? "bg-red-500" : "bg-[#00ff88]")} style={{ width: `${rpmPercent}%` }} />
+                                                                        {/* Total */}
+                                                                        <div className="flex justify-between items-center px-1">
+                                                                            <span className="text-[8px] text-white/20 uppercase font-black tracking-widest">Lifetime</span>
+                                                                            <span className="text-[10px] font-mono text-white/40">{api.usage_count || 0}</span>
                                                                         </div>
                                                                     </div>
                                                                 </TableCell>

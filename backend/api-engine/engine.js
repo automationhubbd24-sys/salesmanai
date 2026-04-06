@@ -420,7 +420,9 @@ router.post('/v1/chat/completions', async (req, res) => {
             const maxAttempts = 5;
             let lastError = null;
             for (let attempt = 0; attempt < maxAttempts; attempt++) {
-                const keyData = await keyService.getSmartKey(provider, modelToUse);
+                // Smart Routing from Key Pool
+                const modality = 'text'; // API Engine is mostly text-based chat
+                const keyData = await keyService.getSmartKey(provider, modelToUse, modality);
                 if (!keyData) break;
 
                 // Proxy only for branded engines to save costs and avoid 429/400 errors for direct keys
@@ -505,7 +507,9 @@ router.post('/v1/chat/completions', async (req, res) => {
             return res.status(status).json({ error: lastError || 'stream_failed' });
         }
 
-        const keyData = await keyService.getSmartKey(provider, modelToUse);
+        // Smart Routing from Key Pool
+        const modality = 'text'; // API Engine is mostly text-based chat
+        const keyData = await keyService.getSmartKey(provider, modelToUse, modality);
         if (!keyData) {
             console.warn(`[API Engine] ⚠️ No keys available for ${provider}/${modelToUse}`);
             return res.status(429).json({ 
@@ -564,7 +568,8 @@ router.post('/v1/chat/completions', async (req, res) => {
                 if (token) {
                     // Use the smart error handler
                     const requestedModel = req.body.model || req.query.model;
-                    await keyService.handleApiKeyError(token, error.response?.data?.error?.message || error.message, requestedModel);
+                    const modality = 'text'; // API Engine is mostly text-based chat
+                    await keyService.handleApiKeyError(token, error.response?.data?.error?.message || error.message, requestedModel, modality);
                 }
             }
         }
