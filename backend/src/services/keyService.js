@@ -546,84 +546,72 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
     // If not set (null/0), check for Dynamic Model Overrides (from Frontend).
     const manual = requestedModel ? dynamicLimits.get(String(requestedModel)) : null;
 
-    // RPD (Requests Per Day) - Unified
-    let rpdLimit = (keyData.rpd_limit !== undefined && keyData.rpd_limit !== null) ? parseInt(keyData.rpd_limit) : null; 
-    
-    // If not set on key, check manual override from global settings
-    if ((rpdLimit === null || rpdLimit === 0) && manual && (manual.rpd !== undefined && manual.rpd !== null)) {
-        rpdLimit = parseInt(manual.rpd);
-    }
-    
-    // Fallback for Gemini (Strict)
+    // --- RESOLVE LIMITS (PRIORITY: Global Setting > Key-Specific > System Default) ---
+    const resolveInternalLimit = (keyVal, globalVal, hardDefault) => {
+        // 1. GLOBAL SETTING (User's Master Control)
+        const gv = (globalVal !== undefined && globalVal !== null) ? parseInt(globalVal) : null;
+        if (gv !== null) {
+            return gv > 0 ? gv : 999999999; // 0 or -1 means unlimited
+        }
+        
+        // 2. KEY-SPECIFIC LIMIT
+        const kv = (keyVal !== undefined && keyVal !== null) ? parseInt(keyVal) : null;
+        if (kv !== null) {
+            return kv > 0 ? kv : 999999999;
+        }
+        
+        // 3. SYSTEM DEFAULT
+        return (hardDefault && hardDefault > 0) ? hardDefault : 999999999;
+    };
+
     const isGemini = (keyData.provider === 'google' || keyData.provider === 'gemini');
-    if ((rpdLimit === null || rpdLimit === 0) && isGemini) {
-        rpdLimit = GEMINI_RPD_LIMIT;
-    } 
-    // If still not set, use global daily limit
-    if (rpdLimit === null) {
-        rpdLimit = DAILY_USAGE_LIMIT || 99999;
-    }
 
-    // RPM (Requests Per Minute) - Unified
-    let rpmLimit = (keyData.rpm_limit !== undefined && keyData.rpm_limit !== null) ? parseInt(keyData.rpm_limit) : null;
-    if ((rpmLimit === null || rpmLimit === 0) && manual && (manual.rpm !== undefined && manual.rpm !== null)) {
-        rpmLimit = parseInt(manual.rpm);
-    }
+    const rpdLimit = resolveInternalLimit(keyData.rpd_limit, manual?.rpd, isGemini ? GEMINI_RPD_LIMIT : DAILY_USAGE_LIMIT);
+    const rpmLimit = resolveInternalLimit(keyData.rpm_limit, manual?.rpm, isGemini ? GEMINI_RPM_LIMIT : null);
+    const rphLimit = resolveInternalLimit(keyData.rph_limit, manual?.rph, isGemini ? GEMINI_RPH_LIMIT : null);
+    const tpmLimit = resolveInternalLimit(keyData.tpm_limit, manual?.tpm, null);
+    const tpdLimit = resolveInternalLimit(keyData.tpd_limit, manual?.tpd, null);
+    const tpmoLimit = resolveInternalLimit(keyData.tpmo_limit, manual?.tpmo, null);
 
-    if ((rpmLimit === null || rpmLimit === 0) && isGemini) {
-        rpmLimit = GEMINI_RPM_LIMIT;
-    }
-
-    // RPH (Requests Per Hour) - Unified
-    let rphLimit = (keyData.rph_limit !== undefined && keyData.rph_limit !== null) ? parseInt(keyData.rph_limit) : null;
-    if ((rphLimit === null || rphLimit === 0) && manual && (manual.rph !== undefined && manual.rph !== null)) {
-        rphLimit = parseInt(manual.rph);
-    }
-
-    if ((rphLimit === null || rphLimit === 0) && isGemini) {
-        rphLimit = GEMINI_RPH_LIMIT;
-    }
-
-    // --- CHECK RPD ---
-    if (rpdLimit > 0 && keyData.last_date_checked === today && effectiveUsageToday >= rpdLimit) {
-        console.warn(`[KeyService] ⛔ Key ${keyData.api} hit RPD limit (${rpdLimit}). Usage: ${effectiveUsageToday}. Marking as Locked.`);
+    // --- 1. REQUEST-LEVEL CHECKS ---
+    // Check RPD
+    if (rpdLimit < 999999999 && keyData.last_date_checked === today && effectiveUsageToday >= rpdLimit) {
+        console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPD limit (${rpdLimit}). Usage: ${effectiveUsageToday}. Locking for 24h.`);
         markKeyAsDead(keyData.api, 24 * 60 * 60 * 1000, 'rpd_limit_reached_strict').catch(e => {});
         return false;
     }
 
-    // --- CHECK RPM ---
-    const timestamps = keyUsageTimestamps.get(keyData.api) || [];
-    const rpmThreshold = now - RPM_WINDOW_MS;
-    const validTimestamps = timestamps.filter(ts => ts > rpmThreshold);
-    if (validTimestamps.length !== timestamps.length) {
-        keyUsageTimestamps.set(keyData.api, validTimestamps);
-    }
-    if (rpmLimit > 0 && validTimestamps.length >= rpmLimit) {
-        console.warn(`[KeyService] ⛔ Key ${keyData.api} hit RPM limit (${rpmLimit}) in last 70s`);
-        return false;
-    }
-
-    const hourTimestamps = keyUsageHourTimestamps.get(keyData.api) || [];
-    const rphThreshold = now - RPH_WINDOW_MS;
-    const validHourTimestamps = hourTimestamps.filter(ts => ts > rphThreshold);
-
-    if (validHourTimestamps.length !== hourTimestamps.length) {
-        keyUsageHourTimestamps.set(keyData.api, validHourTimestamps);
+    // Check RPM
+    if (rpmLimit < 999999999) {
+        const timestamps = keyUsageTimestamps.get(keyData.api) || [];
+        const rpmThreshold = now - RPM_WINDOW_MS;
+        const validTimestamps = timestamps.filter(ts => ts > rpmThreshold);
+        if (validTimestamps.length !== timestamps.length) {
+            keyUsageTimestamps.set(keyData.api, validTimestamps);
+        }
+        if (validTimestamps.length >= rpmLimit) {
+            console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPM limit (${rpmLimit})`);
+            return false;
+        }
     }
 
-    if (rphLimit > 0 && validHourTimestamps.length >= rphLimit) {
-        console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPH limit (${rphLimit}) in last 1h 10m`);
-        return false;
+    // Check RPH
+    if (rphLimit < 999999999) {
+        const hourTimestamps = keyUsageHourTimestamps.get(keyData.api) || [];
+        const rphThreshold = now - RPH_WINDOW_MS;
+        const validHourTimestamps = hourTimestamps.filter(ts => ts > rphThreshold);
+        if (validHourTimestamps.length !== hourTimestamps.length) {
+            keyUsageHourTimestamps.set(keyData.api, validHourTimestamps);
+        }
+        if (validHourTimestamps.length >= rphLimit) {
+            console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPH limit (${rphLimit})`);
+            return false;
+        }
     }
 
-    // --- 2. TOKEN-LEVEL LIMITS (STRICT) ---
-    // TPM (Tokens Per Minute)
-    let tpmLimit = (keyData.tpm_limit !== undefined && keyData.tpm_limit !== null) ? parseInt(keyData.tpm_limit) : null;
-    if ((tpmLimit === null || tpmLimit === 0) && manual && (manual.tpm !== undefined && manual.tpm !== null)) {
-        tpmLimit = parseInt(manual.tpm);
-    }
-
-    if (tpmLimit > 0) {
+    // --- 2. TOKEN-LEVEL CHECKS ---
+    // Check TPM
+    if (tpmLimit < 999999999) {
         const tokenTs = keyTokenUsageTimestamps.get(keyData.api) || [];
         const activeTpmCount = tokenTs.filter(item => item.ts > now - TPM_WINDOW_MS).reduce((acc, item) => acc + item.tokens, 0);
         if (activeTpmCount >= tpmLimit) {
@@ -632,13 +620,8 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
         }
     }
 
-    // TPD (Tokens Per Day)
-    let tpdLimit = (keyData.tpd_limit !== undefined && keyData.tpd_limit !== null) ? parseInt(keyData.tpd_limit) : null;
-    if ((tpdLimit === null || tpdLimit === 0) && manual && (manual.tpd !== undefined && manual.tpd !== null)) {
-        tpdLimit = parseInt(manual.tpd);
-    }
-
-    if (tpdLimit > 0) {
+    // Check TPD
+    if (tpdLimit < 999999999) {
         const effectiveTokensToday = (keyData.usage_tokens_today || 0) + (keyData.last_date_checked === today ? pending.token_delta : 0);
         if (effectiveTokensToday >= tpdLimit) {
             console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit TPD limit (${tpdLimit}). Current: ${effectiveTokensToday}`);
@@ -646,13 +629,8 @@ function isKeyWithinLimits(keyData, requestedModel = null) {
         }
     }
 
-    // TPMo (Tokens Per Month)
-    let tpmoLimit = (keyData.tpmo_limit !== undefined && keyData.tpmo_limit !== null) ? parseInt(keyData.tpmo_limit) : null;
-    if ((tpmoLimit === null || tpmoLimit === 0) && manual && (manual.tpmo !== undefined && manual.tpmo !== null)) {
-        tpmoLimit = parseInt(manual.tpmo);
-    }
-
-    if (tpmoLimit > 0) {
+    // Check TPMo
+    if (tpmoLimit < 999999999) {
         const thisMonth = today.substring(0, 7);
         const effectiveTokensMonth = (keyData.usage_tokens_month || 0) + (keyData.last_month_checked === thisMonth ? pending.token_delta : 0);
         if (effectiveTokensMonth >= tpmoLimit) {
