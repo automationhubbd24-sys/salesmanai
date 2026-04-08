@@ -1327,13 +1327,13 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
             
             // --- AGENTIC JSON PARSER & AUTO-ORDER FALLBACK ---
             try {
-                // More robust cleaning: find the first { and last }
-                const firstBrace = aiTextFinal.indexOf('{');
-                const lastBrace = aiTextFinal.lastIndexOf('}');
+                const strippedThought = aiTextFinal.replace(/<\s*thought[\s\S]*?<\/\s*thought\s*>/gi, '');
+                const firstBrace = strippedThought.indexOf('{');
+                const lastBrace = strippedThought.lastIndexOf('}');
                 
                 let structuredFinal = null;
                 if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-                    const potentialJson = aiTextFinal.substring(firstBrace, lastBrace + 1);
+                    const potentialJson = strippedThought.substring(firstBrace, lastBrace + 1);
                     try {
                         structuredFinal = JSON.parse(potentialJson);
                     } catch (e) {
@@ -1348,7 +1348,8 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                             .replace(/[\u201C\u201D]/g, '"')
                             .replace(/:\s*'([^']*)'/g, ': "$1"')
                             .replace(/'([A-Za-z0-9_]+)'\s*:/g, '"$1":')
-                            .replace(/,\s*([}\]])/g, '$1');
+                            .replace(/,\s*([}\]])/g, '$1')
+                            .replace(/\"image_urls\"\s*:\s*,/g, '"image_urls": [],');
                         try {
                             structuredFinal = JSON.parse(cleanedJson);
                         } catch (e2) {
@@ -1831,6 +1832,24 @@ ${productContext}`;
         );
         
         // Extract text and usage
+        const strictVisionStop = pageConfig && (pageConfig.vision_strict_stop === true || pageConfig.vision_strict_mode === true);
+        let anyVisionFail = false;
+        for (const res of imageResults) {
+            if (typeof res === 'object' && typeof res.text === 'string' && res.text.startsWith('[Vision Analysis Failed]')) {
+                anyVisionFail = true;
+                break;
+            }
+        }
+        if (strictVisionStop && anyVisionFail) {
+            console.warn(`[AI] Vision strict mode: stopping workflow due to vision failure.`);
+            return finalize({
+                reply: null,
+                error: "Vision analysis failed. Workflow stopped by policy.",
+                token_usage: totalTokenUsage,
+                model: pageConfig.chat_model || 'salesmanchatbot-pro'
+            });
+        }
+
         const imageDescriptions = imageResults.map(res => {
             if (typeof res === 'object') {
                 totalTokenUsage += (res.usage || 0);
@@ -2797,6 +2816,112 @@ Rules:
         if (pageConfig && pageConfig.cheap_engine === false) {
              return { text: `[Vision Analysis Failed] Error: ${errMsg}`, usage: 0 };
         }
+
+            // --- ATTEMPT 2: Branded Retry with Rotated Key (Same Provider/Model) ---
+            try {
+                let retryProvider = providerHint || 'google';
+                let retryModel = pageConfig.vision_model || pageConfig.chat_model || 'gemini-1.5-flash-latest';
+                let retryResolved = null;
+                if (providerHint === 'salesmanchatbot' || modelHint === 'salesmanchatbot-pro' || modelHint === 'salesmanchatbot-flash' || modelHint === 'salesmanchatbot-lite') {
+                    retryResolved = await resolveSalesmanchatbotEngine(pageConfig, providerHint, modelHint, true, false);
+                    retryProvider = retryResolved.finalProvider;
+                    retryModel = retryResolved.finalModel;
+                }
+                const isBrandedRetry = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(retryResolved?.targetEngineName || modelHint);
+                if (isBrandedRetry) {
+                    let retryKeyData = await keyService.getSmartKey(retryProvider, retryModel, 'vision');
+                    if (!retryKeyData || !retryKeyData.key) retryKeyData = await keyService.getSmartKey(retryProvider, 'default', 'vision');
+                    if (!retryKeyData || !retryKeyData.key) throw new Error("No alternate key available for retry");
+                    const retryKey = retryKeyData.key;
+
+                    let retryProxyAgent = null;
+                    if (retryProvider === 'google' || retryProvider === 'gemini') {
+                        retryProxyAgent = getGeminiProxyAgent('google', true, retryResolved?.targetEngineName || modelHint);
+                    } else if (retryProvider === 'groq') {
+                        retryProxyAgent = getGroqProxyAgent(true, retryResolved?.targetEngineName || modelHint);
+                    } else {
+                        const proxy = getProxyUrl(retryResolved?.targetEngineName || modelHint);
+                        retryProxyAgent = createProxyAgent(proxy);
+                    }
+
+                    console.log(`[Vision] Attempt 2 (Retry): ${retryModel} (${retryProvider})`);
+
+                    let retryResult = null;
+                    let retryUsage = 0;
+                    if (retryProvider === 'google' || retryProvider === 'gemini') {
+                        const url = `https://generativelanguage.googleapis.com/v1beta/models/${retryModel}:generateContent?key=${retryKey}`;
+                        const payload = {
+                            contents: [{
+                                parts: [
+                                    { text: systemPrompt },
+                                    { inline_data: { mime_type: mimeType, data: base64Image } }
+                                ]
+                            }],
+                            generationConfig: { maxOutputTokens: maxTokens }
+                        };
+                        const res = await axios.post(url, payload, {
+                            headers: { 'Content-Type': 'application/json' },
+                            timeout: 45000,
+                            httpsAgent: retryProxyAgent,
+                            httpAgent: retryProxyAgent,
+                            proxy: false
+                        });
+                        retryResult = res.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+                        retryUsage = res.data?.usageMetadata?.totalTokenCount || 0;
+                    } else {
+                        let baseURL = 'https://openrouter.ai/api/v1';
+                        if (retryProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
+                        else if (retryProvider === 'mistral') baseURL = 'https://api.mistral.ai/v1';
+                        else if (retryProvider === 'custom') baseURL = (pageConfig.custom_base_url || pageConfig.base_url || '').replace(/\/+$/, '');
+                        if (retryProvider === 'openrouter' && retryModel && !retryModel.includes('/') && /^gemini/i.test(retryModel)) {
+                            retryModel = `google/${retryModel}`;
+                        }
+                        const payload = {
+                            model: retryModel,
+                            messages: [
+                                { 
+                                    role: "user", 
+                                    content: [
+                                        { type: "text", text: systemPrompt },
+                                        { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Image}` } }
+                                    ]
+                                }
+                            ],
+                            max_tokens: maxTokens
+                        };
+                        const res = await axios.post(`${baseURL}/chat/completions`, payload, {
+                            headers: { 
+                                'Authorization': `Bearer ${retryKey.trim()}`,
+                                'Content-Type': 'application/json',
+                                ...(retryProvider === 'openrouter' ? { 'HTTP-Referer': 'https://salesmanchatbot.online', 'X-Title': 'SalesmanChatbot' } : {})
+                            },
+                            httpsAgent: retryProxyAgent,
+                            httpAgent: retryProxyAgent,
+                            proxy: false,
+                            timeout: 45000
+                        });
+                        retryResult = res.data?.choices?.[0]?.message?.content;
+                        retryUsage = res.data?.usage?.total_tokens || 0;
+                    }
+
+                    if (retryResult) {
+                        if (retryKey && retryUsage > 0) {
+                            keyService.recordKeyUsage(retryKey, retryUsage).catch(() => {});
+                        }
+                        let returnModel = retryModel;
+                        const isManagedEngine = !(pageConfig && (pageConfig.cheap_engine === false || (pageConfig.api_key && pageConfig.api_key !== 'MANAGED_SECRET_KEY')));
+                        const isSalesmanProvider = (pageConfig.ai_provider === 'salesmanchatbot' || pageConfig.ai === 'salesmanchatbot');
+                        if (isManagedEngine || isSalesmanProvider) {
+                            returnModel = retryResolved?.targetEngineName || modelHint || 'salesmanchatbot-pro';
+                        }
+                        return { text: retryResult, usage: retryUsage, model: returnModel };
+                    }
+                }
+            } catch (retryErr) {
+                const msg2 = retryErr.response?.data?.error?.message || retryErr.message;
+                console.warn(`[Vision] Attempt 2 Failed: ${msg2}`);
+                errors.push(`Retry (Branded): ${msg2}`);
+            }
     }
 
     // ATTEMPT 3: OpenRouter Vision (Dynamically from Config)
