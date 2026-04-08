@@ -1560,11 +1560,8 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             }
 
             // Update result for final return (Branding)
-            if (result.error) {
-                result.error = uiError;
-                // Force display model in result object to maintain branding
-                result.model = displayModel;
-            }
+            if (result) result.model = displayModel;
+            if (result.error) result.error = uiError;
         } catch (err) {
             console.warn("[AI Logger] Error preparing logData:", err.message);
         }

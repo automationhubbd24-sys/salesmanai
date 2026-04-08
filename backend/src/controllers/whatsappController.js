@@ -2758,8 +2758,13 @@ STRICT RULES:
 
         // 7. Save Bot Reply to DB (Only if not empty)
         let modelLabel = aiResponse.model;
-        if (!hasOwnKey && (modelLabel === 'gemini-2.5-flash' || modelLabel === 'gemini-2.5-flash-lite' || modelLabel === 'gemini-2.0-flash-lite')) {
-            modelLabel = 'salesmanchatbot-pro';
+        if (!hasOwnKey) {
+            const branded = (pageConfig && (pageConfig.chat_model || pageConfig.display_model)) || null;
+            if (branded && ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(branded)) {
+                modelLabel = branded;
+            } else if (/^gemini/i.test(modelLabel) || /google\/gemini/i.test(modelLabel)) {
+                modelLabel = 'salesmanchatbot-pro';
+            }
         }
 
         if (finalReplyText && finalReplyText.trim().length > 0) {
