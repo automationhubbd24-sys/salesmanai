@@ -447,20 +447,23 @@ async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, default
         throw new Error(`Engine ${targetEngineName} is missing ${modality} configuration.`);
     }
 
-    // 3. Apply Global Config (Rate Limits and Overrides)
-    const gConfig = await getGlobalEngineConfig(finalProvider);
-    if (gConfig) {
-        // Apply Global Overrides if set
-        if (isAudio && gConfig.voice_provider_override && gConfig.voice_provider_override !== 'default') {
-            finalProvider = gConfig.voice_provider_override;
-            if (gConfig.voice_model) finalModel = gConfig.voice_model;
-        } else if (isVision && gConfig.vision_provider_override && gConfig.vision_provider_override !== 'default') {
-            finalProvider = gConfig.vision_provider_override;
-            if (gConfig.vision_model) finalModel = gConfig.vision_model;
-        } else if (!isAudio && !isVision && gConfig.text_provider_override && gConfig.text_provider_override !== 'default') {
-            finalProvider = gConfig.text_provider_override;
-            if (gConfig.text_model) finalModel = gConfig.text_model;
-        }
+            // 3. Apply Global Config (Rate Limits and Overrides)
+            const gConfig = await getGlobalEngineConfig(finalProvider);
+            if (gConfig) {
+                // --- ADMIN OVERRIDE FOR MODEL ---
+                // If Global Config has a specific model override for this provider, use it.
+                if (isAudio && gConfig.voice_model) finalModel = gConfig.voice_model;
+                else if (isVision && gConfig.vision_model) finalModel = gConfig.vision_model;
+                else if (!isAudio && !isVision && gConfig.text_model) finalModel = gConfig.text_model;
+
+                // Apply Global Provider Overrides if set
+                if (isAudio && gConfig.voice_provider_override && gConfig.voice_provider_override !== 'default') {
+                    finalProvider = gConfig.voice_provider_override;
+                } else if (isVision && gConfig.vision_provider_override && gConfig.vision_provider_override !== 'default') {
+                    finalProvider = gConfig.vision_provider_override;
+                } else if (!isAudio && !isVision && gConfig.text_provider_override && gConfig.text_provider_override !== 'default') {
+                    finalProvider = gConfig.text_provider_override;
+                }
 
         // Apply Manual Limits to KeyService (Modality-aware)
         if (keyService.setManualLimit) {
@@ -1620,20 +1623,21 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             }
         }
 
-        const logData = {
-            user_id: pageConfig.user_id,
-            page_id: pageConfig.page_id,
-            model: displayModel,
-            prompt_tokens: 0, // We usually have total_tokens in token_usage
-            completion_tokens: 0,
-            total_tokens: usageTokens,
-            cost: cost,
-            status: result.error ? 'error' : 'success',
-            error_message: result.error || null, // Keep original error in DB logs for Admin
-            sender_name: senderName || 'Customer',
-            user_message: userMessage || '',
-            ai_reply: result.reply || (uiError ? `[Error]: ${uiError}` : null)
-        };
+            const logData = {
+                user_id: pageConfig.user_id,
+                page_id: pageConfig.page_id,
+                model: displayModel,
+                prompt_tokens: 0, // We usually have total_tokens in token_usage
+                completion_tokens: 0,
+                total_tokens: usageTokens,
+                cost: cost,
+                status: result.error ? 'error' : 'success',
+                error_message: result.error || null, // Keep original error in DB logs for Admin
+                sender_name: senderName || 'Customer',
+                user_message: userMessage || '',
+                ai_reply: result.reply || (uiError ? `[Error]: ${uiError}` : null),
+                raw_model: result.model || null // Track actual model used
+            };
             
             // Call dbService to log this. (Fire and forget, but with internal catch)
             if (dbService.logAiUsage) {
