@@ -161,6 +161,8 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
       
       // Auto-select logic
       const storedPageId = localStorage.getItem("active_fb_page_id");
+      const storedDbId = localStorage.getItem("active_fb_db_id");
+
       if (storedPageId) {
           const found = mergedPages.find(p => p.page_id === storedPageId);
           if (found) {
@@ -174,6 +176,14 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
               if (viewMode === 'personal' || (viewMode === 'team' && effectiveTeamOwner)) {
                   updateActivePage(mergedPages[0]);
               }
+          }
+      } else if (storedDbId) {
+          // Fallback to DB ID if Page ID is missing
+          const found = mergedPages.find(p => String(p.db_id) === String(storedDbId));
+          if (found) {
+              updateActivePage(found);
+          } else if (mergedPages.length > 0) {
+              updateActivePage(mergedPages[0]);
           }
       } else if (mergedPages.length > 0) {
           if (viewMode === 'personal' || (viewMode === 'team' && effectiveTeamOwner)) {

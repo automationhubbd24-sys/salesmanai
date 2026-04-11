@@ -95,7 +95,7 @@ router.get('/pages', async (req, res) => {
         
         if (allPageIds.length > 0) {
             const { rows: dbData } = await pgClient.query(
-                'SELECT page_id, text_prompt, reply_message, swipe_reply, image_detection, image_send, template, order_tracking, image_prompt, template_prompt_x1, template_prompt_x2, verified, wait, block_emoji, unblock_emoji, check_conversion, memory_context_name, order_lock_minutes, audio_detection, semantic_cache_enabled, semantic_cache_threshold, embed_enabled, engine_override FROM fb_message_database WHERE page_id = ANY($1::text[])',
+                'SELECT id, page_id, text_prompt, reply_message, swipe_reply, image_detection, image_send, template, order_tracking, image_prompt, template_prompt_x1, template_prompt_x2, verified, wait, block_emoji, unblock_emoji, check_conversion, memory_context_name, order_lock_minutes, audio_detection, semantic_cache_enabled, semantic_cache_threshold, embed_enabled, engine_override FROM fb_message_database WHERE page_id = ANY($1::text[])',
                 [allPageIds]
             );
             dbConfigs = dbData;
