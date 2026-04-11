@@ -414,10 +414,16 @@ async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, default
     }
 
     // 1. Fetch Branded Config (User's choice in Frontend)
-    const brandedConfig = await getBrandedEngineConfig(targetEngineName);
+    let brandedConfig = await getBrandedEngineConfig(targetEngineName);
     
     if (!brandedConfig) {
-        console.error(`[AI] CRITICAL: No configuration found for engine: ${targetEngineName}. Blocking request.`);
+        console.warn(`[AI] WARNING: No configuration found for engine: ${targetEngineName}. Falling back to salesmanchatbot-pro.`);
+        targetEngineName = 'salesmanchatbot-pro';
+        brandedConfig = await getBrandedEngineConfig(targetEngineName);
+    }
+
+    if (!brandedConfig) {
+        console.error(`[AI] CRITICAL: Even fallback engine (salesmanchatbot-pro) not found. Blocking request.`);
         throw new Error(`Engine ${targetEngineName} is not configured in the dashboard.`);
     }
 

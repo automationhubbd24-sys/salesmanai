@@ -56,7 +56,7 @@ const formSchema = z.object({
 });
 
 const MANAGED_SECRET_KEY = import.meta.env.VITE_MANAGED_API_KEY || "";
-const MANAGED_MODEL = import.meta.env.VITE_MANAGED_MODEL || "gemini-2.5-flash-lite";
+const MANAGED_MODEL = import.meta.env.VITE_MANAGED_MODEL || "salesmanchatbot-pro";
 
 type PromptProduct = {
   id: string | number;

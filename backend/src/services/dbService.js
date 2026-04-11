@@ -12,7 +12,7 @@ async function getPageConfig(pageId) {
               fb.semantic_cache_autosave,
               fb.order_email_confirmation_enabled,
               fb.admin_notification_email,
-              pam.engine_override
+              fb.engine_override
        FROM page_access_token_message pam
        LEFT JOIN fb_message_database fb ON CAST(fb.page_id AS TEXT) = CAST(pam.page_id AS TEXT)
        WHERE CAST(pam.page_id AS TEXT) = CAST($1 AS TEXT) LIMIT 1`,

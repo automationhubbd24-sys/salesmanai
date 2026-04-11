@@ -322,7 +322,7 @@ exports.updateEngineOverride = async (req, res) => {
             return res.status(400).json({ success: false, error: 'Platform and ID are required' });
         }
 
-        const table = platform === 'messenger' ? 'page_access_token_message' : 'whatsapp_message_database';
+        const table = platform === 'messenger' ? 'fb_message_database' : 'whatsapp_message_database';
         const idCol = platform === 'messenger' ? 'page_id' : 'session_name';
 
         const sql = `UPDATE ${table} SET engine_override = $1 WHERE ${idCol} = $2`;
@@ -434,6 +434,7 @@ exports.getSemanticCacheConfigs = async (req, res) => {
             await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS semantic_cache_threshold numeric DEFAULT 0.96`);
             await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS embed_enabled boolean DEFAULT false`);
             await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS semantic_cache_autosave boolean DEFAULT true`);
+            await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS engine_override VARCHAR(50)`);
             await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`);
             
             // WhatsApp Repair
@@ -485,7 +486,7 @@ exports.getSemanticCacheConfigs = async (req, res) => {
                     COALESCE(fb.semantic_cache_threshold, 0.96) as semantic_cache_threshold, 
                     COALESCE(fb.embed_enabled, false) as embed_enabled, 
                     COALESCE(fb.semantic_cache_autosave, true) as semantic_cache_autosave,
-                    pam.engine_override as engine_override,
+                    fb.engine_override as engine_override,
                     COALESCE(pam.created_at, NOW()) as created_at
                 FROM page_access_token_message pam
                 LEFT JOIN fb_message_database fb ON CAST(fb.page_id AS TEXT) = CAST(pam.page_id AS TEXT)
@@ -497,7 +498,7 @@ exports.getSemanticCacheConfigs = async (req, res) => {
                     COALESCE(fb.semantic_cache_threshold, 0.96) as semantic_cache_threshold, 
                     COALESCE(fb.embed_enabled, false) as embed_enabled, 
                     COALESCE(fb.semantic_cache_autosave, true) as semantic_cache_autosave,
-                    NULL as engine_override,
+                    fb.engine_override as engine_override,
                     COALESCE(fb.created_at, NOW()) as created_at
                 FROM fb_message_database fb
                 WHERE NOT EXISTS (SELECT 1 FROM page_access_token_message pam2 WHERE CAST(pam2.page_id AS TEXT) = CAST(fb.page_id AS TEXT))
