@@ -721,9 +721,9 @@ exports.buyCredits = async (req, res) => {
         let planName = 'credit_purchase';
 
         const creditPacks = {
-            p150: { amount: 1000, price: 150, name: 'Basic Credits' },
-            p700: { amount: 5000, price: 700, name: 'Value Pack' },
-            p1350: { amount: 10000, price: 1350, name: 'Bulk Saver' }
+            p150: { amount: 1000, price: 300, name: 'Basic Pack' },
+            p700: { amount: 5000, price: 1200, name: 'Value Pack' },
+            p1350: { amount: 10000, price: 2000, name: 'Bulk Saver' }
         };
 
         if (plan_id && creditPacks[plan_id]) {
@@ -731,7 +731,7 @@ exports.buyCredits = async (req, res) => {
             finalCost = creditPacks[plan_id].price;
             planName = creditPacks[plan_id].name;
         } else if (amount && amount > 0) {
-            const pricePerCredit = 0.15; // standard rate
+            const pricePerCredit = 0.30; // updated standard rate (300 per 1k)
             finalCost = amount * pricePerCredit;
         } else {
             return res.status(400).json({ error: 'Invalid amount or plan' });
