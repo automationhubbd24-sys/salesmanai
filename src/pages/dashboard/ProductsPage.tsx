@@ -11,7 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Lock, Plus, Trash2, Package, Search, Image as ImageIcon, Loader2, ShoppingBag, Download, Edit, X } from "lucide-react";
+import { Lock, Plus, Trash2, Package, Search, Image as ImageIcon, Loader2, ShoppingBag, Download, Edit, X, Check, Save } from "lucide-react";
 import { BACKEND_URL } from "@/config";
 import { cn } from "@/lib/utils";
 
@@ -1103,635 +1103,515 @@ export default function ProductsPage() {
 
                     <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
                         <DialogTrigger asChild>
-                            <Button onClick={resetForm} className="w-full sm:w-auto bg-[#00ff88] text-black font-bold rounded-md hover:bg-[#00f07f] shadow-[0_10px_30px_rgba(0,255,136,0.25)]">
-                                <Plus className="w-4 h-4 mr-2" />
-                                Add Product
-                                <span className="ml-2 inline-flex">
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 fill-black" viewBox="0 0 24 24"><path d="M12 4l1.41 1.41L8.83 10H20v2H8.83l4.58 4.59L12 18l-8-8 8-8z"/></svg>
-                                </span>
+                            <Button onClick={resetForm} className="w-full sm:w-auto bg-[#00ff88] text-black font-black rounded-xl hover:bg-[#00f07f] shadow-[0_10px_30px_rgba(0,255,136,0.2)] transition-all hover:-translate-y-0.5 active:translate-y-0">
+                                <Plus className="w-5 h-5 mr-2" />
+                                Add New Product
                             </Button>
                         </DialogTrigger>
-                        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto bg-[#0f0f0f]/90 border border-white/10 backdrop-blur-md rounded-2xl">
-                        <DialogHeader>
-                            <DialogTitle>{editProductId ? 'Edit Product' : 'Add New Product'}</DialogTitle>
-                            <DialogDescription>
-                                {editProductId ? 'Update product details.' : 'Add product details.'}
-                            </DialogDescription>
-                        </DialogHeader>
-                        
-                        <div className="grid grid-cols-1 md:grid-cols-[140px_1fr] gap-6 py-4">
-                            {/* Left: Image Upload */}
-                            <div className="flex flex-col gap-2 items-center">
-                                <div 
-                                    className="w-[140px] h-[140px] border-2 border-dashed border-white/20 rounded-lg flex items-center justify-center cursor-pointer hover:border-[#00ff88] hover:bg-[#00ff88]/5 transition-colors bg-muted/10 relative overflow-hidden group"
-                                    onClick={openImagePicker}
-                                >
-                                    {imagePreview ? (
-                                        <>
-                                            <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
-                                            <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                                                <ImageIcon className="text-white w-6 h-6" />
-                                            </div>
-                                        </>
-                                    ) : (
-                                        <div className="text-center p-2 text-muted-foreground">
-                                            <ImageIcon className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                                            <span className="text-xs">Upload Image</span>
-                                        </div>
-                                    )}
-                                </div>
-                                <input 
-                                    type="file" 
-                                    accept="image/*" 
-                                    multiple 
-                                    name="images"
-                                    className="hidden" 
-                                    ref={fileInputRef}
-                                    onChange={handleImageChange}
-                                />
-                                <Button 
-                                    type="button" 
-                                    variant="outline" 
-                                    size="sm" 
-                                    className="w-full border-white/20 rounded-md"
-                                    onClick={openImagePicker}
-                                >
-                                    Add Images
-                                    <span className="ml-2 inline-flex">
-                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 fill-current" viewBox="0 0 24 24"><path d="M12 4l1.41 1.41L8.83 10H20v2H8.83l4.58 4.59L12 18l-8-8 8-8z"/></svg>
-                                    </span>
-                                </Button>
-                            </div>
-
-                            {/* Right: Fields */}
-                            <div className="space-y-4">
-                                <div className="grid gap-2">
-                                    <Label htmlFor="title">Title *</Label>
-                                    <Input 
-                                        id="title" 
-                                        placeholder="Enter product title" 
-                                        className="bg-[#101010]/80 border-white/10 focus:border-[#00ff88]/40"
-                                        value={productName}
-                                        onChange={(e) => setProductName(e.target.value)}
-                                    />
-                                </div>
-                                <div className="grid gap-2">
-                                    <Label htmlFor="desc">Description</Label>
-                                    <Textarea 
-                                        id="desc" 
-                                        placeholder="Describe your product..." 
-                                        className="h-32 resize-y bg-[#101010]/80 border-white/10 focus:border-[#00ff88]/40"
-                                        value={productDesc}
-                                        onChange={(e) => setProductDesc(e.target.value)}
-                                    />
-                                </div>
-                                <div className="flex items-center justify-between rounded-md border border-white/10 bg-black/40 px-3 py-2">
-                                    <div className="space-y-0.5">
-                                        <Label className="text-sm font-medium">Allow Description in Chat</Label>
-                                        <p className="text-[10px] text-muted-foreground">Enable to allow this product description to be sent.</p>
+                        <DialogContent className="max-w-5xl max-h-[95vh] overflow-hidden flex flex-col bg-[#0a0a0a] border border-white/10 backdrop-blur-2xl rounded-[3rem] p-0 shadow-[0_0_100px_rgba(0,0,0,0.8)]">
+                            <DialogHeader className="p-10 pb-6 bg-gradient-to-b from-white/[0.04] to-transparent relative overflow-hidden">
+                                {/* Abstract Background Decor */}
+                                <div className="absolute top-0 right-0 w-64 h-64 bg-[#00ff88]/5 blur-[100px] rounded-full -mr-32 -mt-32" />
+                                
+                                <div className="flex items-center gap-6 relative z-10">
+                                    <div className="h-16 w-16 rounded-[1.5rem] bg-gradient-to-br from-[#00ff88]/20 to-[#00ff88]/5 flex items-center justify-center border border-[#00ff88]/20 shadow-[0_0_30px_rgba(0,255,136,0.1)]">
+                                        <Package className="h-8 w-8 text-[#00ff88]" />
                                     </div>
-                                    <Switch checked={allowDescription} onCheckedChange={setAllowDescription} className="data-[state=checked]:bg-[#00ff88]" />
-                                </div>
-                                <div className="grid gap-2">
-                                    <Label htmlFor="keywords">AI Keywords (Label Text)</Label>
-                                    <div className="flex flex-wrap gap-1 rounded-md border border-white/10 bg-[#050505]/80 px-2 py-1 min-h-[42px]">
-                                        {productKeywords.map((k, idx) => (
-                                            <button
-                                                key={idx}
-                                                type="button"
-                                                className="inline-flex items-center gap-1 rounded-full bg-[#00ff88]/10 border border-[#00ff88]/40 px-2 py-0.5 text-[11px] text-[#00ff88] hover:bg-[#00ff88]/20"
-                                                onClick={() => removeKeywordAt(idx)}
-                                            >
-                                                <span className="max-w-[140px] truncate">{k}</span>
-                                                <span className="text-[9px] opacity-80">×</span>
-                                            </button>
-                                        ))}
-                                        <input
-                                            id="keywords"
-                                            value={keywordInput}
-                                            onChange={handleKeywordInputChange}
-                                            onKeyDown={handleKeywordKeyDown}
-                                            className="flex-1 min-w-[120px] bg-transparent outline-none border-none text-xs text-white placeholder:text-muted-foreground"
-                                            placeholder={
-                                                productKeywords.length === 0
-                                                    ? "Type keyword, press Enter or double space"
-                                                    : "Add more..."
-                                            }
-                                        />
+                                    <div>
+                                        <DialogTitle className="text-3xl font-black text-white tracking-tight uppercase">{editProductId ? 'Refine Product' : 'Onboard Product'}</DialogTitle>
+                                        <DialogDescription className="text-gray-400 font-bold text-sm mt-1 uppercase tracking-widest opacity-60">
+                                            {editProductId ? 'Update your catalog parameters' : 'Register a new asset to your ecosystem'}
+                                        </DialogDescription>
                                     </div>
-                                    <span className="text-[10px] text-muted-foreground">
-                                        Product er gaye ja brand/line lekha thake segula choto choto keyword hisebe add koro.
-                                    </span>
                                 </div>
-
-                                <div className="space-y-4 rounded-xl border border-white/5 bg-white/[0.02] p-4">
-                                    <div className="flex items-center justify-between">
-                                        <div className="space-y-0.5">
-                                            <Label className="text-sm font-medium">Is this a Combo?</Label>
-                                            <p className="text-[10px] text-muted-foreground">Enable this to add multiple items to this product package.</p>
-                                        </div>
-                                        <Switch 
-                                            checked={isCombo} 
-                                            onCheckedChange={setIsCombo}
-                                            className="data-[state=checked]:bg-[#00ff88]"
-                                        />
-                                    </div>
-
-                                    {isCombo && (
-                                        <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
-                                            <div className="grid gap-2">
-                                                <Label htmlFor="combo-items" className="text-xs">Combo Sub-Items</Label>
-                                                <div className="flex gap-2">
-                                                    <Input 
-                                                        id="combo-items"
-                                                        placeholder="e.g. Rice Cleanser" 
-                                                        value={comboItemInput}
-                                                        onChange={(e) => setComboItemInput(e.target.value)}
-                                                        onKeyDown={(e) => {
-                                                            if (e.key === 'Enter') {
-                                                                e.preventDefault();
-                                                                if (comboItemInput.trim()) {
-                                                                    setComboItems([...comboItems, comboItemInput.trim()]);
-                                                                    setComboItemInput("");
-                                                                }
-                                                            }
-                                                        }}
-                                                        className="bg-[#101010]/80 border-white/10 focus:border-[#00ff88]/40 h-9 text-sm"
-                                                    />
-                                                    <Button 
-                                                        type="button"
-                                                        size="sm"
-                                                        onClick={() => {
-                                                            if (comboItemInput.trim()) {
-                                                                setComboItems([...comboItems, comboItemInput.trim()]);
-                                                                setComboItemInput("");
-                                                            }
-                                                        }}
-                                                        className="bg-[#00ff88] text-black h-9"
-                                                    >
-                                                        Add
-                                                    </Button>
-                                                </div>
+                            </DialogHeader>
+                            
+                            <div className="flex-1 overflow-y-auto p-10 pt-2 custom-scrollbar">
+                                <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-12">
+                                    {/* Left Sidebar: Media & Vital Status */}
+                                    <div className="space-y-10">
+                                        <div className="space-y-5">
+                                            <div className="flex items-center justify-between">
+                                                <Label className="text-[10px] font-black uppercase tracking-[0.3em] text-muted-foreground/40">Visual Assets</Label>
+                                                <span className="text-[9px] font-black text-[#00ff88] bg-[#00ff88]/5 px-2 py-0.5 rounded-full border border-[#00ff88]/10 uppercase">High Fidelity</span>
                                             </div>
                                             
-                                            {comboItems.length > 0 && (
-                                                <div className="flex flex-wrap gap-2 pt-1">
-                                                    {comboItems.map((item, idx) => (
-                                                        <div key={idx} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white group">
-                                                            <span>{item}</span>
+                                            <div 
+                                                className="aspect-square w-full border-2 border-dashed border-white/10 rounded-[2.5rem] flex flex-col items-center justify-center cursor-pointer hover:border-[#00ff88]/40 hover:bg-[#00ff88]/5 transition-all duration-500 group relative overflow-hidden bg-black/40 shadow-inner"
+                                                onClick={openImagePicker}
+                                            >
+                                                {imagePreview ? (
+                                                    <>
+                                                        <img src={imagePreview} alt="Preview" className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
+                                                        <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-500 backdrop-blur-sm">
+                                                            <div className="h-14 w-14 rounded-full bg-[#00ff88]/20 flex items-center justify-center border border-[#00ff88]/40 mb-3 scale-75 group-hover:scale-100 transition-transform duration-500">
+                                                                <ImageIcon className="text-[#00ff88] w-6 h-6" />
+                                                            </div>
+                                                            <span className="text-[10px] font-black text-white uppercase tracking-[0.2em]">Replace Media</span>
+                                                        </div>
+                                                    </>
+                                                ) : (
+                                                    <div className="text-center p-8 space-y-4">
+                                                        <div className="h-20 w-20 rounded-[1.5rem] bg-white/[0.03] flex items-center justify-center mx-auto group-hover:scale-110 group-hover:bg-[#00ff88]/10 transition-all duration-500 border border-white/5 group-hover:border-[#00ff88]/20">
+                                                            <ImageIcon className="w-10 h-10 text-gray-600 group-hover:text-[#00ff88] transition-colors" />
+                                                        </div>
+                                                        <div className="space-y-1.5">
+                                                            <p className="text-sm font-black text-gray-300 uppercase tracking-widest">Upload</p>
+                                                            <p className="text-[10px] text-gray-500 font-bold uppercase tracking-tighter opacity-60">Studio Quality Only</p>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                            
+                                            <input 
+                                                type="file" 
+                                                accept="image/*" 
+                                                multiple 
+                                                name="images"
+                                                className="hidden" 
+                                                ref={fileInputRef}
+                                                onChange={handleImageChange}
+                                            />
+                                            
+                                            {imagePreviews.length > 1 && (
+                                                <div className="grid grid-cols-4 gap-3">
+                                                    {imagePreviews.slice(1).map((src, idx) => (
+                                                        <div key={idx} className="relative aspect-square rounded-2xl overflow-hidden border border-white/5 group shadow-lg">
+                                                            <img src={src} alt="" className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" />
                                                             <button 
-                                                                onClick={() => setComboItems(comboItems.filter((_, i) => i !== idx))}
-                                                                className="text-muted-foreground hover:text-red-400 transition-colors"
+                                                                onClick={(e) => { e.stopPropagation(); removeImageAt(idx + 1); }}
+                                                                className="absolute inset-0 bg-red-500/80 opacity-0 group-hover:opacity-100 transition-all duration-300 flex items-center justify-center backdrop-blur-[2px]"
                                                             >
-                                                                <X className="w-3 h-3" />
+                                                                <X className="w-5 h-5 text-white" />
                                                             </button>
                                                         </div>
                                                     ))}
+                                                    {imagePreviews.length < 11 && (
+                                                        <button 
+                                                            onClick={openImagePicker}
+                                                            className="aspect-square rounded-2xl border-2 border-dashed border-white/5 flex items-center justify-center hover:bg-white/5 hover:border-white/20 transition-all"
+                                                        >
+                                                            <Plus className="w-5 h-5 text-gray-600" />
+                                                        </button>
+                                                    )}
                                                 </div>
                                             )}
                                         </div>
-                                    )}
-                                </div>
 
-                                <div className="flex gap-4">
-                                    <div className="grid gap-2 flex-1">
-                                        <Label htmlFor="price">Price *</Label>
-                                        <Input 
-                                            id="price" 
-                                            type="number" 
-                                            className="bg-[#101010]/80 border-white/10 focus:border-[#00ff88]/40"
-                                            value={productPrice}
-                                            onChange={(e) => setProductPrice(e.target.value)}
-                                        />
-                                    </div>
-                                    <div className="grid gap-2 w-[100px]">
-                                        <Label>Currency *</Label>
-                                        {isCustomCurrency ? (
-                                            <div className="flex gap-1">
-                                                <Input 
-                                                    value={productCurrency} 
-                                                    onChange={(e) => setProductCurrency(e.target.value.toUpperCase())}
-                                                    className="uppercase px-2 bg-[#101010]/80 border-white/10 focus:border-[#00ff88]/40"
-                                                    maxLength={3}
-                                                    placeholder="XXX"
-                                                />
-                                                <Button variant="ghost" size="icon" className="h-10 w-6 p-0 text-muted-foreground hover:text-destructive" onClick={() => setIsCustomCurrency(false)}>
-                                                    <X className="w-4 h-4" />
-                                                </Button>
-                                            </div>
-                                        ) : (
-                                            <Select value={productCurrency} onValueChange={(val) => {
-                                                if (val === "CUSTOM") {
-                                                    setProductCurrency("");
-                                                    setIsCustomCurrency(true);
-                                                } else {
-                                                    setProductCurrency(val);
-                                                }
-                                            }}>
-                                                <SelectTrigger className="bg-[#101010]/80 border-white/10 focus:border-[#00ff88]/40">
-                                                    <SelectValue />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="USD">USD</SelectItem>
-                                                    <SelectItem value="BDT">BDT</SelectItem>
-                                                    <SelectItem value="EUR">EUR</SelectItem>
-                                                    <SelectItem value="GBP">GBP</SelectItem>
-                                                    <SelectItem value="INR">INR</SelectItem>
-                                                    <SelectItem value="PKR">PKR</SelectItem>
-                                                    <SelectItem value="CAD">CAD</SelectItem>
-                                                    <SelectItem value="AUD">AUD</SelectItem>
-                                                    <SelectItem value="AED">AED</SelectItem>
-                                                    <SelectItem value="SAR">SAR</SelectItem>
-                                                    <SelectItem value="MYR">MYR</SelectItem>
-                                                    <SelectItem value="SGD">SGD</SelectItem>
-                                                    <SelectItem value="CUSTOM" className="text-muted-foreground italic">Custom...</SelectItem>
-                                                </SelectContent>
-                                            </Select>
-                                        )}
-                                    </div>
-                                    <div className="grid gap-2 flex-1">
-                                        <Label htmlFor="stock">Stock *</Label>
-                                        <Input 
-                                            id="stock" 
-                                            type="number" 
-                                            className="bg-[#101010]/80 border-white/10 focus:border-[#00ff88]/40"
-                                            value={productStock}
-                                            onChange={(e) => setProductStock(e.target.value)}
-                                        />
-                                    </div>
-                                </div>
-                                
-                                {imagePreviews.length > 0 && (
-                                    <div className="space-y-2">
-                                        <Label>Selected Images</Label>
-                                        <div className="flex gap-2 overflow-x-auto pb-1">
-                                            {imagePreviews.map((src, idx) => (
-                                                <div key={idx} className="relative group min-w-[72px]">
-                                                    <img src={src} alt={`Preview ${idx + 1}`} className="w-[72px] h-[72px] object-cover rounded border border-white/10" />
-                                                    <button 
-                                                        type="button" 
-                                                        className="absolute top-1 right-1 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100"
-                                                        onClick={() => removeImageAt(idx)}
-                                                    >
-                                                        Remove
-                                                    </button>
+                                        <div className="space-y-6 pt-6 border-t border-white/5">
+                                            <Label className="text-[10px] font-black uppercase tracking-[0.3em] text-muted-foreground/40">Operational Status</Label>
+                                            <div className="space-y-3">
+                                                <div className="flex items-center justify-between p-4 rounded-2xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] transition-all group">
+                                                    <div className="space-y-1">
+                                                        <Label className="text-[11px] font-black text-gray-300 uppercase tracking-widest">Discovery</Label>
+                                                        <p className="text-[9px] text-gray-500 font-bold uppercase tracking-tighter">Live in system</p>
+                                                    </div>
+                                                    <Switch checked={true} disabled className="data-[state=checked]:bg-[#00ff88] scale-90 opacity-40" />
                                                 </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-                                
-                                <div className="space-y-2 pt-2">
-                                    <div className="flex items-center justify-between">
-                                        <div>
-                                            <Label>Visible on Pages *</Label>
-                                            <p className="text-[10px] text-muted-foreground mt-1">
-                                                Select at least one WhatsApp session or Facebook page.
-                                            </p>
-                                        </div>
-                                        <div className="flex gap-2">
-                                        <Button 
-                                            type="button" 
-                                            variant="outline" 
-                                            size="sm"
-                                            className="h-7 text-xs border-white/10 hover:bg-white/5"
-                                            onClick={handleSelectAllPages}
-                                        >
-                                            Select All
-                                        </Button>
-                                        <Button 
-                                            type="button" 
-                                            variant="outline" 
-                                            size="sm"
-                                            className="h-7 text-xs border-white/10 hover:bg-white/5 text-red-400 hover:text-red-300"
-                                            onClick={handleDeselectAllPages}
-                                        >
-                                            Clear
-                                        </Button>
+                                                <div className="flex items-center justify-between p-4 rounded-2xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] transition-all group">
+                                                    <div className="space-y-1">
+                                                        <Label className="text-[11px] font-black text-gray-300 uppercase tracking-widest">Chat Context</Label>
+                                                        <p className="text-[9px] text-gray-500 font-bold uppercase tracking-tighter">AI Knowledge Base</p>
+                                                    </div>
+                                                    <Switch checked={allowDescription} onCheckedChange={setAllowDescription} className="data-[state=checked]:bg-[#00ff88] scale-90" />
+                                                </div>
+                                                <div className="flex items-center justify-between p-4 rounded-2xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] transition-all group">
+                                                    <div className="space-y-1">
+                                                        <Label className="text-[11px] font-black text-gray-300 uppercase tracking-widest">Multi-Bundle</Label>
+                                                        <p className="text-[9px] text-gray-500 font-bold uppercase tracking-tighter">Combo Architecture</p>
+                                                    </div>
+                                                    <Switch checked={isCombo} onCheckedChange={setIsCombo} className="data-[state=checked]:bg-purple-500 scale-90" />
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
 
-                                    {availablePages.length > 5 && (
-                                        <div className="relative">
-                                            <Search className="absolute left-2 top-2 h-3 w-3 text-muted-foreground" />
-                                            <Input 
-                                                placeholder="Search pages..." 
-                                                value={pageSearch}
-                                                onChange={(e) => setPageSearch(e.target.value)}
-                                                className="h-8 pl-7 text-xs mb-2"
-                                            />
-                                        </div>
-                                    )}
+                                    {/* Right Side: Primary Configuration */}
+                                    <div className="space-y-10">
+                                        {/* Identity Section */}
+                                        <div className="grid gap-8">
+                                            <div className="space-y-6">
+                                                <div className="flex items-center gap-4">
+                                                    <div className="h-1px flex-1 bg-gradient-to-r from-white/10 to-transparent" />
+                                                    <Label className="text-[10px] font-black uppercase tracking-[0.3em] text-muted-foreground/40 shrink-0">Product Intelligence</Label>
+                                                </div>
+                                                
+                                                <div className="grid gap-6">
+                                                    <div className="space-y-3">
+                                                        <div className="flex justify-between items-end">
+                                                            <Label htmlFor="title" className="text-[11px] font-black text-gray-400 uppercase tracking-[0.1em]">Commercial Title *</Label>
+                                                            <span className="text-[9px] text-gray-600 font-bold">REQUIRED</span>
+                                                        </div>
+                                                        <Input 
+                                                            id="title" 
+                                                            placeholder="ENTER PREMIUM PRODUCT NAME..." 
+                                                            className="h-14 bg-white/[0.02] border-white/10 focus:border-[#00ff88]/40 rounded-2xl font-black text-lg uppercase tracking-tight px-6 placeholder:text-white/10"
+                                                            value={productName}
+                                                            onChange={(e) => setProductName(e.target.value)}
+                                                        />
+                                                    </div>
+                                                    <div className="space-y-3">
+                                                        <Label htmlFor="desc" className="text-[11px] font-black text-gray-400 uppercase tracking-[0.1em]">Value Proposition</Label>
+                                                        <Textarea 
+                                                            id="desc" 
+                                                            placeholder="ARTICULATE THE UNIQUE SELLING POINTS..." 
+                                                            className="min-h-[160px] bg-white/[0.02] border-white/10 focus:border-[#00ff88]/40 rounded-2xl py-6 px-6 font-bold text-sm leading-relaxed resize-none placeholder:text-white/10"
+                                                            value={productDesc}
+                                                            onChange={(e) => setProductDesc(e.target.value)}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            </div>
 
-                                {(() => {
-                                  const waPages = filteredPages.filter(p => p.type === 'whatsapp');
-                                  const fbPages = filteredPages.filter(p => p.type === 'messenger');
-
-                                  return (
-                                    <div className="space-y-3">
-                                      <div>
-                                        <Label className="text-xs font-semibold text-muted-foreground">WhatsApp Sessions Access</Label>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border p-3 rounded-md max-h-32 overflow-y-auto bg-muted/5 mt-1">
-                                          {waPages.length === 0 ? (
-                                            <p className="text-xs text-muted-foreground col-span-full text-center">No WhatsApp sessions.</p>
-                                          ) : waPages.map(page => {
-                                            const pageKeyRaw = String(page.page_id);
-                                            const pageKey = pageKeyRaw.trim();
-                                            const isSelected = selectedWA.has(pageKey.toLowerCase());
-                                            return (
-                                              <div 
-                                                key={`wa-${page.page_id}`} 
-                                                className={cn(
-                                                  "flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 transition-colors border border-transparent",
-                                                  isSelected && "bg-[#00ff88]/10 border-[#00ff88]/30 shadow-[0_0_10px_rgba(0,255,136,0.1)]"
-                                                )}
-                                              >
-                                                <Checkbox 
-                                                  id={`wa-page-${page.page_id}`}
-                                                  checked={isSelected}
-                                                  onCheckedChange={(checked) => {
-                                                    const key = pageKey.toLowerCase();
-                                                    setSelectedWA(prev => {
-                                                      const next = new Set(Array.from(prev));
-                                                      if (checked) next.add(key); else next.delete(key);
-                                                      return next;
-                                                    });
-                                                    setSelectedFB(prev => {
-                                                      const next = new Set(Array.from(prev));
-                                                      next.delete(key);
-                                                      return next;
-                                                    });
-                                                    if (editProductId) {
-                                                        persistAssignments();
-                                                    }
-                                                  }}
-                                                  className={cn(
-                                                    "data-[state=checked]:bg-[#00ff88] data-[state=checked]:border-[#00ff88]",
-                                                    isSelected && "ring-1 ring-[#00ff88]/40"
-                                                  )}
-                                                />
-                                                <Label 
-                                                  htmlFor={`wa-page-${page.page_id}`}
-                                                  className={cn(
-                                                    "text-sm font-normal cursor-pointer select-none flex-1 truncate",
-                                                    isSelected && "text-[#00ff88] font-medium"
-                                                  )}
-                                                >
-                                                  {page.name}
-                                                </Label>
-                                              </div>
-                                            );
-                                          })}
-                                        </div>
-                                      </div>
-                                      
-                                      <div>
-                                        <Label className="text-xs font-semibold text-muted-foreground">Facebook Pages Access</Label>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border p-3 rounded-md max-h-32 overflow-y-auto bg-muted/5 mt-1">
-                                          {fbPages.length === 0 ? (
-                                            <p className="text-xs text-muted-foreground col-span-full text-center">No Facebook pages.</p>
-                                          ) : fbPages.map(page => {
-                                            const pageKeyRaw = String(page.page_id);
-                                            const pageKey = pageKeyRaw.trim();
-                                            const isSelected = selectedFB.has(pageKey.toLowerCase());
-                                            return (
-                                              <div 
-                                                key={`fb-${page.page_id}`} 
-                                                className={cn(
-                                                  "flex items-center space-x-2 p-1.5 rounded hover:bg-accent/50 transition-colors border border-transparent",
-                                                  isSelected && "bg-[#00ff88]/10 border-[#00ff88]/30 shadow-[0_0_10px_rgba(0,255,136,0.1)]"
-                                                )}
-                                              >
-                                                <Checkbox 
-                                                  id={`fb-page-${page.page_id}`}
-                                                  checked={isSelected}
-                                                  onCheckedChange={(checked) => {
-                                                    const key = pageKey.toLowerCase();
-                                                    setSelectedFB(prev => {
-                                                      const next = new Set(Array.from(prev));
-                                                      if (checked) next.add(key); else next.delete(key);
-                                                      return next;
-                                                    });
-                                                    setSelectedWA(prev => {
-                                                      const next = new Set(Array.from(prev));
-                                                      next.delete(key);
-                                                      return next;
-                                                    });
-                                                    if (editProductId) {
-                                                        persistAssignments();
-                                                    }
-                                                  }}
-                                                  className={cn(
-                                                    "data-[state=checked]:bg-[#00ff88] data-[state=checked]:border-[#00ff88]",
-                                                    isSelected && "ring-1 ring-[#00ff88]/40"
-                                                  )}
-                                                />
-                                                <Label 
-                                                  htmlFor={`fb-page-${page.page_id}`}
-                                                  className={cn(
-                                                    "text-sm font-normal cursor-pointer select-none flex-1 truncate",
-                                                    isSelected && "text-[#00ff88] font-medium"
-                                                  )}
-                                                >
-                                                  {page.name}
-                                                </Label>
-                                              </div>
-                                            );
-                                          })}
-                                          </div>
-                                        </div>
-                                    </div>
-                                  );
-                                })()}
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Advanced / Variants Toggle */}
-                        <div className="border-t pt-4">
-                            <div className="flex items-center justify-between mb-4">
-                                <Label className="text-muted-foreground">Advanced: Variable Product</Label>
-                                <Switch checked={showVariants} onCheckedChange={setShowVariants} />
-                            </div>
-                            
-                            {showVariants && (
-                                <div className="space-y-3 animate-in fade-in slide-in-from-top-2">
-                                    <div className="flex items-center justify-between">
-                                        <Label>Variants (Price Options)</Label>
-                                        <Button variant="outline" size="sm" onClick={() => setVariants([...variants, { name: `Option ${variants.length + 1}`, price: productPrice, currency: productCurrency, available: true }])}>
-                                            <Plus className="w-3 h-3 mr-1" />
-                                            Add Option
-                                        </Button>
-                                    </div>
-                                    <div className="border rounded-md overflow-hidden">
-                                        <Table>
-                                            <TableHeader>
-                                                <TableRow>
-                                                    <TableHead className="w-[40px] text-center">#</TableHead>
-                                                    <TableHead>Price</TableHead>
-                                                    <TableHead className="w-[80px]">Stock</TableHead>
-                                                    <TableHead className="w-[50px]"></TableHead>
-                                                </TableRow>
-                                            </TableHeader>
-                                            <TableBody>
-                                                {variants.map((variant, index) => (
-                                                    <TableRow key={index}>
-                                                        <TableCell className="text-center text-muted-foreground text-sm">
-                                                            {index + 1}
-                                                        </TableCell>
-                                                        <TableCell>
+                                            {/* Financials Row */}
+                                            <div className="space-y-6">
+                                                <div className="flex items-center gap-4">
+                                                    <div className="h-1px flex-1 bg-gradient-to-r from-white/10 to-transparent" />
+                                                    <Label className="text-[10px] font-black uppercase tracking-[0.3em] text-muted-foreground/40 shrink-0">Inventory & Logistics</Label>
+                                                </div>
+                                                
+                                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                                                    <div className="space-y-3">
+                                                        <Label className="text-[11px] font-black text-gray-400 uppercase tracking-[0.1em]">Unit Price *</Label>
+                                                        <div className="relative group">
                                                             <Input 
                                                                 type="number" 
-                                                                value={variant.price} 
-                                                                className="h-8"
-                                                                onChange={(e) => {
-                                                                    const newV = [...variants];
-                                                                    newV[index].price = e.target.value;
-                                                                    setVariants(newV);
-                                                                }}
+                                                                className="h-14 pl-6 bg-white/[0.02] border-white/10 focus:border-[#00ff88]/40 rounded-2xl font-black text-2xl text-[#00ff88] transition-all"
+                                                                value={productPrice}
+                                                                onChange={(e) => setProductPrice(e.target.value)}
                                                             />
-                                                        </TableCell>
-                                                        <TableCell>
-                                                            <Switch 
-                                                                checked={variant.available} 
-                                                                onCheckedChange={(c) => {
-                                                                    const newV = [...variants];
-                                                                    newV[index].available = c;
-                                                                    setVariants(newV);
-                                                                }}
-                                                            />
-                                                        </TableCell>
-                                                        <TableCell>
-                                                            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => {
-                                                                const newV = [...variants];
-                                                                newV.splice(index, 1);
-                                                                setVariants(newV);
-                                                            }}>
-                                                                <Trash2 className="w-4 h-4" />
-                                                            </Button>
-                                                        </TableCell>
-                                                    </TableRow>
-                                                ))}
-                                            </TableBody>
-                                        </Table>
+                                                            <div className="absolute right-6 top-1/2 -translate-y-1/2 text-[10px] font-black text-white/20 group-focus-within:text-[#00ff88]/40 transition-colors uppercase">Amount</div>
+                                                        </div>
+                                                    </div>
+                                                    <div className="space-y-3">
+                                                        <Label className="text-[11px] font-black text-gray-400 uppercase tracking-[0.1em]">Currency ISO *</Label>
+                                                        <Select value={productCurrency} onValueChange={setProductCurrency}>
+                                                            <SelectTrigger className="h-14 bg-white/[0.02] border-white/10 focus:border-[#00ff88]/40 rounded-2xl font-black text-lg">
+                                                                <SelectValue />
+                                                            </SelectTrigger>
+                                                            <SelectContent className="bg-[#0f0f0f] border-white/10 rounded-2xl p-2 backdrop-blur-xl">
+                                                                {["USD", "BDT", "EUR", "GBP", "INR", "PKR", "AED", "SAR"].map(c => (
+                                                                    <SelectItem key={c} value={c} className="font-black py-3 rounded-xl focus:bg-[#00ff88]/10 focus:text-[#00ff88] transition-all">{c}</SelectItem>
+                                                                ))}
+                                                            </SelectContent>
+                                                        </Select>
+                                                    </div>
+                                                    <div className="space-y-3">
+                                                        <Label className="text-[11px] font-black text-gray-400 uppercase tracking-[0.1em]">Stock Count *</Label>
+                                                        <Input 
+                                                            type="number" 
+                                                            className="h-14 bg-white/[0.02] border-white/10 focus:border-[#00ff88]/40 rounded-2xl font-black text-2xl px-6"
+                                                            value={productStock}
+                                                            onChange={(e) => setProductStock(e.target.value)}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* AI Tags Section */}
+                                            <div className="space-y-6">
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex items-center gap-4 flex-1">
+                                                        <div className="h-1px flex-1 bg-gradient-to-r from-white/10 to-transparent" />
+                                                        <Label className="text-[10px] font-black uppercase tracking-[0.3em] text-muted-foreground/40 shrink-0">Neural Tagging</Label>
+                                                    </div>
+                                                    <div className="ml-4 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20">
+                                                        <span className="text-[9px] font-black text-blue-400 uppercase tracking-widest">Enhanced AI Detection</span>
+                                                    </div>
+                                                </div>
+                                                
+                                                <div className="space-y-4">
+                                                    <div className="flex flex-wrap gap-3 min-h-[70px] p-4 rounded-3xl border border-white/10 bg-black/40 shadow-inner group-focus-within:border-blue-500/30 transition-all">
+                                                        {productKeywords.map((k, idx) => (
+                                                            <div key={idx} className="flex items-center gap-2 px-4 py-2 rounded-2xl bg-blue-500/10 border border-blue-500/20 text-[11px] font-black text-blue-400 transition-all hover:bg-blue-500/20 hover:scale-105">
+                                                                <span>{k}</span>
+                                                                <button onClick={() => removeKeywordAt(idx)} className="text-blue-500/40 hover:text-blue-500 transition-colors">
+                                                                    <X className="w-4 h-4" />
+                                                                </button>
+                                                            </div>
+                                                        ))}
+                                                        <input
+                                                            value={keywordInput}
+                                                            onChange={handleKeywordInputChange}
+                                                            onKeyDown={handleKeywordKeyDown}
+                                                            className="flex-1 min-w-[200px] bg-transparent outline-none border-none text-sm text-white placeholder:text-gray-600 font-bold uppercase tracking-widest"
+                                                            placeholder="Input neural tags (e.g. LUXURY, SILK)..."
+                                                        />
+                                                    </div>
+                                                    <p className="text-[10px] text-gray-600 font-bold uppercase tracking-widest px-2 italic">Add semantic keywords to optimize AI identification in visual and textual contexts.</p>
+                                                </div>
+                                            </div>
+
+                                            {/* Combo Architecture - Conditional */}
+                                            {isCombo && (
+                                                <div className="space-y-6 p-8 rounded-[2.5rem] bg-purple-500/5 border border-purple-500/10 animate-in fade-in zoom-in duration-500">
+                                                    <div className="flex items-center gap-4">
+                                                        <div className="h-10 w-10 rounded-2xl bg-purple-500/20 flex items-center justify-center border border-purple-500/20">
+                                                            <Package className="h-5 w-5 text-purple-400" />
+                                                        </div>
+                                                        <Label className="text-[11px] font-black uppercase tracking-[0.2em] text-purple-400">Combo Manifest</Label>
+                                                    </div>
+                                                    
+                                                    <div className="flex gap-4">
+                                                        <Input 
+                                                            placeholder="BUNDLE ITEM NAME..." 
+                                                            value={comboItemInput}
+                                                            onChange={(e) => setComboItemInput(e.target.value)}
+                                                            className="h-14 bg-black/40 border-purple-500/20 focus:border-purple-500/50 rounded-2xl font-bold uppercase tracking-widest px-6"
+                                                        />
+                                                        <Button 
+                                                            onClick={() => { if(comboItemInput.trim()) { setComboItems([...comboItems, comboItemInput.trim()]); setComboItemInput(""); } }} 
+                                                            className="bg-purple-600 hover:bg-purple-500 text-white rounded-2xl px-10 font-black text-xs uppercase tracking-widest h-14 transition-all hover:shadow-[0_0_30px_rgba(168,85,247,0.3)]"
+                                                        >
+                                                            Append
+                                                        </Button>
+                                                    </div>
+                                                    
+                                                    <div className="flex flex-wrap gap-3">
+                                                        {comboItems.map((item, idx) => (
+                                                            <div key={idx} className="px-4 py-2 rounded-2xl bg-purple-500/10 border border-purple-500/20 text-[11px] font-black text-purple-300 flex items-center gap-3 transition-all hover:bg-purple-500/20">
+                                                                {item}
+                                                                <X className="w-4 h-4 cursor-pointer text-purple-500/40 hover:text-purple-500" onClick={() => setComboItems(comboItems.filter((_, i) => i !== idx))} />
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Platform Deployment */}
+                                            <div className="space-y-8">
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex items-center gap-4 flex-1">
+                                                        <div className="h-1px flex-1 bg-gradient-to-r from-white/10 to-transparent" />
+                                                        <Label className="text-[10px] font-black uppercase tracking-[0.3em] text-muted-foreground/40 shrink-0">Omnichannel Deployment</Label>
+                                                    </div>
+                                                    <div className="flex gap-4 ml-6">
+                                                        <button onClick={handleSelectAllPages} className="text-[10px] font-black text-[#00ff88] uppercase tracking-[0.2em] hover:text-[#00ff88]/80 transition-colors">Select All</button>
+                                                        <button onClick={handleDeselectAllPages} className="text-[10px] font-black text-red-400/60 uppercase tracking-[0.2em] hover:text-red-400 transition-colors">Clear</button>
+                                                    </div>
+                                                </div>
+                                                
+                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                                    {/* WhatsApp Deployment */}
+                                                    <div className="space-y-4 p-6 rounded-[2rem] bg-emerald-500/[0.03] border border-emerald-500/10 hover:border-emerald-500/20 transition-all">
+                                                        <div className="flex items-center gap-3 mb-2">
+                                                            <div className="h-8 w-8 rounded-xl bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
+                                                                <svg className="w-4 h-4 text-emerald-500 fill-current" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.353-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.05-.148-.471-1.138-.645-1.556-.17-.41-.344-.354-.471-.354-.121-.002-.26-.002-.399-.002-.14 0-.366.052-.557.26-.191.208-.73.712-.73 1.735 0 1.023.746 2.01 8.49 2.11 1.3 3.476 3.009 3.047 3.476 3.009 3.476 0 .019 0 .019 0 .019.421-.012 1.27-.519 1.449-1.02.18-.5.18-.93.126-1.02-.054-.09-.202-.148-.499-.297zM12 2.03c-5.502 0-9.97 4.468-9.97 9.97 0 1.757.463 3.467 1.343 4.966L2.03 21.97l5.162-1.354c1.441.786 3.063 1.2 4.808 1.2 5.502 0 9.97-4.468 9.97-9.97 0-5.502-4.468-9.97-9.97-9.97z"/></svg>
+                                                            </div>
+                                                            <span className="text-[11px] font-black text-emerald-500 uppercase tracking-[0.2em]">WhatsApp</span>
+                                                        </div>
+                                                        <div className="space-y-3 max-h-[160px] overflow-y-auto pr-3 custom-scrollbar">
+                                                            {availablePages.filter(p => p.type === 'whatsapp').map(page => (
+                                                                <div key={page.page_id} className={cn(
+                                                                    "flex items-center justify-between p-4 rounded-2xl border transition-all cursor-pointer group/item",
+                                                                    selectedWA.has(normalizeId(page.page_id)) 
+                                                                        ? "bg-emerald-500/10 border-emerald-500/30 shadow-[0_0_20px_rgba(16,185,129,0.05)]" 
+                                                                        : "bg-white/[0.02] border-white/5 hover:bg-white/[0.04] opacity-40 hover:opacity-100"
+                                                                )} onClick={() => {
+                                                                    const key = normalizeId(page.page_id);
+                                                                    setSelectedWA(prev => { const next = new Set(prev); if(next.has(key)) next.delete(key); else next.add(key); return next; });
+                                                                }}>
+                                                                    <span className="text-xs font-black text-gray-300 uppercase tracking-widest truncate">{page.name.replace("(WA) ", "")}</span>
+                                                                    <div className={cn(
+                                                                        "h-5 w-5 rounded-lg border-2 flex items-center justify-center transition-all",
+                                                                        selectedWA.has(normalizeId(page.page_id)) ? "bg-emerald-500 border-emerald-500 scale-110" : "border-white/10"
+                                                                    )}>
+                                                                        {selectedWA.has(normalizeId(page.page_id)) && <Check className="w-3 h-3 text-black stroke-[4px]" />}
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Messenger Deployment */}
+                                                    <div className="space-y-4 p-6 rounded-[2rem] bg-blue-500/[0.03] border border-blue-500/10 hover:border-blue-500/20 transition-all">
+                                                        <div className="flex items-center gap-3 mb-2">
+                                                            <div className="h-8 w-8 rounded-xl bg-blue-500/10 flex items-center justify-center border border-blue-500/20">
+                                                                <svg className="w-4 h-4 text-blue-500 fill-current" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.145 2 11.214c0 2.891 1.41 5.474 3.627 7.204V22l3.399-1.865c.935.26 1.929.403 2.974.403 5.523 0 10-4.145 10-9.214S17.523 2 12 2zm1.061 12.445l-2.551-2.722-4.978 2.722 5.474-5.811 2.619 2.722 4.91-2.722-5.474 5.811z"/></svg>
+                                                            </div>
+                                                            <span className="text-[11px] font-black text-blue-500 uppercase tracking-[0.2em]">Messenger</span>
+                                                        </div>
+                                                        <div className="space-y-3 max-h-[160px] overflow-y-auto pr-3 custom-scrollbar">
+                                                            {availablePages.filter(p => p.type === 'messenger').map(page => (
+                                                                <div key={page.page_id} className={cn(
+                                                                    "flex items-center justify-between p-4 rounded-2xl border transition-all cursor-pointer group/item",
+                                                                    selectedFB.has(normalizeId(page.page_id)) 
+                                                                        ? "bg-blue-500/10 border-blue-500/30 shadow-[0_0_20px_rgba(59,130,246,0.05)]" 
+                                                                        : "bg-white/[0.02] border-white/5 hover:bg-white/[0.04] opacity-40 hover:opacity-100"
+                                                                )} onClick={() => {
+                                                                    const key = normalizeId(page.page_id);
+                                                                    setSelectedFB(prev => { const next = new Set(prev); if(next.has(key)) next.delete(key); else next.add(key); return next; });
+                                                                }}>
+                                                                    <span className="text-xs font-black text-gray-300 uppercase tracking-widest truncate">{page.name.replace("(FB) ", "")}</span>
+                                                                    <div className={cn(
+                                                                        "h-5 w-5 rounded-lg border-2 flex items-center justify-center transition-all",
+                                                                        selectedFB.has(normalizeId(page.page_id)) ? "bg-blue-500 border-blue-500 scale-110" : "border-white/10"
+                                                                    )}>
+                                                                        {selectedFB.has(normalizeId(page.page_id)) && <Check className="w-3 h-3 text-black stroke-[4px]" />}
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
-                            )}
-                        </div>
+                            </div>
 
-                        
-
-                        <DialogFooter>
-                            <Button variant="outline" className="border-white/20 rounded-md" onClick={() => setIsDialogOpen(false)}>Cancel</Button>
-                            <Button onClick={handleSubmit} disabled={isSubmitting} className="bg-[#00ff88] text-black font-bold rounded-md hover:bg-[#00f07f] shadow-[0_10px_30px_rgba(0,255,136,0.25)]">
-                                {isSubmitting && <Loader2 className="w-4 h-4 mr-2 animate-spin text-black" />}
-                                Save
-                                <span className="ml-2 inline-flex">
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 fill-black" viewBox="0 0 24 24"><path d="M12 4l1.41 1.41L8.83 10H20v2H8.83l4.58 4.59L12 18l-8-8 8-8z"/></svg>
-                                </span>
-                            </Button>
-                        </DialogFooter>
-                    </DialogContent>
-                </Dialog>
+                            <DialogFooter className="p-10 bg-gradient-to-t from-white/[0.04] to-transparent border-t border-white/5 gap-6 relative z-10">
+                                <Button 
+                                    variant="outline" 
+                                    className="border-white/10 hover:bg-white/5 rounded-2xl font-black text-xs uppercase tracking-[0.2em] h-14 px-10 transition-all active:scale-95" 
+                                    onClick={() => setIsDialogOpen(false)}
+                                >
+                                    Abort
+                                </Button>
+                                <Button 
+                                    onClick={handleSubmit} 
+                                    disabled={isSubmitting} 
+                                    className="bg-[#00ff88] text-black font-black rounded-2xl hover:bg-[#00f07f] shadow-[0_10px_40px_rgba(0,255,136,0.25)] h-14 px-12 transition-all hover:-translate-y-1 active:scale-95 text-xs uppercase tracking-[0.2em]"
+                                >
+                                    {isSubmitting ? (
+                                        <Loader2 className="w-6 h-6 animate-spin" />
+                                    ) : (
+                                        <div className="flex items-center gap-3">
+                                            <Save className="w-5 h-5" />
+                                            <span>{editProductId ? 'Update Entity' : 'Finalize Onboarding'}</span>
+                                        </div>
+                                    )}
+                                </Button>
+                            </DialogFooter>
+                        </DialogContent>
+                    </Dialog>
                 </div>
             </div>
 
-            {/* Product Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {/* Product List - Redesigned to be Professional, Vertical (LOMBA), and Sleek */}
+            <div className="space-y-4">
                 {products.length === 0 ? (
-                    <div className="col-span-full text-center py-10 text-muted-foreground">
-                        No products found. Add your first product or import from WooCommerce.
+                    <div className="flex flex-col items-center justify-center py-24 bg-black/40 border border-white/5 rounded-3xl backdrop-blur-sm">
+                        <div className="h-20 w-20 rounded-full bg-white/5 flex items-center justify-center mb-6 border border-white/10">
+                            <ShoppingBag className="h-10 w-10 text-muted-foreground/30" />
+                        </div>
+                        <p className="text-lg font-bold text-white/40 tracking-widest uppercase">No Records Found</p>
                     </div>
                 ) : (
-                    products.map((product) => (
-                        <Card key={product.id} className="relative group hover:shadow-lg transition-shadow">
-                            {/* Image */}
-                            <CardContent className="p-4 pb-2 flex flex-col items-center">
-                                <div className="h-32 w-32 rounded-md bg-muted/20 overflow-hidden flex items-center justify-center border mb-4">
+                    <div className="flex flex-col gap-4">
+                        {products.map((product) => (
+                            <div 
+                                key={product.id} 
+                                className="group relative flex flex-col md:flex-row items-center gap-6 p-6 bg-[#0c0c0c] border border-white/5 hover:border-white/10 rounded-2xl transition-all duration-300 hover:shadow-[0_10px_40px_rgba(0,0,0,0.5)] overflow-hidden"
+                            >
+                                {/* Subtle Vertical Accent */}
+                                <div className="absolute left-0 top-0 bottom-0 w-1 bg-[#00ff88]/0 group-hover:bg-[#00ff88]/40 transition-all duration-300" />
+                                
+                                {/* Product Image - Compact and Professional */}
+                                <div className="relative h-24 w-24 md:h-28 md:w-28 shrink-0 rounded-xl overflow-hidden border border-white/5 bg-black/40 group-hover:border-white/20 transition-all duration-300 shadow-xl">
                                     {product.image_url ? (
                                         <img
                                             src={product.image_url}
                                             alt={product.name}
-                                            className="w-full h-full object-cover"
+                                            className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
                                             loading="lazy"
-                                            onError={(e) => {
-                                                (e.target as HTMLImageElement).src = "https://placehold.co/100?text=No+Image";
-                                                (e.target as HTMLImageElement).onerror = null; // Prevent infinite loop
-                                            }}
                                         />
                                     ) : (
-                                        <Package className="h-16 w-16 opacity-20" />
+                                        <div className="w-full h-full flex items-center justify-center bg-white/[0.02]">
+                                            <Package className="h-10 w-10 text-white/10" />
+                                        </div>
                                     )}
+                                    
+                                    {/* Small Active Status Dot */}
+                                    <div className="absolute top-2 right-2">
+                                        <div className={cn(
+                                            "h-2 w-2 rounded-full",
+                                            product.is_active ? "bg-[#00ff88] shadow-[0_0_8px_#00ff88]" : "bg-red-500 shadow-[0_0_8px_#ef4444]"
+                                        )} />
+                                    </div>
                                 </div>
-                                {/* Product Name */}
-                                <CardTitle className="text-lg font-semibold text-center mb-1 line-clamp-1">
-                                    {product.name}
-                                </CardTitle>
-                                {/* Description */}
-                                {product.description && (
-                                    <p className="text-sm text-muted-foreground text-center line-clamp-2">
-                                        {product.description}
-                                    </p>
-                                )}
-                                {/* Variants, FB/WA badges */}
-                                <div className="flex flex-wrap gap-1 justify-center mt-2">
-                                    {(() => {
-                                        const messengerIds = parseAssignment(product.allowed_messenger_ids);
-                                        if (messengerIds.length > 0) {
-                                            return (
-                                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
-                                                    FB
-                                                </span>
-                                            );
-                                        }
-                                        return null;
-                                    })()}
-                                    {(() => {
-                                        const waSessions = parseAssignment(product.allowed_wa_sessions);
-                                        if (waSessions.length > 0) {
-                                            return (
-                                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
-                                                    WA
-                                                </span>
-                                            );
-                                        }
-                                        return null;
-                                    })()}
-                                    {product.variants && product.variants.length > 0 && (
-                                        <span className="text-[10px] text-muted-foreground">
-                                            {product.variants.length} variants
-                                        </span>
-                                    )}
+
+                                {/* Product Core Information - Horizontal Flow */}
+                                <div className="flex-1 flex flex-col md:flex-row items-center justify-between gap-6 w-full">
+                                    <div className="flex-1 min-w-0 space-y-1.5 text-center md:text-left">
+                                        <div className="flex flex-wrap items-center justify-center md:justify-start gap-3">
+                                            <h3 className="text-lg font-black text-white/90 group-hover:text-white transition-colors tracking-tight leading-tight truncate max-w-[300px] uppercase">
+                                                {product.name}
+                                            </h3>
+                                            <div className="flex gap-1.5">
+                                                {parseAssignment(product.allowed_messenger_ids).length > 0 && (
+                                                    <div className="h-4 w-4 text-blue-500/60" title="Messenger">
+                                                        <svg className="fill-current" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.145 2 11.214c0 2.891 1.41 5.474 3.627 7.204V22l3.399-1.865c.935.26 1.929.403 2.974.403 5.523 0 10-4.145 10-9.214S17.523 2 12 2zm1.061 12.445l-2.551-2.722-4.978 2.722 5.474-5.811 2.619 2.722 4.91-2.722-5.474 5.811z"/></svg>
+                                                    </div>
+                                                )}
+                                                {parseAssignment(product.allowed_wa_sessions).length > 0 && (
+                                                    <div className="h-4 w-4 text-emerald-500/60" title="WhatsApp">
+                                                        <svg className="fill-current" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.353-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.05-.148-.471-1.138-.645-1.556-.17-.41-.344-.354-.471-.354-.121-.002-.26-.002-.399-.002-.14 0-.366.052-.557.26-.191.208-.73.712-.73 1.735 0 1.023.746 2.01 8.49 2.11 1.3 3.476 3.009 3.047 3.476 3.009 3.476 0 .019 0 .019 0 .019.421-.012 1.27-.519 1.449-1.02.18-.5.18-.93.126-1.02-.054-.09-.202-.148-.499-.297zM12 2.03c-5.502 0-9.97 4.468-9.97 9.97 0 1.757.463 3.467 1.343 4.966L2.03 21.97l5.162-1.354c1.441.786 3.063 1.2 4.808 1.2 5.502 0 9.97-4.468 9.97-9.97 0-5.502-4.468-9.97-9.97-9.97z"/></svg>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <p className="text-xs text-gray-500 font-bold uppercase tracking-widest line-clamp-1 opacity-60">
+                                            {product.description || "NO DESCRIPTION AVAILABLE"}
+                                        </p>
+                                    </div>
+
+                                    {/* Middle Section: Stock & Meta */}
+                                    <div className="flex items-center gap-8 shrink-0">
+                                        <div className="flex flex-col items-center md:items-start">
+                                            <span className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/40 mb-1">Inventory</span>
+                                            <span className={cn(
+                                                "text-[10px] font-black uppercase tracking-tight px-2 py-0.5 rounded-md border",
+                                                product.stock && product.stock > 0 
+                                                    ? "text-[#00ff88]/60 bg-[#00ff88]/5 border-[#00ff88]/10" 
+                                                    : "text-red-400/60 bg-red-400/5 border-red-500/10"
+                                            )}>
+                                                {product.stock || 0} Units
+                                            </span>
+                                        </div>
+                                        <div className="flex flex-col items-center md:items-start">
+                                            <span className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/40 mb-1">Pricing</span>
+                                            <div className="flex items-baseline gap-1">
+                                                <span className="text-[9px] font-black text-white/40 uppercase">{product.currency || 'BDT'}</span>
+                                                <span className="text-lg font-black text-white">{Number(product.price).toLocaleString()}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Right Section: Compact Actions */}
+                                    <div className="flex items-center gap-4 shrink-0 pl-6 border-l border-white/5">
+                                        <div className="flex flex-col items-center gap-2">
+                                            <Switch 
+                                                checked={product.is_active} 
+                                                onCheckedChange={(checked) => handleToggleActive(product, checked)}
+                                                className="data-[state=checked]:bg-[#00ff88] scale-75"
+                                            />
+                                            <span className="text-[8px] font-black uppercase tracking-widest text-muted-foreground/40">Status</span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <Button 
+                                                variant="outline" 
+                                                className="h-10 w-10 p-0 border-white/5 hover:bg-white/5 hover:border-white/10 rounded-xl transition-all"
+                                                onClick={() => handleEdit(product)}
+                                            >
+                                                <Edit className="w-4 h-4 text-white/60 group-hover:text-white transition-colors" />
+                                            </Button>
+                                            <Button 
+                                                variant="outline" 
+                                                className="h-10 w-10 p-0 border-red-500/5 text-red-500/40 hover:bg-red-500/5 hover:border-red-500/20 rounded-xl transition-all"
+                                                onClick={() => {
+                                                    setPendingDeleteProduct(product);
+                                                    setIsDeleteDialogOpen(true);
+                                                }}
+                                            >
+                                                <Trash2 className="w-4 h-4" />
+                                            </Button>
+                                        </div>
+                                    </div>
                                 </div>
-                            </CardContent>
-                            {/* Price & Stock */}
-                            <div className="flex justify-between items-center px-4 py-2 border-t">
-                                <div className="text-lg font-bold">
-                                    {product.currency || 'BDT'} {product.price || 0}
-                                </div>
-                                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${product.stock && product.stock > 0 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>
-                                    Stock: {product.stock || 0}
-                                </span>
                             </div>
-                            {/* Actions (hidden until hover on desktop, always visible on mobile for accessibility) */}
-                            <div className="absolute bottom-0 right-0 p-2 flex gap-2 transition-opacity opacity-0 group-hover:opacity-100 md:opacity-100 md:relative md:p-2 md:border-t md:flex md:justify-end">
-                                <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleEdit(product)}>
-                                    <Edit className="w-4 h-4" />
-                                </Button>
-                                <Button
-                                    size="icon"
-                                    variant="ghost"
-                                    className="h-8 w-8 text-destructive hover:text-destructive"
-                                    onClick={() => {
-                                        setPendingDeleteProduct(product);
-                                        setIsDeleteDialogOpen(true);
-                                    }}
-                                >
-                                    <Trash2 className="w-4 h-4" />
-                                </Button>
-                            </div>
-                        </Card>
-                    ))
+                        ))}
+                    </div>
                 )}
             </div>
 
