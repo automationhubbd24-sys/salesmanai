@@ -12,6 +12,30 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
+
+// --- Simple In-Memory Embedding Cache (500 items, 1 hour TTL) ---
+const embeddingCache = new Map();
+const EMBED_CACHE_MAX = 500;
+const EMBED_CACHE_TTL = 3600 * 1000;
+
+function getCachedEmbedding(text) {
+    const key = text.trim().toLowerCase();
+    const entry = embeddingCache.get(key);
+    if (entry && (Date.now() - entry.timestamp < EMBED_CACHE_TTL)) {
+        return entry.vector;
+    }
+    return null;
+}
+
+function setCachedEmbedding(text, vector) {
+    if (embeddingCache.size >= EMBED_CACHE_MAX) {
+        // Simple LRU: remove first item
+        const firstKey = embeddingCache.keys().next().value;
+        embeddingCache.delete(firstKey);
+    }
+    embeddingCache.set(text.trim().toLowerCase(), { vector, timestamp: Date.now() });
+}
+
 let ffmpegPath = null;
 try {
     ffmpegPath = require('ffmpeg-static');
@@ -922,6 +946,14 @@ function extractImagesFromText(text) {
 
 async function getEmbedding(text, customApiKey = null) {
     if (!text) return null;
+    
+    // 1. Check Cache First (Skip API call if we already have it)
+    const cached = getCachedEmbedding(text);
+    if (cached) {
+        // console.log(`[AI Embedding] Cache HIT for: "${text.substring(0, 30)}..."`);
+        return cached;
+    }
+
     try {
         const config = await dbService.getEmbeddingGlobalConfig();
         const apiKey = customApiKey || (config ? config.api_key : null);
@@ -931,7 +963,8 @@ async function getEmbedding(text, customApiKey = null) {
         }
 
         const provider = (config && config.provider ? config.provider.toLowerCase() : 'google');
-        
+        let vector = null;
+
         if (provider === 'google' || provider === 'gemini') {
             const genAI = new GoogleGenerativeAI(apiKey);
             // Use the specific model from config, or fallback to text-embedding-004
@@ -939,16 +972,14 @@ async function getEmbedding(text, customApiKey = null) {
             const model = genAI.getGenerativeModel({ model: modelName });
             
             const result = await model.embedContent(text.replace(/\n/g, ' '));
-            const embedding = result.embedding.values;
+            vector = result.embedding.values;
 
             // --- FIX: Gemini embedding-001 returns 3072 dims, but our DB expects 1536 ---
             // If the model is embedding-001 and we get 3072, we truncate to 1536
-            if (modelName.includes('embedding-001') && embedding.length === 3072) {
+            if (modelName.includes('embedding-001') && vector.length === 3072) {
                 // console.log(`[AI Embedding] Truncating Gemini 3072 dims to 1536 for compatibility.`);
-                return embedding.slice(0, 1536);
+                vector = vector.slice(0, 1536);
             }
-
-            return embedding;
         } else {
             // Default to OpenAI/OpenRouter (OpenAI SDK compatible)
             const openai = new OpenAI({
@@ -962,8 +993,13 @@ async function getEmbedding(text, customApiKey = null) {
                 encoding_format: "float",
             });
 
-            return response.data[0].embedding;
+            vector = response.data[0].embedding;
         }
+
+        if (vector) {
+            setCachedEmbedding(text, vector);
+        }
+        return vector;
     } catch (e) {
         console.error(`[AI Embedding] Generation failed: ${e.message}`);
         return null;
@@ -2003,7 +2039,7 @@ ${productContext}`;
             });
         }
 
-        cleanUserMessage += "\n" + mediaContext;
+        cleanUserMessage += `\n\n[NEW VISUAL CONTEXT - IMPORTANT]:\nThe user has just sent the following image(s). This is the CURRENT FOCUS of the conversation. If the user asks "eta ase?" or "price koto?", they are referring to the product(s) described below, NOT anything from the previous history.\n\nDescription of New Image(s):\n${mediaContext.trim()}\n[END OF NEW VISUAL CONTEXT]`;
         console.log(`[AI] Added media context to user message. Total Tokens so far: ${totalTokenUsage}`);
     }
 

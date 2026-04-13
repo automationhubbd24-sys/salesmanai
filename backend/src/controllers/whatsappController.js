@@ -1879,7 +1879,8 @@ STRICT RULES:
     if (imageAnalyzeText && imageAnalyzeText.trim() !== "") {
         if (finalOutput) finalOutput += "\n\n";
         // Always use standard tag for consistency
-        finalOutput += `[Visual Content Description]:\n${imageAnalyzeText.trim()}`;
+        // Unified single block for AI - ENHANCED FOCUS
+        finalOutput += `\n\n[NEW VISUAL CONTEXT - IMPORTANT]:\nThe user has just sent the following image(s). This is the CURRENT FOCUS of the conversation. If the user asks "eta ase?" or "price koto?", they are referring to the product(s) described below, NOT anything from the previous history.\n\nDescription of New Image(s):\n${imageAnalyzeText.trim()}\n[END OF NEW VISUAL CONTEXT]`;
     }
 
     // 3. Audio Transcripts (Critical for Voice Notes)

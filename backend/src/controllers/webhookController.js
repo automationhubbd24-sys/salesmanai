@@ -1144,8 +1144,8 @@ STRICT RULES:
             });
 
             if (combinedImageAnalysis) {
-                // Unified single block for AI
-                combinedText += `\n\n[Visual Content Description]:\n${combinedImageAnalysis.trim()}`;
+                // Unified single block for AI - ENHANCED FOCUS
+                combinedText += `\n\n[NEW VISUAL CONTEXT - IMPORTANT]:\nThe user has just sent the following image(s). This is the CURRENT FOCUS of the conversation. If the user asks "eta ase?" or "price koto?", they are referring to the product(s) described below, NOT anything from the previous history.\n\nDescription of New Image(s):\n${combinedImageAnalysis.trim()}\n[END OF NEW VISUAL CONTEXT]`;
             } else {
                 combinedText += `\n[User sent ${allImages.length} images: ${allImages.join(', ')}]`;
             }

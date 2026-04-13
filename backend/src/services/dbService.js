@@ -3236,7 +3236,7 @@ async function updateSemanticCacheEntry(id, { question, response }) {
     }
 }
 
-async function findSemanticCache({ page_id = null, session_name = null, context_id = null, question, threshold = 0.96, vector = null }) {
+async function findSemanticCache({ page_id = null, session_name = null, context_id = null, question, threshold = 0.94, vector = null }) {
     const { query } = require('./pgClient');
     try {
         await ensureSemanticCacheTables();
@@ -3826,7 +3826,15 @@ async function searchProducts(userId, queryText, pageId = null) {
 
         sql += ` ORDER BY distance ASC LIMIT 5`;
 
+        const start = Date.now();
         const result = await query(sql, params);
+        const end = Date.now();
+        
+        if (end - start > 1000) {
+            console.warn(`[DB] searchProducts SLOW query: ${end - start}ms for "${cleanQuery}"`);
+        } else {
+            // console.log(`[DB] searchProducts FAST query: ${end - start}ms`);
+        }
         
         // Return products only if they are reasonably similar (threshold check)
         // distance < 0.4 is usually a good match for cosine similarity
