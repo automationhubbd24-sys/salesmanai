@@ -104,7 +104,6 @@ export default function ProductsPage() {
     const [productImages, setProductImages] = useState<File[]>([]);
     const [imagePreviews, setImagePreviews] = useState<string[]>([]);
     const [existingAdditionalImages, setExistingAdditionalImages] = useState<string[]>([]);
-    const [embeddingApiKey, setEmbeddingApiKey] = useState("");
     const fileInputRef = useRef<HTMLInputElement>(null);
     const openImagePicker = () => {
         if (fileInputRef.current) {
@@ -742,9 +741,6 @@ export default function ProductsPage() {
 
             // 1. Append metadata as a single JSON string
             formData.append("metadata", JSON.stringify(metadata));
-            if (embeddingApiKey) {
-                formData.append("embedding_api_key", embeddingApiKey);
-            }
 
             // 2. Append individual fields for backward compatibility
             // IMPORTANT: Sending as STRINGIFIED ARRAYS to avoid Multer array parsing issues
@@ -1363,24 +1359,6 @@ export default function ProductsPage() {
                                             onChange={(e) => setProductStock(e.target.value)}
                                         />
                                     </div>
-                                </div>
-
-                                <div className="grid gap-2 p-3 rounded-lg border border-[#00ff88]/20 bg-[#00ff88]/5">
-                                    <div className="flex items-center gap-2 text-[#00ff88]">
-                                        <Lock className="w-4 h-4" />
-                                        <Label htmlFor="api-key" className="text-xs font-semibold">Gemini API Key for Vector Search</Label>
-                                    </div>
-                                    <Input 
-                                        id="api-key" 
-                                        type="password"
-                                        placeholder="Enter Gemini API Key (Optional: overrides default)"
-                                        className="bg-[#101010]/80 border-white/10 focus:border-[#00ff88]/40 h-9 text-xs"
-                                        value={embeddingApiKey}
-                                        onChange={(e) => setEmbeddingApiKey(e.target.value)}
-                                    />
-                                    <p className="text-[10px] text-muted-foreground italic">
-                                        This key will be used to generate embeddings for this product's search accuracy.
-                                    </p>
                                 </div>
                                 
                                 {imagePreviews.length > 0 && (
