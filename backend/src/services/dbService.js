@@ -3480,7 +3480,7 @@ async function checkProductFeatureAccess(userId) {
 }
 
 // 28. Create Product
-async function createProduct(productData, customApiKey = null) {
+async function createProduct(productData) {
     const fields = [
         'user_id',
         'name',
@@ -3538,7 +3538,7 @@ async function createProduct(productData, customApiKey = null) {
         const aiService = require('./aiService');
         const embedText = `${product.name} ${product.description || ''} ${product.keywords || ''} ${(product.is_combo && Array.isArray(product.combo_items)) ? product.combo_items.join(' ') : ''}`.trim();
         
-        aiService.getEmbedding(embedText, customApiKey).then(vector => {
+        aiService.getEmbedding(embedText).then(vector => {
             if (vector) {
                 updateProductEmbedding(product.id, vector).catch(e => console.warn(`[DB] Background embedding update failed: ${e.message}`));
             }
@@ -3670,7 +3670,7 @@ async function getProductById(id) {
 }
 
 // 29. Update Product
-async function updateProduct(id, userId, updates, customApiKey = null) {
+async function updateProduct(id, userId, updates) {
     const keys = Object.keys(updates || {});
     
     if (keys.length === 0) {
@@ -3721,7 +3721,7 @@ async function updateProduct(id, userId, updates, customApiKey = null) {
     const aiService = require('./aiService');
     const embedText = `${product.name} ${product.description || ''} ${product.keywords || ''} ${(product.is_combo && Array.isArray(product.combo_items)) ? product.combo_items.join(' ') : ''}`.trim();
     
-    aiService.getEmbedding(embedText, customApiKey).then(vector => {
+    aiService.getEmbedding(embedText).then(vector => {
         if (vector) {
             updateProductEmbedding(product.id, vector).catch(e => console.warn(`[DB] Background embedding update failed: ${e.message}`));
         }

@@ -511,7 +511,7 @@ exports.createProduct = async (req, res) => {
             is_combo: body.is_combo === 'true' || body.is_combo === true,
             combo_items: Array.isArray(body.combo_items) ? body.combo_items : (body.combo_items ? JSON.parse(body.combo_items) : []),
             allow_description: body.allow_description === 'true' || body.allow_description === true
-        }, body.embedding_api_key || null);
+        });
 
         res.status(201).json(product);
 
@@ -901,7 +901,7 @@ exports.updateProduct = async (req, res) => {
             updates.platform = existing.platform || 'restricted';
         }
 
-        const updated = await dbService.updateProduct(id, userId, updates, req.body.embedding_api_key || null);
+        const updated = await dbService.updateProduct(id, userId, updates);
         res.json(updated);
 
     } catch (error) {
