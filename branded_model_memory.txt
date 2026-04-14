@@ -33,46 +33,38 @@
 - [ ] **Proxy Health:** ব্রাইট ডেটার ব্যালেন্স এবং সেশন ফেইলর রেট মনিটর করা।
 - [ ] **OpenRouter Selection:** অটো-আপডেট সাইকেল ঠিকমতো কাজ করছে কি না তা `openrouter_engine_config` টেবিলে চেক করা।
 
-## ৫. Model-Specific RPD Fix (বাগ ফিক্স - 2026-04-14)
-**সমস্যা:** একটি API Key-এ main chatmodel (RPD 15) এবং additional chatmodel (RPD 500) থাকলে, main model-এর RPD শেষ হলে পুরো Key-টি lock হয়ে যেত। ফলে additional model-ও ব্যবহার করা যেত না।
+## ৫. Model-Specific RPD & Visibility Upgrade (আপগ্রেড - 2026-04-14)
 
-**সমাধান:** `keyService.js`-এ `getSmartKey()` ফাংশনে দুই-স্তরীয় RPD চেকিং যোগ করা হয়েছে:
+### সমস্যা সমাধান (RPD Logic Fix):
+একটি API Key-এ একাধিক মডেল থাকলে (যেমন: Main Model RPD 15 এবং Additional Model RPD 500), আগে একটি মডেল শেষ হলে পুরো Key লক হয়ে যেত। এখন এটি সমাধান করা হয়েছে।
 
-### কোড পরিবর্তন (keyService.js):
-```javascript
-// RPD Check - TWO LEVEL: Model-Specific AND Key-Level
-// ১. Model-Specific RPD Check: শুধু ঐ model skip হবে, key lock হবে না
-const modelSpecificRpdLimit = resolveLimit(null, globalLim?.rpd, defaults.rpd);
-if (modelSpecificRpdLimit < 999999 && modelUsageToday >= modelSpecificRpdLimit) {
-    console.warn(`[KeyService] ⏭️ Key ${key}... SKIPPED for model ${modelToCheck} (Model RPD: ${modelUsageToday}/${modelSpecificRpdLimit}).`);
-    continue; // Model exhausted, try next key for THIS model
-}
+**নতুন লজিক:**
+- **Model-Specific Check:** প্রতিটি মডেলের ব্যবহারের জন্য আলাদা RPD চেক করা হয়। যদি একটি মডেলের লিমিট শেষ হয়, তবে ওই Key-টি ওই মডেলের জন্য **SKIP** করা হয়, কিন্তু অন্য মডেলের জন্য সেটি **ACTIVE** থাকে।
+- **Key-Level Check:** শুধু তখনই একটি Key-কে 'LOCKED' বা 'DEAD' মার্ক করা হয় যখন তার গ্লোবাল RPD লিমিট শেষ হয়।
 
-// ২. Key-Level Global RPD Check: শুধু তখনই key lock হবে যখন সব model-এর quota শেষ
-const globalKeyRpdLimit = resolveLimit(candidateKey.rpd_limit, null, defaults.rpd);
-if (globalKeyRpdLimit < 999999 && effectiveUsageToday >= globalKeyRpdLimit) {
-    markKeyAsDead(candidateKey.api, getMsUntilPacificMidnight(), `global_key_rpd_limit_reached_${globalKeyRpdLimit}`);
-    continue; // Entire key locked, all models exhausted
-}
-```
+### ফ্রন্টএন্ড ভিজিবিলিটি (Frontend Visibility):
+এখন এডমিন প্যানেলের **API Management** পেজে প্রতিটি Key-এর পাশে কোন মডেল কতবার ব্যবহার হয়েছে তার ব্রেকডাউন দেখা যায়।
 
-### মেমোরি ট্র্যাকিং:
-```javascript
-// প্রতিটি key+model combination আলাদাভাবে track হয়
-const modelUsageKey = `${candidateKey.api}:${modelToCheck}`;
-const modelDailyUsage = new Map(); // Key: modelUsageKey, Value: { date, count }
-```
+- **Data Source:** `keyService.js` এর `getActiveRotationPool` ফাংশন এখন `model_usage` অবজেক্ট রিটার্ন করে।
+- **Frontend Display:** `ApiManagementPage.tsx` এ "Model Usage" সেকশন যোগ করা হয়েছে যা লাইভ ব্যবহারের তথ্য দেখায়।
 
-### ফলাফল:
-- Main Model RPD 15 শেষ → Main Model skip, পরের key-এ চেষ্টা
-- Additional Model RPD 500 এখনও available → সেটি ব্যবহার হবে
-- শুধু যখন সব model-এর quota শেষ, তখনই entire key lock
+## ৬. টেকনিক্যাল কন্টেক্সট (Future AI-এর জন্য):
 
-### লগ দেখে যাচাই করুন:
-```
-[KeyService] ⏭️ Key abc123... SKIPPED for model gemini-1.5-flash (Model RPD: 15/15). Trying next key.
-[KeyService] ✅ Selected Key: abc123... (ModelRPD: 1/500)
-```
+ভবিষ্যতে যদি কোনো AI বা ডেভেলপার এই সিস্টেমটি নিয়ে কাজ করে, তবে নিচের বিষয়গুলো মাথায় রাখতে হবে:
+
+- **Key Data Structures (keyService.js):**
+  - `modelDailyUsage`: একটি `Map` যা `${apiKey}:${modelName}` ফরম্যাটে প্রতিদিনের ব্যবহার স্টোর করে।
+  - `modelUsageTimestamps`: মডেল-স্পেসিফিক RPM ট্র্যাকিংয়ের জন্য ব্যবহৃত হয়।
+  - `getModelUsageSummaryForKey(apiKey)`: একটি হেল্পার ফাংশন যা নির্দিষ্ট একটি Key-এর সব মডেল ব্যবহারের সামারি দেয়।
+
+- **RPD Resolution Priority:**
+  1. গ্লোবাল কনফিগ (`dynamicLimits`) থেকে মডেল-স্পেসিফিক লিমিট।
+  2. কী-স্পেসিফিক লিমিট (`candidateKey.rpd_limit`)।
+  3. প্রোভাইডার ডিফল্ট (`PROVIDER_DEFAULTS`)।
+
+- **Visibility Logic:**
+  - `getActiveRotationPool` এর মাধ্যমে ডাটা ফ্রন্টএন্ডে যায়।
+  - `ApiManagementPage.tsx` এ `api.model_usage` অবজেক্টটি লুপ করে ডাটা রেন্ডার করা হয়।
 
 ---
-এই মেমোরি ফাইলটি SalesmanAI ব্র্যান্ডেড আপগ্রেডের মূল আর্কিটেকচার বুঝতে সাহায্য করবে।
+এই মেমোরি ফাইলটি SalesmanAI ব্র্যান্ডেড আপগ্রেডের মূল আর্কিটেকচার এবং লেটেস্ট পরিবর্তনগুলো বুঝতে সাহায্য করবে।
