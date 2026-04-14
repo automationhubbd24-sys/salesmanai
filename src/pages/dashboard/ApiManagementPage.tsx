@@ -524,6 +524,18 @@ export default function ApiManagementPage() {
                                                                                 <div className={cn("h-full transition-all", rpmPercent > 80 ? "bg-red-500" : "bg-[#00ff88]")} style={{ width: `${rpmPercent}%` }} />
                                                                             </div>
                                                                         </div>
+                                                                        {/* Model Breakdown */}
+                                                                        {api.model_usage && Object.keys(api.model_usage).length > 0 && (
+                                                                            <div className="bg-white/5 p-1.5 rounded border border-white/5 space-y-1">
+                                                                                <span className="text-[8px] text-white/40 uppercase font-black">Model Usage</span>
+                                                                                {Object.entries(api.model_usage).slice(0, 3).map(([model, data]: [string, any]) => (
+                                                                                    <div key={model} className="flex justify-between items-center">
+                                                                                        <span className="text-[8px] text-white/50 truncate max-w-[80px]">{model.split('/').pop()}</span>
+                                                                                        <span className="text-[9px] font-mono text-[#00ff88]">{data.count}</span>
+                                                                                    </div>
+                                                                                ))}
+                                                                            </div>
+                                                                        )}
                                                                         {/* Total */}
                                                                         <div className="flex justify-between items-center px-1">
                                                                             <span className="text-[8px] text-white/20 uppercase font-black tracking-widest">Lifetime</span>

@@ -1096,15 +1096,40 @@ async function getSmartKey(provider, model = 'default', modality = 'text') {
             // Check RPD & TPD & TPMo
             const pending = pendingUpdates.get(candidateKey.api) || { usage_delta: 0, token_delta: 0 };
             
-            // RPD Check
+            // RPD Check - TWO LEVEL: Model-Specific AND Key-Level
             const dbUsage = candidateKey.last_date_checked === today ? (Number(candidateKey.usage_today) || 0) : 0;
             const effectiveUsageToday = dbUsage + pending.usage_delta;
 
-            if (rpdLimit < 999999 && effectiveUsageToday >= rpdLimit) {
-                console.warn(`[KeyService] ⛔ Key ${candidateKey.api.substring(0,8)}... hit RPD limit (${rpdLimit}). Usage: ${effectiveUsageToday}. Locking.`);
+            // Get Model-Specific RPD for THIS MODEL ONLY
+            const modelSpecificRpdLimit = resolveLimit(null, globalLim?.rpd, defaults.rpd);
+            
+            // Track model-specific usage separately
+            const modelUsageKey = `${candidateKey.api}:${modelToCheck}`;
+            const modelTsList = modelUsageTimestamps.get(modelUsageKey) || [];
+            const modelDailyData = modelDailyUsage.get(modelUsageKey) || { date: null, count: 0 };
+            
+            // Reset model daily count if new Pacific day
+            let modelUsageToday = 0;
+            if (modelDailyData.date !== today) {
+                modelUsageToday = 0;
+                modelDailyUsage.set(modelUsageKey, { date: today, count: 0 });
+            } else {
+                modelUsageToday = modelDailyData.count;
+            }
+
+            // Model-Specific RPD Check: Only skip this model, don't lock the key
+            if (modelSpecificRpdLimit < 999999 && modelUsageToday >= modelSpecificRpdLimit) {
+                console.warn(`[KeyService] ⏭️ Key ${candidateKey.api.substring(0,8)}... SKIPPED for model ${modelToCheck} (Model RPD: ${modelUsageToday}/${modelSpecificRpdLimit}). Trying next key.`);
+                continue;
+            }
+
+            // Key-Level Global RPD Check: Only lock key if ALL models exhausted
+            const globalKeyRpdLimit = resolveLimit(candidateKey.rpd_limit, null, defaults.rpd);
+            if (globalKeyRpdLimit < 999999 && effectiveUsageToday >= globalKeyRpdLimit) {
+                console.warn(`[KeyService] ⛔ Key ${candidateKey.api.substring(0,8)}... hit GLOBAL KEY RPD limit (${globalKeyRpdLimit}). Usage: ${effectiveUsageToday}. Locking entire key.`);
                 candidateKey.status = 'locked';
                 candidateKey.cooldown_until = new Date(Date.now() + getMsUntilPacificMidnight()).toISOString();
-                markKeyAsDead(candidateKey.api, getMsUntilPacificMidnight(), `rpd_limit_reached_hard_${rpdLimit}`).catch(e => {});
+                markKeyAsDead(candidateKey.api, getMsUntilPacificMidnight(), `global_key_rpd_limit_reached_${globalKeyRpdLimit}`).catch(e => {});
                 continue;
             }
 
@@ -1142,6 +1167,15 @@ async function getSmartKey(provider, model = 'default', modality = 'text') {
             updatedHourList.push(now);
             keyUsageHourTimestamps.set(candidateKey.api, updatedHourList);
 
+            // Update Model-Specific Usage Tracking
+            const updatedModelTsList = modelTsList.filter(ts => ts > now - 60000);
+            updatedModelTsList.push(now);
+            modelUsageTimestamps.set(modelUsageKey, updatedModelTsList);
+            
+            // Update Model Daily Count
+            modelUsageToday = modelDailyData.count + 1;
+            modelDailyUsage.set(modelUsageKey, { date: today, count: modelUsageToday });
+
             // Update Usage Stats
             candidateKey.usage_count = (Number(candidateKey.usage_count) || 0) + 1;
             if (candidateKey.last_date_checked === today) {
@@ -1160,7 +1194,7 @@ async function getSmartKey(provider, model = 'default', modality = 'text') {
 
             flushUsageStats().catch(e => console.error(`[KeyService] Immediate flush failed: ${e.message}`));
 
-            console.log(`[KeyService] ✅ Selected Key: ${candidateKey.api} (Index: ${actualIndex + 1}/${totalKeys}, RPM: ${activeRpmCount + 1}/${rpmLimit || '∞'})`);
+            console.log(`[KeyService] ✅ Selected Key: ${candidateKey.api} (Index: ${actualIndex + 1}/${totalKeys}, RPM: ${activeRpmCount + 1}/${rpmLimit || '∞'}, ModelRPD: ${(modelDailyUsage.get(modelUsageKey)?.count || 0)}/${modelSpecificRpdLimit})`);
             addRotationLog(provider, model, candidateKey.api, actualIndex + 1, totalKeys);
 
             return {
@@ -1246,6 +1280,23 @@ module.exports = {
         if (dyn) return { ...def, ...dyn, source: 'realtime' };
         return { ...def, source: 'static' };
     },
+
+    getModelUsageSummaryForKey: (apiKey) => {
+        const today = getPacificDate();
+        const summary = {};
+        
+        modelDailyUsage.forEach((data, key) => {
+            if (key.startsWith(`${apiKey}:`)) {
+                const modelName = key.split(':').slice(1).join(':');
+                summary[modelName] = {
+                    count: data.date === today ? data.count : 0,
+                    date: data.date
+                };
+            }
+        });
+        
+        return summary;
+    },
     
     // NEW: Get filtered keys for Active Rotation Pool display with pagination
     getActiveRotationPool: (providerFilter = null, page = 1, limit = 10, searchQuery = '') => {
@@ -1303,7 +1354,7 @@ module.exports = {
                 return {
                     id: k.id,
                     provider: k.provider,
-                    api: k.api, // Send full API key for searching (Admin Panel only)
+                    api: k.api,
                     email: k.email,
                     status: pending.status || k.status,
                     usage_today: dbUsage + (pending.usage_delta || 0),
@@ -1315,7 +1366,8 @@ module.exports = {
                     rpd_limit: k.rpd_limit,
                     current_rpm: summary.rpm,
                     current_rph: summary.rph,
-                    cooldown_until: pending.cooldown_until || k.cooldown_until
+                    cooldown_until: pending.cooldown_until || k.cooldown_until,
+                    model_usage: getModelUsageSummaryForKey(k.api)
                 };
             })
         };
