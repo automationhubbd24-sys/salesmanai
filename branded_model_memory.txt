@@ -65,9 +65,14 @@
 ভবিষ্যতে যদি কোনো AI বা ডেভেলপার এই সিস্টেমটি নিয়ে কাজ করে, তবে নিচের বিষয়গুলো মাথায় রাখতে হবে:
 
 - **Key Data Structures (keyService.js):**
-  - `modelDailyUsage`: একটি `Map` যা `${apiKey}:${modelName}` ফরম্যাটে প্রতিদিনের ব্যবহার স্টোর করে।
+  - `modelDailyUsage`: একটি `Map` যা `${apiKey}:${modelName}` ফরম্যাটে প্রতিদিনের ব্যবহার স্টোর করে। এটি এখন ডাটাবেজের `api_key_model_usage` টেবিলের সাথে সিঙ্কড (Persistent Storage)।
   - `modelUsageTimestamps`: মডেল-স্পেসিফিক RPM ট্র্যাকিংয়ের জন্য ব্যবহৃত হয়।
-  - `modelLockMap`: এটি গ্লোবাল এবং কী-স্পেসিফিক মডেল লক স্টোর করে (কী: `${apiKey}:${modelName}`)।
+  - `modelLockMap`: এটি গ্লোবাল এবং কী-স্পেসিফিক মডেল লক স্টোর করে (কী: `${apiKey}:${modelName}`)। এটিও ডাটাবেজের সাথে সিঙ্কড।
+
+- **Persistence Logic:**
+  - প্রতিটি রিকোয়েস্টে `getSmartKey` ফাংশন ডাটাবেজের `api_key_model_usage` টেবিলে `usage_today` আপডেট করে।
+  - সার্ভার রিস্টার্ট দিলে `updateKeyCache` ফাংশন ডাটাবেজ থেকে সব মডেলের ব্যবহারের তথ্য পুনরায় লোড করে নেয়।
+  - এর ফলে সার্ভার রিস্টার্ট হলেও কোনো মডেলের লক বা ইউজেস ডাটা হারিয়ে যায় না।
 
 - **RPD Resolution Priority:**
   1. গ্লোবাল কনফিগ (`dynamicLimits`) থেকে মডেল-স্পেসিফিক লিমিট।

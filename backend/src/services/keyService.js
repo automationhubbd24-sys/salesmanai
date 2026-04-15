@@ -371,17 +371,30 @@ async function updateKeyCache(force = false) {
             console.log(`[KeyService] 🧠 Synced Modality-Aware Global & Dynamic Limits for ${configResult.rows.length} providers.`);
         }
 
-        // --- NEW: LOAD MODEL-SPECIFIC LOCKS (User Request Upgrade) ---
+        // --- NEW: LOAD MODEL-SPECIFIC LOCKS & USAGE (User Request Upgrade: Persistent Storage) ---
         const modelLockResult = await pgClient.query(
-            "SELECT amu.*, al.api FROM api_key_model_usage amu JOIN api_list al ON amu.api_key_id = al.id WHERE amu.status = 'locked' AND (amu.cooldown_until IS NULL OR amu.cooldown_until > NOW())"
+            "SELECT amu.*, al.api FROM api_key_model_usage amu JOIN api_list al ON amu.api_key_id = al.id"
         );
         if (modelLockResult.rows && modelLockResult.rows.length > 0) {
-            modelLockResult.rows.forEach(lock => {
-                const lockKey = `${lock.api}:${lock.model_name}`;
-                const expiry = lock.cooldown_until ? new Date(lock.cooldown_until).getTime() : Date.now() + 24 * 60 * 60 * 1000;
-                modelLockMap.set(lockKey, { expiry, reason: 'persisted_lock' });
+            modelLockResult.rows.forEach(row => {
+                const lockKey = `${row.api}:${row.model_name}`;
+                
+                // 1. Load Usage (Persistent)
+                if (row.last_date_checked && String(row.last_date_checked) === today) {
+                    modelDailyUsage.set(lockKey, { date: today, count: row.usage_today || 0 });
+                } else {
+                    modelDailyUsage.set(lockKey, { date: today, count: 0 });
+                }
+
+                // 2. Load Locks
+                if (row.status === 'locked') {
+                    const expiry = row.cooldown_until ? new Date(row.cooldown_until).getTime() : Date.now() + 24 * 60 * 60 * 1000;
+                    if (expiry > nowMs) {
+                        modelLockMap.set(lockKey, { expiry, reason: 'persisted_lock' });
+                    }
+                }
             });
-            console.log(`[KeyService] 🔒 Synced ${modelLockResult.rows.length} model-specific locks from database.`);
+            console.log(`[KeyService] 🔒 Synced ${modelLockResult.rows.length} model-specific usage/lock records from database.`);
         }
 
         lastCacheUpdate = now;
@@ -1281,6 +1294,26 @@ async function getSmartKey(provider, model = 'default', modality = 'text') {
             // Update Model Daily Count
             modelUsageToday = modelDailyData.count + 1;
             modelDailyUsage.set(modelUsageKey, { date: today, count: modelUsageToday });
+
+            // --- NEW: PERSISTENT MODEL USAGE UPDATE ---
+            // We update the DB immediately for model-specific usage to ensure consistency across server restarts.
+            try {
+                const pgClient = require('./pgClient');
+                const modelUsageUpdateQuery = `
+                    INSERT INTO api_key_model_usage (api_key_id, model_name, usage_today, last_date_checked, last_used_at)
+                    SELECT id, $2, 1, $3, NOW() FROM api_list WHERE api = $1
+                    ON CONFLICT (api_key_id, model_name) 
+                    DO UPDATE SET 
+                        usage_today = CASE WHEN api_key_model_usage.last_date_checked = $3 THEN api_key_model_usage.usage_today + 1 ELSE 1 END,
+                        last_date_checked = $3,
+                        last_used_at = NOW()
+                `;
+                pgClient.query(modelUsageUpdateQuery, [candidateKey.api, modelToCheck, today]).catch(e => {
+                    console.error(`[KeyService] 💾 Failed to persist model usage for ${modelToCheck}:`, e.message);
+                });
+            } catch (err) {
+                console.error(`[KeyService] DB error on model usage persistence:`, err.message);
+            }
 
             // Update Usage Stats
             candidateKey.usage_count = (Number(candidateKey.usage_count) || 0) + 1;
