@@ -183,6 +183,15 @@ async function updateKeyCache(force = false) {
             console.log(`[KeyService] ♻️ Auto-reset ${resetResult.rowCount} keys whose 24h lock/cooldown expired.`);
         }
 
+        // --- NEW: AUTO-RESET MODEL-SPECIFIC LOCKS (User Request Upgrade) ---
+        await pgClient.query(
+            `UPDATE api_key_model_usage 
+             SET status = 'active', cooldown_until = NULL, usage_today = 0, last_date_checked = $1
+             WHERE (cooldown_until IS NOT NULL AND cooldown_until < NOW()) 
+             OR (last_date_checked != $1)`,
+            [today]
+        );
+
         const result = await pgClient.query(
             "SELECT * FROM api_list ORDER BY id ASC"
         );
@@ -313,6 +322,19 @@ async function updateKeyCache(force = false) {
             console.log(`[KeyService] 🧠 Synced Modality-Aware Global & Dynamic Limits for ${configResult.rows.length} providers.`);
         }
 
+        // --- NEW: LOAD MODEL-SPECIFIC LOCKS (User Request Upgrade) ---
+        const modelLockResult = await pgClient.query(
+            "SELECT amu.*, al.api FROM api_key_model_usage amu JOIN api_list al ON amu.api_key_id = al.id WHERE amu.status = 'locked' AND (amu.cooldown_until IS NULL OR amu.cooldown_until > NOW())"
+        );
+        if (modelLockResult.rows && modelLockResult.rows.length > 0) {
+            modelLockResult.rows.forEach(lock => {
+                const lockKey = `${lock.api}:${lock.model_name}`;
+                const expiry = lock.cooldown_until ? new Date(lock.cooldown_until).getTime() : Date.now() + 24 * 60 * 60 * 1000;
+                modelLockMap.set(lockKey, { expiry, reason: 'persisted_lock' });
+            });
+            console.log(`[KeyService] 🔒 Synced ${modelLockResult.rows.length} model-specific locks from database.`);
+        }
+
         lastCacheUpdate = now;
 
         // --- OPTIMIZED ROTATION POINTERS ---
@@ -425,18 +447,56 @@ async function report429(modelName, apiKey = null) {
     modelLockMap.set(modelName, state);
 }
 
-// Check if a model is globally locked
-function isModelLocked(modelName) {
+// Check if a model is globally or key-specifically locked
+function isModelLocked(modelName, apiKey = null) {
     if (!modelName) return false;
-    const state = modelLockMap.get(modelName);
-    if (!state) return false;
     
-    // Check if lock expired
-    if (Date.now() > state.expiry) {
-        modelLockMap.delete(modelName); // Auto-cleanup
-        return false;
+    const now = Date.now();
+    
+    // 1. Check GLOBAL Model Lock
+    const globalState = modelLockMap.get(modelName);
+    if (globalState && now < globalState.expiry) {
+        return true;
     }
-    return true;
+
+    // 2. Check KEY-SPECIFIC Model Lock
+    if (apiKey) {
+        const lockKey = `${apiKey}:${modelName}`;
+        const keyModelState = modelLockMap.get(lockKey);
+        if (keyModelState && now < keyModelState.expiry) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// Helper to mark a specific model as dead on a specific key
+async function markModelAsDead(apiKey, modelName, duration = DEFAULT_COOLDOWN, reason = 'unknown') {
+    if (!apiKey || !modelName) return;
+    
+    const now = Date.now();
+    const expiry = now + duration;
+    const expiryDate = new Date(expiry);
+    const lockKey = `${apiKey}:${modelName}`;
+    
+    console.warn(`[KeyService] 🔒 Locking model ${modelName} on key ${apiKey.substring(0,8)}... for ${(duration/1000/60).toFixed(1)} mins. Reason: ${reason}`);
+    
+    // Update In-Memory Map
+    modelLockMap.set(lockKey, { expiry, reason });
+
+    // --- IMMEDIATE DB UPDATE for model-specific lock ---
+    try {
+        const pgClient = require('./pgClient');
+        
+        const query = "INSERT INTO api_key_model_usage (api_key_id, model_name, status, cooldown_until, last_used_at) SELECT id, $2, 'locked', $3, NOW() FROM api_list WHERE api = $1 ON CONFLICT (api_key_id, model_name) DO UPDATE SET status = 'locked', cooldown_until = $3, last_used_at = NOW()";
+        
+        const params = [apiKey, modelName, expiryDate.toISOString()];
+        await pgClient.query(query, params);
+        console.log(`[KeyService] 💾 Persisted model-specific lock for ${modelName} on ${apiKey.substring(0,8)}...`);
+    } catch (err) {
+        console.error(`[KeyService] Failed to persist model-specific lock:`, err.message);
+    }
 }
 
 // Helper to mark key dead directly using object or string
@@ -544,16 +604,13 @@ async function handleApiKeyError(key, error, modelName = null, modality = 'text'
         const provider = (keyData?.provider || 'unknown').toLowerCase();
         const model = (modelName || keyData?.model || 'default').toLowerCase();
 
-        // Get effective limits to understand WHY we hit 429
-        const globalLim = dynamicLimits.get(model.toLowerCase()) || dynamicLimits.get(provider.toLowerCase());
-
         if (isDailyQuota) {
-            console.warn(`[KeyService] 🚨 Daily Quota Exceeded for ${key.substring(0,8)}... Locking until Midnight.`);
+            console.warn(`[KeyService] 🚨 Daily Quota Exceeded for ${key.substring(0,8)}... Locking ENTIRE KEY until Midnight.`);
             await markKeyAsQuotaExceeded(key);
         } else {
-            // User Request: Always lock for 24h (until Pacific Midnight) on any 429 error
-            console.warn(`[KeyService] 🔒 Rate Limit (429) hit for key ${key.substring(0,8)}... marking as EXCEEDED until Pacific Midnight.`);
-            await markKeyAsQuotaExceeded(key);
+            // User Request Upgrade: Lock ONLY the specific model for this key, not the whole key
+            console.warn(`[KeyService] 🔒 Rate Limit (429) hit for model ${model} on key ${key.substring(0,8)}... locking MODEL ONLY.`);
+            await markModelAsDead(key, model, getMsUntilPacificMidnight(), `model_rate_limit_429_${model}`);
         }
         
         await updateKeyCache(true);
@@ -1017,7 +1074,7 @@ async function getSmartKey(provider, model = 'default', modality = 'text') {
             const candidateKey = candidates[actualIndex];
 
             // Skip if key became dead during the cycle
-            const isModelLockedForThisKey = isModelLocked(modelToCheck, candidateKey.id);
+            const isModelLockedForThisKey = isModelLocked(modelToCheck, candidateKey.api);
             if (!isKeyAlive(candidateKey.api) || isModelLockedForThisKey) {
                 // Smart Skip: If this was the current pointer, advance it so next request doesn't waste time checking it
                 if (i === 0) {

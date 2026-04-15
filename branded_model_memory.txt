@@ -42,6 +42,12 @@
 - **Model-Specific Check:** প্রতিটি মডেলের ব্যবহারের জন্য আলাদা RPD চেক করা হয়। যদি একটি মডেলের লিমিট শেষ হয়, তবে ওই Key-টি ওই মডেলের জন্য **SKIP** করা হয়, কিন্তু অন্য মডেলের জন্য সেটি **ACTIVE** থাকে।
 - **Key-Level Check:** শুধু তখনই একটি Key-কে 'LOCKED' বা 'DEAD' মার্ক করা হয় যখন তার গ্লোবাল RPD লিমিট শেষ হয়।
 
+### মডেল-ভিত্তিক লকিং (Model-Based Locking Upgrade):
+আগে কোনো ৪২৯ (Rate Limit) এরর আসলে পুরো API Key-টি লক হয়ে যেত। এখন এটি উন্নত করা হয়েছে:
+- **Smart 429 Detection:** যখন কোনো নির্দিষ্ট মডেলে ৪২৯ এরর আসে, তখন শুধু সেই **মডেলটিকে** ওই Key-এর জন্য লক করা হয় (ব্যবহার করা হয় `markModelAsDead`)। 
+- **Persisted Locks:** এই লকগুলো `api_key_model_usage` টেবিলে সেভ থাকে এবং সার্ভার রিস্টার্ট হলেও বজায় থাকে।
+- **Auto-Reset:** প্রতিদিন প্রশান্ত মহাসাগরীয় সময় অনুযায়ী (Pacific Midnight) এই লকগুলো অটোমেটিক রিলিজ হয়ে যায়।
+
 ### ফ্রন্টএন্ড ভিজিবিলিটি (Frontend Visibility):
 এখন এডমিন প্যানেলের **API Management** পেজে প্রতিটি Key-এর পাশে কোন মডেল কতবার ব্যবহার হয়েছে তার ব্রেকডাউন দেখা যায়।
 
@@ -55,7 +61,7 @@
 - **Key Data Structures (keyService.js):**
   - `modelDailyUsage`: একটি `Map` যা `${apiKey}:${modelName}` ফরম্যাটে প্রতিদিনের ব্যবহার স্টোর করে।
   - `modelUsageTimestamps`: মডেল-স্পেসিফিক RPM ট্র্যাকিংয়ের জন্য ব্যবহৃত হয়।
-  - `getModelUsageSummaryForKey(apiKey)`: একটি হেল্পার ফাংশন যা নির্দিষ্ট একটি Key-এর সব মডেল ব্যবহারের সামারি দেয়।
+  - `modelLockMap`: এটি গ্লোবাল এবং কী-স্পেসিফিক মডেল লক স্টোর করে (কী: `${apiKey}:${modelName}`)।
 
 - **RPD Resolution Priority:**
   1. গ্লোবাল কনফিগ (`dynamicLimits`) থেকে মডেল-স্পেসিফিক লিমিট।
@@ -63,8 +69,8 @@
   3. প্রোভাইডার ডিফল্ট (`PROVIDER_DEFAULTS`)।
 
 - **Visibility Logic:**
-  - `getActiveRotationPool` এর মাধ্যমে ডাটা ফ্রন্টএন্ডে যায়।
-  - `ApiManagementPage.tsx` এ `api.model_usage` অবজেক্টটি লুপ করে ডাটা রেন্ডার করা হয়।
+  - `getActiveRotationPool` এর মাধ্যমে ডাটা ফ্রন্টএন্ডে যায়।
+  - `AdminPage.tsx` এবং `ApiManagementPage.tsx` এ `api.model_usage` অবজেক্টটি রেন্ডার করা হয়।
 
 ---
 এই মেমোরি ফাইলটি SalesmanAI ব্র্যান্ডেড আপগ্রেডের মূল আর্কিটেকচার এবং লেটেস্ট পরিবর্তনগুলো বুঝতে সাহায্য করবে।
