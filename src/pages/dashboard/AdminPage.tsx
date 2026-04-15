@@ -31,6 +31,7 @@ interface ApiKey {
   rpm_limit?: number;
   rpd_limit?: number;
   cooldown_until?: string | null;
+  model_usage?: Record<string, { count: number; date: string }>;
 }
 
 interface EngineStats {
@@ -3207,6 +3208,26 @@ export default function AdminPage() {
                                           <span className="text-[8px] uppercase font-bold text-muted-foreground">Tokens</span>
                                         </div>
                                       </div>
+
+                                      {/* Model Breakdown Upgrade */}
+                                      {k.model_usage && Object.keys(k.model_usage).length > 0 && (
+                                        <div className="bg-blue-500/5 rounded p-1.5 border border-blue-500/10 space-y-1">
+                                          <div className="flex items-center gap-1 mb-1">
+                                            <Cpu className="h-2.5 w-2.5 text-blue-400" />
+                                            <span className="text-[8px] uppercase font-black text-blue-400/70 tracking-tighter">Models</span>
+                                          </div>
+                                          {Object.entries(k.model_usage).map(([model, data]) => (
+                                            <div key={model} className="flex justify-between items-center gap-2">
+                                              <span className="text-[8px] text-white/40 truncate max-w-[70px] font-medium">
+                                                {model.split('/').pop()}
+                                              </span>
+                                              <span className="text-[9px] font-black text-[#00ff88]">
+                                                {data.count}
+                                              </span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
 
                                       {/* Lifetime Stats */}
                                       <div className="px-1.5 flex flex-col">
