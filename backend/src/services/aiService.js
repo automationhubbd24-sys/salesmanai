@@ -1667,7 +1667,16 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             console.log(`[AI Logger] Finalizing response for User: ${pageConfig.user_id}, Page: ${pageConfig.page_id}`);
             
             const isRequestBilling = pageConfig.billing_mode === 'request' || pageConfig.is_external_api === true;
-            const displayModel = pageConfig.display_model || pageConfig.chat_model || result.model || 'unknown';
+            
+            // --- SMART LOGGING FOR FALLBACK MODELS ---
+            let displayModel = pageConfig.display_model || pageConfig.chat_model || result.model || 'unknown';
+            
+            // If the actual model used (result.model) is different from the primary model, mark it as Fallback in logs
+            const isFallback = result.model && primaryModel && result.model !== primaryModel;
+            if (isFallback) {
+                displayModel = `${displayModel} (${result.model.split('/').pop()} Fallback)`;
+            }
+
             const usageTokens = isRequestBilling ? 1 : (result.token_usage || 0);
             const cost = isRequestBilling
                 ? dbService.calculateRequestCost(displayModel, 1)
