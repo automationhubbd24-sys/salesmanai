@@ -3193,35 +3193,28 @@ export default function AdminPage() {
                                       </div>
                                     )}
                                   </TableCell>
-                                  <TableCell className="py-4">
-                                    <div className="flex flex-col gap-2">
-                                      {/* Today's Stats */}
-                                      <div className="bg-white/5 rounded p-1.5 border border-white/5">
-                                        <div className="flex items-baseline justify-between gap-2">
-                                          <span className="font-black text-white text-base leading-none">{k.usage_today || 0}</span>
-                                          <span className="text-[10px] font-mono text-emerald-400 font-bold">
-                                            {k.usage_tokens_today ? (k.usage_tokens_today / 1000).toFixed(1) + 'k' : '0k'}
-                                          </span>
+                                  <TableCell className="py-2">
+                                    <div className="flex flex-col gap-1 w-[140px]">
+                                      {/* Combined Stats Header */}
+                                      <div className="flex items-center justify-between px-1">
+                                        <div className="flex items-baseline gap-1">
+                                          <span className="font-black text-white text-sm leading-none">{k.usage_today || 0}</span>
+                                          <span className="text-[8px] uppercase font-bold text-white/30 tracking-tighter">Req</span>
                                         </div>
-                                        <div className="flex items-center justify-between mt-1 opacity-40">
-                                          <span className="text-[8px] uppercase font-bold text-muted-foreground">Today Req</span>
-                                          <span className="text-[8px] uppercase font-bold text-muted-foreground">Tokens</span>
-                                        </div>
+                                        <span className="text-[9px] font-mono text-emerald-400/80 font-bold">
+                                          {k.usage_tokens_today ? (k.usage_tokens_today / 1000).toFixed(1) + 'k' : '0k'}
+                                        </span>
                                       </div>
 
-                                      {/* Model Breakdown Upgrade */}
+                                      {/* Model Breakdown - Ultra Compact */}
                                       {k.model_usage && Object.keys(k.model_usage).length > 0 && (
-                                        <div className="bg-blue-500/5 rounded p-1.5 border border-blue-500/10 space-y-1">
-                                          <div className="flex items-center gap-1 mb-1">
-                                            <Cpu className="h-2.5 w-2.5 text-blue-400" />
-                                            <span className="text-[8px] uppercase font-black text-blue-400/70 tracking-tighter">Models</span>
-                                          </div>
+                                        <div className="bg-white/[0.03] rounded-sm p-1 border border-white/[0.05] space-y-0.5">
                                           {Object.entries(k.model_usage).map(([model, data]) => (
-                                            <div key={model} className="flex justify-between items-center gap-2">
-                                              <span className="text-[8px] text-white/40 truncate max-w-[70px] font-medium">
-                                                {model.split('/').pop()}
+                                            <div key={model} className="flex justify-between items-center gap-2 leading-tight">
+                                              <span className="text-[7px] text-white/40 truncate max-w-[85px] font-medium uppercase tracking-tighter">
+                                                {model.split('/').pop()?.replace('gemini-', '')}
                                               </span>
-                                              <span className="text-[9px] font-black text-[#00ff88]">
+                                              <span className="text-[8px] font-black text-[#00ff88]/90">
                                                 {data.count}
                                               </span>
                                             </div>
@@ -3229,12 +3222,10 @@ export default function AdminPage() {
                                         </div>
                                       )}
 
-                                      {/* Lifetime Stats */}
-                                      <div className="px-1.5 flex flex-col">
-                                        <div className="flex items-center justify-between">
-                                          <span className="text-[10px] font-bold text-white/60">{k.usage_count || 0}</span>
-                                          <span className="text-[9px] text-muted-foreground font-medium uppercase tracking-tighter">Lifetime</span>
-                                        </div>
+                                      {/* Lifetime Stats - Compact */}
+                                      <div className="flex items-center justify-between px-1 mt-0.5 opacity-30">
+                                        <span className="text-[7px] uppercase font-bold tracking-tighter">Lifetime</span>
+                                        <span className="text-[8px] font-bold">{k.usage_count || 0}</span>
                                       </div>
                                     </div>
                                   </TableCell>
