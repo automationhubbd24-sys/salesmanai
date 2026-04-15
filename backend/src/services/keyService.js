@@ -377,11 +377,13 @@ async function updateKeyCache(force = false) {
         );
         if (modelLockResult.rows && modelLockResult.rows.length > 0) {
             modelLockResult.rows.forEach(row => {
-                const lockKey = `${row.api}:${row.model_name}`;
+                const lockKey = `${row.api}:${row.model_name.toLowerCase()}`;
                 
-                // 1. Load Usage (Persistent)
-                if (row.last_date_checked && String(row.last_date_checked) === today) {
-                    modelDailyUsage.set(lockKey, { date: today, count: row.usage_today || 0 });
+                // 1. Load Usage (Persistent) - Robust Date Comparison
+                const rowDateStr = row.last_date_checked ? new Date(row.last_date_checked).toISOString().split('T')[0] : null;
+                
+                if (rowDateStr === today) {
+                    modelDailyUsage.set(lockKey, { date: today, count: Number(row.usage_today) || 0 });
                 } else {
                     modelDailyUsage.set(lockKey, { date: today, count: 0 });
                 }
