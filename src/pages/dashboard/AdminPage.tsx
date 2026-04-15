@@ -3242,39 +3242,48 @@ export default function AdminPage() {
                                       </div>
                                     )}
                                   </TableCell>
-                                  <TableCell className="py-2">
-                                    <div className="flex flex-col gap-1 w-[160px]">
-                                      {/* Combined Stats Header - Wider */}
-                                      <div className="flex items-center justify-between px-1">
-                                        <div className="flex items-baseline gap-1">
-                                          <span className="font-black text-white text-base leading-none">{k.usage_today || 0}</span>
-                                          <span className="text-[9px] uppercase font-bold text-white/30 tracking-tighter">Today Req</span>
+                                  <TableCell className="py-3">
+                                    <div className="flex flex-col gap-2 w-[180px]">
+                                      {/* Combined Stats Header - Wider & Bigger */}
+                                      <div className="flex items-center justify-between px-1 bg-white/[0.02] p-1.5 rounded-sm border border-white/5">
+                                        <div className="flex items-baseline gap-1.5">
+                                          <span className="font-black text-white text-lg leading-none tracking-tighter">{k.usage_today || 0}</span>
+                                          <span className="text-[10px] uppercase font-black text-white/40 tracking-widest">Today</span>
                                         </div>
-                                        <span className="text-[10px] font-mono text-emerald-400 font-bold">
-                                          {k.usage_tokens_today ? (k.usage_tokens_today / 1000).toFixed(1) + 'k' : '0k'}
-                                        </span>
+                                        <div className="flex flex-col items-end">
+                                          <span className="text-xs font-black text-emerald-400 leading-none tracking-tighter">
+                                            {k.usage_tokens_today ? (k.usage_tokens_today / 1000).toFixed(1) + 'k' : '0k'}
+                                          </span>
+                                          <span className="text-[7px] uppercase font-bold text-white/20 mt-0.5 tracking-widest">Tokens</span>
+                                        </div>
                                       </div>
 
-                                      {/* Model Breakdown - Vertically Stacked & Clearly Visible */}
+                                      {/* Model Breakdown - Vertically Stacked & More Spacious */}
                                       {k.model_usage && Object.keys(k.model_usage).length > 0 && (
-                                        <div className="bg-white/[0.03] rounded-sm p-1.5 border border-white/[0.05] space-y-1">
+                                        <div className="bg-white/[0.03] rounded-sm p-2 border border-white/[0.05] space-y-1.5 shadow-inner">
                                           {Object.entries(k.model_usage).map(([model, data]) => (
-                                            <div key={model} className="flex justify-between items-center gap-3 leading-tight border-b border-white/[0.02] last:border-0 pb-0.5 last:pb-0">
-                                              <span className="text-[9px] text-white/50 truncate max-w-[100px] font-bold uppercase tracking-tighter">
+                                            <div key={model} className="flex justify-between items-center gap-4 leading-tight border-b border-white/[0.03] last:border-0 pb-1 last:pb-0">
+                                              <span className="text-[10px] text-white/60 truncate max-w-[120px] font-black uppercase tracking-tighter">
                                                 {model.split('/').pop()}
                                               </span>
-                                              <span className="text-[10px] font-black text-[#00ff88]">
-                                                {data.count}
-                                              </span>
+                                              <div className="flex items-center gap-1">
+                                                <span className="text-xs font-black text-[#00ff88] leading-none">
+                                                  {data.count}
+                                                </span>
+                                                <span className="text-[7px] uppercase font-bold text-white/20">Req</span>
+                                              </div>
                                             </div>
                                           ))}
                                         </div>
                                       )}
 
                                       {/* Lifetime Stats - Simple row at bottom */}
-                                      <div className="flex items-center justify-between px-1 mt-0.5 opacity-40">
+                                      <div className="flex items-center justify-between px-1.5 mt-0.5 opacity-40">
                                         <span className="text-[8px] uppercase font-black tracking-widest text-white/40">Lifetime</span>
-                                        <span className="text-[10px] font-black text-white/60">{k.usage_count || 0}</span>
+                                        <div className="flex items-baseline gap-1">
+                                          <span className="text-xs font-black text-white/60 leading-none">{k.usage_count || 0}</span>
+                                          <span className="text-[7px] uppercase font-bold text-white/20">Total</span>
+                                        </div>
                                       </div>
                                     </div>
                                   </TableCell>
