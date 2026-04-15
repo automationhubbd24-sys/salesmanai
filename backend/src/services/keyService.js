@@ -178,6 +178,20 @@ async function updateKeyCache(force = false) {
                 CREATE INDEX IF NOT EXISTS idx_api_model_usage_key_id ON api_key_model_usage(api_key_id);
                 CREATE INDEX IF NOT EXISTS idx_api_model_usage_model_name ON api_key_model_usage(model_name);
                 CREATE INDEX IF NOT EXISTS idx_api_model_usage_status ON api_key_model_usage(status);
+
+                -- ADD FALLBACK COLUMNS TO api_engine_configs IF THEY DON'T EXIST
+                DO $$ 
+                BEGIN 
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='api_engine_configs' AND column_name='text_fallback_model') THEN
+                        ALTER TABLE api_engine_configs ADD COLUMN text_fallback_model TEXT;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='api_engine_configs' AND column_name='voice_fallback_model') THEN
+                        ALTER TABLE api_engine_configs ADD COLUMN voice_fallback_model TEXT;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='api_engine_configs' AND column_name='vision_fallback_model') THEN
+                        ALTER TABLE api_engine_configs ADD COLUMN vision_fallback_model TEXT;
+                    END IF;
+                END $$;
             `);
         } catch (e) {
             console.warn(`[KeyService] Migration error (Table might already exist):`, e.message);

@@ -102,7 +102,8 @@ exports.saveGlobalConfig = async (req, res) => {
             text_rpm, text_rpd, text_rph, text_tpm, text_tpd, text_tpmo,
             vision_rpm, vision_rpd, vision_rph, vision_tpm, vision_tpd, vision_tpmo,
             voice_rpm, voice_rpd, voice_rph, voice_tpm, voice_tpd, voice_tpmo,
-            text_models_list, vision_models_list, voice_models_list
+            text_models_list, vision_models_list, voice_models_list,
+            text_fallback_model, vision_fallback_model, voice_fallback_model
         } = req.body;
         
         if (!provider) {
@@ -117,9 +118,10 @@ exports.saveGlobalConfig = async (req, res) => {
                 vision_rpm, vision_rpd, vision_rph, vision_tpm, vision_tpd, vision_tpmo,
                 voice_rpm, voice_rpd, voice_rph, voice_tpm, voice_tpd, voice_tpmo,
                 text_models_list, vision_models_list, voice_models_list,
+                text_fallback_model, vision_fallback_model, voice_fallback_model,
                 updated_at
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, NOW())
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, NOW())
              ON CONFLICT (provider) 
              DO UPDATE SET 
                 text_model = EXCLUDED.text_model,
@@ -149,6 +151,9 @@ exports.saveGlobalConfig = async (req, res) => {
                 text_models_list = EXCLUDED.text_models_list,
                 vision_models_list = EXCLUDED.vision_models_list,
                 voice_models_list = EXCLUDED.voice_models_list,
+                text_fallback_model = EXCLUDED.text_fallback_model,
+                vision_fallback_model = EXCLUDED.vision_fallback_model,
+                voice_fallback_model = EXCLUDED.voice_fallback_model,
                 updated_at = NOW()
              RETURNING *`,
             [
@@ -157,7 +162,8 @@ exports.saveGlobalConfig = async (req, res) => {
                 text_rpm || 0, text_rpd || 0, text_rph || 0, text_tpm || 0, text_tpd || 0, text_tpmo || 0,
                 vision_rpm || 0, vision_rpd || 0, vision_rph || 0, vision_tpm || 0, vision_tpd || 0, vision_tpmo || 0,
                 voice_rpm || 0, voice_rpd || 0, voice_rph || 0, voice_tpm || 0, voice_tpd || 0, voice_tpmo || 0,
-                JSON.stringify(text_models_list || []), JSON.stringify(vision_models_list || []), JSON.stringify(voice_models_list || [])
+                JSON.stringify(text_models_list || []), JSON.stringify(vision_models_list || []), JSON.stringify(voice_models_list || []),
+                text_fallback_model, vision_fallback_model, voice_fallback_model
             ]
         );
 

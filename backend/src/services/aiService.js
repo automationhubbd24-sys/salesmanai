@@ -526,13 +526,17 @@ async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, default
         finalModel = finalModel.split(',')[0].trim();
     }
 
-    console.log(`[AI] Engine Resolved: ${targetEngineName} -> ${finalProvider}/${finalModel} (${modality})`);
+    const fallbackField = isAudio ? 'voice_fallback_model' : (isVision ? 'vision_fallback_model' : 'text_fallback_model');
+    const fallbackModel = (gConfig && gConfig[fallbackField]) ? gConfig[fallbackField] : null;
+
+    console.log(`[AI] Engine Resolved: ${targetEngineName} -> ${finalProvider}/${finalModel} (Fallback: ${fallbackModel || 'None'}) (${modality})`);
 
     return { 
         finalProvider,
         finalModel,
+        fallbackModel, // NEW: Fallback model if primary fails
         targetEngineName,
-        modality, // Pass modality for key selection
+        modality, 
         gConfig
     };
 }
@@ -2378,142 +2382,143 @@ ${productContext || "No specific product context provided yet."}
         });
     }
 
-    // --- FALLBACK & RETRY LOGIC FOR SYSTEM ENGINES (SAME MODEL FIRST) ---
+    // --- FALLBACK & RETRY LOGIC FOR SYSTEM ENGINES (SMART MULTI-MODEL FALLBACK) ---
     let retryCount = 0;
-    const MAX_RETRIES = 15; // Increased to 15 to try more keys if we have many (e.g. 10k+)
+    const MAX_RETRIES_PER_MODEL = 3; // User Request: 3 attempts per model
     let lastError = null;
     let attemptedKeys = new Set();
-    let modality = 'text'; // Define modality outside the loop to avoid ReferenceError in catch block
+    let modality = 'text'; 
 
-    while (retryCount <= MAX_RETRIES) {
-        let currentModel = defaultModel;
-        let apiKey = null;
-        let finalProvider = null;
+    // Resolve Modality and Fallback Models once
+    let isVision = (imageUrls && imageUrls.length > 0);
+    let isAudio = (audioUrls && audioUrls.length > 0); 
+    let resolved = await resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio);
+    
+    const primaryModel = resolved.finalModel;
+    const fallbackModel = resolved.fallbackModel;
+    const finalProvider = resolved.finalProvider;
+    modality = resolved.modality || (isVision ? 'vision' : (isAudio ? 'voice' : 'text'));
 
-        try {
-            // 1. Resolve Modality for Chat Engine
-            let isVision = (imageUrls && imageUrls.length > 0);
-            let isAudio = (audioUrls && audioUrls.length > 0); 
+    // Models to try in order
+    const modelsToTry = [primaryModel];
+    if (fallbackModel && fallbackModel !== primaryModel) {
+        modelsToTry.push(fallbackModel);
+    }
 
-            let resolved = await resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio);
-            finalProvider = resolved.finalProvider;
-            let finalModel = resolved.finalModel;
-            modality = resolved.modality || (isVision ? 'vision' : (isAudio ? 'voice' : 'text'));
+    for (const currentModel of modelsToTry) {
+        console.log(`[AI Retry Loop] 🚀 Starting attempts for model: ${currentModel} (${modality})`);
+        let modelRetryCount = 0;
 
-            currentModel = finalModel;
-            
-            // 2. Get Next Smart Key (Round-Robin)
-            let keyData = await keyService.getSmartKey(finalProvider, currentModel, modality);
-            
-            // If no model-specific key, try default pool
-            if (!keyData || !keyData.key || attemptedKeys.has(keyData.key)) {
-                 keyData = await keyService.getSmartKey(finalProvider, 'default', modality);
-            }
+        while (modelRetryCount < MAX_RETRIES_PER_MODEL) {
+            let apiKey = null;
 
-            // If we still have no key or it's one we already tried in this loop, we are exhausted
-            if (!keyData || !keyData.key || attemptedKeys.has(keyData.key)) {
-                console.warn(`[AI] Pool ${finalProvider}/${currentModel} exhausted after ${attemptedKeys.size} attempts.`);
-                throw new Error(`All API keys for ${finalProvider}/${currentModel} are currently LOCKED or rate-limited. Tried ${attemptedKeys.size} keys. Please add more keys.`);
-            }
+            try {
+                // 1. Get Next Smart Key (Round-Robin)
+                let keyData = await keyService.getSmartKey(finalProvider, currentModel, modality);
+                
+                // If no model-specific key, try default pool
+                if (!keyData || !keyData.key || attemptedKeys.has(keyData.key)) {
+                    keyData = await keyService.getSmartKey(finalProvider, 'default', modality);
+                }
 
-            apiKey = keyData.key;
-            attemptedKeys.add(apiKey);
+                // If we still have no key or it's one we already tried, move to next model
+                if (!keyData || !keyData.key || attemptedKeys.has(keyData.key)) {
+                    console.warn(`[AI] Pool ${finalProvider}/${currentModel} exhausted after ${modelRetryCount} attempts.`);
+                    break; // Exit inner while, move to next model
+                }
 
-            let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
-            if (finalProvider === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
-            else if (finalProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
-            else if (finalProvider === 'openai') baseURL = 'https://api.openai.com/v1';
-            else if (finalProvider === 'mistral') baseURL = 'https://api.mistral.ai/v1';
-            else if (finalProvider === 'xai') baseURL = 'https://api.x.ai/v1';
-            else if (finalProvider === 'google' || finalProvider === 'gemini') baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
-            
-            const isBrandedEngine = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(resolved.targetEngineName);
-            
-            let proxyAgent = null;
-            if (isBrandedEngine) {
-                if (finalProvider === 'google' || finalProvider === 'gemini') {
-                    proxyAgent = getGeminiProxyAgent(baseURL, true, resolved.targetEngineName);
-                } else if (finalProvider === 'groq') {
-                    proxyAgent = getGroqProxyAgent(true, resolved.targetEngineName);
+                apiKey = keyData.key;
+                attemptedKeys.add(apiKey);
+
+                let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
+                if (finalProvider === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
+                else if (finalProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
+                else if (finalProvider === 'openai') baseURL = 'https://api.openai.com/v1';
+                else if (finalProvider === 'mistral') baseURL = 'https://api.mistral.ai/v1';
+                else if (finalProvider === 'xai') baseURL = 'https://api.x.ai/v1';
+                else if (finalProvider === 'google' || finalProvider === 'gemini') baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
+                
+                const isBrandedEngine = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(resolved.targetEngineName);
+                
+                let proxyAgent = null;
+                if (isBrandedEngine) {
+                    if (finalProvider === 'google' || finalProvider === 'gemini') {
+                        proxyAgent = getGeminiProxyAgent(baseURL, true, resolved.targetEngineName);
+                    } else if (finalProvider === 'groq') {
+                        proxyAgent = getGroqProxyAgent(true, resolved.targetEngineName);
+                    } else {
+                        const proxy = getProxyUrl(resolved.targetEngineName);
+                        proxyAgent = createProxyAgent(proxy);
+                    }
+                }
+
+                const result = await runAgentLoop({
+                    apiKey: apiKey,
+                    baseURL: baseURL,
+                    model: currentModel,
+                    messages: messages,
+                    tools: tools,
+                    pageConfig: pageConfig,
+                    proxyAgent: proxyAgent,
+                    totalTokenUsage: totalTokenUsage,
+                    foundProducts: [],
+                    userId: userId,
+                    temperature: (pageConfig.temperature !== undefined && pageConfig.temperature !== null ? Number(pageConfig.temperature) : (pageConfig.is_external_api ? 0.7 : 0.2)),
+                    top_p: (pageConfig.top_p !== undefined && pageConfig.top_p !== null ? Number(pageConfig.top_p) : 0.9),
+                    pageId: pageId 
+                });
+
+                // --- RECORD SUCCESSFUL USAGE ---
+                let tokensToRecord = result.token_usage || 0;
+                if (tokensToRecord === 0 && result.reply) {
+                    tokensToRecord = estimateTokenUsage(messages, result.reply, 0);
+                }
+
+                if (apiKey && tokensToRecord > 0) {
+                    keyService.recordKeyUsage(apiKey, tokensToRecord, currentModel).catch(e => {
+                        console.error(`[AI] Token recording failed:`, e.message);
+                    });
+                }
+
+                return finalize({ ...result, token_usage: tokensToRecord, sentiment: 'neutral' });
+
+            } catch (err) {
+                const errorMsg = (err.message || '').toLowerCase();
+                const statusCode = err.status || (err.response ? err.response.status : null);
+                
+                console.error(`[AI Retry Loop] Model: ${currentModel} | Attempt ${modelRetryCount + 1} Failed with Key ${apiKey ? apiKey.substring(0,8) : 'NONE'}... | Status: ${statusCode} | Msg: ${errorMsg}`);
+                lastError = err;
+                
+                if (apiKey) {
+                    await handleAiError(err, apiKey, currentModel, modality);
+                    const estimatedInputTokens = estimateTokenUsage(messages, '', 0);
+                    try {
+                        await dbService.saveAIUsageLog({
+                            user_id: pageConfig.user_id,
+                            model: currentModel || 'unknown',
+                            tokens: estimatedInputTokens,
+                            cost: 0, 
+                            context: `failed_attempt_p2_model_${currentModel}_retry_${modelRetryCount}`
+                        });
+                    } catch(e) {}
+                }
+
+                const isRetryable = statusCode === 429 || statusCode === 401 || statusCode >= 500 || 
+                                    errorMsg.includes('limit') || errorMsg.includes('quota') || 
+                                    errorMsg.includes('key') || errorMsg.includes('timeout') || 
+                                    errorMsg.includes('network');
+
+                if (isRetryable) {
+                    modelRetryCount++;
+                    retryCount++; // Global total count
+                    await new Promise(resolve => setTimeout(resolve, 200)); 
+                    continue;
                 } else {
-                    const proxy = getProxyUrl(resolved.targetEngineName);
-                    proxyAgent = createProxyAgent(proxy);
+                    break; // Non-retryable error, exit inner while, try next model if available
                 }
             }
-
-            const result = await runAgentLoop({
-                apiKey: apiKey,
-                baseURL: baseURL,
-                model: currentModel,
-                messages: messages,
-                tools: tools,
-                pageConfig: pageConfig,
-                proxyAgent: proxyAgent,
-                totalTokenUsage: totalTokenUsage,
-                foundProducts: [],
-                userId: userId,
-                temperature: (pageConfig.temperature !== undefined && pageConfig.temperature !== null ? Number(pageConfig.temperature) : (pageConfig.is_external_api ? 0.7 : 0.2)),
-                top_p: (pageConfig.top_p !== undefined && pageConfig.top_p !== null ? Number(pageConfig.top_p) : 0.9),
-                pageId: pageId 
-            });
-
-            // --- RECORD SUCCESSFUL USAGE (TOKEN TRACKING) ---
-            let tokensToRecord = result.token_usage || 0;
-            if (tokensToRecord === 0 && result.reply) {
-                // Fallback: Estimate tokens if provider didn't return them
-                tokensToRecord = estimateTokenUsage(messages, result.reply, 0);
-            }
-
-            if (apiKey && tokensToRecord > 0) {
-                keyService.recordKeyUsage(apiKey, tokensToRecord, currentModel).catch(e => {
-                    console.error(`[AI] Token recording failed:`, e.message);
-                });
-            }
-
-            return finalize({ ...result, token_usage: tokensToRecord, sentiment: 'neutral' });
-
-        } catch (err) {
-            const errorMsg = (err.message || '').toLowerCase();
-            const statusCode = err.status || (err.response ? err.response.status : null);
-            
-            console.error(`[AI Retry Loop] Attempt ${retryCount + 1} Failed with Key ${apiKey ? apiKey.substring(0,8) : 'NONE'}... | Status: ${statusCode} | Msg: ${errorMsg}`);
-            lastError = err;
-            
-            // Mark the failing key as dead immediately
-            if (apiKey) {
-                await handleAiError(err, apiKey, currentModel, modality);
-                
-                // --- TOKEN TRACKING FOR FAILED ATTEMPTS (PHASE 2) ---
-                const estimatedInputTokens = estimateTokenUsage(messages, '', 0);
-                try {
-                    await dbService.saveAIUsageLog({
-                        user_id: pageConfig.user_id,
-                        model: currentModel || 'unknown',
-                        tokens: estimatedInputTokens,
-                        cost: 0, 
-                        context: `failed_attempt_p2_retry_${retryCount}`
-                    });
-                } catch(e) {}
-            }
-
-            // Decide if we should retry
-            // Retry on 429, 401 (invalid key), 5xx, or network errors
-            const isRetryable = statusCode === 429 || statusCode === 401 || statusCode >= 500 || 
-                                errorMsg.includes('limit') || errorMsg.includes('quota') || 
-                                errorMsg.includes('key') || errorMsg.includes('timeout') || 
-                                errorMsg.includes('network');
-
-            if (isRetryable) {
-                retryCount++;
-                if (retryCount > MAX_RETRIES) break;
-                // Wait a tiny bit (exponential backoff not needed here because we switch to a NEW key immediately)
-                await new Promise(resolve => setTimeout(resolve, 200)); 
-                continue;
-            } else {
-                // Non-retryable error (e.g. 400 Bad Request), fail immediately
-                break;
-            }
         }
+        console.warn(`[AI Retry Loop] ⚠️ Primary model ${currentModel} failed after ${modelRetryCount} attempts. Checking fallback...`);
     }
 
     // If we are here, all retries failed
