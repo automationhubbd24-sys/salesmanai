@@ -2687,15 +2687,6 @@ export default function AdminPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label className="text-xs text-[#00ff88]/60">Fallback Model</Label>
-                    <Input 
-                      value={configValues.text_fallback_model || ""} 
-                      onChange={(e) => setConfigValues({...configValues, text_fallback_model: e.target.value || null})}
-                      placeholder="e.g. llama-3-70b"
-                      className="bg-black/40 border-[#00ff88]/20 h-9"
-                    />
-                  </div>
-                  <div className="space-y-2">
                     <Label className="text-xs">Provider Override</Label>
                     <Select 
                       value={configValues.text_provider_override || "none"} 
@@ -2796,15 +2787,6 @@ export default function AdminPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label className="text-xs text-orange-400/60">Fallback Model</Label>
-                    <Input 
-                      value={configValues.vision_fallback_model || ""} 
-                      onChange={(e) => setConfigValues({...configValues, vision_fallback_model: e.target.value || null})}
-                      placeholder="e.g. gpt-4o-mini"
-                      className="bg-black/40 border-orange-400/20 h-9"
-                    />
-                  </div>
-                  <div className="space-y-2">
                     <Label className="text-xs">Provider Override</Label>
                     <Select 
                       value={configValues.vision_provider_override || "none"} 
@@ -2902,15 +2884,6 @@ export default function AdminPage() {
                       onChange={(e) => setConfigValues({...configValues, voice_model: e.target.value})}
                       placeholder="e.g. gemini-2.5-flash"
                       className="bg-black/40 border-white/10 h-9"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-xs text-blue-400/60">Fallback Model</Label>
-                    <Input 
-                      value={configValues.voice_fallback_model || ""} 
-                      onChange={(e) => setConfigValues({...configValues, voice_fallback_model: e.target.value || null})}
-                      placeholder="e.g. whisper-1"
-                      className="bg-black/40 border-blue-400/20 h-9"
                     />
                   </div>
                   <div className="space-y-2">
