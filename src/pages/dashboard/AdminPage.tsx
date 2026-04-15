@@ -3194,27 +3194,27 @@ export default function AdminPage() {
                                     )}
                                   </TableCell>
                                   <TableCell className="py-2">
-                                    <div className="flex flex-col gap-1 w-[140px]">
-                                      {/* Combined Stats Header */}
+                                    <div className="flex flex-col gap-1 w-[160px]">
+                                      {/* Combined Stats Header - Wider */}
                                       <div className="flex items-center justify-between px-1">
                                         <div className="flex items-baseline gap-1">
-                                          <span className="font-black text-white text-sm leading-none">{k.usage_today || 0}</span>
-                                          <span className="text-[8px] uppercase font-bold text-white/30 tracking-tighter">Req</span>
+                                          <span className="font-black text-white text-base leading-none">{k.usage_today || 0}</span>
+                                          <span className="text-[9px] uppercase font-bold text-white/30 tracking-tighter">Today Req</span>
                                         </div>
-                                        <span className="text-[9px] font-mono text-emerald-400/80 font-bold">
+                                        <span className="text-[10px] font-mono text-emerald-400 font-bold">
                                           {k.usage_tokens_today ? (k.usage_tokens_today / 1000).toFixed(1) + 'k' : '0k'}
                                         </span>
                                       </div>
 
-                                      {/* Model Breakdown - Ultra Compact */}
+                                      {/* Model Breakdown - Vertically Stacked & Clearly Visible */}
                                       {k.model_usage && Object.keys(k.model_usage).length > 0 && (
-                                        <div className="bg-white/[0.03] rounded-sm p-1 border border-white/[0.05] space-y-0.5">
+                                        <div className="bg-white/[0.03] rounded-sm p-1.5 border border-white/[0.05] space-y-1">
                                           {Object.entries(k.model_usage).map(([model, data]) => (
-                                            <div key={model} className="flex justify-between items-center gap-2 leading-tight">
-                                              <span className="text-[7px] text-white/40 truncate max-w-[85px] font-medium uppercase tracking-tighter">
-                                                {model.split('/').pop()?.replace('gemini-', '')}
+                                            <div key={model} className="flex justify-between items-center gap-3 leading-tight border-b border-white/[0.02] last:border-0 pb-0.5 last:pb-0">
+                                              <span className="text-[9px] text-white/50 truncate max-w-[100px] font-bold uppercase tracking-tighter">
+                                                {model.split('/').pop()}
                                               </span>
-                                              <span className="text-[8px] font-black text-[#00ff88]/90">
+                                              <span className="text-[10px] font-black text-[#00ff88]">
                                                 {data.count}
                                               </span>
                                             </div>
@@ -3222,10 +3222,10 @@ export default function AdminPage() {
                                         </div>
                                       )}
 
-                                      {/* Lifetime Stats - Compact */}
-                                      <div className="flex items-center justify-between px-1 mt-0.5 opacity-30">
-                                        <span className="text-[7px] uppercase font-bold tracking-tighter">Lifetime</span>
-                                        <span className="text-[8px] font-bold">{k.usage_count || 0}</span>
+                                      {/* Lifetime Stats - Simple row at bottom */}
+                                      <div className="flex items-center justify-between px-1 mt-0.5 opacity-40">
+                                        <span className="text-[8px] uppercase font-black tracking-widest text-white/40">Lifetime</span>
+                                        <span className="text-[10px] font-black text-white/60">{k.usage_count || 0}</span>
                                       </div>
                                     </div>
                                   </TableCell>
