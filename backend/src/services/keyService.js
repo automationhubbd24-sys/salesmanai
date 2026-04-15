@@ -158,6 +158,30 @@ async function updateKeyCache(force = false) {
     try {
         const today = getPacificDate();
         const thisMonth = today.substring(0, 7); // YYYY-MM
+
+        // --- NEW: ENSURE MODEL-SPECIFIC USAGE TABLE EXISTS (Migration on-the-fly) ---
+        try {
+            await pgClient.query(`
+                CREATE TABLE IF NOT EXISTS public.api_key_model_usage (
+                    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                    api_key_id BIGINT REFERENCES api_list(id) ON DELETE CASCADE,
+                    model_name TEXT NOT NULL,
+                    usage_today INTEGER DEFAULT 0,
+                    status TEXT DEFAULT 'active',
+                    cooldown_until TIMESTAMP WITH TIME ZONE,
+                    last_used_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    last_date_checked DATE DEFAULT CURRENT_DATE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    UNIQUE(api_key_id, model_name)
+                );
+                CREATE INDEX IF NOT EXISTS idx_api_model_usage_key_id ON api_key_model_usage(api_key_id);
+                CREATE INDEX IF NOT EXISTS idx_api_model_usage_model_name ON api_key_model_usage(model_name);
+                CREATE INDEX IF NOT EXISTS idx_api_model_usage_status ON api_key_model_usage(status);
+            `);
+        } catch (e) {
+            console.warn(`[KeyService] Migration error (Table might already exist):`, e.message);
+        }
         
         // --- SMART AUTO-RESET: Clear expired locks and reset usage for new Pacific Day/Month ---
         const resetResult = await pgClient.query(
