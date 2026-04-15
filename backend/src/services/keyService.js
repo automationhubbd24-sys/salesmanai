@@ -1224,6 +1224,23 @@ setTimeout(() => {
     }
 }, 2000); // 2 seconds delay for safe initialization
 
+function getModelUsageSummaryForKey(apiKey) {
+    const today = getPacificDate();
+    const summary = {};
+    
+    modelDailyUsage.forEach((data, key) => {
+        if (key.startsWith(`${apiKey}:`)) {
+            const modelName = key.split(':').slice(1).join(':');
+            summary[modelName] = {
+                count: data.date === today ? data.count : 0,
+                date: data.date
+            };
+        }
+    });
+    
+    return summary;
+}
+
 module.exports = {
     // NEW: Adaptive Rate Limit Reporter
     reportRateLimit(modelId) {
@@ -1281,22 +1298,7 @@ module.exports = {
         return { ...def, source: 'static' };
     },
 
-    getModelUsageSummaryForKey: (apiKey) => {
-        const today = getPacificDate();
-        const summary = {};
-        
-        modelDailyUsage.forEach((data, key) => {
-            if (key.startsWith(`${apiKey}:`)) {
-                const modelName = key.split(':').slice(1).join(':');
-                summary[modelName] = {
-                    count: data.date === today ? data.count : 0,
-                    date: data.date
-                };
-            }
-        });
-        
-        return summary;
-    },
+    getModelUsageSummaryForKey,
     
     // NEW: Get filtered keys for Active Rotation Pool display with pagination
     getActiveRotationPool: (providerFilter = null, page = 1, limit = 10, searchQuery = '') => {
