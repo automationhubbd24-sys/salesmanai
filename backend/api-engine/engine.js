@@ -170,9 +170,9 @@ router.post('/config', adminAuthMiddleware, async (req, res) => {
 
         const updateFields = {
             provider,
-            text_provider, text_model,
-            voice_provider, voice_model,
-            image_provider, image_model
+            text_provider, text_model, text_fallback_model: req.body.text_fallback_model,
+            voice_provider, voice_model, voice_fallback_model: req.body.voice_fallback_model,
+            image_provider, image_model, image_fallback_model: req.body.image_fallback_model
         };
 
         for (const [key, val] of Object.entries(updateFields)) {

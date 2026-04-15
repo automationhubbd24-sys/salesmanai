@@ -191,6 +191,17 @@ async function updateKeyCache(force = false) {
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='api_engine_configs' AND column_name='vision_fallback_model') THEN
                         ALTER TABLE api_engine_configs ADD COLUMN vision_fallback_model TEXT;
                     END IF;
+
+                    -- ADD FALLBACK COLUMNS TO engine_configs IF THEY DON'T EXIST (For Branded Engines)
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='engine_configs' AND column_name='text_fallback_model') THEN
+                        ALTER TABLE engine_configs ADD COLUMN text_fallback_model TEXT;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='engine_configs' AND column_name='voice_fallback_model') THEN
+                        ALTER TABLE engine_configs ADD COLUMN voice_fallback_model TEXT;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='engine_configs' AND column_name='image_fallback_model') THEN
+                        ALTER TABLE engine_configs ADD COLUMN image_fallback_model TEXT;
+                    END IF;
                 END $$;
             `);
         } catch (e) {

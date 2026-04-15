@@ -2509,6 +2509,19 @@ export default function AdminPage() {
                           />
                         </div>
                       </div>
+
+                      {/* NEW: Fallback Model Input for this Engine's Modality */}
+                      <div className="space-y-1 pt-1 border-t border-white/5">
+                        <Label className="text-[9px] text-muted-foreground uppercase flex items-center gap-1">
+                          <Zap className="h-2 w-2 text-yellow-500" /> Fallback Model
+                        </Label>
+                        <Input 
+                          value={(config as any)[`${modality.key}_fallback_model`] || ""} 
+                          onChange={(e) => updateEngineConfig(config.name, { [`${modality.key}_fallback_model`]: e.target.value || null }, true)}
+                          className="h-7 text-[10px] bg-black/30 border-white/5 font-mono text-white/70"
+                          placeholder="e.g. llama-3-70b (Optional)"
+                        />
+                      </div>
                     </div>
                   ))}
                 </CardContent>
