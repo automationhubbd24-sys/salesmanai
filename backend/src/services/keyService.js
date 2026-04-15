@@ -1364,12 +1364,15 @@ setTimeout(() => {
 }, 2000); // 2 seconds delay for safe initialization
 
 function getModelUsageSummaryForKey(apiKey) {
+    if (!apiKey) return {};
     const today = getPacificDate();
     const summary = {};
     
+    // Use the modelDailyUsage map which is already synced with DB
     modelDailyUsage.forEach((data, key) => {
         if (key.startsWith(`${apiKey}:`)) {
-            const modelName = key.split(':').slice(1).join(':');
+            // Correctly extract model name from key format "apiKey:modelName"
+            const modelName = key.substring(apiKey.length + 1);
             summary[modelName] = {
                 count: data.date === today ? data.count : 0,
                 date: data.date
