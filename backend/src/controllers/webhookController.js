@@ -328,14 +328,21 @@ const handleWebhook = async (req, res) => {
                         const isActuallyActive = await dbService.getPageConfig(pageId);
                         
                         if (isActuallyActive) {
-                            const hasCredit = (isActuallyActive.message_credit > 0);
+                            const hasUserLink = isActuallyActive.user_id !== null && isActuallyActive.user_id !== undefined;
+                            const hasCredit = (Number(isActuallyActive.message_credit || 0) > 0 || Number(isActuallyActive.permanent_credit || 0) > 0 || Number(isActuallyActive.bonus_credit || 0) > 0);
                             const hasOwnKey = (isActuallyActive.api_key && isActuallyActive.api_key.length > 5 && isActuallyActive.cheap_engine === false);
                             const isBanned = isActuallyActive.subscription_status === 'banned';
         
+                            // SECURITY: Hard block if cheap engine is active but no user link (orphan page)
+                            if (isActuallyActive.cheap_engine !== false && !hasUserLink) {
+                                console.error(`[Gatekeeper] SECURITY ALERT: Page ${pageId} has no user_id link. Blocking to prevent free usage.`);
+                                continue;
+                            }
+
                             if (!isBanned && (hasCredit || hasOwnKey)) {
                                 allowedPagesCache.add(pageId); 
                             } else {
-                                console.warn(`[Gatekeeper] BLOCKED unauthorized event for Page ID: ${pageId}. Status: ${isActuallyActive.subscription_status}, Credit: ${isActuallyActive.message_credit}, OwnAPI: ${hasOwnKey}`);
+                                console.warn(`[Gatekeeper] BLOCKED unauthorized event for Page ID: ${pageId}. Status: ${isActuallyActive.subscription_status}, Credit: ${isActuallyActive.message_credit}, OwnAPI: ${hasOwnKey}, Linked: ${hasUserLink}`);
                                 continue; // Skip THIS entry
                             }
                         } else {

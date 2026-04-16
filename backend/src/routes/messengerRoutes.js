@@ -175,13 +175,14 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
         );
 
         await pgClient.query(
-            `INSERT INTO page_access_token_message (page_id, name, page_access_token, email, ai, chat_model, cheap_engine)
-             VALUES ($1,$2,$3,$4,$5,$6,$7)
+            `INSERT INTO page_access_token_message (page_id, name, page_access_token, email, user_id, ai, chat_model, cheap_engine)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
              ON CONFLICT (page_id) DO UPDATE SET
                 name = EXCLUDED.name,
                 page_access_token = EXCLUDED.page_access_token,
-                email = EXCLUDED.email`,
-            [String(page_id), name, page_access_token, ownerEmail, 'google', 'gemini-2.5-flash', true]
+                email = EXCLUDED.email,
+                user_id = EXCLUDED.user_id`,
+            [String(page_id), name, page_access_token, ownerEmail, userId, 'google', 'gemini-2.5-flash', true]
         );
 
         // --- FREE CREDITS LOGIC: Give 100 credits for new integration ---
