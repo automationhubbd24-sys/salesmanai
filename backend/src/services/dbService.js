@@ -2382,7 +2382,7 @@ async function getAllActivePages() {
         const pagesResult = await query(
             `SELECT page_id, user_id, message_credit, subscription_status, api_key, cheap_engine
              FROM page_access_token_message
-             WHERE subscription_status IN ('active','trial','active_trial','active_paid')`,
+             WHERE subscription_status IN ('active','trial','active_trial','active_paid','none')`,
             []
         );
 
@@ -2394,20 +2394,21 @@ async function getAllActivePages() {
 
         if (userIds.length > 0) {
             const configsResult = await query(
-                `SELECT user_id, message_credit
+                `SELECT user_id, message_credit, permanent_credit, bonus_credit
                  FROM user_configs
                  WHERE user_id::text = ANY($1::text[])`,
                 [userIds]
             );
             configsResult.rows.forEach(c => {
-                userCredits[c.user_id] = c.message_credit || 0;
+                const total = Number(c.message_credit || 0) + Number(c.permanent_credit || 0) + Number(c.bonus_credit || 0);
+                userCredits[c.user_id] = total;
             });
         }
 
         const allowedPageIds = pages
             .filter(p => {
                 const status = p.subscription_status;
-                const isActive = ['active', 'trial', 'active_trial', 'active_paid'].includes(status);
+                const isActive = ['active', 'trial', 'active_trial', 'active_paid', 'none'].includes(status);
                 if (!isActive) return false;
 
                 const sharedCredits = userCredits[p.user_id] || 0;
