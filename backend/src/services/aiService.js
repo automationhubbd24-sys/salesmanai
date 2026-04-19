@@ -2606,9 +2606,9 @@ Rules:
 - Do not add extra words.
 - Single line output only.`;
 
-    let resolved = null;
     const providerHint = pageConfig.ai_provider || pageConfig.ai || pageConfig.operator;
     const modelHint = pageConfig.chat_model || pageConfig.chatmodel;
+    let resolved = null;
     if (providerHint === 'salesmanchatbot' || modelHint === 'salesmanchatbot-pro' || modelHint === 'salesmanchatbot-flash' || modelHint === 'salesmanchatbot-lite') {
         resolved = await resolveSalesmanchatbotEngine(pageConfig, providerHint, modelHint, true, false);
     }
@@ -2721,478 +2721,186 @@ Rules:
              if (!apiKey) {
                  return { text: "Error: Own API Mode enabled but no valid API Key found. System keys are blocked in this mode.", usage: 0 };
              }
+         }
 
-        } else {
-             // Free User: Priority is Branded/Global Config (resolved)
-             provider = providerHint || 'google';
-             model = pageConfig.vision_model || pageConfig.chat_model || 'gemini-1.5-flash-latest';
+         // --- NEW SMART RETRY LOGIC (Unified with Text) ---
+    const MAX_RETRIES_PER_MODEL = 3;
+    let attemptedKeys = new Set();
+    let lastError = null;
 
-             if (resolved) {
-                 provider = resolved.finalProvider;
-                 model = resolved.finalModel;
-                 console.log(`[Vision] Using Resolved Engine: ${model} (${provider})`);
-             } else {
-                 try {
-                     const gConfig = await getGlobalEngineConfig(provider);
-                     if (gConfig) {
-                         // 1. If Global Config has a Vision Model Override
-                         if (gConfig.vision_model) {
-                             model = gConfig.vision_model;
-                             console.log(`[Vision] Using Global Admin Config Model: ${model}`);
-                         }
-                         // 2. If Global Config has a Provider Override for Vision
-                         if (gConfig.vision_provider_override && gConfig.vision_provider_override !== 'default') {
-                             provider = gConfig.vision_provider_override;
-                             console.log(`[Vision] Using Global Admin Config Provider Override: ${provider}`);
-                         }
-                     }
-                 } catch (err) {
-                     console.warn(`[Vision] Failed to apply global admin config:`, err.message);
-                 }
-             }
-
-             // Auto-detect provider if model name implies one (e.g. "openrouter/...")
-             // Avoid force-switching provider. Only adjust model namespace if provider is already OpenRouter.
-             if (provider === 'openrouter' && model && !model.includes('/')) {
-                 if (/^gemini/i.test(model)) model = `google/${model}`;
-             }
-
-             // Use System Key for Provider
-             const modality = 'vision';
-             let keyData = await keyService.getSmartKey(provider, model, modality);
-             if (!keyData || !keyData.key) keyData = await keyService.getSmartKey(provider, 'default', modality);
-             if (keyData && keyData.key) apiKey = keyData.key;
-        }
-
-        // Determine if we should use Proxy (ONLY for Branded Engines)
-        const isBrandedEngine = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(resolved?.targetEngineName || modelHint);
-        const useProxy = isBrandedEngine;
-        
-        let proxyAgent = null;
-        if (useProxy) {
-            if (provider === 'google' || provider === 'gemini') {
-                proxyAgent = getGeminiProxyAgent('google', true, resolved?.targetEngineName || modelHint);
-            } else if (provider === 'groq') {
-                proxyAgent = getGroqProxyAgent(true, resolved?.targetEngineName || modelHint);
-            } else {
-                const proxy = getProxyUrl(resolved?.targetEngineName || modelHint);
-                proxyAgent = createProxyAgent(proxy);
-            }
-        }
-
-        console.log(`[Vision] Attempt 1: ${model} (${provider}) | Proxy: ${useProxy ? 'YES' : 'NO'}`);
-
-        let result = null;
-        let usage = 0;
-
-        if (provider === 'openrouter') {
-            // Ensure proper vendor prefix for OpenRouter (e.g., google/gemini-*)
-            if (model && !model.includes('/') && /^gemini/i.test(model)) {
-                model = `google/${model}`;
-            }
-            // OpenRouter Vision Call
-            // Use Base64 Data URI to avoid access issues with external URLs (like FB private URLs)
-            const imageContent = { url: `data:${mimeType};base64,${base64Image}` };
-
-            const payload = {
-                model: model,
-                max_tokens: maxTokens,
-                messages: [
-                    { 
-                        role: "user", 
-                        content: [
-                            { type: "text", text: systemPrompt },
-                            { type: "image_url", image_url: imageContent }
-                        ]
-                    }
-                ]
-            };
-
-            console.log(`[Vision] Calling OpenRouter with Key: ${apiKey.substring(0, 15)}...`);
-
-            const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', payload, {
-                headers: { 
-                    'Authorization': `Bearer ${apiKey.trim()}`,
-                    'Content-Type': 'application/json',
-                    'HTTP-Referer': 'https://orderly-conversations.com', 
-                    'X-Title': 'Orderly Conversations'
-                },
-                httpsAgent: proxyAgent,
-                httpAgent: proxyAgent,
-                proxy: false,
-                timeout: 300000, // 5 minutes
-            });
-
-            const result = response.data?.choices?.[0]?.message?.content;
-            const usage = response.data?.usage?.total_tokens || 0;
-
-            // Record Usage with Model-Specific Logic
-            keyService.recordKeyUsage(apiKey, usage, model).catch(e => {});
-
-        } else if (provider === 'mistral') {
-            // Mistral Vision Call (mistral-large-2512 etc.)
-            const payload = {
-                model: model,
-                messages: [
-                    {
-                        role: "user",
-                        content: [
-                            { type: "text", text: systemPrompt },
-                            { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Image}` } }
-                        ]
-                    }
-                ],
-                max_tokens: maxTokens
-            };
-
-            const response = await axios.post('https://api.mistral.ai/v1/chat/completions', payload, {
-                headers: {
-                    'Authorization': `Bearer ${apiKey.trim()}`,
-                    'Content-Type': 'application/json'
-                },
-                httpsAgent: proxyAgent,
-                httpAgent: proxyAgent,
-                proxy: false,
-                timeout: 300000 // 5 minutes
-            });
-
-            const result = response.data?.choices?.[0]?.message?.content;
-            const usage = response.data?.usage?.total_tokens || 0;
-
-            // Record Usage with Model-Specific Logic
-            keyService.recordKeyUsage(apiKey, usage, model).catch(e => {});
-
-        } else if (provider === 'groq') {
-            // Groq Vision Call (llama-3.2-11b-vision-preview etc.)
-            const payload = {
-                model: model,
-                messages: [
-                    {
-                        role: "user",
-                        content: [
-                            { type: "text", text: systemPrompt },
-                            { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Image}` } }
-                        ]
-                    }
-                ],
-                max_tokens: maxTokens
-            };
-
-            const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', payload, {
-                headers: {
-                    'Authorization': `Bearer ${apiKey.trim()}`,
-                    'Content-Type': 'application/json'
-                },
-                httpsAgent: proxyAgent,
-                httpAgent: proxyAgent,
-                proxy: false,
-                timeout: 300000 // 5 minutes
-            });
-
-            const result = response.data?.choices?.[0]?.message?.content;
-            const usage = response.data?.usage?.total_tokens || 0;
-
-            // Record Usage with Model-Specific Logic
-            keyService.recordKeyUsage(apiKey, usage, model).catch(e => {});
-
-        } else if (provider === 'google') {
-            // Google Vision Call
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-            const payload = {
-                contents: [{
-                    parts: [
-                        { text: systemPrompt },
-                        { inline_data: { mime_type: mimeType, data: base64Image } }
-                    ]
-                }],
-                generationConfig: { maxOutputTokens: maxTokens },
-                safetySettings: getGeminiSafetySettings()
-            };
-            
-            const visionResponse = await axios.post(url, payload, {
-                    headers: getStealthHeaders(apiKey, 'google'),
-                    timeout: 300000, // 5 minutes
-                    httpsAgent: proxyAgent,
-                    httpAgent: proxyAgent,
-                    proxy: false
-                });
-
-            const result = visionResponse.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-            const usage = visionResponse.data?.usageMetadata?.totalTokenCount || 0;
-
-            // Record Usage with Model-Specific Logic
-            keyService.recordKeyUsage(apiKey, usage, model).catch(e => {});
-        } else if (provider === 'custom') {
-            // Custom OpenAI-compatible Vision Call
-            const customBase = pageConfig.custom_base_url || pageConfig.base_url;
-            if (!customBase) throw new Error("Custom Provider selected but no Base URL provided.");
-            
-            const cleanBase = customBase.replace(/\/+$/, '');
-            const url = `${cleanBase}/chat/completions`;
-
-            const payload = {
-                model: model,
-                messages: [
-                    {
-                        role: "user",
-                        content: [
-                            { type: "text", text: systemPrompt },
-                            { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Image}` } }
-                        ]
-                    }
-                ],
-                max_tokens: maxTokens
-            };
-
-            console.log(`[Vision] Calling Custom Provider at: ${url}`);
-
-            const response = await axios.post(url, payload, {
-                headers: {
-                    'Authorization': `Bearer ${apiKey.trim()}`,
-                    'Content-Type': 'application/json'
-                },
-                httpsAgent: proxyAgent,
-                httpAgent: proxyAgent,
-                proxy: false,
-                timeout: 300000 // 5 minutes
-            });
-
-            const result = response.data?.choices?.[0]?.message?.content;
-            const usage = response.data?.usage?.total_tokens || 0;
-
-            // Record Usage with Model-Specific Logic
-            keyService.recordKeyUsage(apiKey, usage, model).catch(e => {});
-        } else {
-             throw new Error(`Provider ${provider} not supported for Vision yet.`);
-        }
-
-        if (!result) throw new Error(`Empty response from ${provider}`);
-        
-        // Record Usage with Model-Specific Logic
-        keyService.recordKeyUsage(apiKey, usage, model).catch(e => {});
-
-        logDebug(`[Vision] Success with ${model}: ${result.substring(0, 30)}... Usage: ${usage}`);
-        
-        // --- BRANDING PERSISTENCE ---
-        let returnModel = model;
-        // User Request: Always prefer branded names for SalesmanChatbot engines
-        const isManagedEngine = !(pageConfig && (pageConfig.cheap_engine === false || (pageConfig.api_key && pageConfig.api_key !== 'MANAGED_SECRET_KEY')));
-        const isSalesmanProvider = (pageConfig.ai_provider === 'salesmanchatbot' || pageConfig.ai === 'salesmanchatbot');
-        
-        if (isManagedEngine || isSalesmanProvider) {
-             // Use the branded name if using system/managed keys
-             returnModel = resolved?.targetEngineName || modelHint || 'salesmanchatbot-pro';
-        }
-        
-        return { text: result, usage: usage, model: returnModel };
-
-    } catch (error) {
-        const errMsg = error.response?.data?.error?.message || error.message;
-        console.warn(`[Vision] Attempt 1 Failed: ${errMsg}`);
-        errors.push(`${pageConfig.cheap_engine === false ? 'Own API' : 'Gemini Attempt 1'}: ${errMsg}`);
-        
-        // --- NEW: AUTO-ROTATE KEY ON FAILURE ---
-        if (typeof apiKey !== 'undefined' && apiKey) {
-            await handleAiError(error, apiKey, model, 'vision');
-        }
-
-        // STOP if Own API (Paid User) - Return Error Text instead of Throwing so AI knows
-        if (pageConfig && pageConfig.cheap_engine === false) {
-             return { text: `[Vision Analysis Failed] Error: ${errMsg}`, usage: 0 };
-        }
-
-            // --- ATTEMPT 2: Branded Retry with Rotated Key (Same Provider/Model) ---
-            try {
-                let retryProvider = providerHint || 'google';
-                let retryModel = pageConfig.vision_model || pageConfig.chat_model || 'gemini-1.5-flash-latest';
-                let retryResolved = null;
-                if (providerHint === 'salesmanchatbot' || modelHint === 'salesmanchatbot-pro' || modelHint === 'salesmanchatbot-flash' || modelHint === 'salesmanchatbot-lite') {
-                    retryResolved = await resolveSalesmanchatbotEngine(pageConfig, providerHint, modelHint, true, false);
-                    retryProvider = retryResolved.finalProvider;
-                    retryModel = retryResolved.finalModel;
-                }
-                const isBrandedRetry = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(retryResolved?.targetEngineName || modelHint);
-                if (isBrandedRetry) {
-                    let retryKeyData = await keyService.getSmartKey(retryProvider, retryModel, 'vision');
-                    if (!retryKeyData || !retryKeyData.key) retryKeyData = await keyService.getSmartKey(retryProvider, 'default', 'vision');
-                    if (!retryKeyData || !retryKeyData.key) throw new Error("No alternate key available for retry");
-                    const retryKey = retryKeyData.key;
-
-                    let retryProxyAgent = null;
-                    if (retryProvider === 'google' || retryProvider === 'gemini') {
-                        retryProxyAgent = getGeminiProxyAgent('google', true, retryResolved?.targetEngineName || modelHint);
-                    } else if (retryProvider === 'groq') {
-                        retryProxyAgent = getGroqProxyAgent(true, retryResolved?.targetEngineName || modelHint);
-                    } else {
-                        const proxy = getProxyUrl(retryResolved?.targetEngineName || modelHint);
-                        retryProxyAgent = createProxyAgent(proxy);
-                    }
-
-                    console.log(`[Vision] Attempt 2 (Retry): ${retryModel} (${retryProvider})`);
-
-                    let retryResult = null;
-                    let retryUsage = 0;
-                    if (retryProvider === 'google' || retryProvider === 'gemini') {
-                        const url = `https://generativelanguage.googleapis.com/v1beta/models/${retryModel}:generateContent`;
-                        const payload = {
-                            contents: [{
-                                parts: [
-                                    { text: systemPrompt },
-                                    { inline_data: { mime_type: mimeType, data: base64Image } }
-                                ]
-                            }],
-                            generationConfig: { maxOutputTokens: maxTokens },
-                            safetySettings: getGeminiSafetySettings()
-                        };
-                        const res = await axios.post(url, payload, {
-                            headers: getStealthHeaders(retryKey, 'google'),
-                            timeout: 300000, // 5 minutes
-                            httpsAgent: retryProxyAgent,
-                            httpAgent: retryProxyAgent,
-                            proxy: false
-                        });
-                        retryResult = res.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-                        retryUsage = res.data?.usageMetadata?.totalTokenCount || 0;
-                    } else {
-                        let baseURL = 'https://openrouter.ai/api/v1';
-                        if (retryProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
-                        else if (retryProvider === 'mistral') baseURL = 'https://api.mistral.ai/v1';
-                        else if (retryProvider === 'custom') baseURL = (pageConfig.custom_base_url || pageConfig.base_url || '').replace(/\/+$/, '');
-                        if (retryProvider === 'openrouter' && retryModel && !retryModel.includes('/') && /^gemini/i.test(retryModel)) {
-                            retryModel = `google/${retryModel}`;
-                        }
-                        const payload = {
-                            model: retryModel,
-                            messages: [
-                                { 
-                                    role: "user", 
-                                    content: [
-                                        { type: "text", text: systemPrompt },
-                                        { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Image}` } }
-                                    ]
-                                }
-                            ],
-                            max_tokens: maxTokens
-                        };
-                        const res = await axios.post(`${baseURL}/chat/completions`, payload, {
-                            headers: getStealthHeaders(retryKey, retryProvider === 'openrouter' ? 'openrouter' : (retryProvider === 'google' || retryProvider === 'gemini' ? 'google' : 'openai')),
-                            httpsAgent: retryProxyAgent,
-                            httpAgent: retryProxyAgent,
-                            proxy: false,
-                            timeout: 300000, // 5 minutes
-                        });
-                        retryResult = res.data?.choices?.[0]?.message?.content;
-                        retryUsage = res.data?.usage?.total_tokens || 0;
-                    }
-
-                    if (retryResult) {
-                        if (retryKey && retryUsage > 0) {
-                            keyService.recordKeyUsage(retryKey, retryUsage, retryModel).catch(() => {});
-                        }
-                        let returnModel = retryModel;
-                        const isManagedEngine = !(pageConfig && (pageConfig.cheap_engine === false || (pageConfig.api_key && pageConfig.api_key !== 'MANAGED_SECRET_KEY')));
-                        const isSalesmanProvider = (pageConfig.ai_provider === 'salesmanchatbot' || pageConfig.ai === 'salesmanchatbot');
-                        if (isManagedEngine || isSalesmanProvider) {
-                            returnModel = retryResolved?.targetEngineName || modelHint || 'salesmanchatbot-pro';
-                        }
-                        return { text: retryResult, usage: retryUsage, model: returnModel };
-                    }
-                }
-            } catch (retryErr) {
-                const msg2 = retryErr.response?.data?.error?.message || retryErr.message;
-                console.warn(`[Vision] Attempt 2 Failed: ${msg2}`);
-                errors.push(`Retry (Branded): ${msg2}`);
-            }
+    // Resolve models and provider once
+    if (!resolved) {
+        resolved = await resolveSalesmanchatbotEngine(pageConfig, providerHint, modelHint, true, false);
     }
-
-    // ATTEMPT 3: OpenRouter Vision (Dynamically from Config)
-    try {
-        const provider = 'openrouter';
-        // User Update: Use the vision model from pageConfig (set via Admin API Engine)
-        let model = pageConfig.vision_model || pageConfig.chat_model || 'qwen/qwen-2.5-vl-7b-instruct:free';
-        if (model && !model.includes('/') && /^gemini/i.test(model)) {
-            model = `google/${model}`;
-        }
-        const modality = 'vision';
-        
-        console.log(`[Vision] Attempt 3: ${model} (${provider})`);
-
-        let keyData = await keyService.getSmartKey(provider, model, modality);
-        if (!keyData || !keyData.key) keyData = await keyService.getSmartKey(provider, 'default', modality);
-        if (!keyData || !keyData.key) throw new Error("No Key found for OpenRouter");
-
-        const apiKey = keyData.key;
-        
-        // USE URL DIRECTLY IF POSSIBLE (User Preference)
-        // But if it's a private URL (like FB/WAHA), we MUST use Base64.
-        // If we already downloaded it (base64Image exists), use Base64 to be safe.
-        let imageContent;
-        if (base64Image) {
-             imageContent = { url: `data:${mimeType};base64,${base64Image}` };
-        } else {
-             imageContent = { url: imageUrl };
-        }
-
-        const payload = {
-            model: model,
-            max_tokens: maxTokens,
-            messages: [
-                { 
-                    role: "user", 
-                    content: [
-                        { type: "text", text: systemPrompt },
-                        { type: "image_url", image_url: imageContent }
-                    ]
-                }
-            ]
-        };
-
-        const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', payload, {
-                headers: getStealthHeaders(apiKey, 'openrouter'),
-                timeout: 40000
-            });
-
-        const result = response.data?.choices?.[0]?.message?.content;
-        const usage = response.data?.usage?.total_tokens || 0;
-        if (!result) throw new Error("Empty response from OpenRouter");
-
-        logDebug(`[Vision] Success with ${model}: ${result.substring(0, 30)}... Usage: ${usage}`);
-
-        // --- RECORD SUCCESSFUL USAGE (TOKEN TRACKING) ---
-        if (apiKey && usage > 0) {
-            keyService.recordKeyUsage(apiKey, usage, model).catch(e => {});
-        }
-        
-        // --- BRANDING PERSISTENCE ---
-        let returnModel = model;
-        // User Request: Always prefer branded names for SalesmanChatbot engines
-        const isManagedEngine = !(pageConfig && (pageConfig.cheap_engine === false || (pageConfig.api_key && pageConfig.api_key !== 'MANAGED_SECRET_KEY')));
-        const isSalesmanProvider = (pageConfig.ai_provider === 'salesmanchatbot' || pageConfig.ai === 'salesmanchatbot');
-        
-        if (isManagedEngine || isSalesmanProvider) {
-             returnModel = resolved?.targetEngineName || modelHint || 'salesmanchatbot-pro';
-        }
-        
-        return { text: result, usage: usage, model: returnModel };
-
-    } catch (error) {
-        const errMsg = error.response?.data?.error?.message || error.message;
-        console.warn(`[Vision] Attempt 3 Failed: ${errMsg}`);
-        errors.push(`OpenRouter Vision: ${errMsg}`);
-        
-        // --- NEW: AUTO-ROTATE KEY ON FAILURE ---
-        if (typeof apiKey !== 'undefined' && apiKey) {
-            await handleAiError(error, apiKey, model, 'vision');
-        }
-    }
-
-    // FINAL FAILURE LOGGING
-    const failureReason = `Image Analysis Failed. Reasons: ${errors.join(' | ')}`;
-    console.error(`[Vision] All attempts failed. Logs: ${failureReason}`);
-    logDebug(`[Vision] FATAL: ${failureReason}`);
     
+    const primaryModel = resolved.finalModel;
+    const fallbackModel = resolved.fallbackModel;
+    const finalProvider = resolved.finalProvider;
+    const modality = resolved.modality || 'vision';
+
+    const modelsToTry = [primaryModel];
+    if (fallbackModel && fallbackModel !== primaryModel) {
+        modelsToTry.push(fallbackModel);
+    }
+
+    // Additional Fallback for Vision (OpenRouter Qwen if everything fails)
+    if (!modelsToTry.includes('qwen/qwen-2.5-vl-7b-instruct:free')) {
+        modelsToTry.push('qwen/qwen-2.5-vl-7b-instruct:free');
+    }
+
+    for (const currentModel of modelsToTry) {
+        console.log(`[Vision Retry Loop] 🚀 Starting attempts for model: ${currentModel} (${modality})`);
+        let modelRetryCount = 0;
+
+        while (modelRetryCount < MAX_RETRIES_PER_MODEL) {
+            let apiKey = null;
+            let currentProvider = finalProvider;
+
+            // If we are on the last fallback model, ensure we use openrouter
+            if (currentModel.includes('qwen')) {
+                currentProvider = 'openrouter';
+            }
+
+            try {
+                // 1. Get Key
+                let keyData = await keyService.getSmartKey(currentProvider, currentModel, modality);
+                if (!keyData || !keyData.key || attemptedKeys.has(keyData.key)) {
+                    keyData = await keyService.getSmartKey(currentProvider, 'default', modality);
+                }
+
+                if (!keyData || !keyData.key || attemptedKeys.has(keyData.key)) {
+                    console.warn(`[Vision] Pool ${currentProvider}/${currentModel} exhausted.`);
+                    break;
+                }
+
+                apiKey = keyData.key;
+                attemptedKeys.add(apiKey);
+
+                // 2. Setup Proxy
+                const isBranded = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(resolved.targetEngineName || modelHint);
+                let proxyAgent = null;
+                if (isBranded) {
+                    if (currentProvider === 'google' || currentProvider === 'gemini') {
+                        proxyAgent = getGeminiProxyAgent('google', true, resolved.targetEngineName || modelHint);
+                    } else if (currentProvider === 'groq') {
+                        proxyAgent = getGroqProxyAgent(true, resolved.targetEngineName || modelHint);
+                    } else {
+                        const proxy = getProxyUrl(resolved.targetEngineName || modelHint);
+                        proxyAgent = createProxyAgent(proxy);
+                    }
+                }
+
+                console.log(`[Vision] Attempting: ${currentModel} (${currentProvider}) | Retry: ${modelRetryCount} | Proxy: ${proxyAgent ? 'YES' : 'NO'}`);
+
+                let resultText = null;
+                let usageTokens = 0;
+
+                if (currentProvider === 'google' || currentProvider === 'gemini') {
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/${currentModel}:generateContent`;
+                    const payload = {
+                        contents: [{
+                            parts: [
+                                { text: systemPrompt },
+                                { inline_data: { mime_type: mimeType, data: base64Image } }
+                            ]
+                        }],
+                        generationConfig: { maxOutputTokens: maxTokens },
+                        safetySettings: getGeminiSafetySettings()
+                    };
+                    const res = await axios.post(url, payload, {
+                        headers: getStealthHeaders(apiKey, 'google'),
+                        timeout: 300000,
+                        httpsAgent: proxyAgent,
+                        httpAgent: proxyAgent,
+                        proxy: false
+                    });
+                    resultText = res.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+                    usageTokens = res.data?.usageMetadata?.totalTokenCount || 0;
+                } else {
+                    let baseURL = 'https://openrouter.ai/api/v1';
+                    if (currentProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
+                    else if (currentProvider === 'mistral') baseURL = 'https://api.mistral.ai/v1';
+                    else if (currentProvider === 'custom') baseURL = (pageConfig.custom_base_url || pageConfig.base_url || '').replace(/\/+$/, '');
+                    
+                    let modelToUse = currentModel;
+                    if (currentProvider === 'openrouter' && modelToUse && !modelToUse.includes('/') && /^gemini/i.test(modelToUse)) {
+                        modelToUse = `google/${modelToUse}`;
+                    }
+
+                    const payload = {
+                        model: modelToUse,
+                        max_tokens: maxTokens,
+                        messages: [
+                            { 
+                                role: "user", 
+                                content: [
+                                    { type: "text", text: systemPrompt },
+                                    { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Image}` } }
+                                ]
+                            }
+                        ]
+                    };
+
+                    const res = await axios.post(`${baseURL}/chat/completions`, payload, {
+                        headers: getStealthHeaders(apiKey, currentProvider === 'openrouter' ? 'openrouter' : 'openai'),
+                        httpsAgent: proxyAgent,
+                        httpAgent: proxyAgent,
+                        proxy: false,
+                        timeout: 300000
+                    });
+                    resultText = res.data?.choices?.[0]?.message?.content;
+                    usageTokens = res.data?.usage?.total_tokens || 0;
+                }
+
+                if (!resultText) throw new Error(`Empty response from ${currentProvider}`);
+
+                // Record Success
+                if (apiKey && usageTokens > 0) {
+                    keyService.recordKeyUsage(apiKey, usageTokens, currentModel).catch(() => {});
+                }
+
+                let returnModel = currentModel;
+                const isManaged = !(pageConfig && (pageConfig.cheap_engine === false || (pageConfig.api_key && pageConfig.api_key !== 'MANAGED_SECRET_KEY')));
+                if (isManaged || pageConfig.ai_provider === 'salesmanchatbot') {
+                    returnModel = resolved.targetEngineName || modelHint || 'salesmanchatbot-pro';
+                }
+
+                return { text: resultText, usage: usageTokens, model: returnModel };
+
+            } catch (err) {
+                lastError = err;
+                const statusCode = err.response?.status;
+                const errorMsg = (err.message || '').toLowerCase();
+                console.warn(`[Vision Retry Loop] Failed: ${currentModel} | Status: ${statusCode} | Msg: ${errorMsg}`);
+
+                if (apiKey) {
+                    await handleAiError(err, apiKey, currentModel, modality);
+                }
+
+                const isRetryable = statusCode === 429 || statusCode === 401 || statusCode >= 500 || 
+                                    errorMsg.includes('limit') || errorMsg.includes('quota') || 
+                                    errorMsg.includes('key') || errorMsg.includes('timeout');
+
+                if (isRetryable) {
+                    modelRetryCount++;
+                    await new Promise(r => setTimeout(r, 200));
+                    continue;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    // FINAL FAILURE
+    const failureReason = lastError?.response?.data?.error?.message || lastError?.message || "All attempts failed";
+    console.error(`[Vision] Fatal Error: ${failureReason}`);
     const returnModel = resolved?.targetEngineName || modelHint || 'salesmanchatbot-pro';
     return { text: `[Vision Analysis Failed] Error: ${failureReason}`, usage: 0, model: returnModel };
+  } catch (error) {
+    console.error(`[Vision] Unexpected Error:`, error.message);
+    return { text: `[Vision Error] ${error.message}`, usage: 0 };
+  }
 }
 
 // --- HELPER: Transcribe Audio (Multi-Engine Priority) ---
@@ -3403,246 +3111,165 @@ async function transcribeAudio(audioUrl, config) {
         }
     }
 
+    // 3. Smart Retry Loop (Unified with Text/Vision)
+    const MAX_RETRIES_PER_MODEL = 3;
+    let attemptedKeys = new Set();
+    let lastError = null;
+
     for (const option of priorityChain) {
-        try {
-            console.log(`[Audio] Attempting Transcription with ${option.name}...`);
-            
+        console.log(`[Audio Retry Loop] 🚀 Starting attempts for model: ${option.model} (${option.provider})`);
+        let modelRetryCount = 0;
+
+        while (modelRetryCount < MAX_RETRIES_PER_MODEL) {
             let apiKey = option.key;
             const modality = 'voice';
-            if (!apiKey) {
-                const keyData = await keyService.getSmartKey(option.provider, option.model, modality);
-                if (!keyData || !keyData.key) {
-                     console.warn(`[Audio] No system key found for ${option.name}`);
-                     continue;
-                }
-                apiKey = keyData.key;
-            }
 
-            // Determine if we should use Proxy (ONLY for Branded Engines)
-            const isBrandedEngine = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(resolved?.targetEngineName || modelHint || config.chat_model);
-            const useProxy = isBrandedEngine;
-            
-            let proxyAgent = null;
-            if (useProxy) {
-                if (option.provider === 'google') {
-                    proxyAgent = getGeminiProxyAgent('google', true, isBrandedEngine ? (resolved?.targetEngineName || modelHint || config.chat_model) : 'managed');
+            try {
+                // 1. Get Key (if not provided in option)
+                if (!apiKey) {
+                    let keyData = await keyService.getSmartKey(option.provider, option.model, modality);
+                    if (!keyData || !keyData.key || attemptedKeys.has(keyData.key)) {
+                        keyData = await keyService.getSmartKey(option.provider, 'default', modality);
+                    }
+
+                    if (!keyData || !keyData.key || attemptedKeys.has(keyData.key)) {
+                        console.warn(`[Audio] Pool ${option.provider}/${option.model} exhausted.`);
+                        break;
+                    }
+                    apiKey = keyData.key;
+                }
+                attemptedKeys.add(apiKey);
+
+                // 2. Setup Proxy
+                const isBrandedEngine = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(resolved?.targetEngineName || modelHint || config.chat_model);
+                const useProxy = isBrandedEngine;
+                
+                let proxyAgent = null;
+                if (useProxy) {
+                    if (option.provider === 'google') {
+                        proxyAgent = getGeminiProxyAgent('google', true, isBrandedEngine ? (resolved?.targetEngineName || modelHint || config.chat_model) : 'managed');
+                    } else if (option.provider === 'groq') {
+                        proxyAgent = getGroqProxyAgent(true, isBrandedEngine ? (resolved?.targetEngineName || modelHint || config.chat_model) : 'managed');
+                    } else {
+                        const proxy = getProxyUrl(isBrandedEngine ? (resolved?.targetEngineName || modelHint || config.chat_model) : 'managed');
+                        proxyAgent = createProxyAgent(proxy);
+                    }
+                }
+
+                console.log(`[Audio] Attempting: ${option.model} (${option.provider}) | Retry: ${modelRetryCount} | Proxy: ${proxyAgent ? 'YES' : 'NO'}`);
+
+                let transcribedText = null;
+                let usageTokens = 0;
+
+                // --- PROVIDER DISPATCH ---
+                if (option.provider === 'openai') {
+                    if (!apiKey.startsWith('sk-') && !apiKey.startsWith('sess-')) throw new Error("Invalid OpenAI Key format");
+
+                    const formData = new FormData();
+                    const fileExt = mimeType === 'audio/mpeg' ? 'mp3' : (mimeType.split('/')[1] || 'mp3');
+                    formData.append('file', audioBuffer, { filename: `audio.${fileExt}`, contentType: mimeType });
+                    formData.append('model', 'whisper-1');
+                    formData.append('language', 'bn');
+
+                    const res = await axios.post('https://api.openai.com/v1/audio/transcriptions', formData, {
+                        headers: { ...formData.getHeaders(), 'Authorization': `Bearer ${apiKey}` },
+                        httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false, timeout: 30000
+                    });
+                    transcribedText = res.data?.text;
+                } else if (option.provider === 'google') {
+                    let modelName = option.model.replace('models/', '');
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+                    
+                    let voicePrompt = config.voice_prompt || (config.page_prompts && config.page_prompts.voice_prompt) || "Transcribe this audio. Priority languages: Bangla, then English, then Hindi. Output ONLY the transcription text.";
+
+                    const payload = {
+                        contents: [{
+                            parts: [
+                                { text: voicePrompt },
+                                { inline_data: { mime_type: mimeType, data: audioBuffer.toString('base64') } }
+                            ]
+                        }]
+                    };
+                    
+                    const res = await axios.post(url, payload, {
+                        headers: { 'Content-Type': 'application/json' },
+                        httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false, timeout: 40000
+                    });
+                    transcribedText = res.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+                    usageTokens = res.data?.usageMetadata?.totalTokenCount || 0;
+                } else if (option.provider === 'mistral') {
+                    const formData = new FormData();
+                    const fileExt = mimeType === 'audio/mpeg' ? 'mp3' : (mimeType.split('/')[1] || 'mp3');
+                    formData.append('file', audioBuffer, { filename: `audio.${fileExt}`, contentType: mimeType });
+                    formData.append('model', option.model || 'mistral-embed');
+
+                    const res = await axios.post('https://api.mistral.ai/v1/audio/transcriptions', formData, {
+                        headers: { ...formData.getHeaders(), 'Authorization': `Bearer ${apiKey.trim()}` },
+                        httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false, timeout: 45000
+                    });
+                    transcribedText = res.data?.text;
                 } else if (option.provider === 'groq') {
-                    proxyAgent = getGroqProxyAgent(true, isBrandedEngine ? (resolved?.targetEngineName || modelHint || config.chat_model) : 'managed');
+                    const formData = new FormData();
+                    const fileExt = mimeType === 'audio/mpeg' ? 'mp3' : (mimeType.split('/')[1] || 'mp3');
+                    formData.append('file', audioBuffer, { filename: `audio.${fileExt}`, contentType: mimeType });
+                    formData.append('model', option.model || 'whisper-large-v3');
+                    formData.append('language', 'bn');
+
+                    const res = await axios.post('https://api.groq.com/openai/v1/audio/transcriptions', formData, {
+                        headers: { ...formData.getHeaders(), 'Authorization': `Bearer ${apiKey}` },
+                        httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false, timeout: 30000
+                    });
+                    transcribedText = res.data.text;
+                } else if (option.provider === 'custom' && option.baseURL) {
+                    const formData = new FormData();
+                    const fileExt = mimeType === 'audio/mpeg' ? 'mp3' : (mimeType.split('/')[1] || 'mp3');
+                    formData.append('file', audioBuffer, { filename: `audio.${fileExt}`, contentType: mimeType });
+                    formData.append('model', option.model || 'whisper-1');
+                    formData.append('language', 'bn');
+
+                    const url = `${option.baseURL.replace(/\/+$/, '')}/audio/transcriptions`;
+                    const res = await axios.post(url, formData, {
+                        headers: { ...formData.getHeaders(), 'Authorization': `Bearer ${apiKey}` },
+                        httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false, timeout: 45000
+                    });
+                    transcribedText = res.data?.text;
+                }
+
+                if (transcribedText) {
+                    console.log(`[Audio] Success with ${option.name}: "${transcribedText.substring(0, 30)}..."`);
+                    if (apiKey && usageTokens > 0) {
+                        keyService.recordKeyUsage(apiKey, usageTokens, option.model).catch(() => {});
+                    }
+                    return { text: transcribedText.trim(), usage: usageTokens, model: option.model };
+                }
+                throw new Error(`Empty response from ${option.provider}`);
+
+            } catch (err) {
+                lastError = err;
+                const statusCode = err.response?.status;
+                const errorMsg = (err.message || '').toLowerCase();
+                console.warn(`[Audio Retry Loop] Failed: ${option.model} | Status: ${statusCode} | Msg: ${errorMsg}`);
+
+                if (apiKey) {
+                    await handleAiError(err, apiKey, option.model, modality);
+                }
+
+                const isRetryable = statusCode === 429 || statusCode === 401 || statusCode >= 500 || 
+                                    errorMsg.includes('limit') || errorMsg.includes('quota') || 
+                                    errorMsg.includes('key') || errorMsg.includes('timeout');
+
+                if (isRetryable) {
+                    modelRetryCount++;
+                    await new Promise(r => setTimeout(r, 200));
+                    continue;
                 } else {
-                    const proxy = getProxyUrl(isBrandedEngine ? (resolved?.targetEngineName || modelHint || config.chat_model) : 'managed');
-                    proxyAgent = createProxyAgent(proxy);
+                    break;
                 }
             }
-            
-            // OPENAI WHISPER API (User Key)
-            if (option.provider === 'openai') {
-                // Fix: Verify Key format for OpenAI. SalesmanChatbot keys should NOT be sent to OpenAI.
-                if (!apiKey.startsWith('sk-') && !apiKey.startsWith('sess-')) {
-                     console.warn(`[Audio] Skipping OpenAI attempt: Invalid Key format for OpenAI (Key: ${apiKey.substring(0,5)}...)`);
-                     continue;
-                }
-
-                const formData = new FormData();
-                const fileExt = mimeType === 'audio/mpeg' ? 'mp3' : (mimeType.split('/')[1] || 'mp3');
-                formData.append('file', audioBuffer, { 
-                    filename: `audio.${fileExt}`, 
-                    contentType: mimeType 
-                });
-                formData.append('model', 'whisper-1');
-                // User Request: "transcription banglai hobe"
-                formData.append('language', 'bn');
-
-                const res = await axios.post('https://api.openai.com/v1/audio/transcriptions', formData, {
-                    headers: {
-                        ...formData.getHeaders(),
-                        'Authorization': `Bearer ${apiKey}`
-                    },
-                    httpsAgent: proxyAgent,
-                    httpAgent: proxyAgent,
-                    proxy: false,
-                    timeout: 30000
-                });
-
-                const text = res.data?.text;
-                if (text) {
-                    console.log(`[Audio] Success with ${option.name}: "${text.substring(0, 30)}..." | Proxy: ${useProxy ? 'YES' : 'NO'}`);
-                    // Record Usage with Model-Specific Logic
-                    keyService.recordKeyUsage(apiKey, 0, 'whisper-1').catch(e => {});
-                    return { text: text.trim(), usage: 0 }; // Usage tracking for audio is complex, skipping for now
-                }
-            }
-
-            // GEMINI DIRECT API
-            if (option.provider === 'google') {
-                const baseUrl = 'https://generativelanguage.googleapis.com/v1beta/models';
-                // User Question: "tahhole ekon doro amr api ami kothao use kortesi ekon foro ami flash select korlam tahole sekane voice image text sob process korte parbe ?"
-                // Answer: YES. Gemini 1.5 Flash / 2.0 Flash is MULTIMODAL.
-                // It can handle Text, Image, and Audio in the SAME model.
-                // So if you select 'gemini-2.0-flash', it will work for everything.
-                
-                // Fix: Google API needs 'models/' prefix sometimes, but v1beta/models/{model} usually works.
-                // However, the model name from config might not have 'models/'.
-                // Let's ensure clean URL.
-                let modelName = option.model;
-                if (modelName.startsWith('models/')) modelName = modelName.replace('models/', '');
-                
-                const url = `${baseUrl}/${modelName}:generateContent?key=${apiKey}`;
-                
-                // Determine Voice Prompt
-                let voicePrompt = "Transcribe this audio. Priority languages: Bangla, then English, then Hindi. Output ONLY the transcription text.";
-                if (config.voice_prompt) voicePrompt = config.voice_prompt;
-                else if (config.page_prompts && config.page_prompts.voice_prompt) voicePrompt = config.page_prompts.voice_prompt;
-
-                const payload = {
-                    contents: [{
-                        parts: [
-                            { text: voicePrompt },
-                            { inline_data: { mime_type: mimeType, data: audioBuffer.toString('base64') } }
-                        ]
-                    }]
-                };
-                
-                const res = await axios.post(url, payload, {
-                    headers: { 'Content-Type': 'application/json' },
-                    httpsAgent: proxyAgent,
-                    httpAgent: proxyAgent,
-                    proxy: false,
-                    timeout: 40000
-                });
-
-                const text = res.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-                // Gemini audio tokens are roughly 1 per second? Let's trust usageMetadata
-                const usage = res.data?.usageMetadata?.totalTokenCount || 0;
-                
-                if (text) {
-                    console.log(`[Audio] Success with ${option.name}: "${text.substring(0, 30)}..." Usage: ${usage} | Proxy: ${useProxy ? 'YES' : 'NO'}`);
-                    // Record Usage with Model-Specific Logic
-                    keyService.recordKeyUsage(apiKey, usage, modelName).catch(e => {});
-                    return { text: text.trim(), usage: usage, model: option.model || option.name };
-                }
-            }
-
-            // MISTRAL AUDIO API
-            if (option.provider === 'mistral') {
-                const formData = new FormData();
-                const fileExt = mimeType === 'audio/mpeg' ? 'mp3' : (mimeType.split('/')[1] || 'mp3');
-                formData.append('file', audioBuffer, { 
-                    filename: `audio.${fileExt}`, 
-                    contentType: mimeType 
-                });
-                formData.append('model', option.model || 'mistral-embed'); // User can set model in frontend
-
-                const res = await axios.post('https://api.mistral.ai/v1/audio/transcriptions', formData, {
-                    headers: {
-                        ...formData.getHeaders(),
-                        'Authorization': `Bearer ${apiKey.trim()}`
-                    },
-                    httpsAgent: proxyAgent,
-                    httpAgent: proxyAgent,
-                    proxy: false,
-                    timeout: 45000
-                });
-
-                const text = res.data?.text;
-                if (text) {
-                    console.log(`[Audio] Success with Mistral (${option.model}): "${text.substring(0, 30)}..." | Proxy: ${useProxy ? 'YES' : 'NO'}`);
-                    // Record Usage with Model-Specific Logic
-                    keyService.recordKeyUsage(apiKey, 0, option.model || 'mistral-audio').catch(e => {});
-                    const returnModel = resolved?.targetEngineName || option.model || 'mistral-audio';
-                    return { text: text.trim(), usage: 0, model: returnModel };
-                }
-            }
-            
-            // GROQ WHISPER API (Fastest)
-            if (option.provider === 'groq') {
-                const formData = new FormData();
-                const fileExt = mimeType === 'audio/mpeg' ? 'mp3' : (mimeType.split('/')[1] || 'mp3');
-                
-                // Using Buffer directly is more robust than PassThrough in some axios versions
-                formData.append('file', audioBuffer, { 
-                    filename: `audio.${fileExt}`, 
-                    contentType: mimeType 
-                });
-                formData.append('model', option.model || 'whisper-large-v3');
-                // User Request: "transcription banglai hobe"
-                // Adding language='bn' hint for Bengali transcription
-                formData.append('language', 'bn');
-
-                const res = await axios.post('https://api.groq.com/openai/v1/audio/transcriptions', formData, {
-                    headers: {
-                        ...formData.getHeaders(),
-                        'Authorization': `Bearer ${apiKey}`
-                    },
-                    httpsAgent: proxyAgent,
-                    httpAgent: proxyAgent,
-                    proxy: false,
-                    timeout: 30000, // 30s timeout for audio
-                });
-
-                const text = res.data.text;
-                if (text) {
-                    console.log(`[Audio] Success with ${option.name}: "${text.substring(0, 30)}..." | Proxy: ${useProxy ? 'YES' : 'NO'}`);
-                    // Record Usage with Model-Specific Logic
-                    keyService.recordKeyUsage(apiKey, 0, option.model || 'whisper-large-v3').catch(e => {});
-                    return { text: text.trim(), usage: 0, model: option.model || 'whisper-large-v3' };
-                }
-            }
-
-            // CUSTOM OPENAI-COMPATIBLE API
-            if (option.provider === 'custom' && option.baseURL) {
-                const formData = new FormData();
-                const fileExt = mimeType === 'audio/mpeg' ? 'mp3' : (mimeType.split('/')[1] || 'mp3');
-                
-                formData.append('file', audioBuffer, { 
-                    filename: `audio.${fileExt}`, 
-                    contentType: mimeType 
-                });
-                formData.append('model', option.model || 'whisper-1');
-                formData.append('language', 'bn');
-
-                // Ensure baseURL doesn't have double slashes and ends correctly
-                const cleanBase = option.baseURL.replace(/\/+$/, '');
-                const url = `${cleanBase}/audio/transcriptions`;
-
-                console.log(`[Audio] Calling Custom Provider at: ${url}`);
-
-                const res = await axios.post(url, formData, {
-                    headers: {
-                        ...formData.getHeaders(),
-                        'Authorization': `Bearer ${apiKey}`
-                    },
-                    httpsAgent: proxyAgent,
-                    httpAgent: proxyAgent,
-                    proxy: false,
-                    timeout: 45000
-                });
-
-                const text = res.data?.text;
-                if (text) {
-                    console.log(`[Audio] Success with Custom Provider: "${text.substring(0, 30)}..."`);
-                    // Record Usage with Model-Specific Logic
-                    keyService.recordKeyUsage(apiKey, 0, option.model).catch(e => {});
-                    return { text: text.trim(), usage: 0, model: option.model };
-                }
-            }
-            
-        } catch (e) {
-             const status = e?.response?.status;
-             const data = e?.response?.data;
-             if (status || data) {
-                 console.warn(`[Audio] ${option.name} Failed:`, status, data);
-             } else {
-                 console.warn(`[Audio] ${option.name} Failed:`, e.message);
-             }
-
-             // --- NEW: AUTO-ROTATE KEY ON FAILURE ---
-             if (typeof apiKey !== 'undefined' && apiKey) {
-                 await handleAiError(e, apiKey, option.model, 'voice');
-             }
         }
     }
 
-    return { text: "[Audio Transcription Failed]", usage: 0 };
+    return { text: `[Audio Transcription Failed] Error: ${lastError?.message || 'Unknown'}`, usage: 0 };
 }
 
 module.exports = {
