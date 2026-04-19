@@ -142,6 +142,7 @@ router.get('/pages', async (req, res) => {
 router.post('/pages/manual', authMiddleware, async (req, res) => {
     try {
         const { page_id, name, page_access_token, email } = req.body;
+        const userId = req.user.id;
 
         if (!page_id || !name || !page_access_token || !email) {
             return res.status(400).json({ error: 'page_id, name, page_access_token, and email are required' });
