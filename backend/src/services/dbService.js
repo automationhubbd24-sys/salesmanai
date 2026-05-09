@@ -2195,7 +2195,8 @@ async function saveOrder(orderData) {
             location: orderData.address,
             product_quantity: orderData.quantity,
             price: orderData.price,
-            customer_email: orderData.customer_email
+            customer_email: orderData.customer_email,
+            product_id: orderData.product_id
         });
     } else {
         return await saveOrderTracking({
@@ -2208,7 +2209,8 @@ async function saveOrder(orderData) {
             price: orderData.price,
             sender_number: orderData.phone,
             customer_email: orderData.customer_email,
-            customer_name: orderData.customer_name
+            customer_name: orderData.customer_name,
+            product_id: orderData.product_id
         });
     }
 }
@@ -2280,6 +2282,9 @@ async function saveOrderTracking(orderData) {
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='is_locked') THEN
                     ALTER TABLE fb_order_tracking ADD COLUMN is_locked boolean DEFAULT false;
                 END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='product_id') THEN
+                    ALTER TABLE fb_order_tracking ADD COLUMN product_id bigint;
+                END IF;
             END $$;
         `);
     } catch (e) {
@@ -2289,7 +2294,7 @@ async function saveOrderTracking(orderData) {
     try {
         // --- 2. SMART AGENT DECISION (Merge into existing incomplete order) ---
         const recentOrder = await query(
-            `SELECT id, is_locked, status, product_name, number, location FROM fb_order_tracking 
+            `SELECT id, is_locked, status, product_name, number, location, product_id FROM fb_order_tracking 
              WHERE page_id = $1::text AND sender_id = $2::text 
              AND created_at > NOW() - INTERVAL '24 hours'
              ORDER BY created_at DESC LIMIT 1`,
@@ -2346,9 +2351,13 @@ async function saveOrderTracking(orderData) {
                             WHEN $9::text IS NOT NULL AND $9::text <> '' THEN $9::text
                             ELSE customer_email
                         END,
+                        product_id = CASE
+                            WHEN $10::bigint IS NOT NULL THEN $10::bigint
+                            ELSE product_id
+                        END,
                         updated_at = NOW()
                      WHERE id = $7::bigint`,
-                    [product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderId, orderData.customer_name || null, customer_email || null]
+                    [product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderId, orderData.customer_name || null, customer_email || null, (orderData.product_id && !isNaN(orderData.product_id)) ? orderData.product_id : null]
                 );
                 return { id: orderId, status: 'updated' };
             }
@@ -2363,10 +2372,10 @@ async function saveOrderTracking(orderData) {
 
         const result = await query(
             `INSERT INTO fb_order_tracking
-                (page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, created_at, status, is_locked, customer_name, customer_email)
-             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, NOW(), 'ongoing', FALSE, $9::text, $10::text)
+                (page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, created_at, status, is_locked, customer_name, customer_email, product_id)
+             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, NOW(), 'ongoing', FALSE, $9::text, $10::text, $11::bigint)
              RETURNING *`,
-            [page_id || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderData.customer_name || null, customer_email || null]
+            [page_id || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderData.customer_name || null, customer_email || null, (orderData.product_id && !isNaN(orderData.product_id)) ? orderData.product_id : null]
         );
         return result.rows[0];
 
