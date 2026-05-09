@@ -3771,23 +3771,31 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
 // 28. Get Product By ID
 async function getProductById(id) {
     // --- BIGINT SYNTAX FIX: Prevent crash if id is a string SKU (like hot-comb-001) ---
-    if (!id || isNaN(id)) {
-        console.warn(`[DB] getProductById: Invalid numeric ID "${id}". Searching by keywords/name instead.`);
-        // Fallback: Search by name/keywords if it's not a numeric ID
+    // User Request: Robust ID handling for Order Engine and Specialist Agent.
+    if (id === undefined || id === null || id === '' || isNaN(id) || String(id).trim() === '') {
+        console.warn(`[DB] getProductById: Invalid or non-numeric ID "${id}". Searching by SKU/keywords instead.`);
+        
+        // If ID is not a number, it might be a SKU or a Name passed as an ID.
+        // We attempt to find the product by SKU or name to prevent system failure.
         const fallbackResult = await query(
-            'SELECT * FROM products WHERE (name ILIKE $1 OR keywords::text ILIKE $1) LIMIT 1',
-            [`%${id}%`]
+            'SELECT * FROM products WHERE (sku = $1 OR name ILIKE $2 OR keywords::text ILIKE $2) LIMIT 1',
+            [String(id), `%${id}%`]
         );
         return fallbackResult.rows.length > 0 ? fallbackResult.rows[0] : null;
     }
 
-    const result = await query(
-        'SELECT * FROM products WHERE id = $1 LIMIT 1',
-        [id]
-    );
-    
-    if (result.rows.length === 0) return null;
-    return result.rows[0];
+    try {
+        const result = await query(
+            'SELECT * FROM products WHERE id = $1 LIMIT 1',
+            [id]
+        );
+        
+        if (result.rows.length === 0) return null;
+        return result.rows[0];
+    } catch (err) {
+        console.error(`[DB] getProductById Error for ID ${id}:`, err.message);
+        return null;
+    }
 }
 
 // 29. Update Product
