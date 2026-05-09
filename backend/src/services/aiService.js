@@ -1366,6 +1366,10 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null
 
             case 'get_product': {
                 const productId = args.product_id;
+                // --- SAFE ID CHECK ---
+                if (isNaN(productId)) {
+                    return { status: 'ERROR', message: `Product ID "${productId}" is invalid. Expected a numeric ID.` };
+                }
                 const product = await dbService.getProductById(productId);
                 
                 if (!product || String(product.user_id) !== String(userId)) {
@@ -1405,6 +1409,10 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null
 
             case 'check_stock': {
                 const productId = args.product_id;
+                // --- SAFE ID CHECK: If it's a string SKU, it won't match a BIGINT id ---
+                if (isNaN(productId)) {
+                    return { status: 'ERROR', message: `Product ID "${productId}" is invalid. Expected a numeric ID.` };
+                }
                 const product = await dbService.getProductById(productId);
                 
                 if (!product) return { status: 'ERROR', message: "Product not found." };
@@ -1679,7 +1687,8 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                             price: parseFloat(rawData.price || structuredFinal.price || 0) || 0,
                             customer_name: customerName,
                             customer_phone: customerPhone ? String(customerPhone).replace(/[^\d+]/g, '') : null,
-                            customer_address: customerAddress ? String(customerAddress).trim() : null
+                            customer_address: customerAddress ? String(customerAddress).trim() : null,
+                            product_id: (structuredFinal.product_id && !isNaN(structuredFinal.product_id)) ? parseInt(structuredFinal.product_id) : null
                         };
 
                         // Phone First Rule: Start saving only if phone exists
@@ -1701,7 +1710,8 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                                             address: orderData.customer_address,
                                             quantity: orderData.quantity,
                                             price: orderData.price,
-                                            customer_name: orderData.customer_name
+                                            customer_name: orderData.customer_name,
+                                            product_id: orderData.product_id
                                         }
                                     });
                                     console.log(`[AgentLoop] ✅ Order Orchestrated Successfully via orderService.`);
@@ -2276,7 +2286,7 @@ ${basePrompt}
 - You have NO internal knowledge of prices or stock.
 - Whenever the user asks about a product, price, stock, or availability, you MUST set "action": "CALL_SPECIALIST" and provide a "search_query" in your JSON output.
 - DO NOT call 'resolve_product' for greetings (e.g., "hi", "hello"), personal questions, or general conversation.
-- STRICT PRICING RULE: You must ONLY provide prices from tool results. NEVER guess.
+- STRICT PRICING RULE: You must ONLY provide prices from tool results or specialist agent. NEVER guess or invent a price. If you don't know the price, state it clearly.
 - STOCK CHECK: If 'stock' is 0, inform the user it's out of stock.
 
 [RULE 2: VISUALS & PHOTO INTENT]
