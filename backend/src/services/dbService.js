@@ -3770,6 +3770,17 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
 
 // 28. Get Product By ID
 async function getProductById(id) {
+    // --- BIGINT SYNTAX FIX: Prevent crash if id is a string SKU (like hot-comb-001) ---
+    if (!id || isNaN(id)) {
+        console.warn(`[DB] getProductById: Invalid numeric ID "${id}". Searching by keywords/name instead.`);
+        // Fallback: Search by name/keywords if it's not a numeric ID
+        const fallbackResult = await query(
+            'SELECT * FROM products WHERE (name ILIKE $1 OR keywords::text ILIKE $1) LIMIT 1',
+            [`%${id}%`]
+        );
+        return fallbackResult.rows.length > 0 ? fallbackResult.rows[0] : null;
+    }
+
     const result = await query(
         'SELECT * FROM products WHERE id = $1 LIMIT 1',
         [id]
