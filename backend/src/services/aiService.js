@@ -1179,7 +1179,7 @@ async function runProductSpecialistAgent(userQuery, pageConfig) {
 Your ONLY job is to identify the correct product(s) and provide the EXACT price and stock from the list below.
 
 [FULL PRODUCT KNOWLEDGE BASE]
-${products.map(p => `ID: ${p.id} | NAME: ${p.name} | PRICE: ${p.price} ${p.currency || 'BDT'} | STOCK: ${p.stock_quantity} | KEYWORDS: ${p.keywords} | DESCRIPTION: ${p.description}`).join('\n---\n')}
+${products.map(p => `ID: ${p.id} | NAME: ${p.name} | PRICE: ${p.price} ${p.currency || 'BDT'} | STOCK: ${p.stock} | KEYWORDS: ${p.keywords} | DESCRIPTION: ${p.description}`).join('\n---\n')}
 
 [STRICT MATCHING RULES]
 1. READ EVERYTHING: You MUST scan the entire list above. Look for matches in NAME, KEYWORDS, and DESCRIPTION.
@@ -1271,7 +1271,7 @@ You MUST return a JSON object with:
                 id: p.id,
                 name: p.name,
                 price: `${p.price} ${p.currency || 'BDT'}`,
-                stock: p.stock_quantity
+                stock: p.stock
             }))
         };
 
@@ -1409,7 +1409,7 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null
                 
                 if (!product) return { status: 'ERROR', message: "Product not found." };
                 
-                const stock = product.stock_quantity !== undefined ? product.stock_quantity : 'Unknown';
+                const stock = product.stock !== undefined ? product.stock : 'Unknown';
                 const inStock = stock === 'Unknown' || stock > 0;
 
                 return { status: 'SUCCESS', product_id: productId, in_stock: inStock, stock_count: stock };
@@ -2277,7 +2277,7 @@ ${basePrompt}
 - Whenever the user asks about a product, price, stock, or availability, you MUST set "action": "CALL_SPECIALIST" and provide a "search_query" in your JSON output.
 - DO NOT call 'resolve_product' for greetings (e.g., "hi", "hello"), personal questions, or general conversation.
 - STRICT PRICING RULE: You must ONLY provide prices from tool results. NEVER guess.
-- STOCK CHECK: If 'stock_quantity' is 0, inform the user it's out of stock.
+- STOCK CHECK: If 'stock' is 0, inform the user it's out of stock.
 
 [RULE 2: VISUALS & PHOTO INTENT]
 - PHOTO INTENT: If the user asks for a photo/image, set "action": "SEND_PHOTO" and provide the "product_id".

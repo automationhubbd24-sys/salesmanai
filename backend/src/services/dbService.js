@@ -3937,14 +3937,14 @@ async function searchProducts(userId, queryText, pageId = null) {
 
         let sql = `
             WITH vector_matches AS (
-                SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, stock_quantity,
+                SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, stock,
                        (embedding <=> $1::vector) as distance
                 FROM products
                 WHERE user_id::text = $2::text AND is_active = true
                 ORDER BY distance ASC LIMIT 50
             ),
             keyword_matches AS (
-                SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, stock_quantity,
+                SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, stock,
                        (1 - similarity(name, $4) - (${wordScoring}) - (CASE WHEN name ILIKE $5 THEN 0.4 ELSE 0 END) - (CASE WHEN keywords::text ILIKE $5 THEN 0.3 ELSE 0 END) - (CASE WHEN description ILIKE $5 THEN 0.1 ELSE 0 END)) as distance 
                 FROM products
                 WHERE user_id::text = $2::text 
