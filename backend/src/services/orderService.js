@@ -19,8 +19,8 @@ function normalizeBdPhone(phone) {
  */
 function normalizeBanglaDigits(text) {
     if (!text) return '';
-    const banglaDigits = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
-    return text.replace(/[০-৯]/g, d => banglaDigits.indexOf(d));
+    const banglaDigits = ['αºª', 'αºº', 'αº¿', 'αº⌐', 'αº¬', 'αº½', 'αº¼', 'αº¡', 'αº«', 'αº»'];
+    return text.replace(/[αºª-αº»]/g, d => banglaDigits.indexOf(d));
 }
 
 /**
