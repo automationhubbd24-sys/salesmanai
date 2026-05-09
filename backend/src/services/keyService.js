@@ -229,7 +229,7 @@ async function updateKeyCache(force = false) {
             [today, thisMonth]
         );
         if (resetResult.rowCount > 0) {
-            console.log(`[KeyService] â™»ï¸ Auto-reset ${resetResult.rowCount} keys whose 24h lock/cooldown expired.`);
+            console.log(`[KeyService] ♻️ Auto-reset ${resetResult.rowCount} keys whose 24h lock/cooldown expired.`);
         }
 
         // --- NEW: AUTO-RESET MODEL-SPECIFIC LOCKS (User Request Upgrade) ---
@@ -368,7 +368,7 @@ async function updateKeyCache(force = false) {
                     });
                 });
             });
-            console.log(`[KeyService] ðŸ§  Synced Modality-Aware Global & Dynamic Limits for ${configResult.rows.length} providers.`);
+            console.log(`[KeyService] 🧠 Synced Modality-Aware Global & Dynamic Limits for ${configResult.rows.length} providers.`);
         }
 
         // --- NEW: LOAD MODEL-SPECIFIC LOCKS & USAGE (User Request Upgrade: Persistent Storage) ---
@@ -396,7 +396,7 @@ async function updateKeyCache(force = false) {
                     }
                 }
             });
-            console.log(`[KeyService] ðŸ”’ Synced ${modelLockResult.rows.length} model-specific usage/lock records from database.`);
+            console.log(`[KeyService] 🔒 Synced ${modelLockResult.rows.length} model-specific usage/lock records from database.`);
         }
 
         lastCacheUpdate = now;
@@ -481,13 +481,13 @@ async function report429(modelName, apiKey = null) {
             state.strikes = 1;
             const duration = 2 * 60 * 1000;
             await markKeyAsDead(apiKey, duration, '429_rate_limit_1st_2m');
-            console.warn(`[KeyService] ðŸ”’ Locking KEY ${apiKey.substring(0,8)}... for 2 minutes (First 429)`);
+            console.warn(`[KeyService] 🔒 Locking KEY ${apiKey.substring(0,8)}... for 2 minutes (First 429)`);
         } else {
             // Second offense -> 10 Minutes (Increased Cool-off)
             state.strikes = 2;
             const duration = 10 * 60 * 1000;
             await markKeyAsDead(apiKey, duration, '429_rate_limit_2nd_10m');
-            console.warn(`[KeyService] ðŸ”’ Locking KEY ${apiKey.substring(0,8)}... for 10 minutes (Repeated 429)`);
+            console.warn(`[KeyService] 🔒 Locking KEY ${apiKey.substring(0,8)}... for 10 minutes (Repeated 429)`);
         }
         
         state.last_429 = now;
@@ -502,11 +502,11 @@ async function report429(modelName, apiKey = null) {
     if (state.strikes === 0) {
         state.strikes = 1;
         state.expiry = now + 2 * 60 * 1000; 
-        console.warn(`[KeyService] ðŸ”’ Locking MODEL ${modelName} for 2 minutes (First 429 - No Key Info)`);
+        console.warn(`[KeyService] 🔒 Locking MODEL ${modelName} for 2 minutes (First 429 - No Key Info)`);
     } else {
         state.strikes = 2; 
         state.expiry = now + 24 * 60 * 60 * 1000; 
-        console.warn(`[KeyService] ðŸ”’ Locking MODEL ${modelName} for 24 HOURS (Repeated 429 - No Key Info)`);
+        console.warn(`[KeyService] 🔒 Locking MODEL ${modelName} for 24 HOURS (Repeated 429 - No Key Info)`);
     }
     modelLockMap.set(modelName, state);
 }
@@ -544,7 +544,7 @@ async function markModelAsDead(apiKey, modelName, duration = DEFAULT_COOLDOWN, r
     const expiryDate = new Date(expiry);
     const lockKey = `${apiKey}:${modelName}`;
     
-    console.warn(`[KeyService] ðŸ”’ Locking model ${modelName} on key ${apiKey.substring(0,8)}... for ${(duration/1000/60).toFixed(1)} mins. Reason: ${reason}`);
+    console.warn(`[KeyService] 🔒 Locking model ${modelName} on key ${apiKey.substring(0,8)}... for ${(duration/1000/60).toFixed(1)} mins. Reason: ${reason}`);
     
     // Update In-Memory Map
     modelLockMap.set(lockKey, { expiry, reason });
@@ -557,7 +557,7 @@ async function markModelAsDead(apiKey, modelName, duration = DEFAULT_COOLDOWN, r
         
         const params = [apiKey, modelName, expiryDate.toISOString()];
         await pgClient.query(query, params);
-        console.log(`[KeyService] ðŸ’¾ Persisted model-specific lock for ${modelName} on ${apiKey.substring(0,8)}...`);
+        console.log(`[KeyService] 💾 Persisted model-specific lock for ${modelName} on ${apiKey.substring(0,8)}...`);
     } catch (err) {
         console.error(`[KeyService] Failed to persist model-specific lock:`, err.message);
     }
@@ -592,7 +592,7 @@ async function markKeyAsDead(keyOrObj, duration = DEFAULT_COOLDOWN, reason = 'un
             "UPDATE api_list SET cooldown_until = $1, status = 'locked', last_used_at = NOW() WHERE api = $2",
             [expiryDate.toISOString(), key]
         );
-        console.log(`[KeyService] ðŸ’¾ Persisted lock for ${key.substring(0,8)}... until ${expiryDate.toISOString()}. Status set to 'locked'. Rows affected: ${res.rowCount}`);
+        console.log(`[KeyService] 💾 Persisted lock for ${key.substring(0,8)}... until ${expiryDate.toISOString()}. Status set to 'locked'. Rows affected: ${res.rowCount}`);
     } catch (err) {
         console.error(`[KeyService] Failed to immediately persist dead key status:`, err.message);
     }
@@ -630,7 +630,7 @@ async function markKeyAsQuotaExceeded(key) {
     // --- PACIFIC MIDNIGHT LOCK (Smart Reset) ---
     // Instead of a flat 24h, we lock until the exact moment Google resets (Midnight PT)
     const msToMidnight = getMsUntilPacificMidnight();
-    console.log(`[KeyService] ðŸ”’ Quota exceeded for ${key.substring(0,8)}... Locking until Pacific Midnight (${(msToMidnight/1000/60).toFixed(1)} mins).`);
+    console.log(`[KeyService] 🔒 Quota exceeded for ${key.substring(0,8)}... Locking until Pacific Midnight (${(msToMidnight/1000/60).toFixed(1)} mins).`);
     await markKeyAsDead(key, msToMidnight, 'quota_exceeded_until_pacific_midnight');
 }
 
@@ -639,7 +639,7 @@ function lockModelTemporarily(modelName, durationMs) {
     if (!modelName) return;
     const expiry = Date.now() + durationMs;
     modelLockMap.set(modelName, { expiry, strikes: 3 }); // Set strikes high to indicate serious lock
-    console.warn(`[KeyService] ðŸ”’ Model ${modelName} locked for ${durationMs/1000}s`);
+    console.warn(`[KeyService] 🔒 Model ${modelName} locked for ${durationMs/1000}s`);
 }
 
 // 13. Check Conversation Lock Status (Failure Lock)
@@ -669,11 +669,11 @@ async function handleApiKeyError(key, error, modelName = null, modality = 'text'
         const model = (modelName || keyData?.model || 'default').toLowerCase();
 
         if (isDailyQuota) {
-            console.warn(`[KeyService] ðŸš¨ Daily Quota Exceeded for ${key.substring(0,8)}... Locking ENTIRE KEY until Midnight.`);
+            console.warn(`[KeyService] 🚨 Daily Quota Exceeded for ${key.substring(0,8)}... Locking ENTIRE KEY until Midnight.`);
             await markKeyAsQuotaExceeded(key);
         } else {
             // User Request Upgrade: Lock ONLY the specific model for this key, not the whole key
-            console.warn(`[KeyService] ðŸ”’ Rate Limit (429) hit for model ${model} on key ${key.substring(0,8)}... locking MODEL ONLY.`);
+            console.warn(`[KeyService] 🔒 Rate Limit (429) hit for model ${model} on key ${key.substring(0,8)}... locking MODEL ONLY.`);
             await markModelAsDead(key, model, getMsUntilPacificMidnight(), `model_rate_limit_429_${model}`);
         }
         
@@ -683,7 +683,7 @@ async function handleApiKeyError(key, error, modelName = null, modality = 'text'
 
     if (errorStr.includes('401') || errorStr.includes('invalid api key') || errorStr.includes('expired') || 
         errorStr.includes('402') || errorStr.includes('insufficient balance') || errorStr.includes('billing')) {
-        console.error(`[KeyService] ðŸ’€ Key ${key.substring(0,8)}... is DEAD (401/402/Invalid). Locking for 24h.`);
+        console.error(`[KeyService] 💀 Key ${key.substring(0,8)}... is DEAD (401/402/Invalid). Locking for 24h.`);
         // User Request: All Dead/Locked keys should reset after 24h
         const twentyFourHours = 24 * 60 * 60 * 1000;
         await markKeyAsDead(key, twentyFourHours, 'invalid_or_no_balance_24h_reset'); 
@@ -695,7 +695,7 @@ async function handleApiKeyError(key, error, modelName = null, modality = 'text'
         errorStr.includes('terms of service') || errorStr.includes('restricted') ||
         errorStr.includes('403') || errorStr.includes('forbidden')) {
         
-        console.warn(`[KeyService] ðŸ‘® Policy/ToS Violation detected for ${key.substring(0,8)}... Locking for 24h to protect project.`);
+        console.warn(`[KeyService] 👮 Policy/ToS Violation detected for ${key.substring(0,8)}... Locking for 24h to protect project.`);
         // Lock for 24 hours to prevent further flags
         const duration = 24 * 60 * 60 * 1000;
         await markKeyAsDead(key, duration, 'policy_violation_cooldown');
@@ -786,7 +786,7 @@ function isKeyWithinLimits(keyData, requestedModel = null, modality = 'text') {
     // --- 1. REQUEST-LEVEL CHECKS ---
     // Check RPD
     if (rpdLimit < 999999999 && keyData.last_date_checked === today && effectiveUsageToday >= rpdLimit) {
-        console.warn(`[KeyService] â›” Key ${keyData.api.substring(0,8)}... hit RPD limit (${rpdLimit}). Usage: ${effectiveUsageToday}. Locking for 24h.`);
+        console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPD limit (${rpdLimit}). Usage: ${effectiveUsageToday}. Locking for 24h.`);
         markKeyAsDead(keyData.api, 24 * 60 * 60 * 1000, 'rpd_limit_reached_strict').catch(e => {});
         return false;
     }
@@ -800,7 +800,7 @@ function isKeyWithinLimits(keyData, requestedModel = null, modality = 'text') {
             keyUsageTimestamps.set(keyData.api, validTimestamps);
         }
         if (validTimestamps.length >= rpmLimit) {
-            console.warn(`[KeyService] â›” Key ${keyData.api.substring(0,8)}... hit RPM limit (${rpmLimit})`);
+            console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPM limit (${rpmLimit})`);
             return false;
         }
     }
@@ -814,7 +814,7 @@ function isKeyWithinLimits(keyData, requestedModel = null, modality = 'text') {
             keyUsageHourTimestamps.set(keyData.api, validHourTimestamps);
         }
         if (validHourTimestamps.length >= rphLimit) {
-            console.warn(`[KeyService] â›” Key ${keyData.api.substring(0,8)}... hit RPH limit (${rphLimit})`);
+            console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit RPH limit (${rphLimit})`);
             return false;
         }
     }
@@ -825,7 +825,7 @@ function isKeyWithinLimits(keyData, requestedModel = null, modality = 'text') {
         const tokenTs = keyTokenUsageTimestamps.get(keyData.api) || [];
         const activeTpmCount = tokenTs.filter(item => item.ts > now - TPM_WINDOW_MS).reduce((acc, item) => acc + item.tokens, 0);
         if (activeTpmCount >= tpmLimit) {
-            console.warn(`[KeyService] â›” Key ${keyData.api.substring(0,8)}... hit TPM limit (${tpmLimit}). Current: ${activeTpmCount}`);
+            console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit TPM limit (${tpmLimit}). Current: ${activeTpmCount}`);
             return false;
         }
     }
@@ -834,7 +834,7 @@ function isKeyWithinLimits(keyData, requestedModel = null, modality = 'text') {
     if (tpdLimit < 999999999) {
         const effectiveTokensToday = (keyData.usage_tokens_today || 0) + (keyData.last_date_checked === today ? pending.token_delta : 0);
         if (effectiveTokensToday >= tpdLimit) {
-            console.warn(`[KeyService] â›” Key ${keyData.api.substring(0,8)}... hit TPD limit (${tpdLimit}). Current: ${effectiveTokensToday}`);
+            console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit TPD limit (${tpdLimit}). Current: ${effectiveTokensToday}`);
             return false;
         }
     }
@@ -844,7 +844,7 @@ function isKeyWithinLimits(keyData, requestedModel = null, modality = 'text') {
         const thisMonth = today.substring(0, 7);
         const effectiveTokensMonth = (keyData.usage_tokens_month || 0) + (keyData.last_month_checked === thisMonth ? pending.token_delta : 0);
         if (effectiveTokensMonth >= tpmoLimit) {
-            console.warn(`[KeyService] â›” Key ${keyData.api.substring(0,8)}... hit TPMo limit (${tpmoLimit}). Current: ${effectiveTokensMonth}`);
+            console.warn(`[KeyService] ⛔ Key ${keyData.api.substring(0,8)}... hit TPMo limit (${tpmoLimit}). Current: ${effectiveTokensMonth}`);
             return false;
         }
     }
@@ -1002,7 +1002,7 @@ async function updateKeyStatusFromHeaders(apiKey, headers) {
             const current = dynamicLimits.get(modelName) || {};
             // Only update if it's different to avoid spamming
             if (current.rpm !== parseInt(limitCap)) {
-                console.log(`[KeyService] ðŸ§  Learned Real-Time Limit for ${modelName}: ${limitCap} RPM (Config was ${DEFAULT_LIMITS[modelName]?.rpm || 'unknown'})`);
+                console.log(`[KeyService] 🧠 Learned Real-Time Limit for ${modelName}: ${limitCap} RPM (Config was ${DEFAULT_LIMITS[modelName]?.rpm || 'unknown'})`);
                 dynamicLimits.set(modelName, { ...current, rpm: parseInt(limitCap) });
             }
         }
@@ -1146,7 +1146,7 @@ async function getSmartKey(provider, model = 'default', modality = 'text') {
                 }
 
                 if (isModelLockedForThisKey) {
-                    console.log(`[KeyService] â­ï¸ Skipping key ${candidateKey.api.substring(0,8)}... for model ${modelToCheck} (Model-Specific Lock).`);
+                    console.log(`[KeyService] ⏭️ Skipping key ${candidateKey.api.substring(0,8)}... for model ${modelToCheck} (Model-Specific Lock).`);
                 }
                 continue;
             }
@@ -1240,14 +1240,14 @@ async function getSmartKey(provider, model = 'default', modality = 'text') {
 
             // Model-Specific RPD Check: Only skip this model, don't lock the key
             if (modelSpecificRpdLimit < 999999 && modelUsageToday >= modelSpecificRpdLimit) {
-                console.warn(`[KeyService] â­ï¸ Key ${candidateKey.api.substring(0,8)}... SKIPPED for model ${modelToCheck} (Model RPD: ${modelUsageToday}/${modelSpecificRpdLimit}). Trying next key.`);
+                console.warn(`[KeyService] ⏭️ Key ${candidateKey.api.substring(0,8)}... SKIPPED for model ${modelToCheck} (Model RPD: ${modelUsageToday}/${modelSpecificRpdLimit}). Trying next key.`);
                 continue;
             }
 
             // Key-Level Global RPD Check: Only lock key if ALL models exhausted
             const globalKeyRpdLimit = resolveLimit(candidateKey.rpd_limit, null, defaults.rpd);
             if (globalKeyRpdLimit < 999999 && effectiveUsageToday >= globalKeyRpdLimit) {
-                console.warn(`[KeyService] â›” Key ${candidateKey.api.substring(0,8)}... hit GLOBAL KEY RPD limit (${globalKeyRpdLimit}). Usage: ${effectiveUsageToday}. Locking entire key.`);
+                console.warn(`[KeyService] ⛔ Key ${candidateKey.api.substring(0,8)}... hit GLOBAL KEY RPD limit (${globalKeyRpdLimit}). Usage: ${effectiveUsageToday}. Locking entire key.`);
                 candidateKey.status = 'locked';
                 candidateKey.cooldown_until = new Date(Date.now() + getMsUntilPacificMidnight()).toISOString();
                 markKeyAsDead(candidateKey.api, getMsUntilPacificMidnight(), `global_key_rpd_limit_reached_${globalKeyRpdLimit}`).catch(e => {});
@@ -1259,7 +1259,7 @@ async function getSmartKey(provider, model = 'default', modality = 'text') {
             const effectiveTokensToday = dbTokensToday + pending.token_delta;
 
             if (tpdLimit < 999999 && effectiveTokensToday >= tpdLimit) {
-                console.warn(`[KeyService] â›” Key ${candidateKey.api.substring(0,8)}... hit TPD limit (${tpdLimit}). Current: ${effectiveTokensToday}`);
+                console.warn(`[KeyService] ⛔ Key ${candidateKey.api.substring(0,8)}... hit TPD limit (${tpdLimit}). Current: ${effectiveTokensToday}`);
                 continue;
             }
 
@@ -1269,7 +1269,7 @@ async function getSmartKey(provider, model = 'default', modality = 'text') {
             const effectiveTokensMonth = dbTokensMonth + pending.token_delta;
 
             if (tpmoLimit < 999999 && effectiveTokensMonth >= tpmoLimit) {
-                console.warn(`[KeyService] â›” Key ${candidateKey.api.substring(0,8)}... hit TPMo limit (${tpmoLimit}). Current: ${effectiveTokensMonth}`);
+                console.warn(`[KeyService] ⛔ Key ${candidateKey.api.substring(0,8)}... hit TPMo limit (${tpmoLimit}). Current: ${effectiveTokensMonth}`);
                 continue;
             }
 
@@ -1311,7 +1311,7 @@ async function getSmartKey(provider, model = 'default', modality = 'text') {
                         last_used_at = NOW()
                 `;
                 pgClient.query(modelUsageUpdateQuery, [candidateKey.api, modelToCheck, today]).catch(e => {
-                    console.error(`[KeyService] ðŸ’¾ Failed to persist model usage for ${modelToCheck}:`, e.message);
+                    console.error(`[KeyService] 💾 Failed to persist model usage for ${modelToCheck}:`, e.message);
                 });
             } catch (err) {
                 console.error(`[KeyService] DB error on model usage persistence:`, err.message);
@@ -1335,7 +1335,7 @@ async function getSmartKey(provider, model = 'default', modality = 'text') {
 
             flushUsageStats().catch(e => console.error(`[KeyService] Immediate flush failed: ${e.message}`));
 
-            console.log(`[KeyService] âœ… Selected Key: ${candidateKey.api} (Index: ${actualIndex + 1}/${totalKeys}, RPM: ${activeRpmCount + 1}/${rpmLimit || 'âˆž'}, ModelRPD: ${(modelDailyUsage.get(modelUsageKey)?.count || 0)}/${modelSpecificRpdLimit})`);
+            console.log(`[KeyService] ✅ Selected Key: ${candidateKey.api} (Index: ${actualIndex + 1}/${totalKeys}, RPM: ${activeRpmCount + 1}/${rpmLimit || '∞'}, ModelRPD: ${(modelDailyUsage.get(modelUsageKey)?.count || 0)}/${modelSpecificRpdLimit})`);
             addRotationLog(provider, model, candidateKey.api, actualIndex + 1, totalKeys);
 
             return {
@@ -1345,7 +1345,7 @@ async function getSmartKey(provider, model = 'default', modality = 'text') {
             };
         }
 
-        console.warn(`[KeyService] âš ï¸ All ${candidates.length} keys exhausted for ${provider}/${model}`);
+        console.warn(`[KeyService] ⚠️ All ${candidates.length} keys exhausted for ${provider}/${model}`);
         return null;
     } finally {
         releaseSelectionLock();
@@ -1388,7 +1388,7 @@ function getModelUsageSummaryForKey(apiKey) {
 module.exports = {
     // NEW: Adaptive Rate Limit Reporter
     reportRateLimit(modelId) {
-        console.warn(`[KeyService] âš ï¸ Adaptive Limit Triggered for ${modelId}`);
+        console.warn(`[KeyService] ⚠️ Adaptive Limit Triggered for ${modelId}`);
         
         // 1. Get current usage count for this minute
         const usageKey = `${modelId}:${new Date().getMinutes()}`;
@@ -1397,7 +1397,7 @@ module.exports = {
         // 2. Set new limit slightly below crash point (e.g., 90% or -1)
         const newLimit = Math.max(1, currentUsage - 1);
         
-        console.log(`[KeyService] ðŸ“‰ Adjusting RPM limit for ${modelId} from UNKNOWN to ${newLimit}`);
+        console.log(`[KeyService] 📉 Adjusting RPM limit for ${modelId} from UNKNOWN to ${newLimit}`);
 
         // 3. Store in Memory
         dynamicLimits.set(modelId, { rpm: newLimit, rpd: 10000, rph: 0 }); // Keep RPD high, focus on RPM
@@ -1432,7 +1432,7 @@ module.exports = {
         const rpd = parseInt(limits.rpd) || 0;
         const rph = parseInt(limits.rph) || 0;
         const source = limits.source || 'manual';
-        console.log(`[KeyService] âš™ï¸ Manually Setting Limits for ${modelId}: RPM=${rpm}, RPD=${rpd}, RPH=${rph}, Source=${source}`);
+        console.log(`[KeyService] ⚙️ Manually Setting Limits for ${modelId}: RPM=${rpm}, RPD=${rpd}, RPH=${rph}, Source=${source}`);
         dynamicLimits.set(modelId, { rpm, rpd, rph, source });
     },
     getLimitForModel: (modelId) => {

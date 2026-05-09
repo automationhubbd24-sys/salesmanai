@@ -593,12 +593,16 @@ const functionTools = [
         type: 'function',
         function: {
             name: 'resolve_product',
-            description: 'Search for products in the database. Use this for ANY product, price, or detail query.',
+            description: 'Resolve the most likely product from user query. Returns EXACT/AMBIGUOUS/NOT_FOUND.',
             parameters: {
                 type: 'object',
                 properties: {
-                    query: { type: 'string', description: 'The product name or keywords to search for (e.g., "Kemei", "Straightener").' },
-                    search_mode: { type: 'string', enum: ['hybrid', 'keyword_only'], description: 'Use keyword_only if hybrid/semantic search fails to find a specific brand or model.' }
+                    query: { type: 'string', description: 'The product name or keywords to search for' },
+                    candidates_scope: {
+                        type: 'array',
+                        items: { type: 'string' },
+                        description: 'Optional: restrict resolution to a previous candidate product_id list'
+                    }
                 },
                 required: ['query']
             }
@@ -1142,196 +1146,6 @@ function extractReplyFromText(text) {
     return text;
 }
 
-/**
- * Uses AI to expand a simple user query into multiple semantic keywords.
- * Example: "Wireless hair machine" -> "wireless, rechargeable, cordless, hair straightener, hair comb"
- */
-async function runProductSpecialistAgent(userQuery, pageConfig) {
-    try {
-        const userId = pageConfig.user_id;
-        const pageId = pageConfig.page_id;
-        
-        // 1. Fetch ALL active products for this specific page/owner
-        const { data: products } = await dbService.getProducts(userId, 1, 500, null, pageId);
-        
-        if (!products || products.length === 0) {
-            return { status: 'NOT_FOUND', message: "No products available in the store." };
-        }
-
-        const userProviderRaw = (pageConfig.ai_provider || pageConfig.ai || 'google').toLowerCase();
-        const userProvider = userProviderRaw === 'gemini' ? 'google' : userProviderRaw;
-        const userModel = pageConfig.chat_model || 'gemini-1.5-flash';
-
-        let keyData = await keyService.getSmartKey(userProvider, userModel, 'text');
-        if (!keyData || !keyData.key) keyData = await keyService.getSmartKey(userProvider, 'default', 'text');
-        if ((!keyData || !keyData.key) && userProvider !== 'google') keyData = await keyService.getSmartKey('google', 'default', 'text');
-        if ((!keyData || !keyData.key) && userProvider !== 'openrouter') keyData = await keyService.getSmartKey('openrouter', 'default', 'text');
-
-        if (!keyData || !keyData.key) {
-            return { status: 'ERROR', message: "Specialist Agent API key unavailable." };
-        }
-
-        const actualProvider = (keyData.provider || userProvider).toLowerCase();
-        const apiKey = keyData.key;
-
-        // 2. Build the specialist system prompt with FULL data
-        const specialistPrompt = `You are the Product Database Specialist for Rimu's Shop.
-Your ONLY job is to identify the correct product(s) and provide the EXACT price and stock from the list below.
-
-[FULL PRODUCT KNOWLEDGE BASE]
-${products.map(p => `ID: ${p.id} | NAME: ${p.name} | PRICE: ${p.price} ${p.currency || 'BDT'} | STOCK: ${p.stock} | KEYWORDS: ${p.keywords} | DESCRIPTION: ${p.description}`).join('\n---\n')}
-
-[STRICT MATCHING RULES]
-1. READ EVERYTHING: You MUST scan the entire list above. Look for matches in NAME, KEYWORDS, and DESCRIPTION.
-2. FUZZY MATCHING: If the user makes a spelling mistake or uses Banglish, identify the most likely product they are referring to.
-3. SEMANTIC MATCHING: Match based on features and synonyms.
-4. BEST MATCH: If multiple products seem relevant, pick the one that best fits the user's specific intent.
-5. ABSOLUTE PRICE TRUTH: Use the EXACT price from the list above. NEVER guess or invent a price.
-6. NO HALLUCINATION: If a product is not in the list, return an empty JSON.
-
-[OUTPUT FORMAT]
-You MUST return a JSON object with:
-   - "matched_ids": Array of IDs.
-   - "final_response": A polite, professional response in the user's language containing the name, price, and stock of the matched products.`;
-
-        // --- NEW: OPENAI COMPATIBLE ARCHITECTURE (Match 1st Agent) ---
-        let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
-        if (actualProvider.includes('openrouter')) baseURL = 'https://openrouter.ai/api/v1';
-        else if (actualProvider.includes('openai')) baseURL = 'https://api.openai.com/v1';
-        else if (actualProvider.includes('groq')) baseURL = 'https://api.groq.com/openai/v1';
-        else if (actualProvider.includes('xai')) baseURL = 'https://api.x.ai/v1';
-        else if (actualProvider.includes('mistral')) baseURL = 'https://api.mistral.ai/v1';
-
-        // Setup Proxy (Like 1st Agent)
-        const isBranded = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(userModel);
-        let proxyAgent = null;
-        if (isBranded) {
-            if (actualProvider.includes('google') || actualProvider.includes('gemini')) {
-                proxyAgent = getGeminiProxyAgent(baseURL, true, userModel);
-            } else if (actualProvider.includes('groq')) {
-                proxyAgent = getGroqProxyAgent(true, userModel);
-            } else {
-                const proxy = getProxyUrl(userModel);
-                proxyAgent = createProxyAgent(proxy);
-            }
-        }
-
-        const openai = new OpenAI({
-            apiKey: apiKey,
-            baseURL: baseURL,
-            timeout: 60000,
-            ...(proxyAgent ? { httpAgent: proxyAgent, httpsAgent: proxyAgent } : {}),
-            defaultHeaders: getStealthHeaders(apiKey, actualProvider)
-        });
-
-        // Request Jitter
-        const jitter = Math.floor(Math.random() * 1000) + 500;
-        await new Promise(resolve => setTimeout(resolve, jitter));
-
-        let targetModel = userModel;
-        if (baseURL.includes('google') && targetModel.includes('/')) targetModel = targetModel.split('/').pop();
-
-        const params = {
-            model: targetModel,
-            messages: [
-                { role: 'system', content: specialistPrompt },
-                { role: 'user', content: `User Request: "${userQuery}"\nFind the matching product IDs and return the JSON object.` }
-            ],
-            temperature: 0.1,
-            response_format: {
-                type: "json_schema",
-                json_schema: {
-                    name: "specialist_response",
-                    strict: true,
-                    schema: {
-                        type: "object",
-                        properties: {
-                            matched_ids: { type: "array", items: { type: "string" } },
-                            final_response: { type: "string" }
-                        },
-                        required: ["matched_ids", "final_response"],
-                        additionalProperties: false
-                    }
-                }
-            }
-        };
-
-        const completion = await openai.chat.completions.create(params);
-        const content = completion.choices[0].message.content;
-        
-        const parsed = JSON.parse(content);
-        const matchedIds = parsed.matched_ids || [];
-        const finalResponse = parsed.final_response || "";
-        const finalProducts = products.filter(p => matchedIds.map(String).includes(String(p.id)));
-        
-        return {
-            status: 'SUCCESS',
-            final_response: finalResponse,
-            products: finalProducts.map(p => ({
-                id: p.id,
-                name: p.name,
-                price: `${p.price} ${p.currency || 'BDT'}`,
-                stock: p.stock
-            }))
-        };
-
-    } catch (e) {
-        console.error("[SpecialistAgent] Error:", e.message);
-        return { status: 'ERROR', message: e.message };
-    }
-}
-
-async function expandProductQuery(query, pageConfig) {
-    try {
-        const userProviderRaw = (pageConfig.ai_provider || pageConfig.ai || 'google').toLowerCase();
-        const userProvider = userProviderRaw === 'gemini' ? 'google' : userProviderRaw;
-        const userModel = pageConfig.chat_model || 'gemini-1.5-flash';
-
-        let keyData = await keyService.getSmartKey(userProvider, userModel, 'text');
-        if (!keyData || !keyData.key) keyData = await keyService.getSmartKey(userProvider, 'default', 'text');
-
-        if (!keyData || !keyData.key) return query;
-
-        const actualProvider = (keyData.provider || userProvider).toLowerCase();
-        const apiKey = keyData.key;
-
-        const expansionPrompt = `You are a Search Optimization Expert. 
-Convert this user query into a list of 5-8 semantic keywords for database searching.
-Include synonyms, features, and functional equivalents.
-Query: "${query}"
-Output ONLY the keywords separated by commas. 
-Example: hair comb, wireless, rechargeable, battery operated, portable`;
-
-        let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
-        if (actualProvider.includes('openrouter')) baseURL = 'https://openrouter.ai/api/v1';
-        else if (actualProvider.includes('openai')) baseURL = 'https://api.openai.com/v1';
-        else if (actualProvider.includes('groq')) baseURL = 'https://api.groq.com/openai/v1';
-
-        const openai = new OpenAI({
-            apiKey: apiKey,
-            baseURL: baseURL,
-            timeout: 10000,
-            defaultHeaders: getStealthHeaders(apiKey, actualProvider)
-        });
-
-        let targetModel = userModel;
-        if (baseURL.includes('google') && targetModel.includes('/')) targetModel = targetModel.split('/').pop();
-
-        const resp = await openai.chat.completions.create({
-            model: targetModel,
-            messages: [{ role: 'system', content: expansionPrompt }],
-            temperature: 0.3
-        });
-
-        const expanded = resp.choices[0].message.content.trim();
-        console.log(`[AI Search] Expanded Query: "${query}" -> "${expanded}"`);
-        return expanded;
-    } catch (e) {
-        console.warn("[AI Search] Query expansion failed:", e.message);
-        return query;
-    }
-}
-
 // --- AGENTIC TOOL EXECUTOR ---
 async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null) {
     const { name, arguments: argsString } = toolCall.function;
@@ -1346,30 +1160,76 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null
         switch (name) {
             case 'resolve_product': {
                 const query = args.query;
-                console.log(`[AgentLoop] Forcing Specialist Agent for query: "${query}"`);
+                const scope = args.candidates_scope;
                 
-                const specialistResult = await runProductSpecialistAgent(query, pageConfig);
+                let products = await dbService.searchProducts(userId, query, pageId);
+                
+                // If scope provided, filter products
+                if (Array.isArray(scope) && scope.length > 0) {
+                    products = products.filter(p => scope.includes(String(p.id)));
+                }
 
-                if (specialistResult.status === 'SUCCESS' && specialistResult.products.length > 0) {
+                if (!products || products.length === 0) {
+                    return { status: 'NOT_FOUND', message: `No products found for "${query}"` };
+                }
+
+                const candidates = products.map(p => {
+                    // Use distance from vector search (smaller distance = better match)
+                    // Convert distance to a 0-100 score for AI compatibility (100 is best)
+                    const score = Math.max(0, Math.min(100, Math.round((1 - p.distance) * 100)));
+                    
+                    const normalizeUrl = (url) => {
+                        if (!url || url === 'N/A') return 'N/A';
+                        if (url.startsWith('http')) return url;
+                        const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
+                        const cleanPath = url.startsWith('/') ? url : `/${url}`;
+                        return `${baseUrl.replace(/\/$/, '')}${cleanPath}`;
+                    };
+
                     return {
-                        status: 'SUCCESS',
-                        FINAL_ANSWER_TO_USER: specialistResult.final_response,
-                        products: specialistResult.products
+                        product_id: String(p.id),
+                        name: p.name,
+                        price: p.price,
+                        description: p.description,
+                        stock: p.stock_quantity,
+                        image_url: normalizeUrl(p.image_url),
+                        additional_images: Array.isArray(p.additional_images) ? p.additional_images.map(normalizeUrl) : [],
+                        match_score: score
+                    };
+                });
+
+                // Sort by score
+                candidates.sort((a, b) => b.match_score - a.match_score);
+
+                if (candidates.length > 0) {
+                    // Limit to top 3 candidates to optimize token usage
+                    const formattedCandidates = candidates.slice(0, 3).map(c => 
+                        `PRODUCT_DATA:
+                         ID: ${c.product_id}
+                         Name: ${c.name}
+                         Price: ${c.price}
+                         Description: ${c.description}
+                         Stock: ${c.stock}
+                         Image_URL: ${c.image_url}
+                         Additional_Images: ${c.additional_images.join(', ')}`
+                    ).join('\n---\n');
+
+                    return { 
+                        status: 'SUCCESS', 
+                        found_count: candidates.length,
+                        data_injection: formattedCandidates,
+                        message: "I have fetched potential matches from the database using Vector Semantic Search. IMPORTANT: If there are multiple similar matches (e.g., a single product vs. a combo pack), DO NOT assume which one the user wants. Instead, politely list the options and ASK the user to clarify (e.g., 'Do you want the single item or our budget combo?'). Only provide specific price/details if you are certain."
                     };
                 }
-                
+
                 return { 
                     status: 'NOT_FOUND', 
-                    message: `No product matching "${query}" exists in our database. DO NOT guess the price.` 
+                    message: "No matching products found in the database. Tell the user we don't have this item."
                 };
             }
 
             case 'get_product': {
                 const productId = args.product_id;
-                // --- SAFE ID CHECK ---
-                if (isNaN(productId)) {
-                    return { status: 'ERROR', message: `Product ID "${productId}" is invalid. Expected a numeric ID.` };
-                }
                 const product = await dbService.getProductById(productId);
                 
                 if (!product || String(product.user_id) !== String(userId)) {
@@ -1409,15 +1269,11 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null
 
             case 'check_stock': {
                 const productId = args.product_id;
-                // --- SAFE ID CHECK: If it's a string SKU, it won't match a BIGINT id ---
-                if (isNaN(productId)) {
-                    return { status: 'ERROR', message: `Product ID "${productId}" is invalid. Expected a numeric ID.` };
-                }
                 const product = await dbService.getProductById(productId);
                 
                 if (!product) return { status: 'ERROR', message: "Product not found." };
                 
-                const stock = product.stock !== undefined ? product.stock : 'Unknown';
+                const stock = product.stock_quantity !== undefined ? product.stock_quantity : 'Unknown';
                 const inStock = stock === 'Unknown' || stock > 0;
 
                 return { status: 'SUCCESS', product_id: productId, in_stock: inStock, stock_count: stock };
@@ -1519,10 +1375,8 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                         schema: {
                             type: "object",
                             properties: {
-                                thought: { type: "string", description: "Internal reasoning or planning. E.g., 'I will search for the product price now.'" },
-                                reply_text: { type: "string", description: "The human-like response to the user. Leave EMPTY if you are calling a tool to find information." },
-                                action: { type: "string", enum: ["NONE", "SEND_DETAILS", "SEND_PHOTO", "SEND_BOTH", "save_order", "CALL_SPECIALIST"], description: "The action to take." },
-                                search_query: { type: ["string", "null"], description: "The search query for the specialist agent if action is CALL_SPECIALIST." },
+                                reply_text: { type: "string", description: "The human-like response to the user." },
+                                action: { type: "string", enum: ["NONE", "SEND_DETAILS", "SEND_PHOTO", "SEND_BOTH", "save_order"], description: "The action to take." },
                                 product_id: { type: ["string", "null"], description: "The ID of the matched product." },
                                 image_urls: { type: "array", items: { type: "string" }, description: "List of image URLs to send." },
                                 customer_phone: { type: ["string", "null"] },
@@ -1551,7 +1405,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                                     required: ["intent", "fields"]
                                 }
                             },
-                            required: ["thought", "reply_text", "action", "search_query", "product_id", "image_urls", "customer_phone", "customer_address", "customer_name", "product_name", "quantity", "price", "order_details"],
+                            required: ["reply_text", "action", "product_id", "image_urls", "customer_phone", "customer_address", "customer_name", "product_name", "quantity", "price", "order_details"],
                             additionalProperties: false
                         }
                     }
@@ -1588,20 +1442,31 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
             if (toolCalls && toolCalls.length > 0) {
                 console.log(`[AgentLoop] AI requested ${toolCalls.length} tool calls.`);
                 
+                // Execute tools in background (don't wait for 2nd LLM call if we have a reply)
                 for (const toolCall of toolCalls) {
                     const result = await executeTool(toolCall, pageConfig, userId, platform);
                     if (result.product) foundProducts.push(result.product);
-
-                    // --- CRITICAL FIX: Add tool result to messages so AI can see it in next turn ---
-                    messages.push({
-                        role: 'tool',
-                        tool_call_id: toolCall.id,
-                        content: typeof result === 'string' ? result : JSON.stringify(result)
-                    });
                 }
 
+                // If AI already gave us a reply_text in this first turn, RETURN IT NOW.
+                // This saves 1 full API call cost.
+                if (structured && structured.reply_text) {
+                    console.log(`[AgentLoop] Single-Call Success: Returning reply and executing tools in background.`);
+                    return { 
+                        reply: structured.reply_text, 
+                        action: structured.action || "NONE",
+                        product_id: structured.product_id || null,
+                        image_urls: Array.isArray(structured.image_urls) ? structured.image_urls : [],
+                        order_details: structured.order_details || null,
+                        token_usage: (completionUsage?.total_tokens || 0) + totalTokensInLoop, 
+                        model: model, 
+                        foundProducts 
+                    };
+                }
+                
+                // If NO reply_text was provided, we MUST continue to get one (rare for good models)
                 totalTokensInLoop += (completionUsage?.total_tokens || 0);
-                continue; // Re-call AI with tool results
+                continue;
             }
 
             // No more tool calls -> Final Answer
@@ -1642,32 +1507,6 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 }
 
                 if (structuredFinal) {
-                    // --- NEW: DUAL AGENT JSON TRIGGER ---
-                    // If Main Agent decides it needs a specialist, we trigger it immediately via JSON.
-                    if (structuredFinal.action === 'CALL_SPECIALIST') {
-                        const query = structuredFinal.search_query || structuredFinal.reply_text || "all products";
-                        console.log(`[AgentLoop] 🤖 Triggering Specialist Agent via JSON action: "${query}"`);
-                        
-                        const specialistResult = await runProductSpecialistAgent(query, pageConfig);
-                        
-                        if (specialistResult.status === 'SUCCESS') {
-                            console.log(`[AgentLoop] ✅ Specialist Agent delivered final response.`);
-                            return {
-                                reply: specialistResult.final_response,
-                                action: "SEND_DETAILS", 
-                                product_id: specialistResult.products?.[0]?.id || null,
-                                image_urls: [],
-                                order_details: structuredFinal.order_details || null,
-                                sentiment: 'neutral',
-                                token_usage: totalTokensInLoop + (completionUsage?.total_tokens || 0),
-                                model: model,
-                                foundProducts: specialistResult.products
-                            };
-                        } else {
-                            console.warn(`[AgentLoop] ⚠️ Specialist Agent failed: ${specialistResult.message}`);
-                        }
-                    }
-
                     // --- AUTO-ORDER SAVE FALLBACK (User Request: JSON based incremental order save) ---
                     // CASE A/B/C: AI provides any piece of order data (phone, address, etc.)
                     if (structuredFinal.order_details || (structuredFinal.action === "save_order" && (structuredFinal.order_data || structuredFinal.details)) || structuredFinal.customer_phone || structuredFinal.customer_address || structuredFinal.phone) {
@@ -1687,8 +1526,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                             price: parseFloat(rawData.price || structuredFinal.price || 0) || 0,
                             customer_name: customerName,
                             customer_phone: customerPhone ? String(customerPhone).replace(/[^\d+]/g, '') : null,
-                            customer_address: customerAddress ? String(customerAddress).trim() : null,
-                            product_id: (structuredFinal.product_id && !isNaN(structuredFinal.product_id)) ? parseInt(structuredFinal.product_id) : null
+                            customer_address: customerAddress ? String(customerAddress).trim() : null
                         };
 
                         // Phone First Rule: Start saving only if phone exists
@@ -1710,8 +1548,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                                             address: orderData.customer_address,
                                             quantity: orderData.quantity,
                                             price: orderData.price,
-                                            customer_name: orderData.customer_name,
-                                            product_id: orderData.product_id
+                                            customer_name: orderData.customer_name
                                         }
                                     });
                                     console.log(`[AgentLoop] ✅ Order Orchestrated Successfully via orderService.`);
@@ -2004,6 +1841,50 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     // --- 3. ACQUIRE AI SLOT (Only for actual LLM calls) ---
     await acquireAiSlot();
 
+    // --- PRODUCT SNAPSHOT INJECTION (Prompt-Only Mode) ---
+    let productContext = "";
+    let foundProducts = [];
+
+    if (pageConfig.user_id && cleanUserMessage) {
+        try {
+            const normalizeUrl = (url) => {
+                if (!url || url === 'N/A') return 'N/A';
+                if (url.startsWith('http')) return url;
+                const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
+                const cleanPath = url.startsWith('/') ? url : `/${url}`;
+                return `${baseUrl}${cleanPath}`;
+            };
+
+            const candidates = await dbService.searchProducts(pageConfig.user_id, cleanUserMessage, pageConfig.page_id);
+            if (candidates && candidates.length > 0) {
+                const topCandidates = candidates.slice(0, 5);
+                productContext = "[PRODUCT LIST SNAPSHOT - FROM PRODUCT ENTRY]\n";
+                topCandidates.forEach((p, idx) => {
+                    const priceValue = p.price ? `${p.price} ${p.currency || ''}`.trim() : 'Ask for Price';
+                    const comboNote = p.is_combo ? " [COMBO PACKAGE - Contains multiple items]" : "";
+                    productContext += `${idx + 1}) ${p.name}${comboNote}\n`;
+                    productContext += `   ID: ${p.id}\n`;
+                    productContext += `   Price: ${priceValue}\n`;
+                    // Check 'allow_description' switch (default true for safety)
+                    if (p.allow_description !== false && p.description) {
+                        productContext += `   Description: ${p.description}\n`;
+                        if (p.is_combo) {
+                            productContext += `   Note: This is a combo. Check the description for individual item details or partial pricing if the user asks.\n`;
+                        }
+                    }
+                    if (p.image_url) productContext += `   Image: ${normalizeUrl(p.image_url)}\n`;
+                    if (Array.isArray(p.additional_images) && p.additional_images.length > 0) {
+                        productContext += `   More Images: ${p.additional_images.map(normalizeUrl).join(', ')}\n`;
+                    }
+                });
+                productContext += "\n";
+                console.log(`[AI] Injected ${topCandidates.length} product snapshot items for query.`);
+            }
+        } catch (err) {
+            console.warn("[AI] Product snapshot injection failed:", err.message);
+        }
+    }
+
     // --- SMART HISTORY PROCESSOR ---
     const processedHistory = [];
     let pendingSystemNotes = [];
@@ -2172,66 +2053,6 @@ ${productContext}`;
         console.log(`[AI] Added media context to user message. Total Tokens so far: ${totalTokenUsage}`);
     }
 
-    // --- AGENTIC DYNAMIC SNAPSHOT ---
-    // Instead of putting all 400 products, we inject a smart snapshot of the top 15 most relevant items.
-    let productContext = "";
-    if (pageConfig.user_id && cleanUserMessage) {
-        try {
-            const normalizeUrl = (url) => {
-                if (!url || url === 'N/A') return 'N/A';
-                if (url.startsWith('http')) return url;
-                const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
-                const cleanPath = url.startsWith('/') ? url : `/${url}`;
-                return `${baseUrl}${cleanPath}`;
-            };
-
-            // 1. Extract a clean search query
-            let userOnlyText = cleanUserMessage.split('[NEW VISUAL CONTEXT')[0].trim();
-            
-            // 2. SMART EXTRACTION: Extract only the product name from visual context
-            let visualProductName = "";
-            if (mediaContext.includes('[Image Analysis Result]') || mediaContext.includes('Description of New Image(s)')) {
-                // More robust regex for both * and ** formats
-                const nameMatch = mediaContext.match(/(?:\*+ )?Product Name:?\s*\*?\*?\s*(.*)/i) || mediaContext.match(/Product:\s*(.*)/i);
-                if (nameMatch && nameMatch[1]) {
-                    visualProductName = nameMatch[1].trim().replace(/\*+$/, "");
-                }
-            }
-
-            let searchInput = visualProductName || userOnlyText;
-            
-            // EMERGENCY FALLBACK: If query is still empty but we have mediaContext, use first line of description
-            if (!searchInput && mediaContext.length > 20) {
-                searchInput = mediaContext.split('\n').find(l => l.length > 10 && !l.includes('Visual')) || "";
-            }
-            
-            // If we have both, combine them for a stronger signal
-            if (visualProductName && userOnlyText && userOnlyText.length > 3 && !userOnlyText.match(/^(dam|price|koto|ase|ki|আছে|দাম|কত|হবে)/i)) {
-                searchInput = `${visualProductName} ${userOnlyText}`;
-            }
-
-            console.log(`[AI Search] Smart Query: "${searchInput}"`);
-
-            const candidates = await dbService.searchProducts(pageConfig.user_id, searchInput, pageConfig.page_id);
-            if (candidates && candidates.length > 0) {
-                const topCandidates = candidates.slice(0, 15);
-                productContext = "[DATABASE SNAPSHOT - VERIFIED PRODUCTS]\n";
-                topCandidates.forEach((p, idx) => {
-                    const priceValue = p.price ? `${p.price} ${p.currency || 'BDT'}`.trim() : 'Ask for Price';
-                    productContext += `PRODUCT_ID: ${p.id} | NAME: ${p.name} | PRICE: ${priceValue}\n`;
-                    if (p.variants && typeof p.variants === 'object' && JSON.stringify(p.variants) !== '{}') {
-                        productContext += `   VARIANTS: ${JSON.stringify(p.variants)}\n`;
-                    }
-                    if (p.description) productContext += `   DESCRIPTION: ${p.description.substring(0, 100)}...\n`;
-                });
-                productContext += "\n[STRICT RULE]: You must ONLY use the prices from the [DATABASE SNAPSHOT] above. If a product matches the user's request (or image), use its EXACT price. DO NOT hallucinate or use prices from your memory or history.";
-            }
-        } catch (err) {
-            console.warn("[AI] Dynamic snapshot failed:", err.message);
-        }
-    }
-    if (productContext) pendingSystemNotes.push(productContext);
-
     // --- MEDIA HANDLING COMPLETED ABOVE ---
     // (Consolidated into Pre-process Media step to ensure correct token tracking)
     // ----------------------------------------
@@ -2241,9 +2062,9 @@ ${productContext}`;
     let responseFormat = undefined; 
     
     // --- TOOL ENABLING LOGIC ---
-    // User Request: "monster-3.0 - implement Agentic RAG for 100% accuracy and token savings"
-    // Instead of injecting ALL products upfront, we give the AI tools to search dynamically.
-    const tools = functionTools; 
+    // User Request: Disable Tool Calls entirely and prefer JSON-based extraction for reliability.
+    // We keep the tools array empty to prevent the model from trying to call tools.
+    const tools = []; // Tool calls are disabled by user request to prefer JSON.
 
     // --- IDENTITY PROTECTION PROTOCOL (WHITE-LABEL) ---
     const isBrandedModel = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(userModel);
@@ -2282,30 +2103,29 @@ ${productContext}`;
         const unifiedSystemPrompt = `${identityInvariant}\n\n[BUSINESS OWNER'S MANDATORY INSTRUCTIONS]
 ${basePrompt}
 
-[RULE 1: PRODUCT INFO & INTEGRITY]
-- You have NO internal knowledge of prices or stock.
-- Whenever the user asks about a product, price, stock, or availability, you MUST set "action": "CALL_SPECIALIST" and provide a "search_query" in your JSON output.
-- DO NOT call 'resolve_product' for greetings (e.g., "hi", "hello"), personal questions, or general conversation.
-- STRICT PRICING RULE: You must ONLY provide prices from tool results or specialist agent. NEVER guess or invent a price. If you don't know the price, state it clearly. If the database snapshot doesn't show a price, say you don't know it. NEVER say "৮৫০ টাকা" unless it is explicitly in the product list.
-- STOCK CHECK: If 'stock' is 0, inform the user it's out of stock.
+[PRODUCT CONTEXT - USE THIS IF RELEVANT]
+${productContext || "No specific product context provided yet."}
 
-[RULE 2: VISUALS & PHOTO INTENT]
-- PHOTO INTENT: If the user asks for a photo/image, set "action": "SEND_PHOTO" and provide the "product_id".
-- action: ["NONE", "SEND_DETAILS", "SEND_PHOTO", "SEND_BOTH", "CALL_SPECIALIST", "save_order"]
-- search_query: The specific product or keywords to search for (e.g., "Kemei hair straightener", "mango price").
-- product_id: Numeric product ID from database (as string), e.g., "101".
+[CORE SYSTEM RULES]
+- You are an AI Salesman for "${ownerName}".
+- Output MUST be a valid JSON object only. No plain text.
+- reply_text: Human-like response. Follow the Owner's tone and language strictly. (Note: Only use Markdown formatting if explicitly requested by the business owner).
+- PHOTO INTENT: If the user asks for a photo/image, set "action": "SEND_PHOTO" and provide the product_id.
+- action: ["NONE", "SEND_DETAILS", "SEND_PHOTO", "SEND_BOTH"]
+- product_id: UUID of the matched product.
 - image_urls: Array of image URLs to attach for the user to see.
+- order_details: Whenever the user provides ANY order info (phone, address, etc.), you MUST include it here.
 
-[RULE 3: SALES WORKFLOW & CRM]
-- INCREMENTAL SAVING: Save customer info (name, phone, address, product, quantity) as soon as ANY piece of data is provided.
-- DATA PERSISTENCE: Always include the latest known values for all order fields in every JSON response until the conversation ends. Update fields if the customer changes them.
-- order_details: Whenever the user provides ANY order info, you MUST include it here.
+[SALES WORKFLOW - EVOLUTIONARY TRACKING]
+1. INCREMENTAL SAVING: Start saving order info as soon as you get even ONE piece of data (like just a phone number). Do NOT wait for all fields to be filled.
+2. CONTINUOUS UPDATING: If the customer provides a phone number first, set 'phone' in the JSON. If they later send an address, add 'address' while keeping the phone number. If they change a value, update it in the next response.
+3. DATA PERSISTENCE: Always include the latest known values for all order fields in every JSON response until the conversation ends.
+4. SMART INFERENCE: Extract product_name, quantity, and price from the context of the conversation.
 
 [RESPONSE FORMAT]
 {
-  "reply_text": "A brief acknowledgment (e.g., 'Let me check that for you...')",
-  "action": "CALL_SPECIALIST",
-  "search_query": "Product name or keywords",
+  "reply_text": "...",
+  "action": "save_order",
   "product_id": "...",
   "image_urls": ["url1", "url2"],
   "customer_phone": "Extracted phone or null",
@@ -2325,7 +2145,8 @@ ${basePrompt}
        "price": "..."
     }
   }
-}`;
+}
+`;
 
         const systemMessage = { role: 'system', content: unifiedSystemPrompt };
 
@@ -2340,14 +2161,14 @@ ${basePrompt}
             }
         }
 
+        if (pendingSystemNotes.length > 0) {
+            cleanUserMessage = `${pendingSystemNotes.join('\n')}\n${cleanUserMessage}`;
+        }
+
         messages = [
             systemMessage,
             ...processedHistory
         ];
-
-        if (productContext) {
-            messages.push({ role: 'system', content: productContext });
-        }
 
         if (!isDuplicate) {
             messages.push({ role: 'user', content: cleanUserMessage });
@@ -2393,28 +2214,6 @@ ${basePrompt}
                         const potentialJson = aiText.substring(firstBrace, lastBrace + 1);
                         const structured = JSON.parse(potentialJson);
                         
-                        // --- DUAL AGENT TRIGGER (Own API Path) ---
-                        if (structured.action === 'CALL_SPECIALIST') {
-                            const query = structured.search_query || structured.reply_text || "all products";
-                            console.log(`[AI] 🤖 Triggering Specialist Agent via Own API: "${query}"`);
-                            
-                            const specialistResult = await runProductSpecialistAgent(query, pageConfig);
-                            
-                            if (specialistResult.status === 'SUCCESS') {
-                                return finalize({
-                                    reply: specialistResult.final_response,
-                                    action: "SEND_DETAILS",
-                                    product_id: specialistResult.products?.[0]?.id || null,
-                                    image_urls: [],
-                                    order_details: structured.order_details || null,
-                                    sentiment: 'neutral',
-                                    token_usage: tokenUsage + totalTokenUsage,
-                                    model: modelToUse,
-                                    foundProducts: specialistResult.products
-                                });
-                            }
-                        }
-
                         // If it's our own internal structured format, return it
                         if (structured.reply_text || structured.order_details) {
                             return finalize({ 
@@ -2784,12 +2583,8 @@ async function processImageWithVision(imageUrl, pageConfig = {}, customOptions =
                     proxy: false 
                 });
                 base64Image = Buffer.from(response.data).toString('base64');
-                let rawMime = response.headers['content-type'] || 'image/jpeg';
-                // Sanitize mime type (Gemini/OpenRouter are strict)
-                mimeType = rawMime.split(';')[0].trim();
-                if (!mimeType.startsWith('image/')) mimeType = 'image/jpeg';
-                
-                logDebug(`[Vision] Image Downloaded. Mime: ${mimeType} (Raw: ${rawMime}), Size: ${base64Image.length}`);
+                mimeType = response.headers['content-type'] || 'image/jpeg';
+                logDebug(`[Vision] Image Downloaded. Mime: ${mimeType}, Size: ${base64Image.length}`);
             }
         } catch (e) {
             throw new Error(`Image Pre-processing Failed: ${e.message}`);

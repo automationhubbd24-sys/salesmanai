@@ -2,10 +2,10 @@
   "name": "salesmanchatbot-backend",
   "version": "1.0.0",
   "private": true,
-  "main": "src/services/aiService.js",
+  "main": "index.js",
   "scripts": {
-    "start": "node src/services/aiService.js",
-    "dev": "node --watch src/services/aiService.js"
+    "start": "node index.js",
+    "dev": "node --watch index.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.454.0",
