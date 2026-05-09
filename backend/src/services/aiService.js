@@ -1146,13 +1146,154 @@ function extractReplyFromText(text) {
  * Uses AI to expand a simple user query into multiple semantic keywords.
  * Example: "Wireless hair machine" -> "wireless, rechargeable, cordless, hair straightener, hair comb"
  */
+async function runProductSpecialistAgent(userQuery, pageConfig) {
+    try {
+        const userId = pageConfig.user_id;
+        const pageId = pageConfig.page_id;
+        
+        // 1. Fetch ALL active products for this specific page/owner
+        const { data: products } = await dbService.getProducts(userId, 1, 500, null, pageId);
+        
+        if (!products || products.length === 0) {
+            return { status: 'NOT_FOUND', message: "No products available in the store." };
+        }
+
+        const userProviderRaw = (pageConfig.ai_provider || pageConfig.ai || 'google').toLowerCase();
+        const userProvider = userProviderRaw === 'gemini' ? 'google' : userProviderRaw;
+        const userModel = pageConfig.chat_model || 'gemini-1.5-flash';
+
+        let keyData = await keyService.getSmartKey(userProvider, userModel, 'text');
+        if (!keyData || !keyData.key) keyData = await keyService.getSmartKey(userProvider, 'default', 'text');
+        if ((!keyData || !keyData.key) && userProvider !== 'google') keyData = await keyService.getSmartKey('google', 'default', 'text');
+        if ((!keyData || !keyData.key) && userProvider !== 'openrouter') keyData = await keyService.getSmartKey('openrouter', 'default', 'text');
+
+        if (!keyData || !keyData.key) {
+            return { status: 'ERROR', message: "Specialist Agent API key unavailable." };
+        }
+
+        const actualProvider = (keyData.provider || userProvider).toLowerCase();
+        const apiKey = keyData.key;
+
+        // 2. Build the specialist system prompt with FULL data
+        const specialistPrompt = `You are the Product Database Specialist for Rimu's Shop.
+Your ONLY job is to identify the correct product(s) and provide the EXACT price and stock from the list below.
+
+[FULL PRODUCT KNOWLEDGE BASE]
+${products.map(p => `ID: ${p.id} | NAME: ${p.name} | PRICE: ${p.price} ${p.currency || 'BDT'} | STOCK: ${p.stock_quantity} | KEYWORDS: ${p.keywords} | DESCRIPTION: ${p.description}`).join('\n---\n')}
+
+[STRICT MATCHING RULES]
+1. READ EVERYTHING: You MUST scan the entire list above. Look for matches in NAME, KEYWORDS, and DESCRIPTION.
+2. FUZZY MATCHING: If the user makes a spelling mistake or uses Banglish, identify the most likely product they are referring to.
+3. SEMANTIC MATCHING: Match based on features and synonyms.
+4. BEST MATCH: If multiple products seem relevant, pick the one that best fits the user's specific intent.
+5. ABSOLUTE PRICE TRUTH: Use the EXACT price from the list above. NEVER guess or invent a price.
+6. NO HALLUCINATION: If a product is not in the list, return an empty JSON.
+
+[OUTPUT FORMAT]
+You MUST return a JSON object with:
+   - "matched_ids": Array of IDs.
+   - "final_response": A polite, professional response in the user's language containing the name, price, and stock of the matched products.`;
+
+        // --- NEW: OPENAI COMPATIBLE ARCHITECTURE (Match 1st Agent) ---
+        let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
+        if (actualProvider.includes('openrouter')) baseURL = 'https://openrouter.ai/api/v1';
+        else if (actualProvider.includes('openai')) baseURL = 'https://api.openai.com/v1';
+        else if (actualProvider.includes('groq')) baseURL = 'https://api.groq.com/openai/v1';
+        else if (actualProvider.includes('xai')) baseURL = 'https://api.x.ai/v1';
+        else if (actualProvider.includes('mistral')) baseURL = 'https://api.mistral.ai/v1';
+
+        // Setup Proxy (Like 1st Agent)
+        const isBranded = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(userModel);
+        let proxyAgent = null;
+        if (isBranded) {
+            if (actualProvider.includes('google') || actualProvider.includes('gemini')) {
+                proxyAgent = getGeminiProxyAgent(baseURL, true, userModel);
+            } else if (actualProvider.includes('groq')) {
+                proxyAgent = getGroqProxyAgent(true, userModel);
+            } else {
+                const proxy = getProxyUrl(userModel);
+                proxyAgent = createProxyAgent(proxy);
+            }
+        }
+
+        const openai = new OpenAI({
+            apiKey: apiKey,
+            baseURL: baseURL,
+            timeout: 60000,
+            ...(proxyAgent ? { httpAgent: proxyAgent, httpsAgent: proxyAgent } : {}),
+            defaultHeaders: getStealthHeaders(apiKey, actualProvider)
+        });
+
+        // Request Jitter
+        const jitter = Math.floor(Math.random() * 1000) + 500;
+        await new Promise(resolve => setTimeout(resolve, jitter));
+
+        let targetModel = userModel;
+        if (baseURL.includes('google') && targetModel.includes('/')) targetModel = targetModel.split('/').pop();
+
+        const params = {
+            model: targetModel,
+            messages: [
+                { role: 'system', content: specialistPrompt },
+                { role: 'user', content: `User Request: "${userQuery}"\nFind the matching product IDs and return the JSON object.` }
+            ],
+            temperature: 0.1,
+            response_format: {
+                type: "json_schema",
+                json_schema: {
+                    name: "specialist_response",
+                    strict: true,
+                    schema: {
+                        type: "object",
+                        properties: {
+                            matched_ids: { type: "array", items: { type: "string" } },
+                            final_response: { type: "string" }
+                        },
+                        required: ["matched_ids", "final_response"],
+                        additionalProperties: false
+                    }
+                }
+            }
+        };
+
+        const completion = await openai.chat.completions.create(params);
+        const content = completion.choices[0].message.content;
+        
+        const parsed = JSON.parse(content);
+        const matchedIds = parsed.matched_ids || [];
+        const finalResponse = parsed.final_response || "";
+        const finalProducts = products.filter(p => matchedIds.map(String).includes(String(p.id)));
+        
+        return {
+            status: 'SUCCESS',
+            final_response: finalResponse,
+            products: finalProducts.map(p => ({
+                id: p.id,
+                name: p.name,
+                price: `${p.price} ${p.currency || 'BDT'}`,
+                stock: p.stock_quantity
+            }))
+        };
+
+    } catch (e) {
+        console.error("[SpecialistAgent] Error:", e.message);
+        return { status: 'ERROR', message: e.message };
+    }
+}
+
 async function expandProductQuery(query, pageConfig) {
     try {
-        const userProvider = pageConfig.ai_provider || pageConfig.ai || 'google';
+        const userProviderRaw = (pageConfig.ai_provider || pageConfig.ai || 'google').toLowerCase();
+        const userProvider = userProviderRaw === 'gemini' ? 'google' : userProviderRaw;
         const userModel = pageConfig.chat_model || 'gemini-1.5-flash';
-        const keyData = await keyService.getSmartKey(userProvider, userModel, 'text');
+
+        let keyData = await keyService.getSmartKey(userProvider, userModel, 'text');
+        if (!keyData || !keyData.key) keyData = await keyService.getSmartKey(userProvider, 'default', 'text');
 
         if (!keyData || !keyData.key) return query;
+
+        const actualProvider = (keyData.provider || userProvider).toLowerCase();
+        const apiKey = keyData.key;
 
         const expansionPrompt = `You are a Search Optimization Expert. 
 Convert this user query into a list of 5-8 semantic keywords for database searching.
@@ -1161,20 +1302,28 @@ Query: "${query}"
 Output ONLY the keywords separated by commas. 
 Example: hair comb, wireless, rechargeable, battery operated, portable`;
 
-        let url = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
-        if (userProvider === 'openrouter') url = 'https://openrouter.ai/api/v1/chat/completions';
-        if (userProvider === 'openai') url = 'https://api.openai.com/v1/chat/completions';
+        let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
+        if (actualProvider.includes('openrouter')) baseURL = 'https://openrouter.ai/api/v1';
+        else if (actualProvider.includes('openai')) baseURL = 'https://api.openai.com/v1';
+        else if (actualProvider.includes('groq')) baseURL = 'https://api.groq.com/openai/v1';
 
-        const resp = await axios.post(url, {
-            model: userModel,
-            messages: [{ role: 'system', content: expansionPrompt }],
-            temperature: 0.3
-        }, {
-            headers: { 'Authorization': `Bearer ${keyData.key}` },
-            timeout: 10000
+        const openai = new OpenAI({
+            apiKey: apiKey,
+            baseURL: baseURL,
+            timeout: 10000,
+            defaultHeaders: getStealthHeaders(apiKey, actualProvider)
         });
 
-        const expanded = resp.data.choices[0].message.content.trim();
+        let targetModel = userModel;
+        if (baseURL.includes('google') && targetModel.includes('/')) targetModel = targetModel.split('/').pop();
+
+        const resp = await openai.chat.completions.create({
+            model: targetModel,
+            messages: [{ role: 'system', content: expansionPrompt }],
+            temperature: 0.3
+        });
+
+        const expanded = resp.choices[0].message.content.trim();
         console.log(`[AI Search] Expanded Query: "${query}" -> "${expanded}"`);
         return expanded;
     } catch (e) {
@@ -1196,103 +1345,22 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null
     try {
         switch (name) {
             case 'resolve_product': {
-                let query = args.query;
-                const searchMode = args.search_mode || 'hybrid';
+                const query = args.query;
+                console.log(`[AgentLoop] Forcing Specialist Agent for query: "${query}"`);
                 
-                // Smart Query Expansion: Convert user intent to searchable keywords
-                if (searchMode === 'hybrid' && query.length > 2) {
-                    query = await expandProductQuery(query, pageConfig);
-                }
+                const specialistResult = await runProductSpecialistAgent(query, pageConfig);
 
-                let rawProducts = [];
-                if (searchMode === 'keyword_only') {
-                    const queryWords = query.split(/[, ]+/).filter(w => w.length > 2);
-                    let filter = queryWords.map(w => `(name ILIKE '%${w}%' OR keywords::text ILIKE '%${w}%' OR description ILIKE '%${w}%')`).join(' OR ');
-                    if (!filter) filter = `name ILIKE '%${query}%'`;
-                    
-                    const sql = `SELECT id, name, price, description, stock_quantity, image_url, additional_images, is_combo, combo_items, keywords 
-                                 FROM products 
-                                 WHERE user_id::text = $1::text AND is_active = true AND (${filter})
-                                 LIMIT 50`;
-                    const res = await dbService.query(sql, [userId]);
-                    rawProducts = res.rows;
-                } else {
-                    rawProducts = await dbService.searchProducts(userId, query, pageId);
+                if (specialistResult.status === 'SUCCESS' && specialistResult.products.length > 0) {
+                    return {
+                        status: 'SUCCESS',
+                        FINAL_ANSWER_TO_USER: specialistResult.final_response,
+                        products: specialistResult.products
+                    };
                 }
-
-                if (!rawProducts || rawProducts.length === 0) {
-                    return { status: 'NOT_FOUND', message: `No products found for "${query}". Try searching with a broader keyword or brand name.` };
-                }
-
-                // --- AGENTIC VERIFIER (Internal API Call) ---
-                // User Request: specialist agent logic for 100% accuracy using user's selected API
-                console.log(`[AgentVerifier] Verifying ${rawProducts.length} candidates using specialist logic.`);
                 
-                const verifierPrompt = `You are a Database Product Specialist. 
-User is looking for: "${query}"
-Conversation context: ${cleanUserMessage.substring(0, 500)}
-
-Candidates from Database:
-${rawProducts.map((p, i) => `${i+1}) ID: ${p.id}, Name: ${p.name}, Price: ${p.price}, Combo: ${p.is_combo}, Stock: ${p.stock_quantity}, Keywords: ${p.keywords}, Description: ${p.description?.substring(0, 200)}`).join('\n')}
-
-Rules for 100% Accuracy:
-1. MATCHING: Look for functional equivalence. If user asks for "wireless hair machine" and a product is named "Hair Comb" but keywords/description mention "rechargeable", "wireless", or "cordless", it is a MATCH.
-2. COMBOS: If user asks for a combo/set, prioritize products where is_combo is true.
-3. QUANTITY: If user asks for "2 pieces", look for combo packs or individual items.
-4. RANKING: Pick up to 3 best matches. If multiple products are similar (different colors/models), include all of them.
-5. NO HALLUCINATION: If NO product in the list matches the user's request, return [].
-6. Output ONLY a JSON array of the chosen product IDs. 
-Example: ["56", "21"]`;
-
-                let verifiedIds = [];
-                try {
-                    // Specialist Agent: Use the same engine selected by the user for this page/session
-                    // This ensures we use the user's API and don't incur extra costs for the platform owner.
-                    const userProvider = pageConfig.ai_provider || pageConfig.ai || 'google';
-                    const userModel = pageConfig.chat_model || 'gemini-1.5-flash';
-                    
-                    const verifierKeyData = await keyService.getSmartKey(userProvider, userModel, 'text');
-                    
-                    if (verifierKeyData && verifierKeyData.key) {
-                        let verifierURL = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
-                        if (userProvider === 'openrouter') verifierURL = 'https://openrouter.ai/api/v1/chat/completions';
-                        if (userProvider === 'openai') verifierURL = 'https://api.openai.com/v1/chat/completions';
-                        
-                        const verificationResp = await axios.post(verifierURL, {
-                            model: userModel,
-                            messages: [{ role: 'system', content: verifierPrompt }],
-                            response_format: { type: "json_object" }
-                        }, {
-                            headers: { 'Authorization': `Bearer ${verifierKeyData.key}` },
-                            timeout: 30000
-                        });
-                        
-                        const verifierContent = verificationResp.data.choices[0].message.content;
-                        const parsed = JSON.parse(verifierContent);
-                        verifiedIds = Array.isArray(parsed) ? parsed : (parsed.ids || Object.values(parsed)[0]);
-                    } else {
-                        throw new Error("No Key found for Verifier Agent");
-                    }
-                } catch (e) {
-                    console.warn(`[AgentVerifier] Failed: ${e.message}. Falling back to top 3 raw results.`);
-                    verifiedIds = rawProducts.slice(0, 3).map(p => String(p.id));
-                }
-
-                const finalProducts = rawProducts.filter(p => verifiedIds.includes(String(p.id)));
-                
-                const formattedCandidates = finalProducts.map(c => 
-                    `VERIFIED_PRODUCT:
-                     ID: ${c.id}
-                     Name: ${c.name}
-                     Price: ${c.price}
-                     Is_Combo: ${c.is_combo || 'No'}
-                     Description: ${c.description?.substring(0, 100)}`
-                ).join('\n---\n');
-
                 return { 
-                    status: 'SUCCESS', 
-                    data_injection: formattedCandidates,
-                    message: "These products have been VERIFIED by the Database Agent. Use these prices with 100% confidence."
+                    status: 'NOT_FOUND', 
+                    message: `No product matching "${query}" exists in our database. DO NOT guess the price.` 
                 };
             }
 
@@ -1445,7 +1513,8 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                             properties: {
                                 thought: { type: "string", description: "Internal reasoning or planning. E.g., 'I will search for the product price now.'" },
                                 reply_text: { type: "string", description: "The human-like response to the user. Leave EMPTY if you are calling a tool to find information." },
-                                action: { type: "string", enum: ["NONE", "SEND_DETAILS", "SEND_PHOTO", "SEND_BOTH", "save_order"], description: "The action to take." },
+                                action: { type: "string", enum: ["NONE", "SEND_DETAILS", "SEND_PHOTO", "SEND_BOTH", "save_order", "CALL_SPECIALIST"], description: "The action to take." },
+                                search_query: { type: ["string", "null"], description: "The search query for the specialist agent if action is CALL_SPECIALIST." },
                                 product_id: { type: ["string", "null"], description: "The ID of the matched product." },
                                 image_urls: { type: "array", items: { type: "string" }, description: "List of image URLs to send." },
                                 customer_phone: { type: ["string", "null"] },
@@ -1474,7 +1543,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                                     required: ["intent", "fields"]
                                 }
                             },
-                            required: ["thought", "reply_text", "action", "product_id", "image_urls", "customer_phone", "customer_address", "customer_name", "product_name", "quantity", "price", "order_details"],
+                            required: ["thought", "reply_text", "action", "search_query", "product_id", "image_urls", "customer_phone", "customer_address", "customer_name", "product_name", "quantity", "price", "order_details"],
                             additionalProperties: false
                         }
                     }
@@ -1565,6 +1634,32 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 }
 
                 if (structuredFinal) {
+                    // --- NEW: DUAL AGENT JSON TRIGGER ---
+                    // If Main Agent decides it needs a specialist, we trigger it immediately via JSON.
+                    if (structuredFinal.action === 'CALL_SPECIALIST') {
+                        const query = structuredFinal.search_query || structuredFinal.reply_text || "all products";
+                        console.log(`[AgentLoop] 🤖 Triggering Specialist Agent via JSON action: "${query}"`);
+                        
+                        const specialistResult = await runProductSpecialistAgent(query, pageConfig);
+                        
+                        if (specialistResult.status === 'SUCCESS') {
+                            console.log(`[AgentLoop] ✅ Specialist Agent delivered final response.`);
+                            return {
+                                reply: specialistResult.final_response,
+                                action: "SEND_DETAILS", 
+                                product_id: specialistResult.products?.[0]?.id || null,
+                                image_urls: [],
+                                order_details: structuredFinal.order_details || null,
+                                sentiment: 'neutral',
+                                token_usage: totalTokensInLoop + (completionUsage?.total_tokens || 0),
+                                model: model,
+                                foundProducts: specialistResult.products
+                            };
+                        } else {
+                            console.warn(`[AgentLoop] ⚠️ Specialist Agent failed: ${specialistResult.message}`);
+                        }
+                    }
+
                     // --- AUTO-ORDER SAVE FALLBACK (User Request: JSON based incremental order save) ---
                     // CASE A/B/C: AI provides any piece of order data (phone, address, etc.)
                     if (structuredFinal.order_details || (structuredFinal.action === "save_order" && (structuredFinal.order_data || structuredFinal.details)) || structuredFinal.customer_phone || structuredFinal.customer_address || structuredFinal.phone) {
@@ -2177,44 +2272,30 @@ ${productContext}`;
         const unifiedSystemPrompt = `${identityInvariant}\n\n[BUSINESS OWNER'S MANDATORY INSTRUCTIONS]
 ${basePrompt}
 
-[PRODUCT SEARCH & DATA SOURCE]
-- You have access to a 'resolve_product' tool which acts as a DIRECT DATABASE QUERY. 
-- You MUST follow this process for every product-related query (price, stock, details, or general browsing):
-  1. THOUGHT: Reason about what the user wants. (e.g., "User is asking for the price of Kemei straightener. I need to find the exact price in the DB.")
-  2. ACTION: Call 'resolve_product' with relevant keywords. If the first search fails, try again with just the brand or category.
-  3. OBSERVATION: Review the search results. If you find a match, note the price and stock. If multiple matches exist, show them and ask for clarification.
-  4. VERIFICATION: Ensure the price you are about to say exactly matches the 'Price' field from the tool result.
-  5. ANSWER: Provide the human-like response with the CORRECT data.
+[RULE 1: PRODUCT INFO & INTEGRITY]
+- You have NO internal knowledge of prices or stock.
+- Whenever the user asks about a product, price, stock, or availability, you MUST set "action": "CALL_SPECIALIST" and provide a "search_query" in your JSON output.
+- DO NOT call 'resolve_product' for greetings (e.g., "hi", "hello"), personal questions, or general conversation.
+- STRICT PRICING RULE: You must ONLY provide prices from tool results. NEVER guess.
+- STOCK CHECK: If 'stock_quantity' is 0, inform the user it's out of stock.
 
-- PRODUCT MANAGEMENT RULES:
-  - If a user asks "What do you have?" or "Show me products", use 'resolve_product' with a general keyword like the store's niche.
-  - ALWAYS check stock_quantity. If it's 0, inform the user it's currently out of stock.
-  - If a product is a COMBO, clearly state what's included.
-  - If variants exist (colors, sizes), mention them to the user.
-
-- STRICT VERIFICATION RULE: You MUST verify the price from the 'PRODUCT_DATA' before replying. If the search result matches a DIFFERENT product (e.g., user asks for straightener but tool returns hair crimper), DO NOT use that price.
-- If 'resolve_product' fails or returns irrelevant items, try again using only the BRAND name (e.g., "Kemei") or only the CATEGORY (e.g., "Straightener") with search_mode: "keyword_only".
-- Your goal is to be as accurate as a human database analyst. Search, observe, and verify.
-
-[CORE SYSTEM RULES]
-- STRICT PRICING RULE: You must ONLY provide prices from the [DATABASE SNAPSHOT]. If the snapshot is EMPTY, you are strictly FORBIDDEN from guessing or mentioning any price. Hallucinating prices will result in system failure.
-- If you find a match, double-check its name. If it's a 'Hair Crimper' but user wants 'Straightener', DO NOT say the crimper's price.
-- PHOTO INTENT: If the user asks for a photo/image, set "action": "SEND_PHOTO" and provide the product_id.
-- action: ["NONE", "SEND_DETAILS", "SEND_PHOTO", "SEND_BOTH"]
-- product_id: UUID of the matched product.
+[RULE 2: VISUALS & PHOTO INTENT]
+- PHOTO INTENT: If the user asks for a photo/image, set "action": "SEND_PHOTO" and provide the "product_id".
+- action: ["NONE", "SEND_DETAILS", "SEND_PHOTO", "SEND_BOTH", "CALL_SPECIALIST", "save_order"]
+- search_query: The specific product or keywords to search for (e.g., "Kemei hair straightener", "mango price").
+- product_id: Numeric product ID from database (as string), e.g., "101".
 - image_urls: Array of image URLs to attach for the user to see.
-- order_details: Whenever the user provides ANY order info (phone, address, etc.), you MUST include it here.
 
-[SALES WORKFLOW - EVOLUTIONARY TRACKING]
-1. INCREMENTAL SAVING: Start saving order info as soon as you get even ONE piece of data (like just a phone number). Do NOT wait for all fields to be filled.
-2. CONTINUOUS UPDATING: If the customer provides a phone number first, set 'phone' in the JSON. If they later send an address, add 'address' while keeping the phone number. If they change a value, update it in the next response.
-3. DATA PERSISTENCE: Always include the latest known values for all order fields in every JSON response until the conversation ends.
-4. SMART INFERENCE: Extract product_name, quantity, and price from the context of the conversation.
+[RULE 3: SALES WORKFLOW & CRM]
+- INCREMENTAL SAVING: Save customer info (name, phone, address, product, quantity) as soon as ANY piece of data is provided.
+- DATA PERSISTENCE: Always include the latest known values for all order fields in every JSON response until the conversation ends. Update fields if the customer changes them.
+- order_details: Whenever the user provides ANY order info, you MUST include it here.
 
 [RESPONSE FORMAT]
 {
-  "reply_text": "...",
-  "action": "save_order",
+  "reply_text": "A brief acknowledgment (e.g., 'Let me check that for you...')",
+  "action": "CALL_SPECIALIST",
+  "search_query": "Product name or keywords",
   "product_id": "...",
   "image_urls": ["url1", "url2"],
   "customer_phone": "Extracted phone or null",
@@ -2234,8 +2315,7 @@ ${basePrompt}
        "price": "..."
     }
   }
-}
-`;
+}`;
 
         const systemMessage = { role: 'system', content: unifiedSystemPrompt };
 
@@ -2303,6 +2383,28 @@ ${basePrompt}
                         const potentialJson = aiText.substring(firstBrace, lastBrace + 1);
                         const structured = JSON.parse(potentialJson);
                         
+                        // --- DUAL AGENT TRIGGER (Own API Path) ---
+                        if (structured.action === 'CALL_SPECIALIST') {
+                            const query = structured.search_query || structured.reply_text || "all products";
+                            console.log(`[AI] 🤖 Triggering Specialist Agent via Own API: "${query}"`);
+                            
+                            const specialistResult = await runProductSpecialistAgent(query, pageConfig);
+                            
+                            if (specialistResult.status === 'SUCCESS') {
+                                return finalize({
+                                    reply: specialistResult.final_response,
+                                    action: "SEND_DETAILS",
+                                    product_id: specialistResult.products?.[0]?.id || null,
+                                    image_urls: [],
+                                    order_details: structured.order_details || null,
+                                    sentiment: 'neutral',
+                                    token_usage: tokenUsage + totalTokenUsage,
+                                    model: modelToUse,
+                                    foundProducts: specialistResult.products
+                                });
+                            }
+                        }
+
                         // If it's our own internal structured format, return it
                         if (structured.reply_text || structured.order_details) {
                             return finalize({ 
