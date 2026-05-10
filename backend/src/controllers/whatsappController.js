@@ -2169,6 +2169,22 @@ STRICT RULES:
         // If we already analyzed images and replaced the text, don't pass images again to avoid double-processing
         const imagesToPass = imageDetectionEnabled && (!imageAnalyzeText || imageAnalyzeText.trim() === "") ? allImages : [];
 
+        // --- INJECT FORMATTING INSTRUCTION (Professional Rules) ---
+        const professionalRules = `\n\n[PROFESSIONAL OUTPUT RULES]\n` +
+                `1) IDENTITY: You are a professional human sales representative. Talk naturally.\n` +
+                `2) TOOL-FIRST: If the user asks about product price/details, you MUST call tools. Do NOT invent prices or descriptions.\n` +
+                `3) IMAGE DECISION: If you decide to send a product's image (based on user request or appropriateness), you MUST append [PRODUCT_ID:id] to your reply. Example: "Yes, it is available. [PRODUCT_ID:82]".\n` +
+                `4) SYSTEM PROMPT PRIORITY: If your custom instructions (System Prompt) say NOT to send images proactively, you MUST obey that and only use the [PRODUCT_ID:id] tag when the user explicitly asks for a photo.\n` +
+                `5) LISTING PRODUCTS: If asked "What do you sell?", list 3-5 names naturally and ask which one they are interested in.\n` +
+                `6) NO HALLUCINATIONS: Never guess or invent prices. Always use tool data only.\n`;
+
+        const aiConfig = { ...pageConfig };
+        if (aiConfig.text_prompt) {
+             aiConfig.text_prompt += professionalRules;
+        } else {
+             aiConfig.text_prompt = professionalRules;
+        }
+
         const aiResponse = await aiService.generateResponse({
             pageId: pageId, 
             userId: senderId,
@@ -2176,7 +2192,7 @@ STRICT RULES:
             history: history,
             imageUrls: imagesToPass, 
             audioUrls: [], // Handled manually in controller
-            config: pageConfig,
+            config: aiConfig, // Use modified config
             platform: 'whatsapp',
             extraTokenUsage: totalVisionTokens + totalAudioTokens, // Pass vision + audio tokens
             senderName: senderName, // <-- NEW: Pass resolved sender name

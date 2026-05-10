@@ -1386,16 +1386,18 @@ STRICT RULES:
         
         // --- INJECT FORMATTING INSTRUCTION (Tool-Driven Product System) ---
         let finalPrompt = pagePrompts?.text_prompt || "";
-        if (finalPrompt) {
-             finalPrompt += `\n\n[PROFESSIONAL OUTPUT RULES]\n` +
+        const professionalRules = `\n\n[PROFESSIONAL OUTPUT RULES]\n` +
                 `1) IDENTITY: You are a professional human sales representative. Talk naturally.\n` +
                 `2) TOOL-FIRST: If the user asks about product price/details, you MUST call tools. Do NOT invent prices or descriptions.\n` +
-                `   - Step A: Call resolve_product with the user's query.\n` +
-                `   - Step B: If a single clear candidate is returned, call get_product with product_id.\n` +
-                `   - Step C: For final price, call compute_offer_price with line_items.\n` +
-                `3) IMAGE REQUEST: If the user asks for a photo/picture, include image_url from get_product in reply.\n` +
-                `4) LISTING PRODUCTS: If asked "What do you sell?", list 3-5 names from the [Inventory List] naturally and ask which one they are interested in.\n` +
-                `5) NO HALLUCINATIONS: Never guess or invent prices. Always use tool data only.\n`;
+                `3) IMAGE DECISION: If you decide to send a product's image (based on user request or appropriateness), you MUST append [PRODUCT_ID:id] to your reply. Example: "Yes, it is available. [PRODUCT_ID:82]".\n` +
+                `4) SYSTEM PROMPT PRIORITY: If your custom instructions (System Prompt) say NOT to send images proactively, you MUST obey that and only use the [PRODUCT_ID:id] tag when the user explicitly asks for a photo.\n` +
+                `5) LISTING PRODUCTS: If asked "What do you sell?", list 3-5 names naturally and ask which one they are interested in.\n` +
+                `6) NO HALLUCINATIONS: Never guess or invent prices. Always use tool data only.\n`;
+
+        if (finalPrompt) {
+             finalPrompt += professionalRules;
+        } else {
+             finalPrompt = professionalRules;
         }
         
         // Use a shallow copy of config to avoid modifying the original config object
