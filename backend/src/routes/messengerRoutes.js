@@ -111,10 +111,10 @@ router.get('/pages', async (req, res) => {
             if (!dbInfo) {
                 try {
                     const insertRes = await pgClient.query(
-                        `INSERT INTO fb_message_database (page_id, text_prompt)
-                         VALUES ($1, $2)
+                        `INSERT INTO fb_message_database (page_id, text_prompt, engine_override, wait, image_send, image_detection, template)
+                         VALUES ($1, $2, $3, $4, $5, $6, $7)
                          RETURNING *`,
-                        [p.page_id, 'You are a helpful sales assistant.']
+                        [p.page_id, 'You are a helpful sales assistant.', 'salesmanchatbot-flash', 2, true, true, true]
                     );
                     dbInfo = insertRes.rows[0];
                 } catch (err) {
@@ -157,10 +157,10 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
 
         if (existsResult.rows.length === 0) {
             const insertResult = await pgClient.query(
-                `INSERT INTO fb_message_database (page_id, text_prompt)
-                 VALUES ($1, $2)
+                `INSERT INTO fb_message_database (page_id, text_prompt, engine_override, wait, image_send, image_detection, template)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)
                  RETURNING id`,
-                [String(page_id), 'You are a helpful sales assistant.']
+                [String(page_id), 'You are a helpful sales assistant.', 'salesmanchatbot-flash', 2, true, true, true]
             );
             dbId = insertResult.rows[0].id;
         } else {
@@ -183,8 +183,23 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
                 page_access_token = EXCLUDED.page_access_token,
                 email = EXCLUDED.email,
                 user_id = EXCLUDED.user_id`,
-            [String(page_id), name, page_access_token, ownerEmail, userId, 'google', 'gemini-2.5-flash', true]
+            [String(page_id), name, page_access_token, ownerEmail, userId, 'gemini', 'salesmanchatbot-flash', true]
         );
+
+        // SYNC ALL PRODUCTS TO THIS NEW PAGE ID (Automatic)
+        try {
+            const allProds = await pgClient.query("SELECT id, allowed_messenger_ids FROM products WHERE user_id::text = $1::text", [userId]);
+            for (const prod of allProds.rows) {
+                let mIds = Array.isArray(prod.allowed_messenger_ids) ? prod.allowed_messenger_ids : [];
+                if (!mIds.includes(String(page_id))) {
+                    mIds.push(String(page_id));
+                    await pgClient.query("UPDATE products SET allowed_messenger_ids = $1 WHERE id = $2", [JSON.stringify(mIds), prod.id]);
+                }
+            }
+            console.log(`[Messenger] Auto-synced ${allProds.rows.length} products to new page ${page_id}`);
+        } catch (syncErr) {
+            console.error("[Messenger] Product auto-sync failed:", syncErr.message);
+        }
 
         // --- FREE CREDITS LOGIC: Give 100 credits for new integration ---
         if (pageExists.rowCount === 0) {

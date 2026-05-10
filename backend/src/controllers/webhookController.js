@@ -2203,7 +2203,7 @@ STRICT RULES:
                 
                 // Check Config for Template/Carousel
                 // Robust check: handles boolean true, string 'true', integer 1, string '1'
-                const tVal = pagePrompts?.template_reply;
+                const tVal = pagePrompts?.template;
                 const useCarousel = (tVal === true || tVal === 'true' || tVal === 1 || tVal === '1');
                 
                 console.log(`[Image Group] Template Check: Value=${tVal}, Result=${useCarousel}, ImageCount=${images.length}`);
