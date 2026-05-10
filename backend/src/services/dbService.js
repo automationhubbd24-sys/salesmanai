@@ -3640,11 +3640,9 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
     if (isWhatsapp) {
         whereClause += ` AND (allowed_wa_sessions::jsonb @> jsonb_build_array($${pIdx}::text) OR platform = 'global')`;
     } else {
-        // FOR MESSENGER: Check BOTH allowed_messenger_ids AND legacy allowed_page_ids for maximum compatibility
+        // FOR MESSENGER: Only check allowed_messenger_ids (Modern Standard)
         whereClause += ` AND (
             (allowed_messenger_ids::jsonb @> jsonb_build_array($${pIdx}::text)) 
-            OR 
-            (allowed_page_ids::jsonb @> jsonb_build_array($${pIdx}::text))
             OR 
             platform = 'global'
         )`;
@@ -3819,12 +3817,8 @@ async function getProductsByNames(userId, productNames, pageId = null) {
         if (isWhatsapp) {
             sql += ` AND (allowed_wa_sessions::jsonb @> jsonb_build_array($${pIdx}::text))`;
         } else {
-            // FOR MESSENGER: Check BOTH allowed_messenger_ids AND legacy allowed_page_ids for maximum compatibility
-            sql += ` AND (
-                (allowed_messenger_ids::jsonb @> jsonb_build_array($${pIdx}::text)) 
-                OR 
-                (allowed_page_ids::jsonb @> jsonb_build_array($${pIdx}::text))
-            )`;
+            // FOR MESSENGER: Only check allowed_messenger_ids (Modern Standard)
+            sql += ` AND (allowed_messenger_ids::jsonb @> jsonb_build_array($${pIdx}::text))`;
         }
     }
     
@@ -3872,14 +3866,8 @@ async function searchProducts(userId, queryText, pageId = null) {
             if (isWhatsapp) {
                 sql += ` AND ((allowed_wa_sessions::jsonb @> jsonb_build_array($${pIdx}::text)) OR platform = 'global')`;
             } else {
-                // FOR MESSENGER: Check BOTH allowed_messenger_ids AND legacy allowed_page_ids for maximum compatibility
-                sql += ` AND (
-                    (allowed_messenger_ids::jsonb @> jsonb_build_array($${pIdx}::text)) 
-                    OR 
-                    (allowed_page_ids::jsonb @> jsonb_build_array($${pIdx}::text))
-                    OR 
-                    platform = 'global'
-                )`;
+                // FOR MESSENGER: Only check allowed_messenger_ids (Modern Standard)
+                sql += ` AND ((allowed_messenger_ids::jsonb @> jsonb_build_array($${pIdx}::text)) OR platform = 'global')`;
             }
         }
 

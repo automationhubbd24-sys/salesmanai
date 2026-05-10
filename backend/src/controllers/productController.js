@@ -506,7 +506,6 @@ exports.createProduct = async (req, res) => {
             stock,
             allowed_messenger_ids: allowedMessengerIds,
             allowed_wa_sessions: allowedWASessions,
-            allowed_page_ids: allowedMessengerIds, // SYNC: Keep legacy column in sync for new products
             platform,
             keywords,
             is_combo: body.is_combo === 'true' || body.is_combo === true,
