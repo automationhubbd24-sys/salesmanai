@@ -256,59 +256,40 @@ router.get('/config/:id', async (req, res) => {
 
         console.log(`[GET /config/:id] Request ID: ${id}, User: ${userEmail}`);
 
-        let configRow = null;
+        // Try lookup by page_id (String) first since that's what the frontend mostly sends
+        const configByPageId = await pgClient.query(
+            'SELECT * FROM fb_message_database WHERE page_id = $1 OR CAST(id AS TEXT) = $1',
+            [id]
+        );
 
-        // Try lookup by primary key (id) first IF it looks like a database integer (not a page ID)
-        // Assume database IDs are relatively small (e.g. < 2 billion), while Page IDs are huge strings
-        const isInteger = /^\d+$/.test(id) && Number(id) < 2147483647;
-
-        if (isInteger) {
-            const configResult = await pgClient.query(
-                'SELECT * FROM fb_message_database WHERE id = $1',
-                [parseInt(id, 10)]
-            );
-             if (configResult.rowCount > 0) {
-                configRow = configResult.rows[0];
-                console.log(`[GET /config/:id] Found by DB ID: ${id}`);
-            }
+        if (configByPageId.rowCount > 0) {
+            configRow = configByPageId.rows[0];
+            console.log(`[GET /config/:id] Found config for: ${id}`);
         }
 
         if (!configRow) {
-            // Fallback: Try lookup by page_id (in case id passed is actually page_id string)
-            // Use TRIM to handle potential whitespace issues
-            const configByPageId = await pgClient.query(
-                'SELECT * FROM fb_message_database WHERE page_id = $1',
-                [id]
-            );
-            if (configByPageId.rowCount > 0) {
-                configRow = configByPageId.rows[0];
-                console.log(`[GET /config/:id] Found by Page ID: ${id}`);
-            }
-        }
-
-        if (!configRow) {
-            console.log(`[GET /config/:id] Config not found for ${id}. Attempting auto-create...`);
-            // Second Fallback: Auto-create if page exists in page_access_token_message but config missing
-             const pageExists = await pgClient.query(
+            // Check if page exists in page_access_token_message but config missing
+            const pageExists = await pgClient.query(
                 'SELECT page_id FROM page_access_token_message WHERE page_id = $1',
                 [id]
             );
             
             if (pageExists.rowCount > 0) {
-                 try {
+                console.log(`[GET /config/:id] Config missing for page ${id}. Auto-creating...`);
+                try {
                     const insertRes = await pgClient.query(
-                        `INSERT INTO fb_message_database (page_id, text_prompt)
-                         VALUES ($1, $2)
+                        `INSERT INTO fb_message_database (page_id, text_prompt, engine_override, wait, image_send, image_detection, template)
+                         VALUES ($1, $2, $3, $4, $5, $6, $7)
                          RETURNING *`,
-                        [id, 'You are a helpful sales assistant.']
+                        [id, 'You are a helpful sales assistant.', 'salesmanchatbot-flash', 2, true, true, true]
                     );
                     configRow = insertRes.rows[0];
                     console.log(`[GET /config/:id] Auto-created config for Page ID: ${id}`);
                 } catch (err) {
-                    console.error("Error auto-creating fb config in /config/:id:", err);
+                    console.error("Error auto-creating fb config in GET:", err);
                 }
             } else {
-                 // Final attempt: Check if the ID was actually a DB ID but missed (unlikely if isInteger logic holds)
+                 // Final attempt: Check if the ID was actually a DB ID but missed
                  console.log(`[GET /config/:id] Page not found in token table for ID: ${id}`);
             }
         }
