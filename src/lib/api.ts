@@ -9,6 +9,14 @@ export const secureFetch = async (url: string, options: RequestInit = {}) => {
   try {
     const response = await fetch(url, options);
 
+    // --- AUTO-FIX: Silent Token Refresh ---
+    // If the server sends a new token, save it automatically to extend the session
+    const newToken = response.headers.get('X-Refresh-Token');
+    if (newToken) {
+      console.log("[Auth] Session extended automatically.");
+      localStorage.setItem("auth_token", newToken);
+    }
+
     // Handle 401 Unauthorized (Invalid/Expired Token)
     if (response.status === 401) {
       console.error("[Auth] Session expired or invalid token (401). Redirecting to login...");

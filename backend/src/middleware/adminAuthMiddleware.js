@@ -19,6 +19,23 @@ module.exports = (req, res, next) => {
             return res.status(403).json({ error: 'Forbidden' });
         }
 
+        // --- SILENT TOKEN REFRESH (Auto-Fix for session expiration) ---
+        const now = Math.floor(Date.now() / 1000);
+        const sixtyDaysInSeconds = 60 * 24 * 60 * 60;
+        if (payload.exp && (payload.exp - now) < sixtyDaysInSeconds) {
+            try {
+                const newToken = jwt.sign(
+                    { role: 'admin', username: payload.username },
+                    secret,
+                    { expiresIn: '90d' }
+                );
+                res.setHeader('X-Refresh-Token', newToken);
+                res.setHeader('Access-Control-Expose-Headers', 'X-Refresh-Token');
+            } catch (e) {
+                console.error('[Admin Auth] Failed to issue refresh token:', e.message);
+            }
+        }
+
         req.admin = {
             role: payload.role,
             username: payload.username

@@ -93,7 +93,7 @@ exports.adminLogin = async (req, res) => {
             const token = require('jsonwebtoken').sign(
                 { role: 'admin', username: username },
                 jwtSecret,
-                { expiresIn: '7d' }
+                { expiresIn: '90d' }
             );
             return res.json({ success: true, token });
         }
