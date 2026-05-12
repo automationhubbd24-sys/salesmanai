@@ -58,6 +58,8 @@ interface EngineConfig {
   voice_model: string;
   image_provider: string | null;
   image_model: string;
+  embed_provider: string | null;
+  embed_model: string;
 }
 
 interface ModelListItem {
@@ -2483,7 +2485,8 @@ export default function AdminPage() {
                   {[
                     { key: 'text', label: 'Text Model', icon: <MessageSquare className="h-3 w-3" />, color: 'text-[#00ff88]' },
                     { key: 'voice', label: 'Voice Model', icon: <Mic className="h-3 w-3" />, color: 'text-amber-400' },
-                    { key: 'image', label: 'Image Model', icon: <ImageIcon className="h-3 w-3" />, color: 'text-blue-400' }
+                    { key: 'image', label: 'Image Model', icon: <ImageIcon className="h-3 w-3" />, color: 'text-blue-400' },
+                    { key: 'embed', label: 'Embed Model', icon: <DatabaseIcon className="h-3 w-3" />, color: 'text-purple-400' }
                   ].map((modality) => (
                     <div key={modality.key} className="p-3 border border-white/5 rounded-lg bg-black/20 space-y-3">
                       <Label className={`text-[10px] uppercase font-bold flex items-center gap-2 ${modality.color}`}>

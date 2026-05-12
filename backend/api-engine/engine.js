@@ -158,7 +158,8 @@ router.post('/config', adminAuthMiddleware, async (req, res) => {
             provider, 
             text_provider, text_model, 
             voice_provider, voice_model, 
-            image_provider, image_model 
+            image_provider, image_model,
+            embed_provider, embed_model
         } = req.body || {};
 
         if (!name) {
@@ -174,7 +175,8 @@ router.post('/config', adminAuthMiddleware, async (req, res) => {
             provider,
             text_provider, text_model, text_fallback_model: req.body.text_fallback_model,
             voice_provider, voice_model, voice_fallback_model: req.body.voice_fallback_model,
-            image_provider, image_model, image_fallback_model: req.body.image_fallback_model
+            image_provider, image_model, image_fallback_model: req.body.image_fallback_model,
+            embed_provider, embed_model
         };
 
         for (const [key, val] of Object.entries(updateFields)) {
@@ -610,6 +612,97 @@ router.post('/v1/chat/completions', async (req, res) => {
         }
 
         res.status(status).json(error.response?.data || { error: error.message });
+    }
+});
+
+// --- NEW: EMBEDDINGS SUPPORT (For Vector DB) ---
+router.post('/v1/embeddings', async (req, res) => {
+    try {
+        const { userConfig, error: authError } = await validateUserApiKey(req);
+        if (authError) return res.status(authError.status).json({ error: authError.message });
+
+        const { model, input } = req.body;
+        if (!model || !input) return res.status(400).json({ error: "Missing model or input" });
+
+        let provider = 'google';
+        let modelToUse = model;
+
+        const isBranded = model.startsWith('salesmanchatbot-');
+        const useProxyForThisRequest = isBranded;
+
+        if (isBranded) {
+             try {
+                 // Branded models resolution logic
+                 const mockConfig = { chat_model: model, cheap_engine: true };
+                 // Dynamic require as aiService is not defined at the top level
+                 const aiService = require('../src/services/aiService');
+                 const resolved = await aiService.resolveSalesmanchatbotEngine(mockConfig, 'salesmanchatbot', model, false, false, true);
+                 
+                 // For 'brain', we prefer Gemini's embedding model if it's forced to google
+                 if (model === 'salesmanchatbot-brain') {
+                     provider = 'google';
+                     modelToUse = resolved.finalModel || 'text-embedding-004'; 
+                 } else {
+                     provider = resolved.finalProvider || 'google';
+                     modelToUse = resolved.finalModel || 'text-embedding-004';
+                 }
+             } catch (e) {
+                 provider = 'google';
+                 modelToUse = 'text-embedding-004';
+             }
+         }
+
+        // Smart Routing from Key Pool
+        const keyData = await keyService.getSmartKey(provider, modelToUse, 'text');
+        if (!keyData) return res.status(429).json({ error: "No active embedding keys available." });
+
+        let targetUrl = '';
+        let headers = { 'Content-Type': 'application/json' };
+        let payload = {};
+
+        if (provider === 'google' || provider === 'gemini') {
+            targetUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelToUse}:embedContent`;
+            headers['x-goog-api-key'] = keyData.key;
+            payload = { content: { parts: [{ text: typeof input === 'string' ? input : input[0] }] } };
+        } else {
+            targetUrl = 'https://api.openai.com/v1/embeddings';
+            headers['Authorization'] = `Bearer ${keyData.key}`;
+            payload = { model: modelToUse, input: input };
+        }
+
+        let agent = undefined;
+        if (useProxyForThisRequest) {
+            const proxyUrl = getProxyUrl(model);
+            if (proxyUrl) agent = new HttpsProxyAgent(proxyUrl);
+        }
+
+        const response = await axios.post(targetUrl, payload, {
+            headers,
+            httpsAgent: agent,
+            httpAgent: agent,
+            proxy: false,
+            timeout: 30000
+        });
+
+        // Map Gemini response to OpenAI format if needed
+        if (provider === 'google' || provider === 'gemini') {
+            const embedding = response.data.embedding.values;
+            res.json({
+                object: "list",
+                data: [{ object: "embedding", embedding: embedding, index: 0 }],
+                model: modelToUse,
+                usage: { prompt_tokens: 0, total_tokens: 0 }
+            });
+        } else {
+            res.json(response.data);
+        }
+
+        // Record usage (minimal for embeddings)
+        keyService.recordKeyUsage(keyData.key, 1);
+
+    } catch (error) {
+        console.error(`[API Engine] Embedding Error:`, error.message);
+        res.status(error.response?.status || 500).json(error.response?.data || { error: error.message });
     }
 });
 

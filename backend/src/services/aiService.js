@@ -427,7 +427,7 @@ async function clearBrandedEngineCache(name = null) {
     }
 }
 
-async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio) {
+async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio, isEmbedding = false) {
     let targetEngineName = defaultModel || 'salesmanchatbot-pro';
 
     // --- ENGINE OVERRIDE LOGIC (Admin Priority) ---
@@ -451,12 +451,16 @@ async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, default
         throw new Error(`Engine ${targetEngineName} is not configured in the dashboard.`);
     }
 
-    // 2. Resolve based on modality (Text/Voice/Image)
+    // 2. Resolve based on modality (Text/Voice/Image/Embedding)
     let finalProvider = brandedConfig.text_provider || brandedConfig.provider;
     let finalModel = brandedConfig.text_model;
     let modality = 'text';
 
-    if (isAudio) {
+    if (isEmbedding) {
+        finalProvider = brandedConfig.embed_provider || finalProvider;
+        finalModel = brandedConfig.embed_model || 'text-embedding-004';
+        modality = 'embedding';
+    } else if (isAudio) {
         finalProvider = brandedConfig.voice_provider || finalProvider;
         finalModel = brandedConfig.voice_model || finalModel;
         modality = 'voice';
@@ -961,12 +965,31 @@ async function getEmbedding(text, customApiKey = null) {
     try {
         const config = await dbService.getEmbeddingGlobalConfig();
         const apiKey = customApiKey || (config ? config.api_key : null);
-        
+        const modelName = (config && config.model) || "text-embedding-004";
+        const provider = (config && config.provider ? config.provider.toLowerCase() : 'google');
+
+        // --- NEW: BRANDED ENGINE SUPPORT FOR EMBEDDINGS ---
+        // If the model name starts with 'salesmanchatbot-', route it through our API Engine
+        if (modelName.startsWith('salesmanchatbot-')) {
+            console.log(`[AI Embedding] Routing through Branded Engine: ${modelName}`);
+            const axios = require('axios');
+            const response = await axios.post(`http://localhost:${process.env.PORT || 3001}/api/api-engine/v1/embeddings`, {
+                model: modelName,
+                input: text.replace(/\n/g, ' ')
+            }, {
+                headers: { 'Authorization': `Bearer ${apiKey}` }, // Use the service key
+                timeout: 30000
+            });
+            
+            const vector = response.data.data[0].embedding;
+            if (vector) setCachedEmbedding(text, vector);
+            return vector;
+        }
+
         if (!apiKey) {
             throw new Error("Embedding API Key missing (Status: 401)");
         }
 
-        const provider = (config && config.provider ? config.provider.toLowerCase() : 'google');
         let vector = null;
 
         if (provider === 'google' || provider === 'gemini') {
