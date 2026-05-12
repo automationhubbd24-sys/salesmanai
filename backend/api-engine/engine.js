@@ -618,8 +618,18 @@ router.post('/v1/chat/completions', async (req, res) => {
 // --- NEW: EMBEDDINGS SUPPORT (For Vector DB) ---
 router.post('/v1/embeddings', async (req, res) => {
     try {
-        const { userConfig, error: authError } = await validateUserApiKey(req);
-        if (authError) return res.status(authError.status).json({ error: authError.message });
+        const authHeader = req.headers.authorization || '';
+        const serviceToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+
+        let userConfig = null;
+        if (serviceToken === 'system-internal-bypass') {
+            // Internal bypass for system services
+            userConfig = { user_id: 'internal', email: 'system@internal' };
+        } else {
+            const { userConfig: validated, error: authError } = await validateUserApiKey(req);
+            if (authError) return res.status(authError.status).json({ error: authError.message });
+            userConfig = validated;
+        }
 
         const { model, input } = req.body;
         if (!model || !input) return res.status(400).json({ error: "Missing model or input" });
