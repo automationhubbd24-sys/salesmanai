@@ -2465,17 +2465,18 @@ export default function AdminPage() {
         </TabsContent>
 
         {/* API Engine Tab */}
-        <TabsContent value="api-engine" className="space-y-6">
-          {/* Engine Model Configuration */}
+        <TabsContent value="api-engine" className="space-y-8">
+          {/* Main Engines Grid (Pro, Flash, Lite) */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {engineConfigs.map((config) => (
+            {engineConfigs
+              .filter(c => c.name !== 'salesmanchatbot-brain')
+              .map((config) => (
               <Card key={config.id} className="bg-card/40 backdrop-blur-md border-white/5 shadow-xl hover:border-white/10 transition-all">
                 <CardHeader className="pb-4 border-b border-white/5 bg-white/5">
                   <CardTitle className="text-lg font-bold flex items-center gap-2">
-                    <Cpu className={`h-5 w-5 ${config.name.includes('pro') ? 'text-blue-400' : config.name.includes('flash') ? 'text-amber-400' : config.name.includes('brain') ? 'text-purple-400' : 'text-[#00ff88]'}`} />
+                    <Cpu className={`h-5 w-5 ${config.name.includes('pro') ? 'text-blue-400' : config.name.includes('flash') ? 'text-amber-400' : 'text-[#00ff88]'}`} />
                     {config.name === 'salesmanchatbot-pro' ? '2.0 Pro (Google)' : 
                      config.name === 'salesmanchatbot-flash' ? '2.0 Flash (OpenRouter)' : 
-                     config.name === 'salesmanchatbot-brain' ? '🧠 2.0 Brain (Gemini)' :
                      '2.0 Lite (Groq)'}
                   </CardTitle>
                   <CardDescription className="text-[10px] uppercase tracking-widest font-bold opacity-60">Engine: {config.name}</CardDescription>
@@ -2485,15 +2486,8 @@ export default function AdminPage() {
                   {[
                     { key: 'text', label: 'Text Model', icon: <MessageSquare className="h-3 w-3" />, color: 'text-[#00ff88]' },
                     { key: 'voice', label: 'Voice Model', icon: <Mic className="h-3 w-3" />, color: 'text-amber-400' },
-                    { key: 'image', label: 'Image Model', icon: <ImageIcon className="h-3 w-3" />, color: 'text-blue-400' },
-                    { key: 'embed', label: 'Embed Model', icon: <DatabaseIcon className="h-3 w-3" />, color: 'text-purple-400' }
-                  ].map((modality) => {
-                    // --- CLEANUP: Only show Embed Model for Brain Engine ---
-                    if (config.name === 'salesmanchatbot-brain' && modality.key !== 'embed') return null;
-                    // --- CLEANUP: Hide Embed Model for other engines ---
-                    if (config.name !== 'salesmanchatbot-brain' && modality.key === 'embed') return null;
-                    
-                    return (
+                    { key: 'image', label: 'Image Model', icon: <ImageIcon className="h-3 w-3" />, color: 'text-blue-400' }
+                  ].map((modality) => (
                     <div key={modality.key} className="p-3 border border-white/5 rounded-lg bg-black/20 space-y-3">
                       <Label className={`text-[10px] uppercase font-bold flex items-center gap-2 ${modality.color}`}>
                         {modality.icon} {modality.label}
@@ -2529,7 +2523,6 @@ export default function AdminPage() {
                         </div>
                       </div>
 
-                      {/* NEW: Fallback Model Input for this Engine's Modality */}
                       <div className="space-y-1 pt-1 border-t border-white/5">
                         <Label className="text-[9px] text-muted-foreground uppercase flex items-center gap-1">
                           <Zap className="h-2 w-2 text-yellow-500" /> Fallback Model
@@ -2542,12 +2535,90 @@ export default function AdminPage() {
                         />
                       </div>
                     </div>
-                    );
-                  })}
+                  ))}
                 </CardContent>
               </Card>
             ))}
           </div>
+
+          {/* Dedicated Brain Engine (Full Width Bottom) */}
+          {engineConfigs
+            .filter(c => c.name === 'salesmanchatbot-brain')
+            .map((config) => (
+            <Card key={config.id} className="bg-card/40 backdrop-blur-md border-purple-500/20 shadow-2xl border-t-2 border-t-purple-500/40">
+              <CardHeader className="pb-4 border-b border-white/5 bg-purple-500/5">
+                <CardTitle className="text-xl font-black flex items-center gap-3 text-purple-400">
+                  <div className="p-2 rounded-lg bg-purple-500/10">
+                    <DatabaseIcon className="h-6 w-6" />
+                  </div>
+                  🧠 2.0 Brain (Internal Embedding Engine)
+                </CardTitle>
+                <CardDescription className="text-xs uppercase tracking-[0.2em] font-black opacity-40 ml-14">
+                  Global Vector & Semantic Search Infrastructure
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="pt-8 pb-8 px-8">
+                <div className="flex flex-col md:flex-row items-center gap-12">
+                  {/* Left Side: Info & Icon */}
+                  <div className="flex-1 space-y-4">
+                    <div className="flex items-center gap-4">
+                      <div className="h-12 w-12 rounded-full bg-[#00ff88]/10 flex items-center justify-center border border-[#00ff88]/20">
+                        <ShieldCheck className="h-6 w-6 text-[#00ff88]" />
+                      </div>
+                      <div>
+                        <h4 className="font-black text-white text-lg">System-Wide Integration</h4>
+                        <p className="text-xs text-muted-foreground">This engine handles all internal vector operations automatically.</p>
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground leading-relaxed pl-16">
+                      The Brain engine is hardcoded to manage your product search, semantic cache, and knowledge base. 
+                      It uses proxy rotation and API key pools to ensure maximum stability and zero cost for embeddings.
+                    </p>
+                  </div>
+
+                  {/* Right Side: Config Fields */}
+                  <div className="w-full md:w-[450px] p-6 rounded-2xl bg-black/40 border border-white/5 shadow-inner">
+                    {[
+                      { key: 'embed', label: 'Global Embed Model', icon: <DatabaseIcon className="h-4 w-4" />, color: 'text-purple-400' }
+                    ].map((modality) => (
+                      <div key={modality.key} className="space-y-4">
+                        <Label className={`text-xs uppercase font-black flex items-center gap-2 ${modality.color}`}>
+                          {modality.icon} {modality.label}
+                        </Label>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label className="text-[10px] text-muted-foreground uppercase font-bold">Provider</Label>
+                            <Select 
+                              value={(config as any)[`${modality.key}_provider`] || "google"} 
+                              onValueChange={(val) => updateEngineConfig(config.name, { [`${modality.key}_provider`]: val }, true)}
+                            >
+                              <SelectTrigger className="h-10 text-xs bg-black/60 border-white/10 font-bold">
+                                <SelectValue placeholder="Provider" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="google">Google Gemini</SelectItem>
+                                <SelectItem value="openai">OpenAI</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-2">
+                            <Label className="text-[10px] text-muted-foreground uppercase font-bold">Model ID</Label>
+                            <Input 
+                              value={(config as any)[`${modality.key}_model`]} 
+                              onChange={(e) => updateEngineConfig(config.name, { [`${modality.key}_model`]: e.target.value }, true)}
+                              className="h-10 text-xs bg-black/60 border-white/10 font-mono font-bold text-[#00ff88]"
+                              placeholder="Model ID"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
 
           {/* Stats Grid */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
