@@ -2281,7 +2281,7 @@ STRICT RULES:
                                 text: `[System Memory: User is viewing Carousel with: ${productContext}]`,
                                 timestamp: Date.now(),
                                 status: 'bot_carousel',
-                                reply_by: 'bot'
+                                reply_by: 'system'
                             });
                         }
                     } catch (carouselError) {
@@ -2312,7 +2312,7 @@ STRICT RULES:
                                     text: `[System Memory: User is viewing Image of ${imgObj.title || 'Product'}: ${imgObj.url}]`,
                                     timestamp: Date.now(),
                                     status: 'bot_image',
-                                    reply_by: 'bot'
+                                    reply_by: 'system'
                                 });
                              }
                          } catch (imgError) {
