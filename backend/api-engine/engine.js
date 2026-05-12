@@ -11,13 +11,15 @@ const { HttpsProxyAgent } = require('https-proxy-agent');
 const PRICING = {
     PRO: 150,
     FLASH: 100,
-    LITE: 80
+    LITE: 80,
+    BRAIN: 90
 };
 
 const getCostPerRequest = (modelName) => {
     let rate = PRICING.PRO;
     if (modelName.includes('flash')) rate = PRICING.FLASH;
     else if (modelName.includes('lite')) rate = PRICING.LITE;
+    else if (modelName.includes('brain')) rate = PRICING.BRAIN;
     return rate / 1000;
 };
 
@@ -344,7 +346,7 @@ router.post('/v1/chat/completions', async (req, res) => {
     let modelToUse = model;
 
     // --- DYNAMIC ENGINE RESOLUTION ---
-    const isBranded = model === 'salesmanchatbot-pro' || model === 'salesmanchatbot-flash' || model === 'salesmanchatbot-lite';
+    const isBranded = model.startsWith('salesmanchatbot-');
     const isVision = imageUrls.length > 0;
     const isAudio = audioUrls.length > 0;
 
@@ -353,10 +355,20 @@ router.post('/v1/chat/completions', async (req, res) => {
 
     if (isBranded) {
         try {
+            // Branded models resolution logic
             const mockConfig = { chat_model: model, cheap_engine: true };
             const resolved = await aiService.resolveSalesmanchatbotEngine(mockConfig, 'salesmanchatbot', model, isVision, isAudio);
-            provider = resolved.finalProvider;
-            modelToUse = resolved.finalModel;
+            
+            // Special Logic for salesmanchatbot-brain: Force Google Gemini if specified as "brain"
+            if (model === 'salesmanchatbot-brain') {
+                provider = 'google'; 
+                modelToUse = resolved.finalModel; // Take model name from resolved config (Frontend managed)
+                console.log(`[API Engine] 🧠 Brain Engine -> Forcing Google/Gemini Provider (Model: ${modelToUse})`);
+            } else {
+                provider = resolved.finalProvider;
+                modelToUse = resolved.finalModel;
+            }
+            
             console.log(`[API Engine] Dynamically Resolved ${model} -> ${provider}/${modelToUse} (Vision: ${isVision}, Audio: ${isAudio})`);
         } catch (e) {
             console.warn(`[API Engine] Dynamic resolution failed for ${model}. Error: ${e.message}`);

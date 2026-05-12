@@ -2360,7 +2360,7 @@ export default function AdminPage() {
                 </div>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-3">
+                <div className="grid gap-4 md:grid-cols-4">
                 <div className="flex items-center gap-2">
                   <Switch
                     checked={engineModels.pro}
@@ -2387,6 +2387,15 @@ export default function AdminPage() {
                     }
                   />
                   <span className="text-sm">SalesmanChatbot 2.0 Lite</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={(engineModels as any).brain || false}
+                    onCheckedChange={(checked) =>
+                      setEngineModels((prev) => ({ ...prev, brain: Boolean(checked) }))
+                    }
+                  />
+                  <span className="text-sm font-bold text-purple-400">🧠 2.0 Brain</span>
                 </div>
               </div>
 
@@ -2461,9 +2470,10 @@ export default function AdminPage() {
               <Card key={config.id} className="bg-card/40 backdrop-blur-md border-white/5 shadow-xl hover:border-white/10 transition-all">
                 <CardHeader className="pb-4 border-b border-white/5 bg-white/5">
                   <CardTitle className="text-lg font-bold flex items-center gap-2">
-                    <Cpu className={`h-5 w-5 ${config.name.includes('pro') ? 'text-blue-400' : config.name.includes('flash') ? 'text-amber-400' : 'text-[#00ff88]'}`} />
+                    <Cpu className={`h-5 w-5 ${config.name.includes('pro') ? 'text-blue-400' : config.name.includes('flash') ? 'text-amber-400' : config.name.includes('brain') ? 'text-purple-400' : 'text-[#00ff88]'}`} />
                     {config.name === 'salesmanchatbot-pro' ? '2.0 Pro (Google)' : 
                      config.name === 'salesmanchatbot-flash' ? '2.0 Flash (OpenRouter)' : 
+                     config.name === 'salesmanchatbot-brain' ? '🧠 2.0 Brain (Gemini)' :
                      '2.0 Lite (Groq)'}
                   </CardTitle>
                   <CardDescription className="text-[10px] uppercase tracking-widest font-bold opacity-60">Engine: {config.name}</CardDescription>
