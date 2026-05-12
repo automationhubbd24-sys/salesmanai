@@ -671,7 +671,9 @@ router.post('/v1/embeddings', async (req, res) => {
         let payload = {};
 
         if (provider === 'google' || provider === 'gemini') {
-            targetUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelToUse}:embedContent`;
+            // Check if model name already includes the prefix, if not add it
+            const fullModelName = modelToUse.startsWith('models/') ? modelToUse : `models/${modelToUse}`;
+            targetUrl = `https://generativelanguage.googleapis.com/v1beta/${fullModelName}:embedContent`;
             headers['x-goog-api-key'] = keyData.key;
             payload = { content: { parts: [{ text: typeof input === 'string' ? input : input[0] }] } };
         } else {
