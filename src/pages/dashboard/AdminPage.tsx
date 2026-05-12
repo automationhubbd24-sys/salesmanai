@@ -2487,7 +2487,13 @@ export default function AdminPage() {
                     { key: 'voice', label: 'Voice Model', icon: <Mic className="h-3 w-3" />, color: 'text-amber-400' },
                     { key: 'image', label: 'Image Model', icon: <ImageIcon className="h-3 w-3" />, color: 'text-blue-400' },
                     { key: 'embed', label: 'Embed Model', icon: <DatabaseIcon className="h-3 w-3" />, color: 'text-purple-400' }
-                  ].map((modality) => (
+                  ].map((modality) => {
+                    // --- CLEANUP: Only show Embed Model for Brain Engine ---
+                    if (config.name === 'salesmanchatbot-brain' && modality.key !== 'embed') return null;
+                    // --- CLEANUP: Hide Embed Model for other engines ---
+                    if (config.name !== 'salesmanchatbot-brain' && modality.key === 'embed') return null;
+                    
+                    return (
                     <div key={modality.key} className="p-3 border border-white/5 rounded-lg bg-black/20 space-y-3">
                       <Label className={`text-[10px] uppercase font-bold flex items-center gap-2 ${modality.color}`}>
                         {modality.icon} {modality.label}
@@ -2536,7 +2542,8 @@ export default function AdminPage() {
                         />
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </CardContent>
               </Card>
             ))}
