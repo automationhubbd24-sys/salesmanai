@@ -3766,65 +3766,18 @@ export default function AdminPage() {
 
         {/* Semantic Cache Tab */}
         <TabsContent value="cache" className="space-y-4">
-          <Card className="border-white/10 bg-black/40 backdrop-blur-md">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
-              <div>
-                <CardTitle className="text-lg font-bold flex items-center gap-2">
-                   <Cpu className="h-5 w-5 text-[#00ff88]" />
-                   Global Embedding Model
-                </CardTitle>
-                <CardDescription>Common configuration for all semantic lookups</CardDescription>
-              </div>
-              <Button 
-                onClick={saveEmbeddingConfig}
-                className="bg-[#00ff88] hover:bg-[#00ff88]/90 text-black font-bold h-8 px-6"
-              >
-                Save Global Config
-              </Button>
-            </CardHeader>
-            <CardContent className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="space-y-2">
-                <Label className="text-xs uppercase text-muted-foreground">Provider</Label>
-                <Select value={embeddingConfig.provider} onValueChange={(val) => setEmbeddingConfig({ ...embeddingConfig, provider: val })}>
-                  <SelectTrigger className="h-9 bg-black/40 border-white/10">
-                    <SelectValue placeholder="Select Provider" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="openai">OpenAI</SelectItem>
-                    <SelectItem value="google">Google</SelectItem>
-                    <SelectItem value="openrouter">OpenRouter</SelectItem>
-                    <SelectItem value="groq">Groq</SelectItem>
-                    <SelectItem value="mistral">Mistral</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label className="text-xs uppercase text-muted-foreground">Base URL</Label>
-                <Input 
-                  placeholder="https://api.openai.com/v1"
-                  value={embeddingConfig.base_url}
-                  onChange={(e) => setEmbeddingConfig({ ...embeddingConfig, base_url: e.target.value })}
-                  className="h-9 bg-black/40 border-white/10 font-mono text-xs"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label className="text-xs uppercase text-muted-foreground">API Key</Label>
-                <Input 
-                  type="password"
-                  placeholder="sk-..."
-                  value={embeddingConfig.api_key}
-                  onChange={(e) => setEmbeddingConfig({ ...embeddingConfig, api_key: e.target.value })}
-                  className="h-9 bg-black/40 border-white/10 font-mono text-xs"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label className="text-xs uppercase text-muted-foreground">Model Name</Label>
-                <Input 
-                  placeholder="text-embedding-3-small"
-                  value={embeddingConfig.model}
-                  onChange={(e) => setEmbeddingConfig({ ...embeddingConfig, model: e.target.value })}
-                  className="h-9 bg-black/40 border-white/10 font-mono text-xs"
-                />
+          <Card className="border-white/10 bg-[#00ff88]/5 border-dashed">
+            <CardContent className="py-6 text-center">
+              <div className="flex flex-col items-center gap-2">
+                <div className="p-3 rounded-full bg-[#00ff88]/10 text-[#00ff88]">
+                  <ShieldCheck className="h-6 w-6" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-lg font-bold text-white">Internal Brain Engine Active</h3>
+                  <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                    All semantic lookups and embeddings are now automatically routed through our internal <strong>salesmanchatbot-brain</strong> infrastructure with proxy and key rotation. Manual API configuration is no longer required.
+                  </p>
+                </div>
               </div>
             </CardContent>
           </Card>
