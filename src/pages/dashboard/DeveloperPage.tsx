@@ -319,27 +319,34 @@ export default function DeveloperPage() {
                         <div className="space-y-8 animate-in fade-in duration-700">
                             <div className="space-y-6">
                                 <h2 className="text-4xl md:text-6xl font-bold leading-tight text-white tracking-tighter">
-                                    Build with <br />
-                                    <span className="text-primary">Unified API</span>
+                                    Get <br />
+                                    <span className="text-primary">API Access</span>
                                 </h2>
                                 <p className="text-slate-400 text-lg md:text-xl leading-relaxed max-w-md">
-                                    A simple, powerful interface for Text, Image, and Voice processing. 
-                                    Enterprise-ready infrastructure for developers.
+                                    আমাদের পাওয়ারফুল AI ইঞ্জিন আপনার নিজের অ্যাপ বা ওয়েবসাইটে ব্যবহার করতে এপিআই এক্সেস নিন।
                                 </p>
                             </div>
 
-                            <div className="space-y-4">
-                                <div className="flex items-center gap-3 text-slate-300">
-                                    <div className="h-1.5 w-1.5 rounded-full bg-primary"></div>
-                                    <span className="text-sm font-medium">Multi-modal Engine (Text, Image, Audio)</span>
-                                </div>
-                                <div className="flex items-center gap-3 text-slate-300">
-                                    <div className="h-1.5 w-1.5 rounded-full bg-primary"></div>
-                                    <span className="text-sm font-medium">99.9% Uptime SLA</span>
-                                </div>
-                                <div className="flex items-center gap-3 text-slate-300">
-                                    <div className="h-1.5 w-1.5 rounded-full bg-primary"></div>
-                                    <span className="text-sm font-medium">Developer-first Documentation</span>
+                            <div className="space-y-6">
+                                <div className="p-5 rounded-2xl bg-white/[0.02] border border-white/5 space-y-3">
+                                    <h3 className="text-white font-bold flex items-center gap-2">
+                                        <div className="h-1.5 w-1.5 rounded-full bg-primary"></div>
+                                        কিভাবে এক্সেস নিবেন?
+                                    </h3>
+                                    <ol className="space-y-3 text-sm text-slate-400">
+                                        <li className="flex gap-3">
+                                            <span className="text-primary font-bold">১.</span>
+                                            নিচের দেওয়া নাম্বারে ৫,০০০ টাকা সেন্ড মানি করুন।
+                                        </li>
+                                        <li className="flex gap-3">
+                                            <span className="text-primary font-bold">২.</span>
+                                            পেমেন্ট কমপ্লিট হলে ট্রানজেকশন আইডি (TrxID) কপি করুন।
+                                        </li>
+                                        <li className="flex gap-3">
+                                            <span className="text-primary font-bold">৩.</span>
+                                            আইডিটি ফর্মে লিখে সাবমিট করুন। ২৪ ঘন্টার মধ্যে এক্সেস পেয়ে যাবেন।
+                                        </li>
+                                    </ol>
                                 </div>
                             </div>
                         </div>
@@ -347,29 +354,47 @@ export default function DeveloperPage() {
                         {/* Right Side: Clean Form */}
                         <div className="animate-in fade-in duration-700">
                             <Card className="border-white/5 bg-[#121212] rounded-3xl overflow-hidden shadow-2xl">
-                                <CardHeader className="space-y-2 pb-8 pt-10 px-6 md:px-10">
-                                    <CardTitle className="text-3xl font-bold text-white tracking-tight">Access API</CardTitle>
+                                <CardHeader className="space-y-2 pb-8 pt-10 px-6 md:px-10 border-b border-white/5">
+                                    <CardTitle className="text-2xl font-bold text-white tracking-tight">পেমেন্ট ইনফরমেশন</CardTitle>
                                     <CardDescription className="text-slate-400">
-                                        Lifetime access for a one-time fee of <span className="text-white font-bold">5,000 BDT</span>
+                                        এককালীন ফি: <span className="text-white font-bold">৫,০০০ টাকা</span> (লাইফটাইম এক্সেস)
                                     </CardDescription>
                                 </CardHeader>
 
-                                <CardContent className="space-y-8 pb-10 px-6 md:px-10">
+                                <CardContent className="space-y-8 py-10 px-6 md:px-10">
                                     <div className="space-y-6">
+                                        <div className="p-4 rounded-xl bg-primary/5 border border-primary/10 flex items-center justify-between">
+                                            <div className="space-y-1">
+                                                <p className="text-[10px] font-bold uppercase text-slate-500 tracking-widest">বিকাশ/নগদ (Personal)</p>
+                                                <p className="text-xl font-mono font-bold text-white tracking-wider">01956871403</p>
+                                            </div>
+                                            <Button 
+                                                variant="ghost" 
+                                                size="sm" 
+                                                className="text-primary hover:text-primary hover:bg-primary/10"
+                                                onClick={() => {
+                                                    navigator.clipboard.writeText("01956871403");
+                                                    toast.success("Number copied!");
+                                                }}
+                                            >
+                                                <Copy className="h-4 w-4" />
+                                            </Button>
+                                        </div>
+
                                         <div className="space-y-2">
-                                            <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Payment Method</Label>
+                                            <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">পেমেন্ট মেথড সিলেক্ট করুন</Label>
                                             <select 
                                                 className="w-full h-14 px-4 appearance-none border border-white/10 rounded-xl bg-white/[0.02] text-white text-sm focus:ring-1 focus:ring-primary outline-none transition-all cursor-pointer"
                                                 value={regData.paymentMethod}
                                                 onChange={(e) => setRegData({...regData, paymentMethod: e.target.value})}
                                             >
-                                                <option value="bkash" className="bg-[#1a1a1a]">bKash (Personal: 01XXX-XXXXXX)</option>
-                                                <option value="nagad" className="bg-[#1a1a1a]">Nagad (Personal: 01XXX-XXXXXX)</option>
+                                                <option value="bkash" className="bg-[#1a1a1a]">bKash</option>
+                                                <option value="nagad" className="bg-[#1a1a1a]">Nagad</option>
                                             </select>
                                         </div>
 
                                         <div className="space-y-2">
-                                            <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Transaction ID</Label>
+                                            <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">ট্রানজেকশন আইডি (TrxID)</Label>
                                             <Input 
                                                 placeholder="Enter TrxID"
                                                 value={regData.transactionId}
@@ -386,7 +411,7 @@ export default function DeveloperPage() {
                                             {registering ? (
                                                 <RefreshCw className="h-5 w-5 animate-spin" />
                                             ) : (
-                                                "Unlock Developer Access"
+                                                "সাবমিট করুন"
                                             )}
                                         </Button>
                                     </div>
