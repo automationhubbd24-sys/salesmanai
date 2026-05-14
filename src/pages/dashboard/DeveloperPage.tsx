@@ -343,6 +343,13 @@ export default function DeveloperPage() {
                                     <h4 className="text-white font-bold text-sm">Real-time Analytics</h4>
                                     <p className="text-xs text-slate-500">Monitor your API usage, token consumption, and costs in real-time.</p>
                                 </div>
+                                <div className="p-4 rounded-2xl bg-primary/5 border border-primary/10 space-y-2 group hover:border-primary/30 transition-all sm:col-span-2">
+                                    <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                                        <CheckCircle2 className="h-4 w-4 text-primary" />
+                                    </div>
+                                    <h4 className="text-white font-bold text-sm">Lifetime Free API Charge</h4>
+                                    <p className="text-xs text-slate-400">একবার অ্যাক্সেস নিলে আজীবনের জন্য এপিআই চার্জ সম্পূর্ণ ফ্রি। কোনো লুকানো খরচ বা মাসিক সাবস্ক্রিপশন নেই।</p>
+                                </div>
                             </div>
 
                             {/* Code Preview */}
@@ -373,8 +380,9 @@ export default function DeveloperPage() {
                             <Card className="border-white/5 bg-[#121212] rounded-[32px] overflow-hidden shadow-2xl">
                                 <CardHeader className="space-y-1 pb-6 pt-8 px-6 md:px-8 border-b border-white/5">
                                     <CardTitle className="text-xl font-bold text-white tracking-tight">Access Card</CardTitle>
-                                    <CardDescription className="text-slate-400 text-xs">
-                                        Lifetime access: <span className="text-primary font-bold">5,000 BDT</span>
+                                    <CardDescription className="text-slate-400 text-xs leading-relaxed">
+                                        Lifetime access: <span className="text-primary font-bold">5,000 BDT</span> <br />
+                                        <span className="text-[10px] text-green-500 font-medium">No recurring fees • Lifetime Free API Usage</span>
                                     </CardDescription>
                                 </CardHeader>
 
