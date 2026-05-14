@@ -193,6 +193,15 @@ export default function DeveloperPage() {
                     'Authorization': `Bearer ${token}`
                 }
             });
+            
+            if (!res.ok) {
+                const errorData = await res.json().catch(() => ({}));
+                console.error(`[UsageStats] Server Error (${res.status}):`, errorData);
+                // Don't show toast for 500 error on fetch to avoid spamming if server is down/misconfigured
+                // toast.error(`Usage stats error: ${errorData.error || 'Server Error'}`);
+                return;
+            }
+
             const data = await res.json();
             if (data.stats) setUsageStats(data.stats);
             if (data.summary) setUsageSummary(data.summary);
@@ -219,6 +228,14 @@ export default function DeveloperPage() {
                     'Authorization': `Bearer ${token}`
                 }
             });
+
+            if (!res.ok) {
+                const errorData = await res.json().catch(() => ({}));
+                console.error(`[FetchKey] Server Error (${res.status}):`, errorData);
+                setLoading(false);
+                return;
+            }
+
             const data = await res.json();
             if (data.api_key) setApiKey(data.api_key);
         } catch (error) {

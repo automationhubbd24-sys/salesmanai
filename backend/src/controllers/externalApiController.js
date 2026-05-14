@@ -424,6 +424,15 @@ exports.getApiKey = async (req, res) => {
         if (!userId) return res.status(401).json({ error: 'Unauthorized' });
         
         const pgClient = require('../services/pgClient');
+        
+        // Check if table user_configs exists
+        try {
+            await pgClient.query('SELECT 1 FROM user_configs LIMIT 1');
+        } catch (e) {
+            console.error("[FetchKey] Table user_configs does not exist yet");
+            return res.json({ api_key: null });
+        }
+
         const result = await pgClient.query(
             'SELECT service_api_key FROM user_configs WHERE user_id = $1::uuid LIMIT 1',
             [userId]
@@ -433,7 +442,7 @@ exports.getApiKey = async (req, res) => {
         res.json({ api_key: row?.service_api_key || null });
     } catch (error) {
         console.error("Fetch Key Exception:", error);
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ error: "Failed to fetch API key", details: error.message });
     }
 };
 
@@ -451,6 +460,14 @@ exports.regenerateApiKey = async (req, res) => {
         console.log(`[KeyGen] Generating new key for user: ${userId}`);
 
         const pgClient = require('../services/pgClient');
+
+        // Check if table exists, if not create it (safe fallback)
+        try {
+            await pgClient.query('SELECT 1 FROM user_configs LIMIT 1');
+        } catch (e) {
+            console.error("[KeyGen] Table user_configs does not exist. Please run migrations.");
+            return res.status(500).json({ error: "Database table 'user_configs' is missing. Please contact admin." });
+        }
 
         // Check if config exists
         const checkRes = await pgClient.query(
@@ -476,7 +493,7 @@ exports.regenerateApiKey = async (req, res) => {
 
     } catch (error) {
         console.error("Key Gen Exception:", error);
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ error: "Failed to regenerate API key", details: error.message });
     }
 };
 
@@ -545,6 +562,18 @@ exports.getUsageStats = async (req, res) => {
         const offset = (page - 1) * limit;
 
         const pgClient = require('../services/pgClient');
+
+        // Check if table exists to avoid 500
+        try {
+            await pgClient.query('SELECT 1 FROM api_usage_stats LIMIT 1');
+        } catch (e) {
+            console.error("[UsageStats] Table api_usage_stats does not exist yet");
+            return res.json({ 
+                stats: [],
+                pagination: { total_records: 0, total_pages: 1, current_page: page, limit: limit },
+                summary: { total_cost: 0, total_tokens: 0, total_requests: 0, today_cost: 0, today_tokens: 0, today_requests: 0, yesterday_cost: 0, yesterday_tokens: 0, yesterday_requests: 0, range_cost: 0, range_tokens: 0, range_requests: 0 }
+            });
+        }
 
         // 1. Fetch Paginated Stats
         const recentResult = await pgClient.query(
@@ -658,6 +687,6 @@ exports.getUsageStats = async (req, res) => {
         });
     } catch (error) {
         console.error("[UsageStats] Error:", error);
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ error: "Failed to fetch usage statistics", details: error.message });
     }
 };
