@@ -206,11 +206,14 @@ export default function DeveloperPage() {
     };
 
     const fetchKey = async () => {
+        const token = localStorage.getItem("auth_token");
+        if (!token) {
+            setLoading(false);
+            return;
+        }
+
         setLoading(true);
         try {
-            const token = localStorage.getItem("auth_token");
-            if (!token) return;
-
             const res = await fetch(`${BACKEND_URL}/api/external/key`, {
                 headers: {
                     'Authorization': `Bearer ${token}`
@@ -226,11 +229,14 @@ export default function DeveloperPage() {
     };
 
     const doRegenerate = async () => {
+        const token = localStorage.getItem("auth_token");
+        if (!token) {
+            toast.error("You are not authenticated");
+            return;
+        }
+
         setIsRegenerating(true);
         try {
-            const token = localStorage.getItem("auth_token");
-            if (!token) return;
-
             const res = await fetch(`${BACKEND_URL}/api/external/key/regenerate`, {
                 method: 'POST',
                 headers: {
@@ -247,7 +253,6 @@ export default function DeveloperPage() {
                 } catch (e) {
                     toast.error(`Server Error (${res.status}): Check backend logs`);
                 }
-                setIsRegenerating(false);
                 return;
             }
 
@@ -255,13 +260,12 @@ export default function DeveloperPage() {
             
             if (data.error) {
                 toast.error(`Error: ${data.error}`);
-                setIsRegenerating(false);
                 return;
             }
 
             if (data.api_key) {
                 setApiKey(data.api_key);
-                toast.success("New API Key generated");
+                toast.success(apiKey ? "API Key regenerated" : "API Key generated");
                 setRegenDialogOpen(false);
             } else {
                 toast.error("Failed to generate key: No key returned from server");
@@ -278,8 +282,14 @@ export default function DeveloperPage() {
         }
     };
     
-    const regenerateKey = () => {
-        setRegenDialogOpen(true);
+    const handleGenerateClick = () => {
+        if (!apiKey) {
+            // If no key exists, generate it directly without dialog
+            doRegenerate();
+        } else {
+            // If key exists, show confirmation dialog for regeneration
+            setRegenDialogOpen(true);
+        }
     };
 
     const copyToClipboard = () => {
@@ -578,8 +588,8 @@ export default function DeveloperPage() {
                                         <Copy className="mr-2 h-4 w-4" /> Copy
                                     </Button>
                                     <Button 
-                                        onClick={regenerateKey} 
-                                        disabled={loading} 
+                                        onClick={handleGenerateClick} 
+                                        disabled={loading || isRegenerating} 
                                         className="h-12 px-8 bg-primary text-black font-bold rounded-xl hover:bg-primary/90 transition-all text-sm"
                                     >
                                         <RefreshCw className={`mr-2 h-4 w-4 ${isRegenerating ? 'animate-spin' : ''}`} />
