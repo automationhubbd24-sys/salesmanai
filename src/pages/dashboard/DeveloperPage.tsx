@@ -313,78 +313,101 @@ export default function DeveloperPage() {
             </div>
 
             {devStatus === 'none' && (
-                <div className="relative z-10 flex items-center justify-center py-10 md:py-20">
-                    <div className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-2 gap-12 items-start">
-                        {/* Left Side: Minimal Info */}
-                        <div className="space-y-8 animate-in fade-in duration-700">
-                            <div className="space-y-6">
-                                <h2 className="text-4xl md:text-6xl font-bold leading-tight text-white tracking-tighter">
-                                    Get <br />
-                                    <span className="text-primary">API Access</span>
+                <div className="relative z-10 flex items-center justify-center py-6 md:py-12 px-4">
+                    <div className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-5 gap-8 lg:gap-12 items-start">
+                        {/* Left Side: Why Buy? (3/5 width) */}
+                        <div className="lg:col-span-3 space-y-8 animate-in fade-in duration-700">
+                            <div className="space-y-4">
+                                <Badge className="bg-primary/10 text-primary border-primary/20 hover:bg-primary/20 transition-colors">Developer Portal</Badge>
+                                <h2 className="text-3xl md:text-5xl font-bold leading-tight text-white tracking-tight">
+                                    Build Smarter Apps with <span className="text-primary">SalesmanAI API</span>
                                 </h2>
-                                <p className="text-slate-400 text-lg md:text-xl leading-relaxed max-w-md">
-                                    আমাদের পাওয়ারফুল AI ইঞ্জিন আপনার নিজের অ্যাপ বা ওয়েবসাইটে ব্যবহার করতে এপিআই এক্সেস নিন।
+                                <p className="text-slate-400 text-base md:text-lg leading-relaxed max-w-xl">
+                                    আমাদের পাওয়ারফুল AI ইঞ্জিন ব্যবহার করে আপনার নিজের অ্যাপ্লিকেশনে Text, Vision এবং Voice ফিচার যুক্ত করুন মাত্র কয়েক লাইনে।
                                 </p>
                             </div>
 
-                            <div className="space-y-6">
-                                <div className="p-5 rounded-2xl bg-white/[0.02] border border-white/5 space-y-3">
-                                    <h3 className="text-white font-bold flex items-center gap-2">
-                                        <div className="h-1.5 w-1.5 rounded-full bg-primary"></div>
-                                        কিভাবে এক্সেস নিবেন?
-                                    </h3>
-                                    <ol className="space-y-3 text-sm text-slate-400">
-                                        <li className="flex gap-3">
-                                            <span className="text-primary font-bold">১.</span>
-                                            নিচের দেওয়া নাম্বারে ৫,০০০ টাকা সেন্ড মানি করুন।
-                                        </li>
-                                        <li className="flex gap-3">
-                                            <span className="text-primary font-bold">২.</span>
-                                            পেমেন্ট কমপ্লিট হলে ট্রানজেকশন আইডি (TrxID) কপি করুন।
-                                        </li>
-                                        <li className="flex gap-3">
-                                            <span className="text-primary font-bold">৩.</span>
-                                            আইডিটি ফর্মে লিখে সাবমিট করুন। ২৪ ঘন্টার মধ্যে এক্সেস পেয়ে যাবেন।
-                                        </li>
-                                    </ol>
+                            {/* Feature Preview Boxes */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2 group hover:border-primary/30 transition-all">
+                                    <div className="h-8 w-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
+                                        <Sparkles className="h-4 w-4 text-blue-400" />
+                                    </div>
+                                    <h4 className="text-white font-bold text-sm">Unified AI Engine</h4>
+                                    <p className="text-xs text-slate-500">Access Text, Image, and Audio models through a single API endpoint.</p>
                                 </div>
+                                <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2 group hover:border-primary/30 transition-all">
+                                    <div className="h-8 w-8 rounded-lg bg-green-500/10 flex items-center justify-center">
+                                        <Activity className="h-4 w-4 text-green-400" />
+                                    </div>
+                                    <h4 className="text-white font-bold text-sm">Real-time Analytics</h4>
+                                    <p className="text-xs text-slate-500">Monitor your API usage, token consumption, and costs in real-time.</p>
+                                </div>
+                            </div>
+
+                            {/* Code Preview */}
+                            <div className="rounded-2xl overflow-hidden border border-white/5 bg-black/40 shadow-inner group">
+                                <div className="px-4 py-2 bg-white/5 border-b border-white/5 flex items-center justify-between">
+                                    <span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest">example_request.js</span>
+                                    <div className="flex gap-1.5">
+                                        <div className="h-2 w-2 rounded-full bg-red-500/20"></div>
+                                        <div className="h-2 w-2 rounded-full bg-amber-500/20"></div>
+                                        <div className="h-2 w-2 rounded-full bg-green-500/20"></div>
+                                    </div>
+                                </div>
+                                <pre className="p-4 text-[10px] md:text-xs font-mono text-primary/80 leading-relaxed overflow-x-auto">
+{`const response = await fetch('api.salesmanchatbot.online/v1/chat', {
+  method: 'POST',
+  headers: { 'Authorization': 'Bearer YOUR_API_KEY' },
+  body: JSON.stringify({
+    model: 'salesmanchatbot-pro',
+    prompt: 'Hello AI!'
+  })
+});`}
+                                </pre>
                             </div>
                         </div>
 
-                        {/* Right Side: Clean Form */}
-                        <div className="animate-in fade-in duration-700">
-                            <Card className="border-white/5 bg-[#121212] rounded-3xl overflow-hidden shadow-2xl">
-                                <CardHeader className="space-y-2 pb-8 pt-10 px-6 md:px-10 border-b border-white/5">
-                                    <CardTitle className="text-2xl font-bold text-white tracking-tight">পেমেন্ট ইনফরমেশন</CardTitle>
-                                    <CardDescription className="text-slate-400">
-                                        এককালীন ফি: <span className="text-white font-bold">৫,০০০ টাকা</span> (লাইফটাইম এক্সেস)
+                        {/* Right Side: Access Card (2/5 width) */}
+                        <div className="lg:col-span-2 animate-in fade-in duration-700 lg:sticky lg:top-8">
+                            <Card className="border-white/5 bg-[#121212] rounded-[32px] overflow-hidden shadow-2xl">
+                                <CardHeader className="space-y-1 pb-6 pt-8 px-6 md:px-8 border-b border-white/5">
+                                    <CardTitle className="text-xl font-bold text-white tracking-tight">Access Card</CardTitle>
+                                    <CardDescription className="text-slate-400 text-xs">
+                                        Lifetime access: <span className="text-primary font-bold">5,000 BDT</span>
                                     </CardDescription>
                                 </CardHeader>
 
-                                <CardContent className="space-y-8 py-10 px-6 md:px-10">
-                                    <div className="space-y-6">
-                                        <div className="p-4 rounded-xl bg-primary/5 border border-primary/10 flex items-center justify-between">
-                                            <div className="space-y-1">
-                                                <p className="text-[10px] font-bold uppercase text-slate-500 tracking-widest">বিকাশ/নগদ (Personal)</p>
-                                                <p className="text-xl font-mono font-bold text-white tracking-wider">01956871403</p>
+                                <CardContent className="space-y-6 py-8 px-6 md:px-8">
+                                    <div className="space-y-5">
+                                        {/* Simple Instructions */}
+                                        <div className="space-y-2">
+                                            <p className="text-[10px] font-bold uppercase text-slate-500 tracking-widest ml-1">Payment Instruction</p>
+                                            <div className="p-3.5 rounded-2xl bg-primary/5 border border-primary/10 space-y-2">
+                                                <div className="flex items-center justify-between">
+                                                    <span className="text-xs text-slate-300 font-medium">bKash/Nagad (Personal)</span>
+                                                </div>
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <span className="text-lg font-mono font-bold text-white">01956871403</span>
+                                                    <Button 
+                                                        variant="ghost" 
+                                                        size="icon" 
+                                                        className="h-8 w-8 text-primary hover:bg-primary/10"
+                                                        onClick={() => {
+                                                            navigator.clipboard.writeText("01956871403");
+                                                            toast.success("Copied to clipboard");
+                                                        }}
+                                                    >
+                                                        <Copy className="h-3.5 w-3.5" />
+                                                    </Button>
+                                                </div>
                                             </div>
-                                            <Button 
-                                                variant="ghost" 
-                                                size="sm" 
-                                                className="text-primary hover:text-primary hover:bg-primary/10"
-                                                onClick={() => {
-                                                    navigator.clipboard.writeText("01956871403");
-                                                    toast.success("Number copied!");
-                                                }}
-                                            >
-                                                <Copy className="h-4 w-4" />
-                                            </Button>
                                         </div>
 
                                         <div className="space-y-2">
-                                            <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">পেমেন্ট মেথড সিলেক্ট করুন</Label>
+                                            <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Payment Method</Label>
                                             <select 
-                                                className="w-full h-14 px-4 appearance-none border border-white/10 rounded-xl bg-white/[0.02] text-white text-sm focus:ring-1 focus:ring-primary outline-none transition-all cursor-pointer"
+                                                className="w-full h-11 px-3 appearance-none border border-white/10 rounded-xl bg-white/[0.02] text-white text-xs focus:ring-1 focus:ring-primary outline-none transition-all cursor-pointer"
                                                 value={regData.paymentMethod}
                                                 onChange={(e) => setRegData({...regData, paymentMethod: e.target.value})}
                                             >
@@ -394,34 +417,34 @@ export default function DeveloperPage() {
                                         </div>
 
                                         <div className="space-y-2">
-                                            <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">ট্রানজেকশন আইডি (TrxID)</Label>
+                                            <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Transaction ID (TrxID)</Label>
                                             <Input 
-                                                placeholder="Enter TrxID"
+                                                placeholder="Paste TrxID here"
                                                 value={regData.transactionId}
                                                 onChange={(e) => setRegData({...regData, transactionId: e.target.value})}
-                                                className="h-14 px-4 rounded-xl bg-white/[0.02] border-white/10 text-white placeholder:text-white/10 focus:ring-1 focus:ring-primary transition-all text-base"
+                                                className="h-11 px-3 rounded-xl bg-white/[0.02] border-white/10 text-white placeholder:text-white/10 focus:ring-1 focus:ring-primary transition-all text-sm"
                                             />
                                         </div>
 
                                         <Button 
-                                            className="w-full h-14 text-base font-bold bg-primary text-black hover:bg-primary/90 rounded-xl transition-all active:scale-[0.98]" 
+                                            className="w-full h-12 text-sm font-bold bg-primary text-black hover:bg-primary/90 rounded-xl transition-all active:scale-[0.98] mt-2 shadow-[0_8px_16px_rgba(0,255,136,0.1)]" 
                                             onClick={handleRegister}
                                             disabled={registering || !regData.transactionId}
                                         >
                                             {registering ? (
-                                                <RefreshCw className="h-5 w-5 animate-spin" />
+                                                <RefreshCw className="h-4 w-4 animate-spin" />
                                             ) : (
-                                                "সাবমিট করুন"
+                                                "Unlock Access"
                                             )}
                                         </Button>
                                     </div>
 
                                     <div className="flex justify-center">
                                         <button 
-                                            className="text-xs font-medium text-slate-500 hover:text-slate-300 transition-colors flex items-center gap-2"
+                                            className="text-[10px] font-medium text-slate-500 hover:text-slate-300 transition-colors flex items-center gap-1.5"
                                             onClick={() => window.history.back()}
                                         >
-                                            <ArrowLeft className="h-3 w-3" /> Back to Dashboard
+                                            <ArrowLeft className="h-3 w-3" /> Dashboard
                                         </button>
                                     </div>
                                 </CardContent>
