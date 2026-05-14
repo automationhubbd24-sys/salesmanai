@@ -426,10 +426,20 @@ exports.getApiKey = async (req, res) => {
         const pgClient = require('../services/pgClient');
         
         // Check if table user_configs exists
-        try {
-            await pgClient.query('SELECT 1 FROM user_configs LIMIT 1');
-        } catch (e) {
-            console.error("[FetchKey] Table user_configs does not exist yet");
+        const tableCheck = await pgClient.query(
+            "SELECT tablename FROM pg_catalog.pg_tables WHERE tablename = 'user_configs'"
+        );
+        if (tableCheck.rows.length === 0) {
+            console.warn("[FetchKey] Table user_configs does not exist yet");
+            return res.json({ api_key: null });
+        }
+
+        // Check if service_api_key column exists
+        const columnCheck = await pgClient.query(
+            "SELECT column_name FROM information_schema.columns WHERE table_name='user_configs' AND column_name='service_api_key'"
+        );
+        if (columnCheck.rows.length === 0) {
+            console.warn("[FetchKey] service_api_key column missing in user_configs");
             return res.json({ api_key: null });
         }
 
@@ -563,11 +573,13 @@ exports.getUsageStats = async (req, res) => {
 
         const pgClient = require('../services/pgClient');
 
-        // Check if table exists to avoid 500
-        try {
-            await pgClient.query('SELECT 1 FROM api_usage_stats LIMIT 1');
-        } catch (e) {
-            console.error("[UsageStats] Table api_usage_stats does not exist yet");
+        // Robust check if table exists
+        const tableCheck = await pgClient.query(
+            "SELECT tablename FROM pg_catalog.pg_tables WHERE tablename = 'api_usage_stats'"
+        );
+
+        if (tableCheck.rows.length === 0) {
+            console.warn("[UsageStats] Table api_usage_stats does not exist yet");
             return res.json({ 
                 stats: [],
                 pagination: { total_records: 0, total_pages: 1, current_page: page, limit: limit },
@@ -575,9 +587,18 @@ exports.getUsageStats = async (req, res) => {
             });
         }
 
+        // Check for specific columns (cost, tokens) to avoid 500 if migration failed
+        const columnCheck = await pgClient.query(
+            "SELECT column_name FROM information_schema.columns WHERE table_name='api_usage_stats' AND column_name IN ('cost', 'tokens')"
+        );
+        const hasCost = columnCheck.rows.some(r => r.column_name === 'cost');
+        const hasTokens = columnCheck.rows.some(r => r.column_name === 'tokens');
+
+        const selectCols = `id, user_id, model, ${hasTokens ? 'tokens' : '0 as tokens'}, ${hasCost ? 'cost' : '0 as cost'}, created_at`;
+
         // 1. Fetch Paginated Stats
         const recentResult = await pgClient.query(
-            `SELECT *
+            `SELECT ${selectCols}
              FROM api_usage_stats
              WHERE user_id = $1::uuid
              ORDER BY created_at DESC
@@ -594,10 +615,10 @@ exports.getUsageStats = async (req, res) => {
         const totalCount = countResult.rows[0]?.total || 0;
         const totalPages = Math.ceil(totalCount / limit);
 
-        // 2. Calculate Totals (Same as before)
-
+        // 2. Calculate Totals
         const totalResult = await pgClient.query(
-            'SELECT cost, tokens FROM api_usage_stats WHERE user_id = $1::uuid',
+            `SELECT ${hasCost ? 'cost' : '0 as cost'}, ${hasTokens ? 'tokens' : '0 as tokens'} 
+             FROM api_usage_stats WHERE user_id = $1::uuid`,
             [userId]
         );
         const totalRows = totalResult.rows || [];
@@ -606,27 +627,26 @@ exports.getUsageStats = async (req, res) => {
         const totalTokens = totalRows.reduce((sum, item) => sum + (Number(item.tokens) || 0), 0);
         const totalRequests = totalRows.length;
 
-        // Today's Cost/Tokens/Requests
+        // Today's stats
         const today = new Date().toISOString().split('T')[0];
         const todayResult = await pgClient.query(
-            `SELECT cost, tokens
+            `SELECT ${hasCost ? 'cost' : '0 as cost'}, ${hasTokens ? 'tokens' : '0 as tokens'}
              FROM api_usage_stats
              WHERE user_id = $1::uuid
                AND created_at >= $2::timestamptz`,
             [userId, `${today}T00:00:00Z`]
         );
         const todayRows = todayResult.rows || [];
-
         const todayCost = todayRows.reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
         const todayTokens = todayRows.reduce((sum, item) => sum + (Number(item.tokens) || 0), 0);
         const todayRequests = todayRows.length;
 
-        // Yesterday Cost/Tokens/Requests
+        // Yesterday stats
         const y = new Date();
         y.setDate(y.getDate() - 1);
         const yesterday = y.toISOString().split('T')[0];
         const yesterdayResult = await pgClient.query(
-            `SELECT cost, tokens
+            `SELECT ${hasCost ? 'cost' : '0 as cost'}, ${hasTokens ? 'tokens' : '0 as tokens'}
              FROM api_usage_stats
              WHERE user_id = $1::uuid
                AND created_at >= $2::timestamptz
@@ -634,56 +654,31 @@ exports.getUsageStats = async (req, res) => {
             [userId, `${yesterday}T00:00:00Z`, `${yesterday}T23:59:59Z`]
         );
         const yesterdayRows = yesterdayResult.rows || [];
-
         const yesterdayCost = yesterdayRows.reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
         const yesterdayTokens = yesterdayRows.reduce((sum, item) => sum + (Number(item.tokens) || 0), 0);
         const yesterdayRequests = yesterdayRows.length;
 
-        // Custom Range Cost
-        let rangeCost = 0;
-        let rangeTokens = 0;
-        let rangeRequests = 0;
+        // Range stats
+        let rangeCost = 0, rangeTokens = 0, rangeRequests = 0;
         if (startDate && endDate) {
             const rangeResult = await pgClient.query(
-                `SELECT cost, tokens
+                `SELECT ${hasCost ? 'cost' : '0 as cost'}, ${hasTokens ? 'tokens' : '0 as tokens'}
                  FROM api_usage_stats
                  WHERE user_id = $1::uuid
                    AND created_at >= $2::timestamptz
                    AND created_at <= $3::timestamptz`,
                 [userId, `${startDate}T00:00:00Z`, `${endDate}T23:59:59Z`]
             );
-            
             const rangeRows = rangeResult.rows || [];
-
             rangeCost = rangeRows.reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
             rangeTokens = rangeRows.reduce((sum, item) => sum + (Number(item.tokens) || 0), 0);
             rangeRequests = rangeRows.length;
         }
 
         res.json({ 
-            stats: stats,
-            pagination: {
-                total_records: totalCount,
-                total_pages: totalPages,
-                current_page: page,
-                limit: limit
-            },
-            summary: {
-                total_cost: totalCost,
-                total_tokens: totalTokens,
-                total_requests: totalRequests,
-                today_cost: todayCost,
-                today_tokens: todayTokens,
-                today_requests: todayRequests,
-                yesterday_cost: yesterdayCost,
-                yesterday_tokens: yesterdayTokens,
-                yesterday_requests: yesterdayRequests,
-                range_cost: rangeCost,
-                range_tokens: rangeTokens,
-                range_requests: rangeRequests,
-                start_date: startDate,
-                end_date: endDate
-            }
+            stats,
+            pagination: { total_records: totalCount, total_pages: totalPages, current_page: page, limit },
+            summary: { total_cost: totalCost, total_tokens: totalTokens, total_requests: totalRequests, today_cost: todayCost, today_tokens: todayTokens, today_requests: todayRequests, yesterday_cost: yesterdayCost, yesterday_tokens: yesterdayTokens, yesterday_requests: yesterdayRequests, range_cost: rangeCost, range_tokens: rangeTokens, range_requests: rangeRequests }
         });
     } catch (error) {
         console.error("[UsageStats] Error:", error);

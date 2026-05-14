@@ -337,14 +337,29 @@ exports.verifyDeveloperLogin = async (req, res) => {
 exports.getDeveloperStats = async (req, res) => {
     try {
         const { userId } = req.params;
+        if (!userId) return res.status(400).json({ error: 'User ID required' });
+
+        const pgClient = require('../services/pgClient');
+
+        // Robust check for developer_status column
+        const columnCheck = await pgClient.query(
+            "SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name='developer_status'"
+        );
+
+        if (columnCheck.rows.length === 0) {
+            console.warn('[GetDevStats] developer_status column missing in users table');
+            return res.json({ developer_status: 'none' });
+        }
+
         const { rows } = await pgClient.query(
-            'SELECT developer_status FROM users WHERE id = $1',
+            'SELECT developer_status FROM users WHERE id = $1::uuid',
             [userId]
         );
         if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
-        res.json(rows[0]);
+        res.json(rows[0] || { developer_status: 'none' });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error("[GetDevStats] Error:", err);
+        res.status(500).json({ error: "Failed to fetch developer stats", details: err.message });
     }
 };
 

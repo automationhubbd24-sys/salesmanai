@@ -75,10 +75,16 @@ export default function DeveloperPage() {
     const fetchDevStatus = async () => {
         try {
             if (!userId) return;
-            const { data } = await api.get(`/auth/developer/stats/${userId}`);
+            const res = await fetch(`${BACKEND_URL}/api/auth/developer/stats/${userId}`);
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                console.error("[DevStatus] Error:", err);
+                return;
+            }
+            const data = await res.json();
             setDevStatus(data.developer_status || 'none');
-        } catch (err) {
-            console.error(err);
+        } catch (error) {
+            console.error("Failed to fetch developer status", error);
         }
     };
 
