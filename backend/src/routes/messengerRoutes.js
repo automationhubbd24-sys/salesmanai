@@ -205,21 +205,60 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
         if (pageExists.rowCount === 0) {
             console.log(`[Messenger] New integration detected for ${page_id}. Giving 100 free credits.`);
             try {
-                // Ensure user config exists
-                const userConfig = await pgClient.query(
-                    'SELECT user_id, message_credit FROM user_configs WHERE LOWER(email) = LOWER($1) OR user_id::text = $2',
-                    [ownerEmail, userId]
+                // Check if this page has EVER received free credits to prevent exploit (Connect/Disconnect cycle)
+                const alreadyGranted = await pgClient.query(
+                    'SELECT id FROM integration_credit_history WHERE integration_id = $1 AND platform = $2',
+                    [String(page_id), 'messenger']
                 );
 
-                if (userConfig.rowCount > 0) {
-                    await pgClient.query(
-                        'UPDATE user_configs SET message_credit = message_credit + 100 WHERE user_id::text = $1',
-                        [String(userConfig.rows[0].user_id)]
+                if (alreadyGranted.rowCount === 0) {
+                    // Ensure user config exists
+                    const userConfig = await pgClient.query(
+                        'SELECT user_id, message_credit FROM user_configs WHERE LOWER(email) = LOWER($1) OR user_id::text = $2',
+                        [ownerEmail, userId]
                     );
-                    console.log(`[Messenger] Added 100 free credits to user ${userConfig.rows[0].user_id} via salesmanchatbot-pro source.`);
+
+                    if (userConfig.rowCount > 0) {
+                        const targetUserId = String(userConfig.rows[0].user_id);
+                        
+                        await pgClient.query(
+                            'UPDATE user_configs SET message_credit = message_credit + 100 WHERE user_id::text = $1',
+                            [targetUserId]
+                        );
+                        
+                        // Mark as granted permanently
+                        await pgClient.query(
+                            'INSERT INTO integration_credit_history (integration_id, platform, user_id, credit_type, amount) VALUES ($1, $2, $3, $4, $5)',
+                            [String(page_id), 'messenger', targetUserId, 'welcome_bonus', 100]
+                        );
+
+                        console.log(`[Messenger] Added 100 free credits to user ${targetUserId} and logged to history.`);
+                    }
+                } else {
+                    console.log(`[Messenger] Page ${page_id} already received welcome bonus in the past. Skipping credit grant.`);
                 }
             } catch (creditErr) {
                 console.error('[Messenger] Failed to grant free credits:', creditErr.message);
+                // Attempt to create history table if it doesn't exist
+                if (creditErr.message.includes('relation "integration_credit_history" does not exist')) {
+                    try {
+                        await pgClient.query(`
+                            CREATE TABLE IF NOT EXISTS integration_credit_history (
+                                id SERIAL PRIMARY KEY,
+                                integration_id TEXT NOT NULL,
+                                platform TEXT NOT NULL,
+                                user_id TEXT NOT NULL,
+                                credit_type TEXT NOT NULL,
+                                amount INTEGER DEFAULT 0,
+                                granted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                            );
+                            CREATE INDEX IF NOT EXISTS idx_integration_credit_history_id ON integration_credit_history(integration_id);
+                        `);
+                        console.log("[Messenger] Created integration_credit_history table.");
+                    } catch (tableErr) {
+                        console.error("[Messenger] Failed to create credit history table:", tableErr.message);
+                    }
+                }
             }
         }
 
@@ -256,59 +295,40 @@ router.get('/config/:id', async (req, res) => {
 
         console.log(`[GET /config/:id] Request ID: ${id}, User: ${userEmail}`);
 
-        let configRow = null;
+        // Try lookup by page_id (String) first since that's what the frontend mostly sends
+        const configByPageId = await pgClient.query(
+            'SELECT * FROM fb_message_database WHERE page_id = $1 OR CAST(id AS TEXT) = $1',
+            [id]
+        );
 
-        // Try lookup by primary key (id) first IF it looks like a database integer (not a page ID)
-        // Assume database IDs are relatively small (e.g. < 2 billion), while Page IDs are huge strings
-        const isInteger = /^\d+$/.test(id) && Number(id) < 2147483647;
-
-        if (isInteger) {
-            const configResult = await pgClient.query(
-                'SELECT * FROM fb_message_database WHERE id = $1',
-                [parseInt(id, 10)]
-            );
-             if (configResult.rowCount > 0) {
-                configRow = configResult.rows[0];
-                console.log(`[GET /config/:id] Found by DB ID: ${id}`);
-            }
+        if (configByPageId.rowCount > 0) {
+            configRow = configByPageId.rows[0];
+            console.log(`[GET /config/:id] Found config for: ${id}`);
         }
 
         if (!configRow) {
-            // Fallback: Try lookup by page_id (in case id passed is actually page_id string)
-            // Use TRIM to handle potential whitespace issues
-            const configByPageId = await pgClient.query(
-                'SELECT * FROM fb_message_database WHERE page_id = $1',
-                [id]
-            );
-            if (configByPageId.rowCount > 0) {
-                configRow = configByPageId.rows[0];
-                console.log(`[GET /config/:id] Found by Page ID: ${id}`);
-            }
-        }
-
-        if (!configRow) {
-            console.log(`[GET /config/:id] Config not found for ${id}. Attempting auto-create...`);
-            // Second Fallback: Auto-create if page exists in page_access_token_message but config missing
-             const pageExists = await pgClient.query(
+            // Check if page exists in page_access_token_message but config missing
+            const pageExists = await pgClient.query(
                 'SELECT page_id FROM page_access_token_message WHERE page_id = $1',
                 [id]
             );
             
             if (pageExists.rowCount > 0) {
-                 try {
+                console.log(`[GET /config/:id] Config missing for page ${id}. Auto-creating...`);
+                try {
                     const insertRes = await pgClient.query(
-                        `INSERT INTO fb_message_database (page_id, text_prompt)
-                         VALUES ($1, $2)
+                        `INSERT INTO fb_message_database (page_id, text_prompt, engine_override, wait, image_send, image_detection, template)
+                         VALUES ($1, $2, $3, $4, $5, $6, $7)
                          RETURNING *`,
-                        [id, 'You are a helpful sales assistant.']
+                        [id, 'You are a helpful sales assistant.', 'salesmanchatbot-flash', 2, true, true, true]
                     );
                     configRow = insertRes.rows[0];
                     console.log(`[GET /config/:id] Auto-created config for Page ID: ${id}`);
                 } catch (err) {
-                    console.error("Error auto-creating fb config in /config/:id:", err);
+                    console.error("Error auto-creating fb config in GET:", err);
                 }
             } else {
-                 // Final attempt: Check if the ID was actually a DB ID but missed (unlikely if isInteger logic holds)
+                 // Final attempt: Check if the ID was actually a DB ID but missed
                  console.log(`[GET /config/:id] Page not found in token table for ID: ${id}`);
             }
         }

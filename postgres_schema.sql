@@ -453,7 +453,7 @@ CREATE TABLE IF NOT EXISTS products (
   price NUMERIC DEFAULT 0,
   currency TEXT DEFAULT 'USD',
   stock INTEGER DEFAULT 0,
-  allowed_page_ids JSONB DEFAULT '[]'::jsonb, -- FB Page IDs
+  allowed_messenger_ids JSONB DEFAULT '[]'::jsonb, -- FB Page IDs
   allowed_wa_sessions JSONB DEFAULT '[]'::jsonb, -- WhatsApp Session Names
   keywords TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),

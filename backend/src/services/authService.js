@@ -127,7 +127,7 @@ function signToken(user) {
         sub: user.id,
         email: user.email
     };
-    const token = jwt.sign(payload, secret, { expiresIn: '7d' });
+    const token = jwt.sign(payload, secret, { expiresIn: '90d' });
     return token;
 }
 

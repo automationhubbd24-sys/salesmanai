@@ -1186,14 +1186,14 @@ export default function MessengerSettingsPage() {
                                                     </div>
                                                 )}
 
-                                                <div className="flex flex-wrap justify-end gap-1.5 mt-1">
+                                                <div className="flex flex-wrap justify-end gap-2 mt-2">
                                                     {detailedCredits?.bonus_credit > 0 && (
-                                                        <div className="px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-[9px] text-amber-500 font-bold">
+                                                        <div className="px-3 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[12px] text-amber-500 font-black shadow-sm">
                                                             BONUS: {detailedCredits.bonus_credit.toLocaleString()}
                                                         </div>
                                                     )}
                                                     {detailedCredits?.permanent_credit > 0 && (
-                                                        <div className="px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-[9px] text-emerald-500 font-bold">
+                                                        <div className="px-3 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-[12px] text-emerald-500 font-black shadow-sm">
                                                             PERMANENT: {detailedCredits.permanent_credit.toLocaleString()}
                                                         </div>
                                                     )}

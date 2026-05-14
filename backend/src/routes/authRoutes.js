@@ -30,4 +30,13 @@ router.post('/payments/redeem', authMiddleware, authController.redeemCoupon);
 router.post('/payments/buy-credits', authMiddleware, authController.buyCredits);
 router.post('/payments/buy-plan', authMiddleware, authController.buyPlan);
 
+// --- DEVELOPER API SYSTEM ROUTES ---
+router.post('/developer/register', authMiddleware, authController.registerDeveloper);
+router.post('/developer/login', authMiddleware, authController.verifyDeveloperLogin);
+router.get('/developer/stats/:userId', authMiddleware, authController.getDeveloperStats);
+
+// Admin Developer Routes
+router.get('/admin/developer/requests', adminAuthMiddleware, authController.listDeveloperRequests);
+router.post('/admin/developer/requests/:id/approve', adminAuthMiddleware, authController.approveDeveloper);
+
 module.exports = router;

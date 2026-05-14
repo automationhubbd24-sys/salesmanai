@@ -24,23 +24,27 @@ async function updateSchema() {
         // but ONLY IDs that are not WA sessions.
         // Also ensure allowed_wa_sessions is clean.
         
-        const products = await client.query("SELECT id, allowed_page_ids, allowed_wa_sessions FROM products");
-        for (const p of products.rows) {
-            let oldPageIds = Array.isArray(p.allowed_page_ids) ? p.allowed_page_ids : [];
-            let oldWaSessions = Array.isArray(p.allowed_wa_sessions) ? p.allowed_wa_sessions : [];
-            
-            // All unique IDs
-            const allIds = Array.from(new Set([...oldPageIds, ...oldWaSessions]));
-            
-            const messengerIds = allIds.filter(id => !id.startsWith('bottow_') && !id.startsWith('session_'));
-            const waSessions = allIds.filter(id => id.startsWith('bottow_') || id.startsWith('session_'));
-            
-            await client.query(
-                'UPDATE products SET allowed_messenger_ids = $1::jsonb, allowed_wa_sessions = $2::jsonb WHERE id = $3',
-                [JSON.stringify(messengerIds), JSON.stringify(waSessions), p.id]
-            );
+        try {
+            const products = await client.query("SELECT id, allowed_page_ids, allowed_wa_sessions FROM products");
+            for (const p of products.rows) {
+                let oldPageIds = Array.isArray(p.allowed_page_ids) ? p.allowed_page_ids : [];
+                let oldWaSessions = Array.isArray(p.allowed_wa_sessions) ? p.allowed_wa_sessions : [];
+                
+                // All unique IDs
+                const allIds = Array.from(new Set([...oldPageIds, ...oldWaSessions]));
+                
+                const messengerIds = allIds.filter(id => !id.startsWith('bottow_') && !id.startsWith('session_'));
+                const waSessions = allIds.filter(id => id.startsWith('bottow_') || id.startsWith('session_'));
+                
+                await client.query(
+                    'UPDATE products SET allowed_messenger_ids = $1::jsonb, allowed_wa_sessions = $2::jsonb WHERE id = $3',
+                    [JSON.stringify(messengerIds), JSON.stringify(waSessions), p.id]
+                );
+            }
+            console.log("Data migrated to new structure.");
+        } catch (migErr) {
+            console.warn("Migration warning (allowed_page_ids might be missing):", migErr.message);
         }
-        console.log("Data migrated to new structure.");
 
     } catch (e) {
         console.error(e);

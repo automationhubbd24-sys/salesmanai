@@ -1386,16 +1386,18 @@ STRICT RULES:
         
         // --- INJECT FORMATTING INSTRUCTION (Tool-Driven Product System) ---
         let finalPrompt = pagePrompts?.text_prompt || "";
-        if (finalPrompt) {
-             finalPrompt += `\n\n[PROFESSIONAL OUTPUT RULES]\n` +
+        const professionalRules = `\n\n[PROFESSIONAL OUTPUT RULES]\n` +
                 `1) IDENTITY: You are a professional human sales representative. Talk naturally.\n` +
                 `2) TOOL-FIRST: If the user asks about product price/details, you MUST call tools. Do NOT invent prices or descriptions.\n` +
-                `   - Step A: Call resolve_product with the user's query.\n` +
-                `   - Step B: If a single clear candidate is returned, call get_product with product_id.\n` +
-                `   - Step C: For final price, call compute_offer_price with line_items.\n` +
-                `3) IMAGE REQUEST: If the user asks for a photo/picture, include image_url from get_product in reply.\n` +
-                `4) LISTING PRODUCTS: If asked "What do you sell?", list 3-5 names from the [Inventory List] naturally and ask which one they are interested in.\n` +
-                `5) NO HALLUCINATIONS: Never guess or invent prices. Always use tool data only.\n`;
+                `3) IMAGE DECISION: If you decide to send a product's image (based on user request or appropriateness), you MUST append [PRODUCT_ID:id] to your reply. Example: "Yes, it is available. [PRODUCT_ID:82]".\n` +
+                `4) SYSTEM PROMPT PRIORITY: If your custom instructions (System Prompt) say NOT to send images proactively, you MUST obey that and only use the [PRODUCT_ID:id] tag when the user explicitly asks for a photo.\n` +
+                `5) LISTING PRODUCTS: If asked "What do you sell?", list 3-5 names naturally and ask which one they are interested in.\n` +
+                `6) NO HALLUCINATIONS: Never guess or invent prices. Always use tool data only.\n`;
+
+        if (finalPrompt) {
+             finalPrompt += professionalRules;
+        } else {
+             finalPrompt = professionalRules;
         }
         
         // Use a shallow copy of config to avoid modifying the original config object
@@ -1404,18 +1406,42 @@ STRICT RULES:
              aiConfig.text_prompt = finalPrompt;
         }
 
-        const aiResponse = await aiService.generateResponse({
-            pageId: pageId,
-            userId: senderId,
-            userMessage: finalUserMessage,
-            history: effectiveHistory,
-            imageUrls: [], // imageUrls (Already processed)
-            audioUrls: [], // audioUrls (Already processed)
-            config: aiConfig, // Use modified config
-            platform: 'messenger',
-            extraTokenUsage: totalVisionTokens + totalAudioTokens,
-            senderName: senderName
-        });
+        let aiResponse;
+        try {
+            aiResponse = await aiService.generateResponse({
+                pageId: pageId,
+                userId: senderId,
+                userMessage: finalUserMessage,
+                history: effectiveHistory,
+                imageUrls: [], // imageUrls (Already processed)
+                audioUrls: [], // audioUrls (Already processed)
+                config: aiConfig, // Use modified config
+                platform: 'messenger',
+                extraTokenUsage: totalVisionTokens + totalAudioTokens,
+                senderName: senderName
+            });
+        } catch (genErr) {
+            console.error(`[Webhook] AI Generation CRITICAL Error:`, genErr.message);
+            
+            if (genErr.message.includes('PRODUCT_SEARCH_API_FAILURE')) {
+                // Log the failure to dashboard for visibility
+                await dbService.saveFbChat({
+                    page_id: pageId,
+                    sender_id: pageId,
+                    recipient_id: senderId,
+                    message_id: `err_search_${Date.now()}`,
+                    text: `[CRITICAL ERROR] Product search failed due to API problem. (Code: 503_VECTOR_DB_FAIL). Details: ${genErr.message}`,
+                    timestamp: Date.now(),
+                    status: 'api_failure',
+                    reply_by: 'system'
+                });
+                // STOP THE PROCESS: No message to user
+                return;
+            }
+            
+            // For other errors, fallback to existing null check logic or throw
+            aiResponse = null;
+        }
         
         if (aiResponse == null) {
              console.error(`[Webhook] AI generation failed or returned NULL for ${senderId}. No response sent to user.`);
@@ -1985,51 +2011,66 @@ STRICT RULES:
         }
 
         // --- TIER 2: AGENTIC ACTION (Priority if no Tags exist) ---
-        if (extractedImages.length === 0 && aiResponse.action && aiResponse.action !== "NONE" && aiResponse.product_id) {
-            console.log(`[Image Selection] TIER 2: Using Agentic Delivery for ID: ${aiResponse.product_id}`);
-            try {
-                // Check if product_id is a valid number (BigInt compatible)
-                const isNumericId = /^\d+$/.test(String(aiResponse.product_id));
-                if (isNumericId) {
-                    const product = await dbService.getProductById(aiResponse.product_id);
-                    if (product) {
-                    if (aiResponse.action === "SEND_DETAILS" || aiResponse.action === "SEND_BOTH") {
-                        if (!replyText || replyText.length < 50) {
-                            const numericPrice = parsePrice(product.price);
-                            const priceDisplay = numericPrice > 0 ? `${numericPrice} ${product.currency || 'BDT'}` : "Ask for Price";
-                            const details = `🛍️ *${product.name}*\n💰 Price: ${priceDisplay}\n📝 Info: ${product.description || 'No details available.'}`;
-                            replyText = `${replyText}\n\n${details}`;
-                        }
-                    }
-                    if (aiResponse.action === "SEND_PHOTO" || aiResponse.action === "SEND_BOTH") {
-                        const urls = [];
-                        if (product.image_url) {
-                            const fullUrl = normalizeImageUrl(product.image_url);
-                            if (fullUrl) urls.push(fullUrl);
-                        }
-                        
-                        let additional = [];
-                        if (Array.isArray(product.additional_images)) additional = product.additional_images;
-                        else if (typeof product.additional_images === 'string') {
-                            try { additional = JSON.parse(product.additional_images); } catch(e) { additional = product.additional_images.split(',').map(s => s.trim()); }
-                        }
-                        if (Array.isArray(additional)) {
-                            additional.forEach(u => {
-                                const nU = normalizeImageUrl(u);
-                                if (nU && !urls.includes(nU)) urls.push(nU);
-                            });
-                        }
-
-                        urls.forEach(u => {
-                            if (!extractedImages.some(img => img.url === u)) {
-                                extractedImages.push({ url: u, title: product.name, description: product.description || '' });
-                            }
-                        });
-                    }
+        if (extractedImages.length === 0 && (aiResponse.action && aiResponse.action !== "NONE" || hasPhotoIntent(effectiveHistory))) {
+            let targetId = aiResponse.product_id;
+            
+            // RECOVERY: If AI forgot the product_id but we have it in State Memory
+            if (!targetId && hasPhotoIntent(effectiveHistory)) {
+                const state = await dbService.getConversationState(pageId, senderId);
+                if (state && state.last_product_id) {
+                    targetId = state.last_product_id;
+                    console.log(`[Image Selection] TIER 2 Recovery: Using last_product_id from Memory: ${targetId}`);
                 }
             }
-        } catch (err) {
-                console.error(`[Agentic Delivery] Failed:`, err.message);
+
+            if (targetId) {
+                console.log(`[Image Selection] TIER 2: Using Agentic Delivery for ID: ${targetId}`);
+                try {
+                    // Check if product_id is a valid number (BigInt compatible)
+                    const isNumericId = /^\d+$/.test(String(targetId));
+                    if (isNumericId) {
+                        const product = await dbService.getProductById(targetId);
+                        if (product) {
+                            if (aiResponse.action === "SEND_DETAILS" || aiResponse.action === "SEND_BOTH") {
+                                if (!replyText || replyText.length < 50) {
+                                    const numericPrice = parsePrice(product.price);
+                                    const priceDisplay = numericPrice > 0 ? `${numericPrice} ${product.currency || 'BDT'}` : "Ask for Price";
+                                    const details = `🛍️ *${product.name}*\n💰 Price: ${priceDisplay}\n📝 Info: ${product.description || 'No details available.'}`;
+                                    replyText = `${replyText}\n\n${details}`;
+                                }
+                            }
+                            
+                            // Always fetch images if it's a SEND_PHOTO, SEND_BOTH, or if user explicitly asked for photos
+                            if (aiResponse.action === "SEND_PHOTO" || aiResponse.action === "SEND_BOTH" || hasPhotoIntent(effectiveHistory)) {
+                                const urls = [];
+                                if (product.image_url) {
+                                    const fullUrl = normalizeImageUrl(product.image_url);
+                                    if (fullUrl) urls.push(fullUrl);
+                                }
+                                
+                                let additional = [];
+                                if (Array.isArray(product.additional_images)) additional = product.additional_images;
+                                else if (typeof product.additional_images === 'string') {
+                                    try { additional = JSON.parse(product.additional_images); } catch(e) { additional = product.additional_images.split(',').map(s => s.trim()); }
+                                }
+                                if (Array.isArray(additional)) {
+                                    additional.forEach(u => {
+                                        const nU = normalizeImageUrl(u);
+                                        if (nU && !urls.includes(nU)) urls.push(nU);
+                                    });
+                                }
+
+                                urls.forEach(u => {
+                                    if (!extractedImages.some(img => img.url === u)) {
+                                        extractedImages.push({ url: u, title: product.name, description: product.description || '' });
+                                    }
+                                });
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.error(`[Agentic Delivery] Failed:`, err.message);
+                }
             }
         }
 
@@ -2240,7 +2281,7 @@ STRICT RULES:
                                 text: `[System Memory: User is viewing Carousel with: ${productContext}]`,
                                 timestamp: Date.now(),
                                 status: 'bot_carousel',
-                                reply_by: 'bot'
+                                reply_by: 'system'
                             });
                         }
                     } catch (carouselError) {
@@ -2271,7 +2312,7 @@ STRICT RULES:
                                     text: `[System Memory: User is viewing Image of ${imgObj.title || 'Product'}: ${imgObj.url}]`,
                                     timestamp: Date.now(),
                                     status: 'bot_image',
-                                    reply_by: 'bot'
+                                    reply_by: 'system'
                                 });
                              }
                          } catch (imgError) {

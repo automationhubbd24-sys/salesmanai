@@ -9,6 +9,14 @@ export const secureFetch = async (url: string, options: RequestInit = {}) => {
   try {
     const response = await fetch(url, options);
 
+    // --- AUTO-FIX: Silent Token Refresh ---
+    // If the server sends a new token, save it automatically to extend the session
+    const newToken = response.headers.get('X-Refresh-Token');
+    if (newToken) {
+      console.log("[Auth] Session extended automatically.");
+      localStorage.setItem("auth_token", newToken);
+    }
+
     // Handle 401 Unauthorized (Invalid/Expired Token)
     if (response.status === 401) {
       console.error("[Auth] Session expired or invalid token (401). Redirecting to login...");
@@ -47,5 +55,40 @@ export const secureFetch = async (url: string, options: RequestInit = {}) => {
   } catch (error) {
     console.error("[Network] Fetch error:", error);
     throw error;
+  }
+};
+
+/**
+ * Common API helper to handle auth and backend URL
+ */
+import { BACKEND_URL } from "@/config";
+
+export const api = {
+  get: async (endpoint: string) => {
+    const token = localStorage.getItem("auth_token");
+    const res = await secureFetch(`${BACKEND_URL}/api${endpoint}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    return { data: await res.json(), status: res.status };
+  },
+  post: async (endpoint: string, data: any) => {
+    const token = localStorage.getItem("auth_token");
+    const res = await secureFetch(`${BACKEND_URL}/api${endpoint}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify(data)
+    });
+    return { data: await res.json(), status: res.status };
+  },
+  delete: async (endpoint: string) => {
+    const token = localStorage.getItem("auth_token");
+    const res = await secureFetch(`${BACKEND_URL}/api${endpoint}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    return { data: await res.json(), status: res.status };
   }
 };

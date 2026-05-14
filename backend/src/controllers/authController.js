@@ -93,7 +93,7 @@ exports.adminLogin = async (req, res) => {
             const token = require('jsonwebtoken').sign(
                 { role: 'admin', username: username },
                 jwtSecret,
-                { expiresIn: '7d' }
+                { expiresIn: '90d' }
             );
             return res.json({ success: true, token });
         }
@@ -243,6 +243,108 @@ exports.requestOtp = async (req, res) => {
     } catch (error) {
         console.error('requestOtp error:', error);
         res.status(500).json({ error: 'Failed to send OTP' });
+    }
+};
+
+// --- DEVELOPER API SYSTEM ---
+
+exports.registerDeveloper = async (req, res) => {
+    try {
+        const { userId, paymentMethod, transactionId } = req.body;
+        if (!userId || !paymentMethod || !transactionId) {
+            return res.status(400).json({ error: 'Missing required fields' });
+        }
+
+        const user = await pgClient.query('SELECT id FROM users WHERE id = $1', [userId]);
+        if (user.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+
+        await pgClient.query(
+            `INSERT INTO developer_registrations (user_id, payment_method, transaction_id, status)
+             VALUES ($1, $2, $3, 'pending')`,
+            [userId, paymentMethod, transactionId]
+        );
+
+        await pgClient.query("UPDATE users SET developer_status = 'pending' WHERE id = $1", [userId]);
+
+        res.json({ success: true, message: 'Developer registration submitted. Waiting for admin approval.' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+exports.listDeveloperRequests = async (req, res) => {
+    try {
+        const { rows } = await pgClient.query(
+            `SELECT dr.*, u.email, u.full_name 
+             FROM developer_registrations dr
+             JOIN users u ON dr.user_id = u.id
+             ORDER BY dr.created_at DESC`
+        );
+        res.json({ requests: rows });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+exports.approveDeveloper = async (req, res) => {
+    try {
+        const { id } = req.params; 
+        const { devId, devPass } = req.body; // New: admin provides credentials
+
+        if (!devId || !devPass) {
+            return res.status(400).json({ error: 'Developer ID and Password are required for approval' });
+        }
+
+        const { rows } = await pgClient.query('SELECT * FROM developer_registrations WHERE id = $1', [id]);
+        if (rows.length === 0) return res.status(404).json({ error: 'Request not found' });
+
+        const request = rows[0];
+        
+        await pgClient.query("UPDATE developer_registrations SET status = 'approved', updated_at = NOW() WHERE id = $1", [id]);
+        await pgClient.query(
+            "UPDATE users SET developer_status = 'approved', developer_id = $1, developer_password = $2 WHERE id = $3", 
+            [devId, devPass, request.user_id]
+        );
+
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+exports.verifyDeveloperLogin = async (req, res) => {
+    try {
+        const { userId, devId, devPass } = req.body;
+        if (!userId || !devId || !devPass) {
+            return res.status(400).json({ error: 'Missing required fields' });
+        }
+
+        const { rows } = await pgClient.query(
+            'SELECT * FROM users WHERE id = $1 AND developer_id = $2 AND developer_password = $3 AND developer_status = $4',
+            [userId, devId, devPass, 'approved']
+        );
+
+        if (rows.length === 0) {
+            return res.status(401).json({ error: 'Invalid Developer Credentials' });
+        }
+
+        res.json({ success: true, message: 'Developer access unlocked' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+exports.getDeveloperStats = async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const { rows } = await pgClient.query(
+            'SELECT developer_status FROM users WHERE id = $1',
+            [userId]
+        );
+        if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
+        res.json(rows[0]);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 };
 

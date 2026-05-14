@@ -709,8 +709,7 @@ async function initTables() {
         `);
         console.log("[DB] 'fb_message_database' extra columns checked.");
 
-        // 1. Rename allowed_page_ids to allowed_messenger_ids if it exists
-        // Or just add allowed_messenger_ids as a clear column
+        // 1. Ensure allowed_messenger_ids exists (Modern Standard)
         await query(`
             DO $$ 
             BEGIN 
@@ -1213,13 +1212,50 @@ async function createWhatsAppEntry(sessionName, userId, planDays = 30, initialSt
     if (existingResult.rows.length === 0) {
         console.log(`[WhatsApp] New integration detected for session ${sessionName}. Giving 100 free credits.`);
         try {
-            await query(
-                'UPDATE user_configs SET message_credit = message_credit + 100 WHERE user_id::text = $1::text OR email = $2',
-                [String(userId), userEmail]
+            // Check if this session has EVER received free credits to prevent exploit
+            const alreadyGranted = await query(
+                'SELECT id FROM integration_credit_history WHERE integration_id = $1 AND platform = $2',
+                [String(sessionName), 'whatsapp']
             );
-            console.log(`[WhatsApp] Added 100 free credits to user via salesmanchatbot-pro source.`);
+
+            if (alreadyGranted.rowCount === 0) {
+                await query(
+                    'UPDATE user_configs SET message_credit = message_credit + 100 WHERE user_id::text = $1::text OR email = $2',
+                    [String(userId), userEmail]
+                );
+                
+                // Mark as granted permanently
+                await query(
+                    'INSERT INTO integration_credit_history (integration_id, platform, user_id, credit_type, amount) VALUES ($1, $2, $3, $4, $5)',
+                    [String(sessionName), 'whatsapp', String(userId), 'welcome_bonus', 100]
+                );
+                
+                console.log(`[WhatsApp] Added 100 free credits to user and logged to history.`);
+            } else {
+                console.log(`[WhatsApp] Session ${sessionName} already received welcome bonus in the past. Skipping.`);
+            }
         } catch (creditErr) {
             console.error('[WhatsApp] Failed to grant free credits:', creditErr.message);
+            // Attempt to create history table if it doesn't exist
+            if (creditErr.message.includes('relation "integration_credit_history" does not exist')) {
+                try {
+                    await query(`
+                        CREATE TABLE IF NOT EXISTS integration_credit_history (
+                            id SERIAL PRIMARY KEY,
+                            integration_id TEXT NOT NULL,
+                            platform TEXT NOT NULL,
+                            user_id TEXT NOT NULL,
+                            credit_type TEXT NOT NULL,
+                            amount INTEGER DEFAULT 0,
+                            granted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                        );
+                        CREATE INDEX IF NOT EXISTS idx_integration_credit_history_id ON integration_credit_history(integration_id);
+                    `);
+                    console.log("[DB] Created integration_credit_history table.");
+                } catch (tableErr) {
+                    console.error("[DB] Failed to create credit history table:", tableErr.message);
+                }
+            }
         }
     }
 
@@ -2920,11 +2956,11 @@ async function getAllKeys() {
 }
 
 // Add API Key
-async function addApiKey({ provider, api, model = 'default', email = null }) {
+async function addApiKey({ provider, api, model = 'default', email = null, gmail = null, mode = 'admin', owner_id = null }) {
     try {
         const result = await query(
-            'INSERT INTO api_list (provider, api, model, status, email) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-            [provider, api, model, 'active', email]
+            'INSERT INTO api_list (provider, api, model, status, email, gmail, mode, owner_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
+            [provider, api, model, 'active', email, gmail, mode, owner_id]
         );
         return result.rows[0];
     } catch (error) {
@@ -3451,6 +3487,7 @@ module.exports = {
     getEmbeddingGlobalConfig,
     getProducts,
     getProductById,
+    getProductByImageUrl,
     updateProduct,
     deleteProduct,
     searchProducts,
@@ -3706,6 +3743,25 @@ async function getProductById(id) {
     return result.rows[0];
 }
 
+/**
+ * Find a product by its main image URL (used for resolving additional images)
+ * @param {string} userId 
+ * @param {string} imageUrl 
+ * @returns {Promise<Object|null>}
+ */
+async function getProductByImageUrl(userId, imageUrl) {
+    try {
+        const result = await query(
+            'SELECT * FROM products WHERE user_id::text = $1::text AND (image_url = $2 OR additional_images::text LIKE $3) LIMIT 1',
+            [String(userId), imageUrl, `%${imageUrl}%`]
+        );
+        return result.rows.length > 0 ? result.rows[0] : null;
+    } catch (error) {
+        console.error("[DB] getProductByImageUrl Error:", error.message);
+        return null;
+    }
+}
+
 // 29. Update Product
 async function updateProduct(id, userId, updates) {
     const keys = Object.keys(updates || {});
@@ -3834,16 +3890,30 @@ async function getProductsByNames(userId, productNames, pageId = null) {
 // 31. Search Products (For AI) - Enhanced with Vector Search (Pure Vector Mode)
 async function searchProducts(userId, queryText, pageId = null) {
     try {
-        if (!userId || !queryText) return [];
-        const cleanQuery = queryText.trim();
-        if (!cleanQuery) return [];
+        if (!userId) return [];
+        const cleanQuery = (queryText || '').trim();
+        
+        // --- FALLBACK: If query is empty, return latest products for this user/page ---
+        if (!cleanQuery) {
+            const contextType = pageId ? await resolvePageContextType(pageId) : null;
+            const isWhatsapp = contextType === 'whatsapp';
+            let sql = `SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, 0 as distance FROM products WHERE user_id::text = $1::text AND is_active = true`;
+            const params = [String(userId)];
+            if (pageId) {
+                params.push(String(pageId));
+                if (isWhatsapp) sql += ` AND ((allowed_wa_sessions::jsonb @> jsonb_build_array($2::text)) OR platform = 'global')`;
+                else sql += ` AND ((allowed_messenger_ids::jsonb @> jsonb_build_array($2::text)) OR platform = 'global')`;
+            }
+            sql += ` ORDER BY id DESC LIMIT 5`;
+            const res = await query(sql, params);
+            return res.rows;
+        }
 
         const aiService = require('./aiService');
         const queryVector = await aiService.getEmbedding(cleanQuery);
         
         if (!queryVector) {
-            console.warn("[DB] Vector search fallback: Embedding generation failed.");
-            return [];
+            throw new Error("Vector search failed: Embedding generation returned null.");
         }
 
         const contextType = pageId ? await resolvePageContextType(pageId) : null;
@@ -3889,7 +3959,7 @@ async function searchProducts(userId, queryText, pageId = null) {
         
     } catch (error) {
         console.error("[DB] searchProducts Vector Error:", error.message);
-        return [];
+        throw error; // Throw error so controller can handle it (Status: 503)
     }
 }
 

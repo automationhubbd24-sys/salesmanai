@@ -2169,19 +2169,58 @@ STRICT RULES:
         // If we already analyzed images and replaced the text, don't pass images again to avoid double-processing
         const imagesToPass = imageDetectionEnabled && (!imageAnalyzeText || imageAnalyzeText.trim() === "") ? allImages : [];
 
-        const aiResponse = await aiService.generateResponse({
-            pageId: pageId, 
-            userId: senderId,
-            userMessage: finalOutput, // Use the resolved output (Analysis, Text, Audio)
-            history: history,
-            imageUrls: imagesToPass, 
-            audioUrls: [], // Handled manually in controller
-            config: pageConfig,
-            platform: 'whatsapp',
-            extraTokenUsage: totalVisionTokens + totalAudioTokens, // Pass vision + audio tokens
-            senderName: senderName, // <-- NEW: Pass resolved sender name
-            ownerName: ownerName // <-- NEW: Pass Owner Account Name (Real PushName)
-        });
+        // --- INJECT FORMATTING INSTRUCTION (Professional Rules) ---
+        const professionalRules = `\n\n[PROFESSIONAL OUTPUT RULES]\n` +
+                `1) IDENTITY: You are a professional human sales representative. Talk naturally.\n` +
+                `2) TOOL-FIRST: If the user asks about product price/details, you MUST call tools. Do NOT invent prices or descriptions.\n` +
+                `3) IMAGE DECISION: If you decide to send a product's image (based on user request or appropriateness), you MUST append [PRODUCT_ID:id] to your reply. Example: "Yes, it is available. [PRODUCT_ID:82]".\n` +
+                `4) SYSTEM PROMPT PRIORITY: If your custom instructions (System Prompt) say NOT to send images proactively, you MUST obey that and only use the [PRODUCT_ID:id] tag when the user explicitly asks for a photo.\n` +
+                `5) LISTING PRODUCTS: If asked "What do you sell?", list 3-5 names naturally and ask which one they are interested in.\n` +
+                `6) NO HALLUCINATIONS: Never guess or invent prices. Always use tool data only.\n`;
+
+        const aiConfig = { ...pageConfig };
+        if (aiConfig.text_prompt) {
+             aiConfig.text_prompt += professionalRules;
+        } else {
+             aiConfig.text_prompt = professionalRules;
+        }
+
+        let aiResponse;
+        try {
+            aiResponse = await aiService.generateResponse({
+                pageId: pageId, 
+                userId: senderId,
+                userMessage: finalOutput, // Use the resolved output (Analysis, Text, Audio)
+                history: history,
+                imageUrls: imagesToPass, 
+                audioUrls: [], // Handled manually in controller
+                config: aiConfig, // Use modified config
+                platform: 'whatsapp',
+                extraTokenUsage: totalVisionTokens + totalAudioTokens, // Pass vision + audio tokens
+                senderName: senderName, // <-- NEW: Pass resolved sender name
+                ownerName: ownerName // <-- NEW: Pass Owner Account Name (Real PushName)
+            });
+        } catch (genErr) {
+            console.error(`[WA] AI Generation CRITICAL Error:`, genErr.message);
+            
+            if (genErr.message.includes('PRODUCT_SEARCH_API_FAILURE')) {
+                // Log the failure to dashboard for visibility
+                await dbService.saveWhatsAppChat({
+                    session_name: sessionName,
+                    sender_id: sessionName,
+                    recipient_id: senderId,
+                    message_id: `err_search_${Date.now()}`,
+                    text: `[CRITICAL ERROR] Product search failed due to API problem. (Code: 503_VECTOR_DB_FAIL). Details: ${genErr.message}`,
+                    timestamp: Date.now(),
+                    status: 'api_failure',
+                    reply_by: 'system'
+                });
+                // STOP THE PROCESS: No message to user
+                return;
+            }
+            
+            aiResponse = null;
+        }
 
         if (!aiResponse) {
              console.log(`[WA] AI returned null (Silent Failure). Verify AI Service health or content safety.`);
@@ -2239,8 +2278,19 @@ STRICT RULES:
                 }
             }
         } catch (err) {
-                console.error(`[WA Agentic Delivery] Failed for ID ${aiResponse.product_id}:`, err.message);
-            }
+            console.error(`[WA Agentic Delivery] Failed for ID ${aiResponse.product_id}:`, err.message);
+            // Log error for user visibility in DB
+            await dbService.saveWhatsAppChat({
+                session_name: sessionName,
+                sender_id: sessionName,
+                recipient_id: senderId,
+                message_id: `imgerr_${Date.now()}`,
+                text: `[SYSTEM ERROR] Failed to resolve product ID ${aiResponse.product_id}. Error: ${err.message}`,
+                timestamp: Date.now(),
+                status: 'system_error',
+                reply_by: 'system'
+            });
+        }
         }
 
         // --- NEW: Add images from structured image_urls array (Professional JSON mode) ---
@@ -2477,8 +2527,7 @@ STRICT RULES:
                     }
                     // Resolve additional images if it's a known product image
                     try {
-                        const products = await dbService.searchProducts(pageConfig.user_id, '', sessionName);
-                        const matched = products.find(p => p.image_url === url);
+                        const matched = await dbService.getProductByImageUrl(pageConfig.user_id, url);
                         if (matched) {
                             let additional = [];
                             if (Array.isArray(matched.additional_images)) additional = matched.additional_images;
@@ -2715,7 +2764,7 @@ STRICT RULES:
             const history = await dbService.getLastNWhatsAppMessages(sessionName, senderId, 20);
             if (hasPhotoIntent(history)) {
                 let targetProductId = null;
-                const state = await dbService.getWhatsAppConversationState(sessionName, senderId);
+                const state = await dbService.getConversationState(sessionName, senderId);
                 if (state && state.last_product_id) targetProductId = state.last_product_id;
                 if (!targetProductId && aiResponse.product_id) targetProductId = aiResponse.product_id;
 
@@ -2760,7 +2809,22 @@ STRICT RULES:
                      recentBotReplies.set(senderId, existing);
                 }
 
-                await whatsappService.sendImage(sessionName, senderId, img.url, img.title);
+                try {
+                    const sendRes = await whatsappService.sendImage(sessionName, senderId, img.url, img.title);
+                    if (!sendRes) throw new Error("WAHA returned empty response or error");
+                } catch (sendErr) {
+                    console.error(`[WA] Image Send Failed: ${img.url}`, sendErr.message);
+                    await dbService.saveWhatsAppChat({
+                        session_name: sessionName,
+                        sender_id: sessionName,
+                        recipient_id: senderId,
+                        message_id: `imgerr_${Date.now()}`,
+                        text: `[SYSTEM ERROR] Failed to send image: ${img.title || 'Product'}. Error: ${sendErr.message}. URL: ${img.url}`,
+                        timestamp: Date.now(),
+                        status: 'system_error',
+                        reply_by: 'system'
+                    });
+                }
             }
         }
 
@@ -2774,6 +2838,16 @@ STRICT RULES:
         }
 
         // 7. Save Bot Reply to DB (Only if not empty)
+        // Track the product mentioned in this response for State Memory
+        if (aiResponse.product_id) {
+            try {
+                await dbService.updateConversationState(sessionName, senderId, { last_product_id: aiResponse.product_id });
+                console.log(`[WA State Memory] Saved last_product_id: ${aiResponse.product_id} for user: ${senderId}`);
+            } catch (stateErr) {
+                console.error(`[WA State Memory] Error saving state: ${stateErr.message}`);
+            }
+        }
+
         let modelLabel = aiResponse.model;
         if (!hasOwnKey) {
             const branded = (pageConfig && (pageConfig.chat_model || pageConfig.display_model)) || null;
@@ -2785,6 +2859,16 @@ STRICT RULES:
         }
 
         if (finalReplyText && finalReplyText.trim().length > 0) {
+            // Track the product mentioned in this response for State Memory
+            if (aiResponse.product_id) {
+                try {
+                    await dbService.updateConversationState(sessionName, senderId, { last_product_id: aiResponse.product_id });
+                    console.log(`[WA State Memory] Saved last_product_id: ${aiResponse.product_id} for user: ${senderId}`);
+                } catch (stateErr) {
+                    console.error(`[WA State Memory] Error saving state: ${stateErr.message}`);
+                }
+            }
+
             console.log(`[WA AI] Saving Bot Reply to DB with ID: ${sentMessageId}`);
             await dbService.saveWhatsAppChat({
                 session_name: sessionName,

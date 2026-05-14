@@ -58,6 +58,8 @@ interface EngineConfig {
   voice_model: string;
   image_provider: string | null;
   image_model: string;
+  embed_provider: string | null;
+  embed_model: string;
 }
 
 interface ModelListItem {
@@ -277,6 +279,10 @@ export default function AdminPage() {
   const [topupAmount, setTopupAmount] = useState("");
   const [topupLoading, setTopupLoading] = useState(false);
 
+  // Developer State
+  const [developerRequests, setDeveloperRequests] = useState<any[]>([]);
+  const [loadingDevelopers, setLoadingDevelopers] = useState(false);
+
   // API Engine State
   const [engineStats, setEngineStats] = useState<EngineStats | null>(null);
   const [engineKeys, setEngineKeys] = useState<ApiKey[]>([]);
@@ -473,6 +479,7 @@ export default function AdminPage() {
   useEffect(() => {
     if (isAuthenticated) {
       fetchTransactions();
+      fetchDeveloperRequests();
       fetchCoupons();
       fetchDbTables();
       fetchEngineData();
@@ -1533,6 +1540,50 @@ export default function AdminPage() {
     }
   };
 
+  const fetchDeveloperRequests = async () => {
+    try {
+      setLoadingDevelopers(true);
+      const token = getAdminToken();
+      const res = await fetch(`${BACKEND_URL}/api/auth/admin/developer/requests`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (res.ok && Array.isArray(data.requests)) {
+        setDeveloperRequests(data.requests);
+      }
+    } finally {
+      setLoadingDevelopers(false);
+    }
+  };
+
+  const handleApproveDeveloper = async (requestId: string) => {
+    const devId = prompt("Enter Developer ID for this user:");
+    const devPass = prompt("Enter Developer Password for this user:");
+    
+    if (!devId || !devPass) {
+      toast.error("Developer ID and Password are required");
+      return;
+    }
+
+    try {
+      const token = getAdminToken();
+      const res = await fetch(`${BACKEND_URL}/api/auth/admin/developer/requests/${requestId}/approve`, {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}` 
+        },
+        body: JSON.stringify({ devId, devPass })
+      });
+      if (res.ok) {
+        toast.success("Developer approved with credentials");
+        fetchDeveloperRequests();
+      }
+    } catch (err) {
+      toast.error("Failed to approve developer");
+    }
+  };
+
   const fetchCoupons = async () => {
     try {
       setLoadingCoupons(true);
@@ -1982,6 +2033,7 @@ export default function AdminPage() {
           <TabsTrigger value="cache" className="text-blue-400 font-bold data-[state=active]:bg-blue-500 data-[state=active]:text-white transition-all">Semantic Cache</TabsTrigger>
           <TabsTrigger value="db" className="data-[state=active]:bg-[#00ff88] data-[state=active]:text-black transition-all font-bold">Database Admin</TabsTrigger>
           <TabsTrigger value="openrouter" className="data-[state=active]:bg-primary data-[state=active]:text-black transition-all">OpenRouter Config</TabsTrigger>
+          <TabsTrigger value="developers" className="data-[state=active]:bg-[#00ff88] data-[state=active]:text-black transition-all font-bold">Developers</TabsTrigger>
         </TabsList>
 
         {/* Payments Tab */}
@@ -2360,7 +2412,7 @@ export default function AdminPage() {
                 </div>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-3">
+                <div className="grid gap-4 md:grid-cols-4">
                 <div className="flex items-center gap-2">
                   <Switch
                     checked={engineModels.pro}
@@ -2387,6 +2439,15 @@ export default function AdminPage() {
                     }
                   />
                   <span className="text-sm">SalesmanChatbot 2.0 Lite</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={(engineModels as any).brain || false}
+                    onCheckedChange={(checked) =>
+                      setEngineModels((prev) => ({ ...prev, brain: Boolean(checked) }))
+                    }
+                  />
+                  <span className="text-sm font-bold text-purple-400">🧠 2.0 Brain</span>
                 </div>
               </div>
 
@@ -2454,10 +2515,12 @@ export default function AdminPage() {
         </TabsContent>
 
         {/* API Engine Tab */}
-        <TabsContent value="api-engine" className="space-y-6">
-          {/* Engine Model Configuration */}
+        <TabsContent value="api-engine" className="space-y-8">
+          {/* Main Engines Grid (Pro, Flash, Lite) */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {engineConfigs.map((config) => (
+            {engineConfigs
+              .filter(c => c.name !== 'salesmanchatbot-brain')
+              .map((config) => (
               <Card key={config.id} className="bg-card/40 backdrop-blur-md border-white/5 shadow-xl hover:border-white/10 transition-all">
                 <CardHeader className="pb-4 border-b border-white/5 bg-white/5">
                   <CardTitle className="text-lg font-bold flex items-center gap-2">
@@ -2510,7 +2573,6 @@ export default function AdminPage() {
                         </div>
                       </div>
 
-                      {/* NEW: Fallback Model Input for this Engine's Modality */}
                       <div className="space-y-1 pt-1 border-t border-white/5">
                         <Label className="text-[9px] text-muted-foreground uppercase flex items-center gap-1">
                           <Zap className="h-2 w-2 text-yellow-500" /> Fallback Model
@@ -2528,6 +2590,85 @@ export default function AdminPage() {
               </Card>
             ))}
           </div>
+
+          {/* Dedicated Brain Engine (Full Width Bottom) */}
+          {engineConfigs
+            .filter(c => c.name === 'salesmanchatbot-brain')
+            .map((config) => (
+            <Card key={config.id} className="bg-card/40 backdrop-blur-md border-purple-500/20 shadow-2xl border-t-2 border-t-purple-500/40">
+              <CardHeader className="pb-4 border-b border-white/5 bg-purple-500/5">
+                <CardTitle className="text-xl font-black flex items-center gap-3 text-purple-400">
+                  <div className="p-2 rounded-lg bg-purple-500/10">
+                    <DatabaseIcon className="h-6 w-6" />
+                  </div>
+                  🧠 2.0 Brain (Internal Embedding Engine)
+                </CardTitle>
+                <CardDescription className="text-xs uppercase tracking-[0.2em] font-black opacity-40 ml-14">
+                  Global Vector & Semantic Search Infrastructure
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="pt-8 pb-8 px-8">
+                <div className="flex flex-col md:flex-row items-center gap-12">
+                  {/* Left Side: Info & Icon */}
+                  <div className="flex-1 space-y-4">
+                    <div className="flex items-center gap-4">
+                      <div className="h-12 w-12 rounded-full bg-[#00ff88]/10 flex items-center justify-center border border-[#00ff88]/20">
+                        <ShieldCheck className="h-6 w-6 text-[#00ff88]" />
+                      </div>
+                      <div>
+                        <h4 className="font-black text-white text-lg">System-Wide Integration</h4>
+                        <p className="text-xs text-muted-foreground">This engine handles all internal vector operations automatically.</p>
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground leading-relaxed pl-16">
+                      The Brain engine is hardcoded to manage your product search, semantic cache, and knowledge base. 
+                      It uses proxy rotation and API key pools to ensure maximum stability and zero cost for embeddings.
+                    </p>
+                  </div>
+
+                  {/* Right Side: Config Fields */}
+                  <div className="w-full md:w-[450px] p-6 rounded-2xl bg-black/40 border border-white/5 shadow-inner">
+                    {[
+                      { key: 'embed', label: 'Global Embed Model', icon: <DatabaseIcon className="h-4 w-4" />, color: 'text-purple-400' }
+                    ].map((modality) => (
+                      <div key={modality.key} className="space-y-4">
+                        <Label className={`text-xs uppercase font-black flex items-center gap-2 ${modality.color}`}>
+                          {modality.icon} {modality.label}
+                        </Label>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label className="text-[10px] text-muted-foreground uppercase font-bold">Provider</Label>
+                            <Select 
+                              value={(config as any)[`${modality.key}_provider`] || "google"} 
+                              onValueChange={(val) => updateEngineConfig(config.name, { [`${modality.key}_provider`]: val }, true)}
+                            >
+                              <SelectTrigger className="h-10 text-xs bg-black/60 border-white/10 font-bold">
+                                <SelectValue placeholder="Provider" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="google">Google Gemini</SelectItem>
+                                <SelectItem value="openai">OpenAI</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-2">
+                            <Label className="text-[10px] text-muted-foreground uppercase font-bold">Model ID</Label>
+                            <Input 
+                              value={(config as any)[`${modality.key}_model`]} 
+                              onChange={(e) => updateEngineConfig(config.name, { [`${modality.key}_model`]: e.target.value }, true)}
+                              className="h-10 text-xs bg-black/60 border-white/10 font-mono font-bold text-[#00ff88]"
+                              placeholder="Model ID"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
 
           {/* Stats Grid */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -3746,65 +3887,18 @@ export default function AdminPage() {
 
         {/* Semantic Cache Tab */}
         <TabsContent value="cache" className="space-y-4">
-          <Card className="border-white/10 bg-black/40 backdrop-blur-md">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
-              <div>
-                <CardTitle className="text-lg font-bold flex items-center gap-2">
-                   <Cpu className="h-5 w-5 text-[#00ff88]" />
-                   Global Embedding Model
-                </CardTitle>
-                <CardDescription>Common configuration for all semantic lookups</CardDescription>
-              </div>
-              <Button 
-                onClick={saveEmbeddingConfig}
-                className="bg-[#00ff88] hover:bg-[#00ff88]/90 text-black font-bold h-8 px-6"
-              >
-                Save Global Config
-              </Button>
-            </CardHeader>
-            <CardContent className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="space-y-2">
-                <Label className="text-xs uppercase text-muted-foreground">Provider</Label>
-                <Select value={embeddingConfig.provider} onValueChange={(val) => setEmbeddingConfig({ ...embeddingConfig, provider: val })}>
-                  <SelectTrigger className="h-9 bg-black/40 border-white/10">
-                    <SelectValue placeholder="Select Provider" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="openai">OpenAI</SelectItem>
-                    <SelectItem value="google">Google</SelectItem>
-                    <SelectItem value="openrouter">OpenRouter</SelectItem>
-                    <SelectItem value="groq">Groq</SelectItem>
-                    <SelectItem value="mistral">Mistral</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label className="text-xs uppercase text-muted-foreground">Base URL</Label>
-                <Input 
-                  placeholder="https://api.openai.com/v1"
-                  value={embeddingConfig.base_url}
-                  onChange={(e) => setEmbeddingConfig({ ...embeddingConfig, base_url: e.target.value })}
-                  className="h-9 bg-black/40 border-white/10 font-mono text-xs"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label className="text-xs uppercase text-muted-foreground">API Key</Label>
-                <Input 
-                  type="password"
-                  placeholder="sk-..."
-                  value={embeddingConfig.api_key}
-                  onChange={(e) => setEmbeddingConfig({ ...embeddingConfig, api_key: e.target.value })}
-                  className="h-9 bg-black/40 border-white/10 font-mono text-xs"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label className="text-xs uppercase text-muted-foreground">Model Name</Label>
-                <Input 
-                  placeholder="text-embedding-3-small"
-                  value={embeddingConfig.model}
-                  onChange={(e) => setEmbeddingConfig({ ...embeddingConfig, model: e.target.value })}
-                  className="h-9 bg-black/40 border-white/10 font-mono text-xs"
-                />
+          <Card className="border-white/10 bg-[#00ff88]/5 border-dashed">
+            <CardContent className="py-6 text-center">
+              <div className="flex flex-col items-center gap-2">
+                <div className="p-3 rounded-full bg-[#00ff88]/10 text-[#00ff88]">
+                  <ShieldCheck className="h-6 w-6" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-lg font-bold text-white">Internal Brain Engine Active</h3>
+                  <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                    All semantic lookups and embeddings are now automatically routed through our internal <strong>salesmanchatbot-brain</strong> infrastructure with proxy and key rotation. Manual API configuration is no longer required.
+                  </p>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -4550,7 +4644,65 @@ export default function AdminPage() {
 
         {/* OpenRouter Config Tab (Embedded) */}
         <TabsContent value="openrouter">
-           <OpenRouterConfigPage />
+          <OpenRouterConfigPage />
+        </TabsContent>
+
+        <TabsContent value="developers">
+          <Card className="bg-card/40 backdrop-blur-md border-white/5">
+            <CardHeader>
+              <CardTitle>Developer API Registration Requests</CardTitle>
+              <CardDescription>Approve users who paid 5,000 BDT for developer access.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>User</TableHead>
+                    <TableHead>Method</TableHead>
+                    <TableHead>TrxID</TableHead>
+                    <TableHead>Amount</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {loadingDevelopers ? (
+                    <TableRow><TableCell colSpan={7} className="text-center">Loading...</TableCell></TableRow>
+                  ) : developerRequests.length === 0 ? (
+                    <TableRow><TableCell colSpan={7} className="text-center">No pending requests</TableCell></TableRow>
+                  ) : developerRequests.map((req) => (
+                    <TableRow key={req.id}>
+                      <TableCell>
+                        <div className="font-bold">{req.full_name || 'N/A'}</div>
+                        <div className="text-xs text-muted-foreground">{req.email}</div>
+                      </TableCell>
+                      <TableCell className="uppercase">{req.payment_method}</TableCell>
+                      <TableCell className="font-mono">{req.transaction_id}</TableCell>
+                      <TableCell>{req.amount} BDT</TableCell>
+                      <TableCell>
+                        <Badge variant={req.status === 'approved' ? 'default' : 'secondary'}>
+                          {req.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{new Date(req.created_at).toLocaleDateString()}</TableCell>
+                      <TableCell>
+                        {req.status === 'pending' && (
+                          <Button 
+                            size="sm" 
+                            className="bg-[#00ff88] text-black hover:bg-[#00ff88]/80"
+                            onClick={() => handleApproveDeveloper(req.id)}
+                          >
+                            Approve
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
         </TabsContent>
 
       </Tabs>

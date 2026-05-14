@@ -427,7 +427,7 @@ async function clearBrandedEngineCache(name = null) {
     }
 }
 
-async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio) {
+async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio, isEmbedding = false) {
     let targetEngineName = defaultModel || 'salesmanchatbot-pro';
 
     // --- ENGINE OVERRIDE LOGIC (Admin Priority) ---
@@ -451,12 +451,16 @@ async function resolveSalesmanchatbotEngine(pageConfig, defaultProvider, default
         throw new Error(`Engine ${targetEngineName} is not configured in the dashboard.`);
     }
 
-    // 2. Resolve based on modality (Text/Voice/Image)
+    // 2. Resolve based on modality (Text/Voice/Image/Embedding)
     let finalProvider = brandedConfig.text_provider || brandedConfig.provider;
     let finalModel = brandedConfig.text_model;
     let modality = 'text';
 
-    if (isAudio) {
+    if (isEmbedding) {
+        finalProvider = brandedConfig.embed_provider || finalProvider;
+        finalModel = brandedConfig.embed_model || 'text-embedding-004';
+        modality = 'embedding';
+    } else if (isAudio) {
         finalProvider = brandedConfig.voice_provider || finalProvider;
         finalModel = brandedConfig.voice_model || finalModel;
         modality = 'voice';
@@ -953,60 +957,63 @@ async function getEmbedding(text, customApiKey = null) {
     
     // 1. Check Cache First (Skip API call if we already have it)
     const cached = getCachedEmbedding(text);
-    if (cached) {
-        // console.log(`[AI Embedding] Cache HIT for: "${text.substring(0, 30)}..."`);
-        return cached;
-    }
+    if (cached) return cached;
 
     try {
-        const config = await dbService.getEmbeddingGlobalConfig();
-        const apiKey = customApiKey || (config ? config.api_key : null);
+        // --- INTERNAL FORCED ENGINE: Use Brain Engine with Proxy & Rotation ---
+        // This bypasses external API costs and uses our internal infrastructure (salesmanchatbot-brain)
+        const internalModel = 'salesmanchatbot-brain';
+        // console.log(`[AI Embedding] Using Internal Branded Engine: ${internalModel}`);
         
-        if (!apiKey) {
-            return null;
-        }
-
-        const provider = (config && config.provider ? config.provider.toLowerCase() : 'google');
-        let vector = null;
-
-        if (provider === 'google' || provider === 'gemini') {
-            const genAI = new GoogleGenerativeAI(apiKey);
-            // Use the specific model from config, or fallback to text-embedding-004
-            const modelName = (config && config.model) || "text-embedding-004";
-            const model = genAI.getGenerativeModel({ model: modelName });
-            
-            const result = await model.embedContent(text.replace(/\n/g, ' '));
-            vector = result.embedding.values;
-
-            // --- FIX: Gemini embedding-001 returns 3072 dims, but our DB expects 1536 ---
-            // If the model is embedding-001 and we get 3072, we truncate to 1536
-            if (modelName.includes('embedding-001') && vector.length === 3072) {
-                // console.log(`[AI Embedding] Truncating Gemini 3072 dims to 1536 for compatibility.`);
-                vector = vector.slice(0, 1536);
-            }
-        } else {
-            // Default to OpenAI/OpenRouter (OpenAI SDK compatible)
-            const openai = new OpenAI({
-                apiKey: apiKey,
-                baseURL: (config && config.base_url) || 'https://api.openai.com/v1'
-            });
-
-            const response = await openai.embeddings.create({
-                model: (config && config.model) || 'text-embedding-3-small',
-                input: text.replace(/\n/g, ' '),
-                encoding_format: "float",
-            });
-
-            vector = response.data[0].embedding;
-        }
-
+        const axios = require('axios');
+        // We hit our own internal API Engine endpoint which handles the proxy and keys
+        const response = await axios.post(`http://localhost:${process.env.PORT || 3001}/api/api-engine/v1/embeddings`, {
+            model: internalModel,
+            input: text.replace(/\n/g, ' ')
+        }, {
+            headers: { 'Authorization': `Bearer system-internal-bypass` }, 
+            timeout: 30000
+        });
+        
+        const vector = response.data.data[0].embedding;
         if (vector) {
             setCachedEmbedding(text, vector);
+            return vector;
         }
-        return vector;
+        throw new Error("Empty vector returned from internal engine");
     } catch (e) {
-        console.error(`[AI Embedding] Generation failed: ${e.message}`);
-        return null;
+        console.error(`[AI Embedding] Internal Generation failed: ${e.message}. Falling back to legacy config if possible.`);
+        try {
+            const config = await dbService.getEmbeddingGlobalConfig();
+            const apiKey = customApiKey || (config ? config.api_key : null);
+            if (!apiKey) throw e;
+
+            const provider = (config && config.provider ? config.provider.toLowerCase() : 'google');
+            let vector = null;
+
+            if (provider === 'google' || provider === 'gemini') {
+                const genAI = new GoogleGenerativeAI(apiKey);
+                const modelName = (config && config.model) || "text-embedding-004";
+                const model = genAI.getGenerativeModel({ model: modelName });
+                const result = await model.embedContent(text.replace(/\n/g, ' '));
+                vector = result.embedding.values;
+                if (modelName.includes('embedding-001') && vector.length === 3072) vector = vector.slice(0, 1536);
+            } else {
+                const openai = new OpenAI({ apiKey, baseURL: (config && config.base_url) || 'https://api.openai.com/v1' });
+                const res = await openai.embeddings.create({
+                    model: (config && config.model) || 'text-embedding-3-small',
+                    input: text.replace(/\n/g, ' '),
+                    encoding_format: "float",
+                });
+                vector = res.data[0].embedding;
+            }
+
+            if (vector) setCachedEmbedding(text, vector);
+            return vector;
+        } catch (fallbackErr) {
+            console.error(`[AI Embedding] Fallback also failed: ${fallbackErr.message}`);
+            throw fallbackErr;
+        }
     }
 }
 
@@ -1162,7 +1169,13 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null
                 const query = args.query;
                 const scope = args.candidates_scope;
                 
-                let products = await dbService.searchProducts(userId, query, pageId);
+                let products;
+                try {
+                    products = await dbService.searchProducts(userId, query, pageId);
+                } catch (searchErr) {
+                    console.error("[AgentLoop] resolve_product CRITICAL failure:", searchErr.message);
+                    throw new Error(`PRODUCT_SEARCH_API_FAILURE: ${searchErr.message}`);
+                }
                 
                 // If scope provided, filter products
                 if (Array.isArray(scope) && scope.length > 0) {
@@ -1881,7 +1894,12 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                 console.log(`[AI] Injected ${topCandidates.length} product snapshot items for query.`);
             }
         } catch (err) {
-            console.warn("[AI] Product snapshot injection failed:", err.message);
+            console.error("[AI] Product snapshot injection CRITICAL failure:", err.message);
+            // If it's a vector search failure, we throw so the controller can stop the reply
+            if (err.message.includes('Vector search failed') || err.message.includes('Embedding generation')) {
+                throw new Error(`PRODUCT_SEARCH_API_FAILURE: ${err.message}`);
+            }
+            console.warn("[AI] Product snapshot injection failed (non-critical):", err.message);
         }
     }
 

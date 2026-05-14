@@ -215,6 +215,8 @@ async function updateKeyCache(force = false) {
                 status = 'active', 
                 cooldown_until = NULL,
                 usage_today = CASE WHEN last_date_checked != $1 THEN 0 ELSE usage_today END,
+                usage_user_today = CASE WHEN last_date_checked != $1 THEN 0 ELSE usage_user_today END,
+                usage_system_today = CASE WHEN last_date_checked != $1 THEN 0 ELSE usage_system_today END,
                 usage_tokens_today = CASE WHEN last_date_checked != $1 THEN 0 ELSE usage_tokens_today END,
                 usage_tokens_month = CASE WHEN last_month_checked != $2 THEN 0 ELSE usage_tokens_month END,
                 last_date_checked = CASE WHEN last_date_checked != $1 THEN $1 ELSE last_date_checked END,
@@ -1088,12 +1090,11 @@ function releaseSelectionLock() {
     }
 }
 
-async function getSmartKey(provider, model = 'default', modality = 'text') {
+async function getSmartKey(provider, model = 'default', modality = 'text', isSystemRequest = true, requestUserId = null) {
     await acquireSelectionLock();
     try {
-        // --- JITTER: Introduce a small random delay to break mechanical patterns ---
-        // This helps prevent project-wide restrictions for "Terms of Service" violations
-        const jitter = Math.floor(Math.random() * 500); // 0-500ms jitter
+        // --- JITTER: Introduce a small random delay ---
+        const jitter = Math.floor(Math.random() * 500); 
         if (jitter > 0) await new Promise(resolve => setTimeout(resolve, jitter));
 
         // Avoid blocking if cache is fresh
@@ -1125,6 +1126,17 @@ async function getSmartKey(provider, model = 'default', modality = 'text') {
             if (keysByProvider.has(provider)) candidates = keysByProvider.get(provider);
             if (!candidates || candidates.length === 0) return null;
         }
+
+        // --- FILTER CANDIDATES BASED ON REQUEST SOURCE ---
+        if (!isSystemRequest) {
+            // DEVELOPER API: Must use their own keys ONLY
+            candidates = candidates.filter(k => k.owner_id === requestUserId && k.mode === 'dev');
+        } else {
+            // SYSTEM REQUEST: Use Admin keys OR shared Dev keys
+            candidates = candidates.filter(k => k.mode === 'admin' || k.mode === 'dev');
+        }
+
+        if (candidates.length === 0) return null;
 
         // 2. STRICT SEQUENTIAL ROTATION (O(1) Scale for 10k+ Keys)
         const totalKeys = candidates.length;
@@ -1190,6 +1202,24 @@ async function getSmartKey(provider, model = 'default', modality = 'text') {
             const tpmLimit = resolveLimit(candidateKey.tpm_limit, globalLim?.tpm, defaults.tpm);
             const tpdLimit = resolveLimit(candidateKey.tpd_limit, globalLim?.tpd, defaults.tpd);
             const tpmoLimit = resolveLimit(candidateKey.tpmo_limit, globalLim?.tpmo, defaults.tpmo);
+
+            // --- SECRET 50/50 LIMIT LOGIC ---
+            if (candidateKey.mode === 'dev') {
+                const userLimit = Math.floor(rpdLimit / 2);
+                const systemLimit = Math.ceil(rpdLimit / 2);
+
+                if (!isSystemRequest) {
+                    // Developer reached their 50% limit?
+                    if ((candidateKey.usage_user_today || 0) >= userLimit) {
+                        continue;
+                    }
+                } else {
+                    // System reached its 50% limit?
+                    if ((candidateKey.usage_system_today || 0) >= systemLimit) {
+                        continue;
+                    }
+                }
+            }
 
             // Check RPM
             if (rpmLimit < 999999 && activeRpmCount >= rpmLimit) {
@@ -1321,9 +1351,13 @@ async function getSmartKey(provider, model = 'default', modality = 'text') {
             candidateKey.usage_count = (Number(candidateKey.usage_count) || 0) + 1;
             if (candidateKey.last_date_checked === today) {
                 candidateKey.usage_today = (Number(candidateKey.usage_today) || 0) + 1;
+                if (isSystemRequest) candidateKey.usage_system_today = (Number(candidateKey.usage_system_today) || 0) + 1;
+                else candidateKey.usage_user_today = (Number(candidateKey.usage_user_today) || 0) + 1;
             } else {
                 candidateKey.last_date_checked = today;
                 candidateKey.usage_today = 1;
+                candidateKey.usage_system_today = isSystemRequest ? 1 : 0;
+                candidateKey.usage_user_today = isSystemRequest ? 0 : 1;
             }
             candidateKey.last_used_at = new Date().toISOString();
 
@@ -1335,7 +1369,7 @@ async function getSmartKey(provider, model = 'default', modality = 'text') {
 
             flushUsageStats().catch(e => console.error(`[KeyService] Immediate flush failed: ${e.message}`));
 
-            console.log(`[KeyService] ✅ Selected Key: ${candidateKey.api} (Index: ${actualIndex + 1}/${totalKeys}, RPM: ${activeRpmCount + 1}/${rpmLimit || '∞'}, ModelRPD: ${(modelDailyUsage.get(modelUsageKey)?.count || 0)}/${modelSpecificRpdLimit})`);
+            console.log(`[KeyService] ✅ Selected Key: ${candidateKey.api} (Source: ${isSystemRequest ? 'System' : 'User'}, Index: ${actualIndex + 1}/${totalKeys}, RPM: ${activeRpmCount + 1}/${rpmLimit || '∞'}, ModelRPD: ${(modelDailyUsage.get(modelUsageKey)?.count || 0)}/${modelSpecificRpdLimit})`);
             addRotationLog(provider, model, candidateKey.api, actualIndex + 1, totalKeys);
 
             return {
@@ -1385,7 +1419,22 @@ function getModelUsageSummaryForKey(apiKey) {
     return summary;
 }
 
+/**
+ * Unified Key Picker for Developer API
+ */
+async function getUnifiedKey(userId, type, modelName) {
+    // Wrapper around getSmartKey for Developer API requests (isSystemRequest = false)
+    return await getSmartKey('google', modelName || 'gemini-1.5-flash', type, false, userId);
+}
+
+async function trackUnifiedUsage(key, userId) {
+    // Usage is now tracked inside getSmartKey for atomic updates
+    return;
+}
+
 module.exports = {
+    getUnifiedKey,
+    trackUnifiedUsage,
     // NEW: Adaptive Rate Limit Reporter
     reportRateLimit(modelId) {
         console.warn(`[KeyService] ⚠️ Adaptive Limit Triggered for ${modelId}`);
