@@ -323,10 +323,10 @@ export default function DeveloperPage() {
             }
 
             if (data.api_key) {
+                const isFirstTime = !apiKey;
                 setApiKey(data.api_key);
-                toast.success(apiKey ? "API Key regenerated" : "API Key generated");
+                toast.success(isFirstTime ? "API Key generated" : "API Key regenerated");
                 setRegenDialogOpen(false);
-                // Also trigger usage fetch to ensure everything is in sync
                 fetchUsage(1);
             } else {
                 toast.error("Failed to generate key: No key returned from server");
@@ -614,7 +614,7 @@ export default function DeveloperPage() {
                     {isDevLoggedIn && (
                         <div className="relative z-10 space-y-6 pb-20">
                             <Card className="border-white/5 bg-[#121212] rounded-3xl overflow-hidden shadow-2xl">
-                                <CardHeader className="pb-4 pt-8 px-6 md:px-10">
+                                <CardHeader className="pb-4 pt-8 px-6 md:px-10 cursor-default select-none">
                                     <CardTitle className="text-xl md:text-2xl font-bold text-white flex items-center gap-2">
                                         <Key className="h-5 w-5 text-primary" />
                                         API Key
@@ -627,37 +627,39 @@ export default function DeveloperPage() {
                                     <div className="flex flex-col lg:flex-row gap-4">
                                         <div className="relative flex-1 group">
                                             <Input 
-                                                value={apiKey || "No API Key Generated"} 
+                                                value={apiKey || ""} 
+                                                placeholder={apiKey ? "" : "No API Key Generated"}
                                                 type={showKey ? "text" : "password"} 
-                                                readOnly 
-                                                className="h-12 pr-12 font-mono bg-white/[0.02] border-white/10 rounded-xl text-white text-xs md:text-sm focus:ring-1 focus:ring-primary transition-all"
-                                            />
-                                            <Button 
-                                                variant="ghost" 
-                                                size="sm" 
-                                                className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8 p-0 text-slate-500 hover:text-white"
-                                                onClick={() => setShowKey(!showKey)}
-                                            >
-                                                {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                                            </Button>
-                                        </div>
-                                        <div className="flex flex-row gap-3">
-                                            <Button 
-                                                variant="outline" 
-                                                onClick={copyToClipboard} 
-                                                disabled={!apiKey} 
-                                                className="h-12 px-6 border-white/10 bg-white/5 hover:bg-white/10 rounded-xl text-white font-bold transition-all text-sm"
-                                            >
-                                                <Copy className="mr-2 h-4 w-4" /> Copy
-                                            </Button>
-                                            <Button 
-                                                onClick={handleGenerateClick} 
-                                                disabled={loading || isRegenerating} 
-                                                className="h-12 px-8 bg-primary text-black font-bold rounded-xl hover:bg-primary/90 transition-all text-sm"
-                                            >
-                                                <RefreshCw className={`mr-2 h-4 w-4 ${isRegenerating ? 'animate-spin' : ''}`} />
-                                                {apiKey ? "Regenerate" : "Generate"}
-                                            </Button>
+                                                 readOnly 
+                                                 autoComplete="new-password"
+                                                 className="h-12 pr-12 font-mono bg-white/[0.02] border-white/10 rounded-xl text-white text-xs md:text-sm focus:ring-1 focus:ring-primary transition-all cursor-default"
+                                             />
+                                             <Button 
+                                                 variant="ghost" 
+                                                 size="sm" 
+                                                 className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8 p-0 text-slate-500 hover:text-white"
+                                                 onClick={() => setShowKey(!showKey)}
+                                             >
+                                                 {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                             </Button>
+                                         </div>
+                                         <div className="flex flex-row gap-3">
+                                             <Button 
+                                                 variant="outline" 
+                                                 onClick={copyToClipboard} 
+                                                 disabled={!apiKey} 
+                                                 className="h-12 px-6 border-white/10 bg-white/5 hover:bg-white/10 rounded-xl text-white font-bold transition-all text-sm"
+                                             >
+                                                 <Copy className="mr-2 h-4 w-4" /> Copy
+                                             </Button>
+                                             <Button 
+                                                 onClick={handleGenerateClick} 
+                                                 disabled={loading || isRegenerating} 
+                                                 className="h-12 px-8 bg-primary text-black font-bold rounded-xl hover:bg-primary/90 transition-all text-sm"
+                                             >
+                                                 <RefreshCw className={`mr-2 h-4 w-4 ${isRegenerating ? 'animate-spin' : ''}`} />
+                                                 {apiKey && apiKey.length > 5 ? "Regenerate" : "Generate"}
+                                             </Button>
                                         </div>
                                     </div>
 
@@ -681,7 +683,7 @@ export default function DeveloperPage() {
 
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                                 <Card className="border-white/5 bg-[#121212] rounded-3xl overflow-hidden shadow-xl">
-                                    <CardHeader className="pt-8 px-6 md:px-10">
+                                    <CardHeader className="pt-8 px-6 md:px-10 cursor-default select-none">
                                         <CardTitle className="text-lg font-bold text-white">External Engine</CardTitle>
                                         <CardDescription className="text-slate-400 text-xs">Add your Gemini API key for extra capacity.</CardDescription>
                                     </CardHeader>
@@ -711,7 +713,7 @@ export default function DeveloperPage() {
                                 </Card>
 
                                 <Card className="border-white/5 bg-[#121212] rounded-3xl overflow-hidden shadow-xl">
-                                    <CardHeader className="pt-8 px-6 md:px-10">
+                                    <CardHeader className="pt-8 px-6 md:px-10 cursor-default select-none">
                                         <CardTitle className="text-lg font-bold text-white">Endpoint</CardTitle>
                                         <CardDescription className="text-slate-400 text-xs">Direct API connection point.</CardDescription>
                                     </CardHeader>
@@ -730,7 +732,7 @@ export default function DeveloperPage() {
                             </div>
 
                             <Card className="border-white/5 bg-[#121212] rounded-3xl overflow-hidden shadow-xl">
-                                <CardHeader className="px-6 md:px-10 pt-8 pb-4">
+                                <CardHeader className="px-6 md:px-10 pt-8 pb-4 cursor-default select-none">
                                     <CardTitle className="text-lg font-bold text-white">Usage Statistics</CardTitle>
                                 </CardHeader>
                                 <CardContent className="px-6 md:px-10 pb-10">
