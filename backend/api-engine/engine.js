@@ -371,6 +371,27 @@ router.delete('/keys/:id', async (req, res) => {
 });
 
 // --- 3. THE CORE PROXY ENGINE (Compatible with OpenAI Client) ---
+// OpenAI Compatibility Aliases (for N8N and other tools)
+router.get('/models', async (req, res) => {
+    const { error } = await validateUserApiKey(req);
+    if (error) return res.status(error.status).json({ error: error.message });
+    
+    return res.json({
+        object: "list",
+        data: [
+            { id: "salesmanchatbot-pro", object: "model", created: 1677610602, owned_by: "salesman" },
+            { id: "salesmanchatbot-flash", object: "model", created: 1709251200, owned_by: "salesman" },
+            { id: "salesmanchatbot-lite", object: "model", created: 1709251200, owned_by: "salesman" }
+        ]
+    });
+});
+
+router.post('/chat/completions', async (req, res) => {
+    // Forward to the actual handler
+    req.url = '/v1/chat/completions';
+    return router.handle(req, res);
+});
+
 // Endpoint: /v1/chat/completions
 router.get('/v1', async (req, res) => {
     const { error } = await validateUserApiKey(req);
