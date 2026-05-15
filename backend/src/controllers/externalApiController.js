@@ -132,65 +132,82 @@ exports.handleChatCompletion = async (req, res) => {
         // 3. Free Tier Logic (Lifetime 20 requests if balance is low)
         let freeTierActive = false;
         try {
+            const pgClient = require('../services/pgClient');
             const countResult = await pgClient.query(
                 'SELECT COUNT(*)::int AS cnt FROM api_usage_stats WHERE user_id = $1::uuid',
                 [userConfig.user_id]
             );
-            const totalCount = countResult.rows.length > 0 ? countResult.rows[0].cnt : 0;
+            const totalCount = countResult.rows.length > 0 ? (countResult.rows[0].cnt || 0) : 0;
             if (Number(userConfig.balance) < 0.01 && totalCount < 20) {
                 freeTierActive = true;
             }
         } catch (e) {
+            console.error("[ExternalAPI] Free tier check error:", e.message);
         }
 
-        // 4. Check Balance (skip if free tier active)
+        // 4. Resolve Provider & Model
+        let provider = 'google';
+        let modelToUse = requestedModel;
+        let isSystemRequest = true;
+
+        if (isBranded) {
+            try {
+                // Branded models use our system pool
+                const resolved = await aiService.resolveSalesmanchatbotEngine({ chat_model: requestedModel }, 'salesmanchatbot', requestedModel, imageUrls.length > 0, audioUrls.length > 0);
+                provider = resolved.finalProvider;
+                modelToUse = resolved.finalModel;
+                isSystemRequest = true; // Use Admin/Global pool
+            } catch (e) {
+                console.warn(`[ExternalAPI] Resolution failed for ${requestedModel}:`, e.message);
+            }
+        } else {
+            // Non-branded models MUST use user's own keys
+            isSystemRequest = false; 
+            if (requestedModel.includes('gpt')) provider = 'openai';
+            else if (requestedModel.includes('mistral')) provider = 'mistral';
+            else if (requestedModel.includes('llama') || requestedModel.includes('mixtral')) provider = 'groq';
+            else if (requestedModel.includes('claude')) provider = 'anthropic';
+        }
+
+        // 5. Check Balance (skip if free tier active)
         if (!freeTierActive) {
             if (userConfig.balance < 0.01) {
                 return res.status(402).json({ error: { message: `Insufficient balance. Minimum 0.01 BDT required.`, type: 'insufficient_quota', code: 'insufficient_balance' } });
             }
         }
 
+        // --- COMMON LOGIC: Fetch Key & Prepare Request ---
+        const maxAttempts = 3;
+        let lastError = null;
+        let targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+        
+        if (provider === 'openai') targetUrl = 'https://api.openai.com/v1/chat/completions';
+        else if (provider === 'groq') targetUrl = 'https://api.groq.com/openai/v1/chat/completions';
+        else if (provider === 'mistral') targetUrl = 'https://api.mistral.ai/v1/chat/completions';
+        else if (provider === 'anthropic') targetUrl = 'https://api.anthropic.com/v1/messages'; // Note: Anthropic might need a wrapper if using OpenAI format
+
         // --- STREAMING SUPPORT ---
         if (stream) {
-            console.log(`[ExternalAPI] Streaming request for model: ${requestedModel}`);
+            console.log(`[ExternalAPI] Streaming request for model: ${requestedModel} (SystemPool: ${isSystemRequest})`);
             
-            // Resolve Model & Provider
-            let provider = 'google';
-            let modelToUse = requestedModel;
-            
-            if (isBranded) {
-                try {
-                    const resolved = await aiService.resolveSalesmanchatbotEngine({ chat_model: requestedModel }, 'salesmanchatbot', requestedModel, imageUrls.length > 0, audioUrls.length > 0);
-                    provider = resolved.finalProvider;
-                    modelToUse = resolved.finalModel;
-                } catch (e) {
-                    console.warn(`[ExternalAPI] Resolution failed for ${requestedModel}:`, e.message);
-                }
-            } else if (requestedModel.includes('gpt')) provider = 'openai';
-            else if (requestedModel.includes('mistral')) provider = 'mistral';
-            else if (requestedModel.includes('llama')) provider = 'groq';
-
-            let targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
-            if (provider === 'openai') targetUrl = 'https://api.openai.com/v1/chat/completions';
-            else if (provider === 'groq') targetUrl = 'https://api.groq.com/openai/v1/chat/completions';
-            else if (provider === 'mistral') targetUrl = 'https://api.mistral.ai/v1/chat/completions';
-
-            // Update body for upstream
-            req.body.model = modelToUse;
-
-            const maxAttempts = 3;
-            let lastError = null;
-
             for (let attempt = 0; attempt < maxAttempts; attempt++) {
-                const keyData = await keyService.getSmartKey(provider, modelToUse, imageUrls.length > 0 ? 'vision' : 'text');
-                if (!keyData) break;
+                // Use getSmartKey with isSystemRequest filter
+                const keyData = await keyService.getSmartKey(provider, modelToUse, imageUrls.length > 0 ? 'vision' : 'text', isSystemRequest, userConfig.user_id);
+                
+                if (!keyData) {
+                    lastError = { message: `No active ${provider} keys found for this request.` };
+                    break;
+                }
 
                 const headers = { 'Content-Type': 'application/json' };
                 if (provider === 'google' || provider === 'gemini') headers['x-goog-api-key'] = keyData.key;
                 else headers['Authorization'] = `Bearer ${keyData.key}`;
 
                 try {
-                    const response = await axios.post(targetUrl, req.body, {
+                    // Update body for upstream
+                    const upstreamBody = { ...req.body, model: modelToUse };
+
+                    const response = await axios.post(targetUrl, upstreamBody, {
                         headers,
                         responseType: 'stream',
                         timeout: 60000,
@@ -198,7 +215,7 @@ exports.handleChatCompletion = async (req, res) => {
                     });
 
                     if (response.status >= 400) {
-                        lastError = { status: response.status, data: response.data };
+                        lastError = { status: response.status, data: "" };
                         if (response.status === 429) keyService.markKeyAsDead(keyData.key, 2 * 60 * 1000, 'upstream_429');
                         else if ([401, 403].includes(response.status)) keyService.markKeyAsDead(keyData.key, 24 * 60 * 60 * 1000, 'upstream_auth');
                         continue;
@@ -223,145 +240,64 @@ exports.handleChatCompletion = async (req, res) => {
                     lastError = err;
                 }
             }
-            return res.status(502).json({ error: { message: "Stream failed after multiple attempts", details: lastError } });
+            return res.status(502).json({ error: { message: "Stream failed or no keys available", details: lastError?.message || lastError } });
         }
 
-        if (!userMessage) {
-             return res.status(400).json({ error: { message: 'Last message must be from user', type: 'invalid_request_error' } });
-        }
+        // --- NON-STREAMING RAW API PATH ---
+        console.log(`[ExternalAPI] Non-streaming request for model: ${requestedModel} (SystemPool: ${isSystemRequest})`);
 
-        // 4. ROUTING LOGIC based on Model Name
-        let aiText = "";
-        let totalTokens = 0;
-        let responseModelName = requestedModel; 
-        let billingLabel = "Cheap Engine API Call";
-
-        // --- UNIFIED ENGINE CALL (Using Rotation Pool) ---
-        // Ensure Vision requests use a capable model (Gemini 2.0 Flash or 1.5 Flash)
-        let modelToUse = requestedModel;
-        if (imageUrls.length > 0 || audioUrls.length > 0) {
-            // For External API multi-modal requests, force use of a stable vision model
-            // but keep the branding in the final response.
-            modelToUse = 'salesmanchatbot-pro'; 
-        }
-
-        const prompts = systemPrompt ? { text_prompt: systemPrompt } : {};
-        
-        // --- SAFE FIX: Extract User ID from OpenAI format if provided ---
-        const senderId = req.body.user || externalUser || 'ExternalAPI';
-
-        const aiResponseObj = await aiService.generateReply(
-            userMessage,
-            { 
-                user_id: userConfig.user_id,
-                page_id: externalUser || 'ExternalAPI',
-                ai_provider: 'salesmanchatbot',
-                chat_model: modelToUse, 
-                is_external_api: true,
-                display_model: requestedModel,
-                billing_mode: 'request',
-                cheap_engine: false,
-                platform: 'external_api'
-            }, 
-            prompts, 
-            history,
-            'API_User', 
-            'API_Owner', 
-            null, 
-            imageUrls, 
-            audioUrls, 
-            0,
-            senderId // Pass the senderId/userId
-        );
-
-        let structuredData = null;
-        if (typeof aiResponseObj === 'object' && aiResponseObj !== null) {
-            // Priority: If it's a structured reply from our agent, take the text part.
-            // This prevents JSON leaking into n8n/external platforms.
-            aiText = aiResponseObj.reply || aiResponseObj.reply_text || aiResponseObj.text || JSON.stringify(aiResponseObj);
-            totalTokens = aiResponseObj.token_usage || 0;
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            const keyData = await keyService.getSmartKey(provider, modelToUse, imageUrls.length > 0 ? 'vision' : 'text', isSystemRequest, userConfig.user_id);
             
-            // Keep track of structured data to return if needed
-            structuredData = {
-                reply_text: aiText,
-                action: aiResponseObj.action || "NONE",
-                product_id: aiResponseObj.product_id || null,
-                image_urls: aiResponseObj.image_urls || [],
-                order_details: aiResponseObj.order_details || null
-            };
-
-            // ALWAYS return the branded name the user requested
-            responseModelName = requestedModel; 
-        } else {
-            aiText = String(aiResponseObj);
-        }
-
-        // Clean AI Text from any JSON artifacts
-        aiText = cleanAiText(aiText);
-
-        // --- SAFE FIX: If we have structured data, we should ideally wrap it in the final output ---
-        // so that internal calls can parse it back.
-        let finalOutput = aiText;
-        if (structuredData && (structuredData.order_details || structuredData.product_id)) {
-            // Append structured data as a hidden or secondary part of the response
-            // This allows the internal caller (aiService.js) to parse it back.
-            finalOutput = JSON.stringify(structuredData);
-        }
-
-        // Fallback Token Calculation if engine returned 0
-        if (totalTokens === 0) {
-            const historyChars = history.reduce((acc, m) => acc + (m.content?.length || 0), 0);
-            const systemChars = systemPrompt ? systemPrompt.length : 0;
-            const inputChars = userMessage.length + historyChars + systemChars;
-            const outputChars = aiText.length;
-            totalTokens = Math.ceil((inputChars + outputChars) / 4);
-        }
-
-        // Determine Billing Label based on Model
-        if (model === 'salesmanchatbot-flash') billingLabel = "Flash Engine API Call";
-        else if (model === 'salesmanchatbot-lite') billingLabel = "Lite Engine API Call";
-        else billingLabel = "Pro Engine API Call";
-
-        // 5. Calculate Cost & Deduct Balance
-        const finalCost = await dbService.getCostForModel(requestedModel);
-
-        if (!freeTierActive) {
-            await dbService.deductUserBalance(userConfig.user_id, finalCost, `${billingLabel} (${totalTokens} tokens)`);
-            await dbService.logApiUsage(userConfig.user_id, requestedModel, totalTokens, finalCost, 'external_api');
-        }
-
-        // Usage is now logged inside aiService.js to unify all consumption tracking.
-
-        // --- SAFETY FILTER: Remove Internal Tags like [SAVE_ORDER] ---
-        if (aiText && typeof aiText === 'string') {
-            aiText = aiText.replace(/\[SAVE_ORDER:[\s\S]*?\]/g, '').trim();
-        }
-
-        // 6. Return Response
-        const responseId = `chatcmpl-${Date.now()}`;
-        const created = Math.floor(Date.now() / 1000);
-
-        return res.json({
-            id: responseId,
-            object: 'chat.completion',
-            created: created,
-            model: responseModelName, // Dynamic based on engine
-            choices: [
-                {
-                    index: 0,
-                    message: {
-                        role: 'assistant',
-                        content: finalOutput // Use the potentially JSON-wrapped output
-                    },
-                    finish_reason: 'stop'
-                }
-            ],
-            usage: {
-                prompt_tokens: 0, 
-                completion_tokens: 0,
-                total_tokens: totalTokens
+            if (!keyData) {
+                lastError = { message: `No active ${provider} keys found for this request.` };
+                break;
             }
-        });
+
+            const headers = { 'Content-Type': 'application/json' };
+            if (provider === 'google' || provider === 'gemini') headers['x-goog-api-key'] = keyData.key;
+            else headers['Authorization'] = `Bearer ${keyData.key}`;
+
+            try {
+                // Update body for upstream
+                const upstreamBody = { ...req.body, model: modelToUse };
+
+                const response = await axios.post(targetUrl, upstreamBody, {
+                    headers,
+                    timeout: 60000,
+                    validateStatus: () => true
+                });
+
+                if (response.status >= 400) {
+                    lastError = { status: response.status, data: response.data };
+                    if (response.status === 429) keyService.markKeyAsDead(keyData.key, 2 * 60 * 1000, 'upstream_429');
+                    else if ([401, 403].includes(response.status)) keyService.markKeyAsDead(keyData.key, 24 * 60 * 60 * 1000, 'upstream_auth');
+                    continue;
+                }
+
+                // Success: Return RAW OpenAI compatible response
+                const data = response.data;
+                
+                // Branded response model name
+                if (data.model) data.model = requestedModel;
+
+                // Billing
+                if (!freeTierActive) {
+                    const tokens = data.usage?.total_tokens || 0;
+                    const cost = await dbService.getCostForModel(requestedModel);
+                    await dbService.deductUserBalance(userConfig.user_id, cost, `API: ${requestedModel} (${tokens} tokens)`);
+                    await dbService.logApiUsage(userConfig.user_id, requestedModel, tokens, cost, 'external_api');
+                }
+
+                return res.json(data);
+
+            } catch (err) {
+                console.error(`[ExternalAPI] Attempt ${attempt + 1} failed:`, err.message);
+                lastError = err;
+            }
+        }
+
+        return res.status(502).json({ error: { message: "API request failed or no keys available", details: lastError?.message || lastError } });
 
     } catch (error) {
         console.error('[ExternalAPI] Error:', error);
