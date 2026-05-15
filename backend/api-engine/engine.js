@@ -6,7 +6,6 @@ const pgClient = require('../src/services/pgClient');
 const adminAuthMiddleware = require('../src/middleware/adminAuthMiddleware');
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
-const dbService = require('../src/services/dbService');
 const aiService = require('../src/services/aiService');
 
 // --- Proxy Helper ---

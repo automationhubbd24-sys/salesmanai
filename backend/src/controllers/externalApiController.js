@@ -21,8 +21,6 @@ const validateApiKey = async (req) => {
         return { error: { status: 401, message: 'Invalid API Key format', type: 'invalid_request_error', code: 'invalid_api_key' } };
     }
 
-    const pgClient = require('../services/pgClient');
-
     let userConfig = null;
 
     try {
