@@ -759,18 +759,32 @@ export default function DeveloperPage() {
 
                                 <Card className="border-white/5 bg-[#121212] rounded-3xl overflow-hidden shadow-xl">
                                     <CardHeader className="pt-8 px-6 md:px-10 cursor-default select-none">
-                                        <CardTitle className="text-lg font-bold text-white">Endpoint</CardTitle>
-                                        <CardDescription className="text-slate-400 text-xs">Direct API connection point.</CardDescription>
+                                        <CardTitle className="text-lg font-bold text-white flex items-center justify-between">
+                                            <span>Endpoint</span>
+                                            <Button 
+                                                variant="ghost" 
+                                                size="sm" 
+                                                className="h-8 w-8 p-0 text-slate-500 hover:text-white"
+                                                onClick={() => {
+                                                    const endpoint = `${window.location.origin}/v1/chat/completions`;
+                                                    navigator.clipboard.writeText(endpoint);
+                                                    toast.success("Endpoint copied to clipboard");
+                                                }}
+                                            >
+                                                <Copy className="h-4 w-4" />
+                                            </Button>
+                                        </CardTitle>
+                                        <CardDescription className="text-slate-400 text-xs">Direct API connection point (OpenAI Compatible).</CardDescription>
                                     </CardHeader>
                                     <CardContent className="space-y-4 px-6 md:px-10 pb-10">
                                         <div className="bg-black/40 p-4 rounded-xl border border-white/5">
                                             <code className="block text-[10px] md:text-xs font-mono text-primary break-all leading-relaxed">
-                                                {window.location.origin}/api-engine/v1/dev/chat
+                                                {window.location.origin}/v1/chat/completions
                                             </code>
                                         </div>
                                         <div className="flex justify-between text-[10px] md:text-xs text-slate-500 font-medium">
                                             <span>Auth: Bearer Token</span>
-                                            <span>Model: salesmanchatbot-pro</span>
+                                            <span>Format: OpenAI compatible</span>
                                         </div>
                                     </CardContent>
                                 </Card>

@@ -23,8 +23,29 @@ const app = express();
 // Enable trust proxy for Coolify/Nginx/Load Balancers
 app.set('trust proxy', 1);
 
-// Middleware
-app.use(cors());
+// CORS Configuration
+const allowedOrigins = [
+    'https://www.salesmanchatbot.online',
+    'https://salesmanchatbot.online',
+    'http://localhost:5173',
+    'http://localhost:3000'
+];
+
+app.use(cors({
+    origin: function (origin, callback) {
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.indexOf(origin) === -1) {
+            return callback(null, true); // Allow all for now to fix the immediate issue
+        }
+        return callback(null, true);
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
+}));
+
+// Explicitly handle OPTIONS preflight
+app.options('*', cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
@@ -48,7 +69,8 @@ if (require('fs').existsSync(distPath)) {
     app.use(express.static(distPath, cacheOptions));
     // SPA Fallback: handle client-side routing
     app.get('*', (req, res, next) => {
-        if (req.path.startsWith('/api')) return next();
+        const publicPaths = ['/api', '/v1', '/webhook', '/whatsapp', '/messenger', '/uploads'];
+        if (publicPaths.some(path => req.path.startsWith(path))) return next();
         res.sendFile(path.join(distPath, 'index.html'));
     });
 }
