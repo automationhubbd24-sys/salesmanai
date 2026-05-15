@@ -239,7 +239,9 @@ export default function DeveloperPage() {
             const token = localStorage.getItem("auth_token");
             if (!token) return;
 
-            let url = `${BACKEND_URL}/api/external/usage?page=${page}&limit=20`;
+            // Ensure we use the correct backend URL prefix
+            const baseUrl = BACKEND_URL.endsWith('/api') ? BACKEND_URL.replace(/\/api$/, '') : BACKEND_URL;
+            let url = `${baseUrl}/api/external/usage?page=${page}&limit=20`;
             if (startDate && endDate) {
                 url += `&startDate=${startDate}&endDate=${endDate}`;
             }
@@ -277,7 +279,8 @@ export default function DeveloperPage() {
 
         setLoading(true);
         try {
-            const res = await fetch(`${BACKEND_URL}/api/external/key`, {
+            const baseUrl = BACKEND_URL.endsWith('/api') ? BACKEND_URL.replace(/\/api$/, '') : BACKEND_URL;
+            const res = await fetch(`${baseUrl}/api/external/key`, {
                 headers: {
                     'Authorization': `Bearer ${token}`
                 }
@@ -308,7 +311,8 @@ export default function DeveloperPage() {
 
         setIsRegenerating(true);
         try {
-            const res = await fetch(`${BACKEND_URL}/api/external/key/regenerate`, {
+            const baseUrl = BACKEND_URL.endsWith('/api') ? BACKEND_URL.replace(/\/api$/, '') : BACKEND_URL;
+            const res = await fetch(`${baseUrl}/api/external/key/regenerate`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}`

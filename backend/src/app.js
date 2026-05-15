@@ -21,10 +21,7 @@ const path = require('path');
 const app = express();
 
 // CORS Configuration - Original Simple Working State
-app.use(cors({
-    origin: true, // Reflects the request origin, equivalent to '*' but supports credentials
-    credentials: true
-}));
+app.use(cors());
 
 // Enable trust proxy
 app.set('trust proxy', 1);
