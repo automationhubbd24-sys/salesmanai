@@ -15,7 +15,7 @@ import Logo from "@/components/Logo";
 
 export default function DeveloperPage() {
     const [apiKey, setApiKey] = useState<string | null>(null);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(false);
     const [loadingStatus, setLoadingStatus] = useState(true);
     const [showKey, setShowKey] = useState(false);
     
@@ -38,16 +38,18 @@ export default function DeveloperPage() {
         fetchDevStatus();
     }, []);
 
-    // Effect to auto-unlock if approved and main token works
+    // Effect to fetch key if logged in
     useEffect(() => {
-        if (devStatus === 'approved') {
-            if (isDevLoggedIn) {
-                fetchKey();
-                fetchUsage(1);
-            } else {
-                // Attempt auto-unlock if status is approved but not "logged in" to dev portal yet
-                checkAutoUnlock();
-            }
+        if (isDevLoggedIn) {
+            fetchKey();
+            fetchUsage(1);
+        }
+    }, [isDevLoggedIn]);
+
+    // Effect to auto-unlock if approved
+    useEffect(() => {
+        if (devStatus === 'approved' && !isDevLoggedIn) {
+            checkAutoUnlock();
         }
     }, [devStatus, isDevLoggedIn]);
 
@@ -496,7 +498,7 @@ export default function DeveloperPage() {
                                                 </div>
 
                                                 <Button 
-                                                    className="w-full h-12 text-sm font-bold bg-primary text-black hover:bg-primary/90 rounded-xl transition-all active:scale-[0.98] mt-2 shadow-[0_8px_16px_rgba(0,255,136,0.1)]" 
+                                                    className="w-full h-12 text-sm font-bold bg-primary text-black hover:bg-primary/90 rounded-xl transition-all active:scale-[0.98] mt-2 shadow-[0_8px_16px_rgba(0,255,136,0.1)] cursor-pointer disabled:cursor-not-allowed" 
                                                     onClick={handleRegister}
                                                     disabled={registering || !regData.transactionId}
                                                 >
@@ -586,7 +588,7 @@ export default function DeveloperPage() {
 
                                     <div className="space-y-3">
                                         <Button 
-                                            className="w-full h-12 text-sm font-bold bg-primary text-black hover:bg-primary/90 rounded-xl transition-all" 
+                                            className="w-full h-12 text-sm font-bold bg-primary text-black hover:bg-primary/90 rounded-xl transition-all cursor-pointer disabled:cursor-not-allowed" 
                                             onClick={handleDevLogin}
                                             disabled={loggingIn || !devCreds.id || !devCreds.pass}
                                         >
@@ -623,43 +625,43 @@ export default function DeveloperPage() {
                                         Use this key to authenticate your requests. Keep it secure.
                                     </CardDescription>
                                 </CardHeader>
-                                <CardContent className="space-y-6 px-6 md:px-10 pb-10">
+                                <CardContent className="space-y-6 px-6 md:px-10 pb-10 select-none">
                                     <div className="flex flex-col lg:flex-row gap-4">
-                                        <div className="relative flex-1 group">
+                                        <div className="relative flex-1 group select-text">
                                             <Input 
                                                 value={apiKey || ""} 
                                                 placeholder={apiKey ? "" : "No API Key Generated"}
                                                 type={showKey ? "text" : "password"} 
-                                                 readOnly 
-                                                 autoComplete="new-password"
-                                                 className="h-12 pr-12 font-mono bg-white/[0.02] border-white/10 rounded-xl text-white text-xs md:text-sm focus:ring-1 focus:ring-primary transition-all cursor-default"
-                                             />
-                                             <Button 
-                                                 variant="ghost" 
-                                                 size="sm" 
-                                                 className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8 p-0 text-slate-500 hover:text-white"
-                                                 onClick={() => setShowKey(!showKey)}
-                                             >
-                                                 {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                                             </Button>
-                                         </div>
-                                         <div className="flex flex-row gap-3">
-                                             <Button 
-                                                 variant="outline" 
-                                                 onClick={copyToClipboard} 
-                                                 disabled={!apiKey} 
-                                                 className="h-12 px-6 border-white/10 bg-white/5 hover:bg-white/10 rounded-xl text-white font-bold transition-all text-sm"
-                                             >
-                                                 <Copy className="mr-2 h-4 w-4" /> Copy
-                                             </Button>
-                                             <Button 
-                                                 onClick={handleGenerateClick} 
-                                                 disabled={loading || isRegenerating} 
-                                                 className="h-12 px-8 bg-primary text-black font-bold rounded-xl hover:bg-primary/90 transition-all text-sm"
-                                             >
-                                                 <RefreshCw className={`mr-2 h-4 w-4 ${isRegenerating ? 'animate-spin' : ''}`} />
-                                                 {apiKey && apiKey.length > 5 ? "Regenerate" : "Generate"}
-                                             </Button>
+                                                readOnly 
+                                                autoComplete="new-password"
+                                                className="h-12 pr-12 font-mono bg-white/[0.02] border-white/10 rounded-xl text-white text-xs md:text-sm focus:ring-1 focus:ring-primary transition-all cursor-default"
+                                            />
+                                            <Button 
+                                                variant="ghost" 
+                                                size="sm" 
+                                                className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8 p-0 text-slate-500 hover:text-white"
+                                                onClick={() => setShowKey(!showKey)}
+                                            >
+                                                {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                            </Button>
+                                        </div>
+                                        <div className="flex flex-row gap-3">
+                                            <Button 
+                                                variant="outline" 
+                                                onClick={copyToClipboard} 
+                                                disabled={!apiKey || apiKey.length < 5} 
+                                                className="h-12 px-6 border-white/10 bg-white/5 hover:bg-white/10 rounded-xl text-white font-bold transition-all text-sm cursor-pointer disabled:cursor-not-allowed"
+                                            >
+                                                <Copy className="mr-2 h-4 w-4" /> Copy
+                                            </Button>
+                                            <Button 
+                                                onClick={handleGenerateClick} 
+                                                disabled={loading || isRegenerating} 
+                                                className="h-12 px-8 bg-primary text-black font-bold rounded-xl hover:bg-primary/90 transition-all text-sm cursor-pointer disabled:cursor-not-allowed"
+                                            >
+                                                <RefreshCw className={`mr-2 h-4 w-4 ${isRegenerating ? 'animate-spin' : ''}`} />
+                                                {apiKey && apiKey.length > 5 ? "Regenerate" : "Generate"}
+                                            </Button>
                                         </div>
                                     </div>
 
@@ -705,7 +707,7 @@ export default function DeveloperPage() {
                                         <Button 
                                             onClick={handleAddGeminiKey} 
                                             disabled={isAddingKey || !userGeminiKey || !userGmail}
-                                            className="w-full h-12 bg-white/5 hover:bg-white/10 text-white font-bold rounded-xl transition-all"
+                                            className="w-full h-12 bg-white/5 hover:bg-white/10 text-white font-bold rounded-xl transition-all cursor-pointer disabled:cursor-not-allowed"
                                         >
                                             {isAddingKey ? <RefreshCw className="h-4 w-4 animate-spin" /> : "Save Gemini Key"}
                                         </Button>
