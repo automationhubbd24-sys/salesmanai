@@ -122,14 +122,18 @@ const validateUserApiKey = async (req) => {
 
 // --- GLOBAL AUTH MIDDLEWARE (STRICT) ---
 router.use(async (req, res, next) => {
-    if (req.path === '/health' || req.path === '/status') return next();
+    if (req.path === '/health' || req.path === '/status' || req.path === '/') return next();
 
     const { userConfig, error } = await validateUserApiKey(req);
     if (error) {
         console.warn(`[API Engine Auth] Denied ${req.method} ${req.originalUrl} - ${error.message}`);
+        
+        // Special case: If user gives wrong key but accesses root/base URLs, show friendly error instead of breaking connection tests completely if we want to guide them
+        const isRootPath = req.path === '/v1' || req.path === '/v1/' || req.path === '/api/v1/dev/chat';
+        
         return res.status(error.status).json({ 
             error: {
-                message: error.message,
+                message: isRootPath ? "Unauthorized API Key. Please get a valid key from salesmanchatbot.online/dashboard/api" : error.message,
                 type: 'invalid_request_error',
                 code: error.status === 401 ? 'invalid_api_key' : 'forbidden'
             }
