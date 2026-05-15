@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { api } from "@/lib/api";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import Logo from "@/components/Logo";
 
 export default function DeveloperPage() {
@@ -28,11 +29,19 @@ export default function DeveloperPage() {
     const [loggingIn, setLoggingIn] = useState(false);
     const [regData, setRegData] = useState({ paymentMethod: 'bkash', transactionId: '' });
 
-    // User Gemini Key Management
-    const [userGeminiKey, setUserGeminiKey] = useState('');
+    // User External Key Management
+    const [externalKey, setExternalKey] = useState('');
     const [userGmail, setUserGmail] = useState('');
+    const [selectedProvider, setSelectedProvider] = useState('google');
     const [isAddingKey, setIsAddingKey] = useState(false);
     const userId = localStorage.getItem('auth_user_id');
+
+    const providers = [
+        { id: 'google', name: 'Gemini (Google)', icon: '✨' },
+        { id: 'openrouter', name: 'OpenRouter', icon: '🌐' },
+        { id: 'mistral', name: 'Mistral AI', icon: '🌪️' },
+        { id: 'groq', name: 'Groq', icon: '⚡' }
+    ];
 
     useEffect(() => {
         fetchDevStatus();
@@ -145,22 +154,23 @@ export default function DeveloperPage() {
         }
     };
 
-    const handleAddGeminiKey = async () => {
-        if (!userGeminiKey || !userGmail) {
+    const handleAddExternalKey = async () => {
+        if (!externalKey || !userGmail) {
             toast.error("Gmail and API Key are required");
             return;
         }
         setIsAddingKey(true);
         try {
             await api.post('/api-engine/keys', {
-                api: userGeminiKey,
+                api: externalKey,
                 gmail: userGmail,
-                provider: 'google',
+                provider: selectedProvider,
                 mode: 'dev', 
                 owner_id: userId
             });
-            toast.success("Gemini API Key added successfully");
-            setUserGeminiKey('');
+            const providerName = providers.find(p => p.id === selectedProvider)?.name || selectedProvider;
+            toast.success(`${providerName} API Key added successfully`);
+            setExternalKey('');
             setUserGmail('');
         } catch (err: any) {
             toast.error(err.response?.data?.error || "Failed to add key");
@@ -686,30 +696,63 @@ export default function DeveloperPage() {
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                                 <Card className="border-white/5 bg-[#121212] rounded-3xl overflow-hidden shadow-xl">
                                     <CardHeader className="pt-8 px-6 md:px-10 cursor-default select-none">
-                                        <CardTitle className="text-lg font-bold text-white">External Engine</CardTitle>
-                                        <CardDescription className="text-slate-400 text-xs">Add your Gemini API key for extra capacity.</CardDescription>
+                                        <CardTitle className="text-lg font-bold text-white flex items-center gap-2">
+                                            <Cpu className="h-5 w-5 text-primary" />
+                                            External Engine
+                                        </CardTitle>
+                                        <CardDescription className="text-slate-400 text-xs">Connect your own AI models for extra capacity and flexibility.</CardDescription>
                                     </CardHeader>
                                     <CardContent className="space-y-4 px-6 md:px-10 pb-10">
-                                        <div className="space-y-3">
-                                            <Input 
-                                                placeholder="Gmail Address" 
-                                                value={userGmail}
-                                                onChange={(e) => setUserGmail(e.target.value)}
-                                                className="h-12 bg-white/[0.02] border-white/10 rounded-xl text-white text-sm"
-                                            />
-                                            <Input 
-                                                placeholder="Gemini API Key" 
-                                                value={userGeminiKey}
-                                                onChange={(e) => setUserGeminiKey(e.target.value)}
-                                                className="h-12 bg-white/[0.02] border-white/10 rounded-xl text-white text-sm"
-                                            />
+                                        <div className="space-y-4">
+                                            <div className="space-y-2">
+                                                <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">AI Provider</Label>
+                                                <Select value={selectedProvider} onValueChange={setSelectedProvider}>
+                                                    <SelectTrigger className="h-12 bg-white/[0.02] border-white/10 rounded-xl text-white">
+                                                        <SelectValue placeholder="Select Provider" />
+                                                    </SelectTrigger>
+                                                    <SelectContent className="bg-zinc-950 border-white/10 text-white">
+                                                        {providers.map(p => (
+                                                            <SelectItem key={p.id} value={p.id} className="cursor-pointer">
+                                                                <span className="flex items-center gap-2">
+                                                                    <span>{p.icon}</span>
+                                                                    <span>{p.name}</span>
+                                                                </span>
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+
+                                            <div className="space-y-3">
+                                                <div className="space-y-2">
+                                                    <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Admin Email (Gmail)</Label>
+                                                    <Input 
+                                                        placeholder="example@gmail.com" 
+                                                        value={userGmail}
+                                                        onChange={(e) => setUserGmail(e.target.value)}
+                                                        className="h-12 bg-white/[0.02] border-white/10 rounded-xl text-white text-sm"
+                                                    />
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">
+                                                        {providers.find(p => p.id === selectedProvider)?.name} API Key
+                                                    </Label>
+                                                    <Input 
+                                                        placeholder={`Paste your ${providers.find(p => p.id === selectedProvider)?.name} key here`}
+                                                        value={externalKey}
+                                                        onChange={(e) => setExternalKey(e.target.value)}
+                                                        className="h-12 bg-white/[0.02] border-white/10 rounded-xl text-white text-sm"
+                                                    />
+                                                </div>
+                                            </div>
                                         </div>
                                         <Button 
-                                            onClick={handleAddGeminiKey} 
-                                            disabled={isAddingKey || !userGeminiKey || !userGmail}
-                                            className="w-full h-12 bg-white/5 hover:bg-white/10 text-white font-bold rounded-xl transition-all cursor-pointer disabled:cursor-not-allowed"
+                                            onClick={handleAddExternalKey} 
+                                            disabled={isAddingKey || !externalKey || !userGmail}
+                                            className="w-full h-12 bg-primary text-black hover:bg-primary/90 font-bold rounded-xl transition-all cursor-pointer disabled:cursor-not-allowed mt-2"
                                         >
-                                            {isAddingKey ? <RefreshCw className="h-4 w-4 animate-spin" /> : "Save Gemini Key"}
+                                            {isAddingKey ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
+                                            Save {providers.find(p => p.id === selectedProvider)?.name} Key
                                         </Button>
                                     </CardContent>
                                 </Card>

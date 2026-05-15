@@ -6,6 +6,7 @@ const pgClient = require('../src/services/pgClient');
 const adminAuthMiddleware = require('../src/middleware/adminAuthMiddleware');
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
+const aiEngine = require('../utils/aiEngine');
 
 // --- PRICING ---
 const PRICING = {
@@ -251,27 +252,35 @@ router.post('/v1/dev/chat', async (req, res) => {
         const selectedKey = await keyService.getUnifiedKey(userConfig.user_id, type, model);
         if (!selectedKey) return res.status(503).json({ error: 'No active keys available for your request' });
 
-        // Forward to Provider (Gemini/OpenAI etc)
-        // For simplicity, let's assume Gemini for now as per user request
-        const providerUrl = selectedKey.provider === 'google' 
-            ? `https://generativelanguage.googleapis.com/v1beta/models/${model || 'gemini-1.5-flash'}:generateContent?key=${selectedKey.api}`
-            : null;
-
-        if (!providerUrl) return res.status(400).json({ error: 'Unsupported provider for unified API' });
-
-        // Handle request forwarding...
-        // (This would normally be a long implementation, I'll keep it concise for now)
-        const response = await axios.post(providerUrl, {
-            contents: messages.map(m => ({
-                role: m.role === 'assistant' ? 'model' : 'user',
-                parts: [{ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }]
-            }))
-        });
+        // Forward to Provider using the multi-provider AI Engine
+        const aiResponse = await aiEngine.generateAIResponse(
+            {
+                provider: selectedKey.provider,
+                apiKey: selectedKey.key,
+                model: selectedKey.model || model || 'gemini-1.5-flash',
+                systemPrompt: "You are a helpful AI assistant."
+            },
+            messages.slice(0, -1), // history
+            { text: messages[messages.length - 1].content } // current user message
+        );
 
         // Track usage for payment/50-50
         await keyService.trackUnifiedUsage(selectedKey, userConfig.user_id);
 
-        res.json(response.data);
+        res.json({
+            id: `chatcmpl-${Date.now()}`,
+            object: 'chat.completion',
+            created: Math.floor(Date.now() / 1000),
+            model: selectedKey.model || model,
+            choices: [{
+                index: 0,
+                message: {
+                    role: 'assistant',
+                    content: aiResponse.output
+                },
+                finish_reason: 'stop'
+            }]
+        });
     } catch (err) {
         console.error('[Unified API Error]', err.message);
         res.status(500).json({ error: 'Internal Server Error', details: err.message });

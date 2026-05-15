@@ -47,11 +47,12 @@ const CACHE_TTL = 15 * 1000; // Updated to 15 Seconds for higher accuracy in mul
 
 // --- PROVIDER-SPECIFIC HARDCODED DEFAULTS (User Request) ---
 const PROVIDER_DEFAULTS = {
-    google:  { rpm: 1, rph: 1, rpd: 15, tpm: 250000, tpd: 999999, tpmo: 999999 },
-    gemini:  { rpm: 1, rph: 1, rpd: 15, tpm: 250000, tpd: 999999, tpmo: 999999 },
-    mistral: { rpm: 999999, rph: 999999, rpd: 999999, tpm: 50000, tpd: 999999, tpmo: 4000000 },
-    groq:    { rpm: 30, rph: 999999, rpd: 1000, tpm: 15000, tpd: 500000, tpmo: 999999 },
-    default: { rpm: 999999, rph: 999999, rpd: 999999, tpm: 999999, tpd: 999999, tpmo: 999999 }
+    google:     { rpm: 1, rph: 1, rpd: 15, tpm: 250000, tpd: 999999, tpmo: 999999 },
+    gemini:     { rpm: 1, rph: 1, rpd: 15, tpm: 250000, tpd: 999999, tpmo: 999999 },
+    mistral:    { rpm: 999999, rph: 999999, rpd: 999999, tpm: 50000, tpd: 999999, tpmo: 4000000 },
+    groq:       { rpm: 30, rph: 999999, rpd: 1000, tpm: 15000, tpd: 500000, tpmo: 999999 },
+    openrouter: { rpm: 10, rph: 999999, rpd: 1000, tpm: 999999, tpd: 999999, tpmo: 999999 },
+    default:    { rpm: 999999, rph: 999999, rpd: 999999, tpm: 999999, tpd: 999999, tpmo: 999999 }
 };
 
 const STATUS_ACTIVE = 'active';
@@ -1423,8 +1424,16 @@ function getModelUsageSummaryForKey(apiKey) {
  * Unified Key Picker for Developer API
  */
 async function getUnifiedKey(userId, type, modelName) {
+    let provider = 'google';
+    const model = (modelName || '').toLowerCase();
+    
+    if (model.includes('gpt')) provider = 'openai';
+    else if (model.includes('mistral')) provider = 'mistral';
+    else if (model.includes('llama') || model.includes('mixtral')) provider = 'groq';
+    else if (model.includes('/') || model.includes(':free')) provider = 'openrouter';
+
     // Wrapper around getSmartKey for Developer API requests (isSystemRequest = false)
-    return await getSmartKey('google', modelName || 'gemini-1.5-flash', type, false, userId);
+    return await getSmartKey(provider, modelName || 'gemini-1.5-flash', type, false, userId);
 }
 
 async function trackUnifiedUsage(key, userId) {
