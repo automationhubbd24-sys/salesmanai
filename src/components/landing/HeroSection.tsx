@@ -47,9 +47,9 @@ const HeroSection = () => {
         >
           <Link 
             to="/dashboard/whatsapp" 
-            className="mb-8 inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/5 border border-white/10 backdrop-blur-md text-xs md:text-sm font-medium text-slate-300 hover:bg-white/10 transition-colors cursor-pointer"
+            className="mb-8 inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-secondary border border-border backdrop-blur-md text-xs md:text-sm font-medium text-muted-foreground hover:bg-secondary/80 transition-colors cursor-pointer"
           >
-            <span className="bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wider font-bold">whatsapp</span>
+            <span className="bg-green-500/20 text-green-600 dark:text-green-400 px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wider font-bold">whatsapp</span>
             <span>wahub api →</span>
           </Link>
         </motion.div>
@@ -83,9 +83,9 @@ const HeroSection = () => {
           style={{ marginLeft: "calc(50% - 50vw)", marginRight: "calc(50% - 50vw)" }}
         >
           <div className="mx-auto" style={{ maxWidth: "min(1950px, calc(120vw - 1rem))" }}>
-            <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-6 md:p-8 shadow-[0_30px_80px_rgba(0,0,0,0.6)]">
+            <div className="rounded-3xl border border-border bg-card/50 p-6 md:p-8 shadow-xl">
             <div className="text-center space-y-6">
-              <div className="text-xs md:text-sm font-black uppercase tracking-widest text-slate-300">
+              <div className="text-xs md:text-sm font-black uppercase tracking-widest text-muted-foreground">
                 {t("Trusted by", "ভরসা করেন")}
               </div>
               <div className="space-y-3">
@@ -98,7 +98,7 @@ const HeroSection = () => {
                     {[...marqueeItems, ...marqueeItems].map((name, i) => (
                       <span
                         key={`r1-${i}`}
-                        className="px-3 md:px-4 py-1.5 rounded-full bg-white/5 border border-white/10 text-xs md:text-sm font-bold text-slate-200"
+                        className="px-3 md:px-4 py-1.5 rounded-full bg-secondary border border-border text-xs md:text-sm font-bold text-foreground"
                       >
                         {name}
                       </span>
@@ -114,7 +114,7 @@ const HeroSection = () => {
                     {[...marqueeItemsRev, ...marqueeItemsRev].map((name, i) => (
                       <span
                         key={`r2-${i}`}
-                        className="px-3 md:px-4 py-1.5 rounded-full bg-white/5 border border-white/10 text-xs md:text-sm font-bold text-slate-200"
+                        className="px-3 md:px-4 py-1.5 rounded-full bg-secondary border border-border text-xs md:text-sm font-bold text-foreground"
                       >
                         {name}
                       </span>
@@ -146,56 +146,56 @@ const HeroSection = () => {
               repeat: Infinity, 
               ease: "easeInOut" 
             }}
-            className="absolute -inset-20 bg-purple-600/40 blur-[120px] rounded-full" 
+            className="absolute -inset-20 bg-purple-600/40 blur-[120px] rounded-full opacity-20 dark:opacity-40" 
           />
           
-          <div className="relative bg-card/30 border border-border rounded-3xl overflow-hidden shadow-[0_40px_100px_rgba(0,0,0,0.2)] backdrop-blur-xl">
+          <div className="relative bg-card border border-border rounded-3xl overflow-hidden shadow-[0_40px_100px_rgba(0,0,0,0.1)] dark:shadow-[0_40px_100px_rgba(0,0,0,0.4)] backdrop-blur-xl">
             {/* Top Bar */}
-            <div className="h-14 bg-card/40 border-b border-border flex items-center px-4 md:px-6 justify-between">
+            <div className="h-14 bg-secondary/50 border-b border-border flex items-center px-4 md:px-6 justify-between">
               <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2 bg-muted/20 px-3 py-1.5 rounded-lg border border-border">
+                <div className="flex items-center gap-2 bg-background px-3 py-1.5 rounded-lg border border-border">
                   <div className="w-4 h-4 rounded-full bg-purple-500 flex items-center justify-center">
                     <Sparkles className="w-2.5 h-2.5 text-white" />
                   </div>
                   <span className="text-xs font-bold text-foreground">A Shopping Page</span>
-                  <ChevronDown className="w-3 h-3 text-slate-400" />
+                  <ChevronDown className="w-3 h-3 text-muted-foreground" />
                 </div>
               </div>
               
               <div className="flex items-center gap-4 md:gap-6">
                 <div className="hidden md:flex items-center gap-3">
                   <div className="relative">
-                    <Bell className="w-5 h-5 text-slate-400" />
+                    <Bell className="w-5 h-5 text-muted-foreground" />
                     <div className="absolute -top-1 -right-1 w-4 h-4 bg-purple-600 rounded-full text-[10px] flex items-center justify-center font-bold text-white">48</div>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/20 px-3 py-1 rounded-full">
                   <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                  <span className="text-[10px] md:text-xs font-bold text-green-500">Available</span>
+                  <span className="text-[10px] md:text-xs font-bold text-green-600 dark:text-green-500">Available</span>
                   <ChevronDown className="w-3 h-3 text-green-500/50" />
                 </div>
-                <Button className="h-8 px-4 text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white rounded-lg" asChild>
+                <Button className="h-8 px-4 text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white rounded-lg shadow-sm" asChild>
                   <Link to="/login">{t("Get Started", "শুরু করুন")}</Link>
                 </Button>
               </div>
             </div>
 
             {/* Dashboard Content */}
-            <div className="flex h-[400px] md:h-[600px]">
+            <div className="flex h-[400px] md:h-[600px] bg-background">
               {/* Left Thin Sidebar */}
-              <div className="w-14 md:w-16 border-r border-white/5 bg-white/[0.01] flex flex-col items-center py-6 gap-6">
+              <div className="w-14 md:w-16 border-r border-border bg-secondary/30 flex flex-col items-center py-6 gap-6">
                 <div className="w-8 h-8 rounded-xl bg-purple-600 flex items-center justify-center shadow-[0_0_15px_rgba(168,85,247,0.4)]">
                   <Sparkles className="w-4 h-4 text-white" />
                 </div>
                 <div className="flex flex-col gap-6 mt-4">
-                  <LayoutDashboard className="w-5 h-5 text-slate-400 hover:text-white transition-colors cursor-pointer" />
-                  <Users className="w-5 h-5 text-slate-400 hover:text-white transition-colors cursor-pointer" />
-                  <MessageSquare className="w-5 h-5 text-purple-500" />
-                  <BarChart3 className="w-5 h-5 text-slate-400 hover:text-white transition-colors cursor-pointer" />
-                  <Star className="w-5 h-5 text-slate-400 hover:text-white transition-colors cursor-pointer" />
+                  <LayoutDashboard className="w-5 h-5 text-muted-foreground hover:text-foreground transition-colors cursor-pointer" />
+                  <Users className="w-5 h-5 text-muted-foreground hover:text-foreground transition-colors cursor-pointer" />
+                  <MessageSquare className="w-5 h-5 text-purple-600 dark:text-purple-500" />
+                  <BarChart3 className="w-5 h-5 text-muted-foreground hover:text-foreground transition-colors cursor-pointer" />
+                  <Star className="w-5 h-5 text-muted-foreground hover:text-foreground transition-colors cursor-pointer" />
                 </div>
                 <div className="mt-auto flex flex-col gap-6 mb-4">
-                  <Settings className="w-5 h-5 text-slate-400 hover:text-white transition-colors cursor-pointer" />
+                  <Settings className="w-5 h-5 text-muted-foreground hover:text-foreground transition-colors cursor-pointer" />
                   <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-purple-600 to-indigo-600" />
                 </div>
               </div>
@@ -203,24 +203,24 @@ const HeroSection = () => {
               {/* Middle Section: Chat Interface */}
               <div className="flex-1 flex flex-col md:flex-row min-w-0">
                 {/* Contact List (Desktop Only) */}
-                <div className="hidden lg:flex w-80 flex-col border-r border-white/5 bg-white/[0.01]">
-                  <div className="p-4 border-b border-white/5 space-y-4">
+                <div className="hidden lg:flex w-80 flex-col border-r border-border bg-secondary/10">
+                  <div className="p-4 border-b border-border space-y-4">
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 px-3 py-1.5 bg-purple-600/10 border border-purple-500/20 rounded-lg text-xs font-bold text-purple-400">
+                      <div className="flex items-center gap-2 px-3 py-1.5 bg-purple-500/10 border border-purple-500/20 rounded-lg text-xs font-bold text-purple-600 dark:text-purple-400">
                         All Contacts <span className="bg-purple-600/20 px-1.5 py-0.5 rounded ml-1">538</span>
                       </div>
                       <div className="flex items-center gap-3">
-                        <div className="text-[10px] text-slate-500 font-bold uppercase">Order Requests <span className="ml-1">12</span></div>
+                        <div className="text-[10px] text-muted-foreground font-bold uppercase">Order Requests <span className="ml-1">12</span></div>
                       </div>
                     </div>
                     <div className="relative">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                       <input 
                         type="text" 
                         placeholder="Search" 
-                        className="w-full bg-white/5 border border-white/10 rounded-xl py-2 pl-10 pr-4 text-xs text-white placeholder:text-slate-600 focus:outline-none focus:border-purple-500/50"
+                        className="w-full bg-background border border-border rounded-xl py-2 pl-10 pr-4 text-xs text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-purple-500/50"
                       />
-                      <Filter className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                      <Filter className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                     </div>
                   </div>
                   
@@ -231,12 +231,12 @@ const HeroSection = () => {
                       { name: "Mostofa Ahmed", msg: "AI : Apnar order confirm korte ami apnar pr...", time: "40min ago", active: false, platform: "IG", labels: ["Priority", "Successful"] },
                       { name: "Habibullah Bahar", msg: "AI : SAIBEI F71 er kono model er infor...", time: "1hr ago", active: false, platform: "FB", labels: ["Priority", "Attention", "High Prospect"] }
                     ].map((contact, i) => (
-                      <div key={i} className={`p-3 rounded-2xl flex gap-3 cursor-pointer transition-all ${contact.active ? 'bg-white/5 border border-white/10' : 'hover:bg-white/[0.02]'}`}>
+                      <div key={i} className={`p-3 rounded-2xl flex gap-3 cursor-pointer transition-all ${contact.active ? 'bg-card border border-border shadow-sm' : 'hover:bg-secondary/40'}`}>
                         <div className="relative">
-                          <div className="w-10 h-10 rounded-full bg-slate-800 border border-white/10 flex items-center justify-center text-xs font-bold text-slate-400">
+                          <div className="w-10 h-10 rounded-full bg-muted border border-border flex items-center justify-center text-xs font-bold text-muted-foreground">
                             {contact.name.charAt(0)}
                           </div>
-                          <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-[#0b0c10] flex items-center justify-center ${
+                          <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-background flex items-center justify-center ${
                             contact.platform === 'WA' ? 'bg-green-500' : contact.platform === 'FB' ? 'bg-blue-500' : 'bg-pink-500'
                           }`}>
                             {contact.platform === 'WA' ? <Phone className="w-2 h-2 text-white" /> : <MessageSquare className="w-2 h-2 text-white" />}
@@ -244,17 +244,17 @@ const HeroSection = () => {
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between mb-0.5">
-                            <span className="text-xs font-bold text-white truncate">{contact.name}</span>
-                            <span className="text-[10px] text-slate-500">{contact.time}</span>
+                            <span className="text-xs font-bold text-foreground truncate">{contact.name}</span>
+                            <span className="text-[10px] text-muted-foreground">{contact.time}</span>
                           </div>
-                          <p className="text-[10px] text-slate-400 truncate mb-2">{contact.msg}</p>
+                          <p className="text-[10px] text-muted-foreground truncate mb-2">{contact.msg}</p>
                           <div className="flex flex-wrap gap-1">
                             {contact.labels.map((label, li) => (
                               <span key={li} className={`text-[8px] px-1.5 py-0.5 rounded font-bold ${
-                                label === 'Priority' ? 'bg-purple-600/20 text-purple-400' :
-                                label === 'Top Client' ? 'bg-blue-600/20 text-blue-400' :
-                                label === 'High Prospect' ? 'bg-orange-600/20 text-orange-400' :
-                                'bg-slate-600/20 text-slate-400'
+                                label === 'Priority' ? 'bg-purple-600/10 text-purple-600 dark:text-purple-400' :
+                                label === 'Top Client' ? 'bg-blue-600/10 text-blue-600 dark:text-blue-400' :
+                                label === 'High Prospect' ? 'bg-orange-600/10 text-orange-600 dark:text-orange-400' :
+                                'bg-muted text-muted-foreground'
                               }`}>
                                 {label}
                               </span>
@@ -268,70 +268,70 @@ const HeroSection = () => {
                 </div>
 
                 {/* Main Chat Area */}
-                <div className="flex-1 flex flex-col bg-white/[0.01]">
-                  <div className="h-14 border-b border-white/5 px-3 sm:px-6 flex items-center justify-between">
+                <div className="flex-1 flex flex-col bg-background">
+                  <div className="h-14 border-b border-border px-3 sm:px-6 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-slate-800 border border-white/10 flex items-center justify-center text-xs font-bold text-slate-400">S</div>
+                      <div className="w-8 h-8 rounded-full bg-muted border border-border flex items-center justify-center text-xs font-bold text-muted-foreground">S</div>
                       <div>
                         <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold text-white">Sajal Akand</span>
-                          <UserPlus className="w-3 h-3 text-slate-500" />
+                          <span className="text-xs font-bold text-foreground">Sajal Akand</span>
+                          <UserPlus className="w-3 h-3 text-muted-foreground" />
                         </div>
                         <div className="flex items-center gap-1.5">
                           <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                          <span className="text-[10px] text-slate-500">Active now</span>
+                          <span className="text-[10px] text-muted-foreground">Active now</span>
                         </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-3 sm:gap-4">
-                      <Phone className="w-4 h-4 text-slate-400 cursor-pointer" />
-                      <Video className="w-4 h-4 text-slate-400 cursor-pointer" />
-                      <div className="w-px h-4 bg-white/10" />
-                      <MoreVertical className="w-4 h-4 text-slate-400 cursor-pointer" />
+                      <Phone className="w-4 h-4 text-muted-foreground cursor-pointer" />
+                      <Video className="w-4 h-4 text-muted-foreground cursor-pointer" />
+                      <div className="w-px h-4 bg-border" />
+                      <MoreVertical className="w-4 h-4 text-muted-foreground cursor-pointer" />
                     </div>
                   </div>
 
                   {/* Messages Area */}
                   <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
                     <div className="flex flex-col gap-1 max-w-[80%]">
-                      <div className="bg-white/5 border border-white/10 rounded-2xl p-3 text-xs text-white">
+                      <div className="bg-secondary border border-border rounded-2xl p-3 text-xs text-foreground">
                         Sajal, 01894927244, house 117b road 30 gul...
                       </div>
-                      <span className="text-[10px] text-slate-500 ml-2">11:40am</span>
+                      <span className="text-[10px] text-muted-foreground ml-2">11:40am</span>
                     </div>
 
                     <div className="flex flex-col items-end gap-1 ml-auto max-w-[80%]">
-                      <div className="bg-purple-600/20 border border-purple-500/30 rounded-2xl p-4 text-xs text-white relative">
-                        <div className="flex items-center gap-2 mb-2 text-purple-400 font-bold italic">
+                      <div className="bg-purple-600/10 border border-purple-500/20 rounded-2xl p-4 text-xs text-foreground relative">
+                        <div className="flex items-center gap-2 mb-2 text-purple-600 dark:text-purple-400 font-bold italic">
                           <Sparkles className="w-3 h-3" /> AI Replied
                         </div>
                         আপনি The Neutral Edition - White Half Zip x Coffee Pant অর্ডার করতে চান, দয়া করে আপনার পুরো নাম, ফোন নম্বর, ডেলিভারি ঠিকানা এবং কতটি অর্ডার করবেন তা জানান
                       </div>
-                      <span className="text-[10px] text-slate-500 mr-2">11:41am · Replied by Salesman AI ✨</span>
+                      <span className="text-[10px] text-muted-foreground mr-2">11:41am · Replied by Salesman AI ✨</span>
                     </div>
 
                     <div className="flex flex-col gap-1 max-w-[80%]">
-                      <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden max-w-[240px]">
+                      <div className="bg-secondary border border-border rounded-2xl overflow-hidden max-w-[240px]">
                         <img src="https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&q=80&w=400" alt="Product" className="w-full aspect-square object-cover" />
                       </div>
-                      <div className="bg-white/5 border border-white/10 rounded-2xl p-3 text-xs text-white mt-1">
+                      <div className="bg-secondary border border-border rounded-2xl p-3 text-xs text-foreground mt-1">
                         Eta order korbo
                       </div>
-                      <span className="text-[10px] text-slate-500 ml-2">Thursday 11:40am</span>
+                      <span className="text-[10px] text-muted-foreground ml-2">Thursday 11:40am</span>
                     </div>
                   </div>
 
                   {/* Input Area */}
-                  <div className="p-4 bg-white/[0.02] border-t border-white/5">
-                    <div className="bg-white/5 border border-white/10 rounded-2xl flex items-center p-2">
-                      <div className="flex items-center gap-2 px-2 border-r border-white/10 mr-2">
-                        <Image className="w-5 h-5 text-slate-500 cursor-pointer hover:text-white" />
-                        <MessageSquare className="w-5 h-5 text-slate-500 cursor-pointer hover:text-white" />
+                  <div className="p-4 bg-secondary/30 border-t border-border">
+                    <div className="bg-background border border-border rounded-2xl flex items-center p-2">
+                      <div className="flex items-center gap-2 px-2 border-r border-border mr-2">
+                        <Image className="w-5 h-5 text-muted-foreground cursor-pointer hover:text-foreground" />
+                        <MessageSquare className="w-5 h-5 text-muted-foreground cursor-pointer hover:text-foreground" />
                       </div>
                       <input 
                         type="text" 
                         placeholder="Type your message..." 
-                        className="flex-1 bg-transparent border-none text-xs text-white focus:outline-none placeholder:text-slate-600"
+                        className="flex-1 bg-transparent border-none text-xs text-foreground focus:outline-none placeholder:text-muted-foreground/60"
                       />
                       <div className="w-8 h-8 rounded-xl bg-purple-600 flex items-center justify-center shadow-[0_0_15px_rgba(168,85,247,0.4)] cursor-pointer hover:scale-105 transition-transform">
                         <Send className="w-4 h-4 text-white" />
@@ -341,14 +341,14 @@ const HeroSection = () => {
                 </div>
 
                 {/* Right Panel (Desktop Only) */}
-                <div className="hidden xl:flex w-72 flex-col border-l border-white/5 bg-white/[0.01]">
+                <div className="hidden xl:flex w-72 flex-col border-l border-border bg-secondary/10">
                   <div className="p-4 space-y-6 overflow-y-auto custom-scrollbar">
                     {/* Order Actions */}
                     <div className="space-y-3">
-                      <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Order Actions</div>
+                      <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Order Actions</div>
                       <div className="grid grid-cols-2 gap-2">
-                        <Link to="/dashboard/whatsapp/orders" className="bg-white/5 hover:bg-white/10 border border-white/10 py-2 rounded-xl text-[10px] font-bold text-white transition-colors text-center">Manage Orders</Link>
-                        <Link to="/dashboard/whatsapp/control" className="bg-white/5 hover:bg-white/10 border border-white/10 py-2 rounded-xl text-[10px] font-bold text-white transition-colors text-center">Create Orders</Link>
+                        <Link to="/dashboard/whatsapp/orders" className="bg-background hover:bg-secondary border border-border py-2 rounded-xl text-[10px] font-bold text-foreground transition-colors text-center shadow-sm">Manage Orders</Link>
+                        <Link to="/dashboard/whatsapp/control" className="bg-background hover:bg-secondary border border-border py-2 rounded-xl text-[10px] font-bold text-foreground transition-colors text-center shadow-sm">Create Orders</Link>
                       </div>
                     </div>
 
@@ -361,15 +361,15 @@ const HeroSection = () => {
                       { title: "Activity List", icon: <Clock className="w-3 h-3" />, hasLink: "See all" },
                       { title: "Shared Files", icon: <Clock className="w-3 h-3" />, hasLink: "See all" }
                     ].map((panel, i) => (
-                      <div key={i} className="border-t border-white/5 pt-4">
+                      <div key={i} className="border-t border-border pt-4">
                         <div className="flex items-center justify-between mb-3">
                           <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{panel.title}</span>
-                            {panel.count && <span className="text-[8px] bg-purple-600/20 text-purple-400 px-1 rounded-full">{panel.count}</span>}
+                            <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">{panel.title}</span>
+                            {panel.count && <span className="text-[8px] bg-purple-600/20 text-purple-600 dark:text-purple-400 px-1 rounded-full">{panel.count}</span>}
                           </div>
                           <div className="flex items-center gap-2">
-                            {panel.hasLink && <span className="text-[8px] text-purple-500 font-bold cursor-pointer">{panel.hasLink}</span>}
-                            {panel.hasAdd && <UserPlus className="w-3 h-3 text-slate-500 cursor-pointer" />}
+                            {panel.hasLink && <span className="text-[8px] text-purple-600 font-bold cursor-pointer">{panel.hasLink}</span>}
+                            {panel.hasAdd && <UserPlus className="w-3 h-3 text-muted-foreground cursor-pointer" />}
                             {panel.icon}
                           </div>
                         </div>
@@ -382,12 +382,12 @@ const HeroSection = () => {
                               { label: "Add your socials", desc: "Share posts to your social accounts", done: false }
                             ].map((item, ii) => (
                               <div key={ii} className="flex gap-3">
-                                <div className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${item.done ? 'bg-purple-600 border-purple-600' : 'border-white/20'}`}>
+                                <div className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${item.done ? 'bg-purple-600 border-purple-600' : 'border-border'}`}>
                                   {item.done && <CheckCircle2 className="w-2.5 h-2.5 text-white" />}
                                 </div>
                                 <div className="min-w-0">
-                                  <div className="text-[10px] font-bold text-white">{item.label}</div>
-                                  <div className="text-[8px] text-slate-500 truncate">{item.desc}</div>
+                                  <div className="text-[10px] font-bold text-foreground">{item.label}</div>
+                                  <div className="text-[8px] text-muted-foreground truncate">{item.desc}</div>
                                 </div>
                               </div>
                             ))}

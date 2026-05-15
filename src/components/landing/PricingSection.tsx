@@ -135,27 +135,24 @@ const PricingSection = () => {
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
             transition={{ delay: 0.1 }}
-            className="text-4xl md:text-6xl font-black text-white mb-8 tracking-tight"
+            className="text-4xl md:text-6xl font-black text-foreground mb-8 tracking-tight"
           >
             {t("Choose Your", "বেছে নিন আপনার")} <br />
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#00ff88] to-emerald-400">
-              {t("Growth Strategy", "গ্রোথ স্ট্র্যাটেজি")}
-            </span>
+            <span className="text-[#00ff88]">{t("Growth Strategy", "গ্রোথ স্ট্র্যাটেজি")}</span>
           </motion.h2>
 
-          {/* Pricing Toggle */}
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0, scale: 0.9 }}
             whileInView={{ opacity: 1, scale: 1 }}
             viewport={{ once: true }}
-            className="flex items-center justify-center gap-4 mt-12 p-1.5 bg-white/5 border border-white/10 rounded-2xl w-fit mx-auto backdrop-blur-md"
+            className="flex items-center justify-center gap-4 mt-12 p-1.5 bg-card border border-border rounded-2xl w-fit mx-auto backdrop-blur-md shadow-sm"
           >
             <button
               onClick={() => setBillingCycle("monthly")}
               className={`flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-black transition-all ${
                 billingCycle === "monthly" 
                 ? "bg-[#00ff88] text-black shadow-[0_8px_20px_rgba(0,255,136,0.2)]" 
-                : "text-gray-400 hover:text-white"
+                : "text-muted-foreground hover:text-foreground"
               }`}
             >
               <Clock className="w-4 h-4" />
@@ -166,7 +163,7 @@ const PricingSection = () => {
               className={`flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-black transition-all ${
                 billingCycle === "permanent" 
                 ? "bg-[#00ff88] text-black shadow-[0_8px_20px_rgba(0,255,136,0.2)]" 
-                : "text-gray-400 hover:text-white"
+                : "text-muted-foreground hover:text-foreground"
               }`}
             >
               <InfinityIcon className="w-4 h-4" />
@@ -186,8 +183,8 @@ const PricingSection = () => {
                 transition={{ duration: 0.4, delay: index * 0.1 }}
                 className={`relative flex flex-col p-8 rounded-[2.5rem] border backdrop-blur-3xl transition-all duration-500 hover:-translate-y-2 group ${
                   plan.popular 
-                    ? "bg-[#00ff88]/[0.03] border-[#00ff88]/30 shadow-[0_20px_50px_rgba(0,255,136,0.05)]" 
-                    : "bg-white/[0.01] border-white/10 hover:border-white/20"
+                    ? "bg-[#00ff88]/[0.03] border-[#00ff88]/30 shadow-[0_20px_50px_rgba(0,255,136,0.05)] dark:bg-[#00ff88]/[0.02]" 
+                    : "bg-card border-border hover:border-[#00ff88]/30 shadow-sm"
                 }`}
               >
                 {plan.popular && (
@@ -198,33 +195,27 @@ const PricingSection = () => {
 
                 <div className="mb-8">
                   <div className={`w-14 h-14 rounded-2xl flex items-center justify-center mb-8 transition-transform group-hover:scale-110 duration-300 ${
-                    plan.color === 'blue' ? 'bg-blue-500/10 text-blue-400' :
-                    plan.color === 'indigo' ? 'bg-indigo-500/10 text-indigo-400' :
-                    plan.color === 'green' ? 'bg-emerald-500/10 text-emerald-400' :
-                    'bg-purple-500/10 text-purple-400'
+                    plan.color === 'blue' ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400' :
+                    plan.color === 'indigo' ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400' :
+                    plan.color === 'green' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' :
+                    'bg-purple-500/10 text-purple-600 dark:text-purple-400'
                   }`}>
                     <plan.icon className="w-7 h-7" />
                   </div>
-                  <h3 className="text-2xl font-black text-white mb-3">{plan.name}</h3>
-                  <p className="text-gray-500 text-sm font-bold leading-relaxed">
-                    {plan.description}
-                  </p>
-                </div>
-
-                <div className="mb-10">
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-5xl font-black text-white">৳{plan.price}</span>
-                    <span className="text-gray-500 text-xs font-black uppercase tracking-widest">{plan.unit}</span>
+                  <h3 className="text-2xl font-black text-foreground mb-2">{plan.name}</h3>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-4xl font-black text-foreground">৳{plan.price}</span>
+                    <span className="text-muted-foreground font-bold">{plan.unit}</span>
                   </div>
                 </div>
 
-                <div className="space-y-4 mb-12 flex-1">
-                  {plan.features.map((feature) => (
-                    <div key={feature} className="flex items-start gap-3">
-                      <div className="mt-1 rounded-full bg-[#00ff88]/10 p-0.5">
-                        <Check className="w-3.5 h-3.5 text-[#00ff88]" />
+                <div className="space-y-4 mb-10 flex-grow">
+                  {plan.features.map((feature, fIndex) => (
+                    <div key={fIndex} className="flex items-center gap-3">
+                      <div className="flex-shrink-0 w-5 h-5 rounded-full bg-[#00ff88]/20 flex items-center justify-center">
+                        <Check className="w-3 h-3 text-[#00ff88]" />
                       </div>
-                      <span className="text-gray-400 text-[13px] font-bold leading-tight">{feature}</span>
+                      <span className="text-sm font-medium text-foreground/80">{feature}</span>
                     </div>
                   ))}
                 </div>
@@ -234,7 +225,7 @@ const PricingSection = () => {
                   className={`w-full h-14 rounded-2xl font-black text-sm uppercase tracking-widest transition-all duration-300 ${
                     plan.popular 
                       ? "bg-[#00ff88] hover:bg-[#00f07f] text-black shadow-lg shadow-[#00ff88]/20" 
-                      : "bg-white/5 border-white/10 hover:bg-white/10 text-white"
+                      : "bg-secondary border-border hover:bg-secondary/80 text-foreground"
                   }`}
                   asChild
                 >
@@ -253,25 +244,27 @@ const PricingSection = () => {
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          className="mt-20 max-w-5xl mx-auto p-10 rounded-[2.5rem] bg-gradient-to-r from-[#00ff88]/10 via-emerald-500/5 to-transparent border border-white/5 flex flex-col md:flex-row items-center justify-between gap-8 backdrop-blur-sm"
+          className="mt-20 max-w-5xl mx-auto p-10 rounded-[2.5rem] bg-gradient-to-r from-[#00ff88]/10 via-emerald-500/5 to-transparent border border-border flex flex-col md:flex-row items-center justify-between gap-8 backdrop-blur-sm shadow-xl"
         >
           <div className="flex items-center gap-6 text-center md:text-left">
             <div className="w-16 h-16 rounded-2xl bg-[#00ff88]/20 flex items-center justify-center flex-shrink-0 animate-bounce">
               <Sparkles className="w-8 h-8 text-[#00ff88]" />
             </div>
             <div>
-              <h4 className="text-2xl font-black text-white mb-2">
-                {t("New Integration Bonus", "নতুন ইন্টিগ্রেশন বোনাস")}
-              </h4>
-              <p className="text-gray-400 text-base font-bold">
-                {t("Get 100 free replies for every new WhatsApp or Messenger integration.", "প্রতিটি নতুন হোয়াটসঅ্যাপ বা মেসেঞ্জার ইন্টিগ্রেশনে ১০০টি ফ্রি রিপ্লাই পান।")}
+              <h3 className="text-2xl font-black text-foreground mb-2">
+                {t("New Account Bonus", "নতুন অ্যাকাউন্ট বোনাস")}
+              </h3>
+              <p className="text-muted-foreground font-medium">
+                {t("Get 500 free credits for the first 30 days", "প্রথম ৩০ দিনের জন্য ৫০০ ফ্রি ক্রেডিট পান")}
               </p>
             </div>
           </div>
-          <Button className="bg-white/5 hover:bg-white/10 text-[#00ff88] border border-[#00ff88]/20 h-14 px-10 rounded-2xl font-black uppercase tracking-widest text-xs" asChild>
-            <Link to="/login" className="flex items-center gap-2">
-              {t("Try for free", "ফ্রিতে ট্রাই করুন")}
-              <ArrowRight className="w-4 h-4" />
+          <Button 
+            className="bg-white text-black hover:bg-gray-100 font-black rounded-2xl px-8 h-14 uppercase tracking-wider shadow-xl dark:bg-zinc-900 dark:text-white dark:hover:bg-zinc-800"
+            asChild
+          >
+            <Link to="/login">
+              {t("Try for Free", "ফ্রি ট্রায়াল")}
             </Link>
           </Button>
         </motion.div>

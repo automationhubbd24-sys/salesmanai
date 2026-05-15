@@ -82,15 +82,15 @@ const Navbar = () => {
       scrolled ? "translate-y-0" : "translate-y-0"
     )}>
       <div className={cn(
-        "mx-auto max-w-7xl flex items-center justify-between px-5 md:px-8 h-16 md:h-20 rounded-2xl border border-white/5 transition-all duration-500",
-        scrolled ? "bg-black/80 backdrop-blur-2xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] border-white/10" : "bg-black/40 backdrop-blur-md"
+        "mx-auto max-w-7xl flex items-center justify-between px-5 md:px-8 h-16 md:h-20 rounded-2xl border border-border transition-all duration-500",
+        scrolled ? "bg-background/80 backdrop-blur-2xl shadow-[0_20px_50px_rgba(0,0,0,0.1)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.5)] border-border" : "bg-background/40 backdrop-blur-md"
       )}>
         <Link to="/" className="flex items-center group relative z-50 scale-90 md:scale-100 origin-left">
           <Logo size="md" accentColor={accentColor} />
           {/* Logo Glow */}
           <div
             className="absolute -inset-6 blur-[40px] rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-700 pointer-events-none"
-            style={{ backgroundColor: accentColor, opacity: 0.2 }}
+            style={{ backgroundColor: accentColor, opacity: 0.1 }}
           />
         </Link>
 
@@ -99,7 +99,7 @@ const Navbar = () => {
           <div className="flex items-center gap-2">
             <button 
               onClick={() => scrollToSection('services')}
-              className="text-[13px] font-bold text-slate-300 hover:text-white transition-colors px-4 py-2"
+              className="text-[13px] font-bold text-muted-foreground hover:text-foreground transition-colors px-4 py-2"
             >
               {t("Solutions", "সলিউশনস")}
             </button>
@@ -109,26 +109,26 @@ const Navbar = () => {
                 <NavigationMenuItem>
                   <NavigationMenuTrigger 
                     onClick={() => scrollToSection('detailed')}
-                    className="bg-transparent text-slate-300 hover:text-white transition-colors font-bold text-[13px] hover:bg-white/5 px-4 rounded-xl h-10 data-[state=open]:bg-white/5"
+                    className="bg-transparent text-muted-foreground hover:text-foreground transition-colors font-bold text-[13px] hover:bg-secondary/50 px-4 rounded-xl h-10 data-[state=open]:bg-secondary/50"
                   >
                     {t("Features", "ফিচারসমূহ")}
                   </NavigationMenuTrigger>
                   <NavigationMenuContent>
-                    <div className="grid w-[550px] gap-4 p-8 bg-[#000000]/95 backdrop-blur-2xl border border-white/5 rounded-[2.5rem] shadow-[0_20px_80px_rgba(0,0,0,0.5)]">
+                    <div className="grid w-[550px] gap-4 p-8 bg-card backdrop-blur-2xl border border-border rounded-[2.5rem] shadow-[0_20px_80px_rgba(0,0,0,0.1)] dark:shadow-[0_20px_80px_rgba(0,0,0,0.5)]">
                       <div className="grid grid-cols-2 gap-4">
                         {features.map((item) => (
                           <Link
                             key={item.title}
                             to={item.link}
-                            className="group block rounded-[1.5rem] p-5 hover:bg-white/5 border border-transparent hover:border-white/5 transition-all"
+                            className="group block rounded-[1.5rem] p-5 hover:bg-secondary border border-transparent hover:border-border transition-all"
                           >
                             <div className="flex items-center gap-3 mb-1">
-                              <div className="w-8 h-8 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-400 group-hover:bg-purple-500 group-hover:text-white transition-all">
+                              <div className="w-8 h-8 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-600 dark:text-purple-400 group-hover:bg-purple-500 group-hover:text-white transition-all">
                                 <Zap className="w-4 h-4" />
                               </div>
-                              <div className="font-black text-white uppercase tracking-tight text-[13px]">{item.title}</div>
+                              <div className="font-black text-foreground uppercase tracking-tight text-[13px]">{item.title}</div>
                             </div>
-                            <div className="text-[11px] text-slate-500 font-bold leading-relaxed ml-11">{item.desc}</div>
+                            <div className="text-[11px] text-muted-foreground font-bold leading-relaxed ml-11">{item.desc}</div>
                           </Link>
                         ))}
                       </div>
@@ -140,14 +140,14 @@ const Navbar = () => {
 
             <button 
               onClick={() => scrollToSection('pricing')}
-              className="text-[13px] font-bold text-slate-300 hover:text-white transition-colors px-4 py-2"
+              className="text-[13px] font-bold text-muted-foreground hover:text-foreground transition-colors px-4 py-2"
             >
               {t("Pricing", "প্রাইসিং")}
             </button>
 
             <button 
               onClick={() => scrollToSection('footer')}
-              className="text-[13px] font-bold text-slate-300 hover:text-white transition-colors px-4 py-2"
+              className="text-[13px] font-bold text-muted-foreground hover:text-foreground transition-colors px-4 py-2"
             >
               {t("Contacts", "যোগাযোগ")}
             </button>
@@ -157,18 +157,18 @@ const Navbar = () => {
                 <NavigationMenuItem>
                   <NavigationMenuTrigger 
                     onClick={() => scrollToSection('how')}
-                    className="bg-transparent text-slate-300 hover:text-white transition-colors font-bold text-[13px] hover:bg-white/5 px-4 rounded-xl h-10 data-[state=open]:bg-white/5"
+                    className="bg-transparent text-muted-foreground hover:text-foreground transition-colors font-bold text-[13px] hover:bg-secondary/50 px-4 rounded-xl h-10 data-[state=open]:bg-secondary/50"
                   >
                     {t("Resources", "রিসোর্স")}
                   </NavigationMenuTrigger>
                   <NavigationMenuContent>
-                    <div className="grid w-[200px] gap-2 p-4 bg-[#000000]/95 backdrop-blur-2xl border border-white/5 rounded-2xl shadow-[0_20px_80px_rgba(0,0,0,0.5)]">
-                      <Link to="/dashboard/api" className="block p-3 text-sm font-bold text-slate-400 hover:text-white hover:bg-white/5 rounded-xl transition-all">
+                    <div className="grid w-[200px] gap-2 p-4 bg-card backdrop-blur-2xl border border-border rounded-2xl shadow-[0_20px_80px_rgba(0,0,0,0.1)] dark:shadow-[0_20px_80px_rgba(0,0,0,0.5)]">
+                      <Link to="/dashboard/api" className="block p-3 text-sm font-bold text-muted-foreground hover:text-foreground hover:bg-secondary rounded-xl transition-all">
                         Developer API
                       </Link>
                       <button 
                         onClick={() => scrollToSection('faq')}
-                        className="w-full text-left block p-3 text-sm font-bold text-slate-300 hover:text-white hover:bg-white/5 rounded-xl transition-all"
+                        className="w-full text-left block p-3 text-sm font-bold text-muted-foreground hover:text-foreground hover:bg-secondary rounded-xl transition-all"
                       >
                         Help Center (FAQ)
                       </button>
@@ -193,7 +193,7 @@ const Navbar = () => {
 
         {/* Mobile Menu Button */}
         <button
-          className="lg:hidden flex items-center justify-center w-10 h-10 rounded-xl bg-white/5 border border-white/10 text-white transition-all active:scale-90 hover:bg-white/10"
+          className="lg:hidden flex items-center justify-center w-10 h-10 rounded-xl bg-secondary border border-border text-foreground transition-all active:scale-90 hover:bg-secondary/80"
           onClick={() => setIsOpen(!isOpen)}
         >
           {isOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}

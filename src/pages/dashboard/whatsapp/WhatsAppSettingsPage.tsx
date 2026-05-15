@@ -841,10 +841,10 @@ export default function WhatsAppSettingsPage() {
                                 </div>
 
                                 {(detailedCredits?.subscription_plan !== 'none' || detailedCredits?.permanent_credit > 0 || messageCredit > 0) ? (
-                                    <div className="flex items-center gap-4 rounded-xl bg-gradient-to-br from-white to-purple-50/20 p-3 shadow-sm border border-purple-100 dark:from-purple-900/20 dark:to-purple-950/20 dark:border-purple-800/30">
+                                    <div className="flex items-center gap-4 rounded-xl bg-gradient-to-br from-secondary to-purple-500/5 p-4 shadow-sm border border-border dark:from-purple-900/20 dark:to-purple-950/20 dark:border-purple-800/30">
                                         <div className="text-right flex-1">
                                             <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground mb-1">Current Plan</p>
-                                            <div className="text-sm font-black text-purple-700 dark:text-purple-400 leading-none">
+                                            <div className="text-sm font-black text-foreground leading-none">
                                                 {isTeamView ? (
                                                   <span className="text-amber-500 font-bold">Managed by Owner</span>
                                                 ) : (
@@ -901,7 +901,7 @@ export default function WhatsAppSettingsPage() {
                                               variant="outline"  
                                               size="sm"
                                               onClick={() => setIsPricingOpen(true)} 
-                                              className="border-purple-200 hover:bg-purple-100/50 text-purple-700 font-bold h-8 text-[11px] shadow-sm px-3"
+                                              className="border-border hover:bg-secondary text-foreground font-bold h-8 text-[11px] shadow-sm px-3"
                                           >
                                               Upgrade
                                           </Button>
@@ -939,10 +939,10 @@ export default function WhatsAppSettingsPage() {
 
                         {/* Pricing Modal */}
                         <Dialog open={isPricingOpen} onOpenChange={setIsPricingOpen}>
-                            <DialogContent className="max-w-4xl bg-[#0b0b0b] border-white/10 text-white">
+                            <DialogContent className="max-w-4xl bg-card border-border text-foreground">
                                 <DialogHeader>
-                                    <DialogTitle className="text-2xl font-black text-[#00ff88]">Select Your AI Plan</DialogTitle>
-                                    <DialogDescription className="text-gray-400">
+                                    <DialogTitle className="text-2xl font-black text-primary">Select Your AI Plan</DialogTitle>
+                                    <DialogDescription className="text-muted-foreground">
                                         Choose the message capacity that fits your needs. Starter/Pro have no expiry; Enterprise is valid for 30 days.
                                     </DialogDescription>
                                 </DialogHeader>
@@ -950,7 +950,7 @@ export default function WhatsAppSettingsPage() {
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8 py-6">
                                     {/* Monthly Packages */}
                                     <div className="space-y-4">
-                                        <h4 className="text-[#00ff88] font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                                        <h4 className="text-primary font-black uppercase tracking-widest text-xs flex items-center gap-2">
                                             <Clock className="h-4 w-4" />
                                             Monthly Packages
                                         </h4>
@@ -962,23 +962,23 @@ export default function WhatsAppSettingsPage() {
                                             ].map((plan) => (
                                                 <div 
                                                     key={plan.id}
-                                                    className={`cursor-pointer relative rounded-2xl border-2 p-4 transition-all hover:border-[#00ff88]/60 ${selectedPlan === plan.id ? 'border-[#00ff88] bg-[#00ff88]/10' : 'border-white/10 bg-white/5'}`}
+                                                    className={`cursor-pointer relative rounded-2xl border-2 p-4 transition-all hover:border-primary/60 ${selectedPlan === plan.id ? 'border-primary bg-primary/10' : 'border-border bg-secondary/50'}`}
                                                     onClick={() => setSelectedPlan(plan.id)}
                                                 >
                                                     <div className="flex justify-between items-center">
                                                         <div>
                                                             <div className="flex items-center gap-2">
                                                                 <h3 className="font-bold text-lg">{plan.name}</h3>
-                                                                {plan.popular && <Badge className="bg-[#00ff88] text-black text-[8px] h-4">POPULAR</Badge>}
+                                                                {plan.popular && <Badge className="bg-primary text-primary-foreground text-[8px] h-4">POPULAR</Badge>}
                                                             </div>
-                                                            <p className="text-xs text-gray-400">{plan.msg} • {plan.bonus}</p>
+                                                            <p className="text-xs text-muted-foreground">{plan.msg} • {plan.bonus}</p>
                                                         </div>
                                                         <div className="text-right">
-                                                            <div className="text-xl font-black text-[#00ff88]">৳{plan.price}</div>
-                                                            <p className="text-[10px] text-gray-500">/ month</p>
+                                                            <div className="text-xl font-black text-primary">৳{plan.price}</div>
+                                                            <p className="text-[10px] text-muted-foreground">/ month</p>
                                                         </div>
                                                     </div>
-                                                    {selectedPlan === plan.id && <div className="absolute -right-2 -top-2 bg-[#00ff88] rounded-full p-1 text-black shadow-lg"><Check className="h-3 w-3" /></div>}
+                                                    {selectedPlan === plan.id && <div className="absolute -right-2 -top-2 bg-primary rounded-full p-1 text-primary-foreground shadow-lg"><Check className="h-3 w-3" /></div>}
                                                 </div>
                                             ))}
                                         </div>
@@ -986,7 +986,7 @@ export default function WhatsAppSettingsPage() {
 
                                     {/* Permanent Packages */}
                                     <div className="space-y-4">
-                                        <h4 className="text-emerald-400 font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                                        <h4 className="text-emerald-500 font-black uppercase tracking-widest text-xs flex items-center gap-2">
                                             <InfinityIcon className="h-4 w-4" />
                                             Permanent Packages
                                         </h4>
@@ -998,23 +998,23 @@ export default function WhatsAppSettingsPage() {
                                             ].map((plan) => (
                                                 <div 
                                                     key={plan.id}
-                                                    className={`cursor-pointer relative rounded-2xl border-2 p-4 transition-all hover:border-emerald-400/60 ${selectedPlan === plan.id ? 'border-emerald-400 bg-emerald-400/10' : 'border-white/10 bg-white/5'}`}
+                                                    className={`cursor-pointer relative rounded-2xl border-2 p-4 transition-all hover:border-emerald-500/60 ${selectedPlan === plan.id ? 'border-emerald-500 bg-emerald-500/10' : 'border-border bg-secondary/50'}`}
                                                     onClick={() => setSelectedPlan(plan.id)}
                                                 >
                                                     <div className="flex justify-between items-center">
                                                         <div>
                                                             <div className="flex items-center gap-2">
                                                                 <h3 className="font-bold text-lg">{plan.name}</h3>
-                                                                {plan.popular && <Badge className="bg-emerald-400 text-black text-[8px] h-4">BEST VALUE</Badge>}
+                                                                {plan.popular && <Badge className="bg-emerald-500 text-white text-[8px] h-4">BEST VALUE</Badge>}
                                                             </div>
-                                                            <p className="text-xs text-gray-400">{plan.msg}</p>
+                                                            <p className="text-xs text-muted-foreground">{plan.msg}</p>
                                                         </div>
                                                         <div className="text-right">
-                                                            <div className="text-xl font-black text-emerald-400">৳{plan.price}</div>
-                                                            <p className="text-[10px] text-gray-500">No Expiry</p>
+                                                            <div className="text-xl font-black text-emerald-500">৳{plan.price}</div>
+                                                            <p className="text-[10px] text-muted-foreground">No Expiry</p>
                                                         </div>
                                                     </div>
-                                                    {selectedPlan === plan.id && <div className="absolute -right-2 -top-2 bg-emerald-400 rounded-full p-1 text-black shadow-lg"><Check className="h-3 w-3" /></div>}
+                                                    {selectedPlan === plan.id && <div className="absolute -right-2 -top-2 bg-emerald-500 rounded-full p-1 text-white shadow-lg"><Check className="h-3 w-3" /></div>}
                                                 </div>
                                             ))}
                                         </div>
@@ -1022,24 +1022,24 @@ export default function WhatsAppSettingsPage() {
                                 </div>
 
                                 {/* Coupon Section in Modal */}
-                                <div className="space-y-4 pt-6 border-t border-dashed border-white/10">
+                                <div className="space-y-4 pt-6 border-t border-dashed border-border">
                                      <div className="flex items-end gap-3">
                                          <div className="grid gap-2 flex-1 max-w-xs">
-                                             <Label htmlFor="coupon" className="text-gray-400 font-bold uppercase tracking-wider text-xs">Have a Coupon?</Label>
+                                             <Label htmlFor="coupon" className="text-muted-foreground font-bold uppercase tracking-wider text-xs">Have a Coupon?</Label>
                                              <Input 
                                                  id="coupon" 
                                                  placeholder="ENTER CODE (E.G. FREE500)" 
                                                  value={couponCode}
                                                  onChange={(e) => setCouponCode(e.target.value)}
                                                  disabled={!!appliedCoupon}
-                                                 className="uppercase bg-white/5 border-white/10 focus:border-[#00ff88]/60 font-mono text-white"
+                                                 className="uppercase bg-secondary border-border focus:border-primary/60 font-mono text-foreground"
                                              />
                                          </div>
                                          <Button 
                                              type="button" 
                                              onClick={handleApplyCoupon}
                                              disabled={!!appliedCoupon || !couponCode}
-                                             className="bg-white/10 hover:bg-white/20 text-white font-bold"
+                                             className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold"
                                          >
                                              {appliedCoupon ? "Applied" : "Apply Code"}
                                          </Button>
