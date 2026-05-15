@@ -120,6 +120,43 @@ const validateUserApiKey = async (req) => {
     }
 };
 
+// --- AUTH MIDDLEWARE FOR ALL ROUTES ---
+router.use(async (req, res, next) => {
+    console.log(`[API Engine Auth] ${req.method} ${req.originalUrl}`);
+    
+    // List of public routes (if any)
+    const publicPaths = ['/health']; 
+    if (publicPaths.includes(req.path)) return next();
+
+    // Enforce authentication for ALL requests to api-engine
+    const { userConfig, error } = await validateUserApiKey(req);
+    
+    if (error) {
+        console.warn(`[API Engine Auth] Failed for ${req.originalUrl}: ${error.message}`);
+        return res.status(error.status).json({ 
+            error: {
+                message: error.message,
+                type: 'invalid_request_error',
+                code: error.status === 401 ? 'invalid_api_key' : 'forbidden'
+            }
+        });
+    }
+    
+    // Attach userConfig to request for later use
+    req.userConfig = userConfig;
+    next();
+});
+
+// --- Root Handler for N8N Connection Test ---
+router.get('/', async (req, res) => {
+    res.json({ 
+        status: "online", 
+        message: "SalesmanChatbot API Engine is running.",
+        authenticated: true,
+        user_id: req.userConfig.user_id
+    });
+});
+
 // --- 2. ENGINE STATS & DASHBOARD ---
 router.get('/stats', adminAuthMiddleware, async (req, res) => {
     try {
@@ -231,9 +268,7 @@ router.post('/config', adminAuthMiddleware, async (req, res) => {
 // --- UNIFIED DEV API (Text, Image, Voice) ---
 router.post('/v1/dev/chat', async (req, res) => {
     try {
-        const { userConfig, error } = await validateUserApiKey(req);
-        if (error) return res.status(error.status).json({ error: error.message });
-
+        const userConfig = req.userConfig;
         const { messages, model, stream } = req.body;
         if (!messages || !Array.isArray(messages)) {
             return res.status(400).json({ error: 'messages array is required' });
@@ -373,9 +408,6 @@ router.delete('/keys/:id', async (req, res) => {
 // --- 3. THE CORE PROXY ENGINE (Compatible with OpenAI Client) ---
 // OpenAI Compatibility Aliases (for N8N and other tools)
 router.get('/models', async (req, res) => {
-    const { error } = await validateUserApiKey(req);
-    if (error) return res.status(error.status).json({ error: error.message });
-    
     return res.json({
         object: "list",
         data: [
@@ -394,23 +426,14 @@ router.post('/chat/completions', async (req, res) => {
 
 // Endpoint: /v1/chat/completions
 router.get('/v1', async (req, res) => {
-    const { error } = await validateUserApiKey(req);
-    if (error) return res.status(error.status).json({ error: error.message });
-    
-    res.json({ status: "online", message: "SalesmanChatbot API Engine v1 is running.", authenticated: true });
+    res.json({ status: "online", message: "SalesmanChatbot API Engine v1 is running.", authenticated: true, user_id: req.userConfig.user_id });
 });
 
 router.get('/v1/dev/chat', async (req, res) => {
-    const { error } = await validateUserApiKey(req);
-    if (error) return res.status(error.status).json({ error: error.message });
-    
-    res.json({ status: "online", endpoint: "/v1/dev/chat", authenticated: true });
+    res.json({ status: "online", endpoint: "/v1/dev/chat", authenticated: true, user_id: req.userConfig.user_id });
 });
 
 router.get('/v1/models', async (req, res) => {
-    const { error } = await validateUserApiKey(req);
-    if (error) return res.status(error.status).json({ error: error.message });
-
     return res.json({
         object: "list",
         data: [
@@ -422,8 +445,7 @@ router.get('/v1/models', async (req, res) => {
 });
 
 router.post('/v1/chat/completions', async (req, res) => {
-    const { userConfig, error: authError } = await validateUserApiKey(req);
-    if (authError) return res.status(authError.status).json({ error: authError.message });
+    const userConfig = req.userConfig;
 
     // Check Balance
     if (userConfig.balance < 0.01) {
