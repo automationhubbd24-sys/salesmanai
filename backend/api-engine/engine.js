@@ -373,7 +373,17 @@ router.delete('/keys/:id', async (req, res) => {
 // --- 3. THE CORE PROXY ENGINE (Compatible with OpenAI Client) ---
 // Endpoint: /v1/chat/completions
 router.get('/v1', async (req, res) => {
-    res.json({ status: "online", message: "SalesmanChatbot API Engine v1 is running." });
+    const { error } = await validateUserApiKey(req);
+    if (error) return res.status(error.status).json({ error: error.message });
+    
+    res.json({ status: "online", message: "SalesmanChatbot API Engine v1 is running.", authenticated: true });
+});
+
+router.get('/v1/dev/chat', async (req, res) => {
+    const { error } = await validateUserApiKey(req);
+    if (error) return res.status(error.status).json({ error: error.message });
+    
+    res.json({ status: "online", endpoint: "/v1/dev/chat", authenticated: true });
 });
 
 router.get('/v1/models', async (req, res) => {

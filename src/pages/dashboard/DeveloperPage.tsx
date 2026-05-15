@@ -765,7 +765,7 @@ export default function DeveloperPage() {
                                     <CardContent className="space-y-4 px-6 md:px-10 pb-10">
                                         <div className="bg-black/40 p-4 rounded-xl border border-white/5">
                                             <code className="block text-[10px] md:text-xs font-mono text-primary break-all leading-relaxed">
-                                                {window.location.origin}/api/v1/dev/chat
+                                                {window.location.origin}/api-engine/v1/dev/chat
                                             </code>
                                         </div>
                                         <div className="flex justify-between text-[10px] md:text-xs text-slate-500 font-medium">
