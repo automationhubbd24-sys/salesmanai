@@ -24,28 +24,20 @@ const app = express();
 app.set('trust proxy', 1);
 
 // CORS Configuration
-const allowedOrigins = [
-    'https://www.salesmanchatbot.online',
-    'https://salesmanchatbot.online',
-    'http://localhost:5173',
-    'http://localhost:3000'
-];
-
 app.use(cors({
-    origin: function (origin, callback) {
-        if (!origin) return callback(null, true);
-        if (allowedOrigins.indexOf(origin) === -1) {
-            return callback(null, true); // Allow all for now to fix the immediate issue
-        }
-        return callback(null, true);
-    },
+    origin: '*', // Allow all origins to definitively solve the issue
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin']
 }));
 
-// Explicitly handle OPTIONS preflight
-app.options('*', cors());
+// Explicitly handle OPTIONS preflight for all routes
+app.options('*', (req, res) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
+    res.sendStatus(200);
+});
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
