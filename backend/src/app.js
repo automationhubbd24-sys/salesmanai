@@ -20,18 +20,11 @@ const marketingRoutes = require('./routes/marketingRoutes');
 const path = require('path');
 const app = express();
 
-// --- BULLETPROOF CORS & PREFLIGHT HANDLING ---
-app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-    
-    // Handle Preflight
-    if (req.method === 'OPTIONS') {
-        return res.status(200).end();
-    }
-    next();
-});
+// CORS Configuration - Original Simple Working State
+app.use(cors({
+    origin: true, // Reflects the request origin, equivalent to '*' but supports credentials
+    credentials: true
+}));
 
 // Enable trust proxy
 app.set('trust proxy', 1);
