@@ -764,31 +764,68 @@ export default function DeveloperPage() {
                                 <Card className="border-white/5 bg-[#121212] rounded-3xl overflow-hidden shadow-xl">
                                     <CardHeader className="pt-8 px-6 md:px-10 cursor-default select-none">
                                         <CardTitle className="text-lg font-bold text-white flex items-center justify-between">
-                                            <span>Endpoint</span>
-                                            <Button 
-                                                variant="ghost" 
-                                                size="sm" 
-                                                className="h-8 w-8 p-0 text-slate-500 hover:text-white"
-                                                onClick={() => {
-                                                    const endpoint = `${EXTERNAL_API_BASE}/v1/chat/completions`;
-                                                    navigator.clipboard.writeText(endpoint);
-                                                    toast.success("Endpoint copied to clipboard");
-                                                }}
-                                            >
-                                                <Copy className="h-4 w-4" />
-                                            </Button>
+                                            <span>n8n / OpenAI Compatible</span>
+                                            <div className="flex gap-2">
+                                                <Button 
+                                                    variant="ghost" 
+                                                    size="sm" 
+                                                    className="h-8 px-3 text-[10px] font-bold text-slate-500 hover:text-white border border-white/5 rounded-lg"
+                                                    onClick={() => {
+                                                        const baseUrl = `${EXTERNAL_API_BASE}/v1`;
+                                                        navigator.clipboard.writeText(baseUrl);
+                                                        toast.success("Base URL copied");
+                                                    }}
+                                                >
+                                                    <Copy className="h-3 w-3 mr-1" /> Base URL
+                                                </Button>
+                                            </div>
                                         </CardTitle>
-                                        <CardDescription className="text-slate-400 text-xs">Direct API connection point (OpenAI Compatible).</CardDescription>
+                                        <CardDescription className="text-slate-400 text-xs">Use these settings for n8n, Flowise, or any OpenAI client.</CardDescription>
                                     </CardHeader>
                                     <CardContent className="space-y-4 px-6 md:px-10 pb-10">
-                                        <div className="bg-black/40 p-4 rounded-xl border border-white/5">
-                                            <code className="block text-[10px] md:text-xs font-mono text-primary break-all leading-relaxed">
-                                                {EXTERNAL_API_BASE}/v1/chat/completions
-                                            </code>
+                                        <div className="space-y-4">
+                                            <div className="space-y-1.5">
+                                                <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Base URL</Label>
+                                                <div className="bg-black/40 p-3 rounded-xl border border-white/5 flex items-center justify-between group">
+                                                    <code className="text-[10px] md:text-xs font-mono text-primary break-all">
+                                                        {EXTERNAL_API_BASE}/v1
+                                                    </code>
+                                                </div>
+                                            </div>
+
+                                            <div className="space-y-1.5">
+                                                <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Available Models</Label>
+                                                <div className="grid grid-cols-1 gap-2">
+                                                    {[
+                                                        { id: "salesmanchatbot-pro", desc: "Best for complex reasoning" },
+                                                        { id: "salesmanchatbot-flash", desc: "Fast & multimodal (Vision)" },
+                                                        { id: "salesmanchatbot-lite", desc: "Lightweight & fast" }
+                                                    ].map(m => (
+                                                        <div key={m.id} className="flex items-center justify-between p-2 rounded-lg bg-white/[0.02] border border-white/5 group">
+                                                            <div className="flex flex-col">
+                                                                <span className="text-[10px] font-mono text-slate-200">{m.id}</span>
+                                                                <span className="text-[8px] text-slate-500">{m.desc}</span>
+                                                            </div>
+                                                            <Button 
+                                                                variant="ghost" 
+                                                                size="sm" 
+                                                                className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                                onClick={() => {
+                                                                    navigator.clipboard.writeText(m.id);
+                                                                    toast.success(`${m.id} copied`);
+                                                                }}
+                                                            >
+                                                                <Copy className="h-3 w-3" />
+                                                            </Button>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
                                         </div>
-                                        <div className="flex justify-between text-[10px] md:text-xs text-slate-500 font-medium">
-                                            <span>Auth: Bearer Token</span>
-                                            <span>Format: OpenAI compatible</span>
+
+                                        <div className="pt-2 flex items-center gap-2 text-[10px] text-slate-500 font-medium">
+                                            <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                                            <span>Streaming & Vision Supported</span>
                                         </div>
                                     </CardContent>
                                 </Card>
