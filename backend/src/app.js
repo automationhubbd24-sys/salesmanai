@@ -60,6 +60,10 @@ app.use('/webhook', webhookRoutes);
 app.use('/api/webhook', webhookRoutes); // Alias for consistency
 
 // Register other routes
+app.use('/api/v1/dev/chat', apiEngineRoutes);
+app.use('/api/api-engine', apiEngineRoutes);
+app.use('/api-engine', apiEngineRoutes);
+
 app.use('/whatsapp', whatsappRoutes);
 app.use('/api/whatsapp', whatsappRoutes); // Alias for /api prefix
 
@@ -75,9 +79,6 @@ app.use('/api/openrouter', openrouterEngineRoutes);
 app.use('/api/db-admin', dbAdminRoutes);
 app.use('/db-admin', dbAdminRoutes); // Alias for both
 app.use('/api/api-list', apiListRoutes);
-app.use('/api/api-engine', apiEngineRoutes);
-app.use('/api-engine', apiEngineRoutes); // Alias for easier n8n connection
-app.use('/api/v1/dev/chat', apiEngineRoutes); // Exact match for user's N8N URL
 
 app.use('/teams', teamRoutes);
 app.use('/api/teams', teamRoutes); // Alias for /api prefix
@@ -86,17 +87,6 @@ app.use('/stats', statsRoutes);
 app.use('/api/stats', statsRoutes); // Alias for /api prefix
 app.use('/api/ai', aiRoutes);
 app.use('/api/marketing', marketingRoutes);
-
-// JSON 404 handler for all other /api routes
-app.use('/api', (req, res) => {
-    res.status(404).json({ 
-        error: {
-            message: `Route ${req.method} ${req.path} not found`,
-            type: 'invalid_request_error',
-            code: 'resource_not_found'
-        }
-    });
-});
 
 // Basic health check
 
