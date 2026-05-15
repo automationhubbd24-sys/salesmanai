@@ -378,7 +378,7 @@ export default function DeveloperPage() {
                         </p>
                     </div>
 
-                    {(devStatus === 'none' && !showManualLogin) && (
+                    {(!isDevLoggedIn && devStatus === 'none' && !showManualLogin) && (
                         <div className="relative z-10 flex items-center justify-center py-6 md:py-12 px-4">
                             <div className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-5 gap-8 lg:gap-12 items-start">
                                 <div className="lg:col-span-3 space-y-8 animate-in fade-in duration-700">
@@ -553,7 +553,7 @@ export default function DeveloperPage() {
                         </div>
                     )}
 
-                    {((devStatus === 'approved' && !isDevLoggedIn && !loading) || showManualLogin) && (
+                    {(!isDevLoggedIn && ((devStatus === 'approved' && !loading) || showManualLogin)) && (
                         <div className="relative z-10 flex items-center justify-center py-20 px-4">
                             <Card className="w-full max-w-md border-white/5 bg-[#121212] rounded-3xl overflow-hidden shadow-2xl">
                                 <CardHeader className="text-center pt-10 pb-6">
@@ -774,6 +774,26 @@ export default function DeveloperPage() {
                     )}
                 </>
             )}
+
+            <Dialog open={regenDialogOpen} onOpenChange={setRegenDialogOpen}>
+                <DialogContent className="bg-zinc-950 border-white/10 text-white">
+                    <DialogHeader>
+                        <DialogTitle>Regenerate API Key?</DialogTitle>
+                        <DialogDescription className="text-slate-400">
+                            আপনার বর্তমান এপিআই কী-টি কাজ করা বন্ধ করে দেবে এবং একটি নতুন কী তৈরি হবে। আপনি কি নিশ্চিত?
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter className="gap-2">
+                        <Button variant="ghost" onClick={() => setRegenDialogOpen(false)} className="text-slate-400">
+                            Cancel
+                        </Button>
+                        <Button onClick={doRegenerate} disabled={isRegenerating} className="bg-primary text-black font-bold">
+                            {isRegenerating ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : null}
+                            Confirm Regenerate
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }
