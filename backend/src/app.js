@@ -88,7 +88,7 @@ app.use('/api/ai', aiRoutes);
 app.use('/api/marketing', marketingRoutes);
 
 // JSON 404 handler for all other /api routes
-app.all('/api/(.*)', (req, res) => {
+app.all('/api/:path*', (req, res) => {
     res.status(404).json({ 
         error: {
             message: `Route ${req.method} ${req.path} not found`,
