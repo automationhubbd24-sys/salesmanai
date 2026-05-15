@@ -9,11 +9,6 @@ router.post('/chat/completions', externalApiController.handleChatCompletion);
 router.post('/audio/transcriptions', externalApiController.transcribeAudio);
 router.get('/models', externalApiController.listModels);
 
-// Support both with and without /v1 prefix for internal consistency
-router.post('/v1/chat/completions', externalApiController.handleChatCompletion);
-router.post('/v1/audio/transcriptions', externalApiController.transcribeAudio);
-router.get('/v1/models', externalApiController.listModels);
-
 // Management Endpoints (Protected by User Auth AND Developer Approval)
 router.get('/key', authMiddleware, developerAuthMiddleware, externalApiController.getApiKey);
 router.post('/key/regenerate', authMiddleware, developerAuthMiddleware, externalApiController.regenerateApiKey);

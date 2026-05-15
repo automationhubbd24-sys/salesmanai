@@ -46,14 +46,14 @@ const FAQSection = () => {
   ];
 
   return (
-    <section id="faq" className="py-24 bg-[#000000] relative overflow-hidden">
+    <section id="faq" className="py-24 bg-[#050505] relative overflow-hidden border-t border-white/5">
       <div className="container mx-auto px-4 relative z-10">
         <div className="text-center max-w-3xl mx-auto mb-16">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
-            className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-purple-500/5 border border-purple-500/10 text-purple-400/80 text-xs font-bold mb-6 uppercase tracking-wider"
+            className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-400 text-xs font-bold mb-6 uppercase tracking-wider"
           >
             <HelpCircle className="w-3 h-3" />
             {t("FAQ", "সাধারণ জিজ্ঞাসা")}
@@ -65,9 +65,9 @@ const FAQSection = () => {
             transition={{ delay: 0.1 }}
             className="text-4xl md:text-5xl font-black text-white mb-6"
           >
-            {t("Common questions", "সাধারণ কিছু")} <br />
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-purple-400/80 to-pink-400/80">
-              {t("answered", "প্রশ্ন ও উত্তর")}
+            {t("Got Questions?", "কিছু জানতে চান?")} <br />
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-indigo-400">
+              {t("We've Got Answers", "আমরা উত্তর দিচ্ছি")}
             </span>
           </motion.h2>
         </div>
@@ -86,8 +86,8 @@ const FAQSection = () => {
                 onClick={() => setOpenIndex(openIndex === index ? null : index)}
                 className={`w-full p-6 rounded-2xl border transition-all duration-300 flex items-start gap-4 text-left ${
                   openIndex === index 
-                    ? "bg-white/[0.03] border-white/10" 
-                    : "bg-white/[0.01] border-white/5 hover:border-white/10"
+                    ? "bg-white/[0.04] border-white/10" 
+                    : "bg-white/[0.02] border-white/5 hover:border-white/10"
                 }`}
               >
                 <div className={`mt-1 flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center transition-colors ${
@@ -110,7 +110,7 @@ const FAQSection = () => {
                         transition={{ duration: 0.3 }}
                         className="overflow-hidden"
                       >
-                        <p className="pt-4 text-slate-500 leading-relaxed">
+                        <p className="pt-4 text-slate-400 leading-relaxed">
                           {faq.answer}
                         </p>
                       </motion.div>

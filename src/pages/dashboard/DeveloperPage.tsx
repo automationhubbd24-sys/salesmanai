@@ -770,7 +770,7 @@ export default function DeveloperPage() {
                                                 size="sm" 
                                                 className="h-8 w-8 p-0 text-slate-500 hover:text-white"
                                                 onClick={() => {
-                                                    const endpoint = `${window.location.origin}/v1/chat/completions`;
+                                                    const endpoint = `${EXTERNAL_API_BASE}/v1/chat/completions`;
                                                     navigator.clipboard.writeText(endpoint);
                                                     toast.success("Endpoint copied to clipboard");
                                                 }}
@@ -783,7 +783,7 @@ export default function DeveloperPage() {
                                     <CardContent className="space-y-4 px-6 md:px-10 pb-10">
                                         <div className="bg-black/40 p-4 rounded-xl border border-white/5">
                                             <code className="block text-[10px] md:text-xs font-mono text-primary break-all leading-relaxed">
-                                                {window.location.origin}/v1/chat/completions
+                                                {EXTERNAL_API_BASE}/v1/chat/completions
                                             </code>
                                         </div>
                                         <div className="flex justify-between text-[10px] md:text-xs text-slate-500 font-medium">

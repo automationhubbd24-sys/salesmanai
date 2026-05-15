@@ -2,6 +2,8 @@ const dbService = require('../services/dbService');
 const aiService = require('../services/aiService');
 const liteEngineService = require('../services/liteEngineService');
 const openrouterEngineService = require('../services/openrouterEngineService');
+const keyService = require('../services/keyService');
+const axios = require('axios');
 const crypto = require('crypto');
 
 const pgClient = require('../services/pgClient');
@@ -89,10 +91,47 @@ exports.handleChatCompletion = async (req, res) => {
             return res.status(authError.status).json({ error: { message: authError.message, type: authError.type, code: authError.code } });
         }
 
-        // 2. Free Tier Logic (Lifetime 20 requests if balance is low)
+        // 2. Parse Request (OpenAI Format) - MOVED UP for access to 'stream' and 'model'
+        const { messages, model, stream, user: externalUser } = req.body;
+        const requestedModel = model || 'salesmanchatbot-pro';
+        const isBranded = requestedModel.startsWith('salesmanchatbot-');
+
+        if (!messages || !Array.isArray(messages)) {
+            return res.status(400).json({ error: { message: 'messages array is required', type: 'invalid_request_error' } });
+        }
+
+        let systemPrompt = null;
+        let history = [];
+        let userMessage = "";
+        let imageUrls = [];
+        let audioUrls = [];
+
+        // Parse messages to get image/audio URLs for resolution
+        for (let i = 0; i < messages.length; i++) {
+            const msg = messages[i];
+            let contentText = "";
+            if (Array.isArray(msg.content)) {
+                for (const part of msg.content) {
+                    if (part.type === 'text') contentText += part.text || "";
+                    else if (part.type === 'image_url') {
+                        const url = part.image_url?.url || part.image_url;
+                        if (url && i === messages.length - 1 && msg.role === 'user') imageUrls.push(url);
+                    } else if (part.type === 'audio_url') {
+                        const url = part.audio_url?.url || part.audio_url;
+                        if (url && i === messages.length - 1 && msg.role === 'user') audioUrls.push(url);
+                    }
+                }
+            } else {
+                contentText = msg.content || "";
+            }
+            if (msg.role === 'system') systemPrompt = contentText;
+            else if (i === messages.length - 1 && msg.role === 'user') userMessage = contentText;
+            else history.push({ role: msg.role, content: contentText });
+        }
+
+        // 3. Free Tier Logic (Lifetime 20 requests if balance is low)
         let freeTierActive = false;
         try {
-            const pgClient = require('../services/pgClient');
             const countResult = await pgClient.query(
                 'SELECT COUNT(*)::int AS cnt FROM api_usage_stats WHERE user_id = $1::uuid',
                 [userConfig.user_id]
@@ -104,7 +143,7 @@ exports.handleChatCompletion = async (req, res) => {
         } catch (e) {
         }
 
-        // 3. Check Balance (skip if free tier active)
+        // 4. Check Balance (skip if free tier active)
         if (!freeTierActive) {
             if (userConfig.balance < 0.01) {
                 return res.status(402).json({ error: { message: `Insufficient balance. Minimum 0.01 BDT required.`, type: 'insufficient_quota', code: 'insufficient_balance' } });
@@ -172,12 +211,12 @@ exports.handleChatCompletion = async (req, res) => {
                     
                     response.data.pipe(res);
 
-        // Billing (Flat rate for stream)
-        if (!freeTierActive) {
-            const cost = await dbService.getCostForModel(requestedModel);
-            dbService.deductUserBalance(userConfig.user_id, cost, `Stream: ${requestedModel}`).catch(() => {});
-            dbService.logApiUsage(userConfig.user_id, requestedModel, 0, cost, 'external_api');
-        }
+                    // Billing (Flat rate for stream)
+                    if (!freeTierActive) {
+                        const cost = await dbService.getCostForModel(requestedModel);
+                        dbService.deductUserBalance(userConfig.user_id, cost, `Stream: ${requestedModel}`).catch(() => {});
+                        dbService.logApiUsage(userConfig.user_id, requestedModel, 0, cost, 'external_api');
+                    }
                     return;
                 } catch (err) {
                     console.error(`[ExternalAPI] Stream Attempt ${attempt + 1} failed:`, err.message);
@@ -185,70 +224,6 @@ exports.handleChatCompletion = async (req, res) => {
                 }
             }
             return res.status(502).json({ error: { message: "Stream failed after multiple attempts", details: lastError } });
-        }
-
-        // 4. Process Request (OpenAI Format)
-        const { messages, model, stream, user: externalUser } = req.body;
-        const requestedModel = model || 'salesmanchatbot-pro';
-        const isBranded = requestedModel.startsWith('salesmanchatbot-');
-
-        if (!messages || !Array.isArray(messages)) {
-            return res.status(400).json({ error: { message: 'messages array is required', type: 'invalid_request_error' } });
-        }
-
-        let systemPrompt = null;
-        let history = [];
-        let userMessage = "";
-        let imageUrls = [];
-        let audioUrls = [];
-
-        // Parse messages
-        for (let i = 0; i < messages.length; i++) {
-            const msg = messages[i];
-            let contentText = "";
-
-            // Handle Multimodal Content (Array of objects)
-            if (Array.isArray(msg.content)) {
-                for (const part of msg.content) {
-                    if (part.type === 'text') {
-                        contentText += part.text || "";
-                    } else if (part.type === 'image_url') {
-                        const url = part.image_url?.url || part.image_url;
-                        if (url) {
-                            // If it's the active user message, add to imageUrls for processing
-                            if (i === messages.length - 1 && msg.role === 'user') {
-                                imageUrls.push(url);
-                            } else {
-                                contentText += ` [Image] `; 
-                            }
-                        }
-                    } else if (part.type === 'audio_url') {
-                        // Custom support for Audio (e.g. { type: "audio_url", audio_url: { url: "..." } })
-                        const url = part.audio_url?.url || part.audio_url;
-                        if (url) {
-                            if (i === messages.length - 1 && msg.role === 'user') {
-                                audioUrls.push(url);
-                            } else {
-                                contentText += ` [Audio] `;
-                            }
-                        }
-                    }
-                }
-            } else {
-                // Standard String Content
-                contentText = msg.content || "";
-            }
-
-            if (msg.role === 'system') {
-                systemPrompt = contentText;
-            } else {
-                // If it's the last message and it's user, it's the current prompt
-                if (i === messages.length - 1 && msg.role === 'user') {
-                    userMessage = contentText;
-                } else {
-                    history.push({ role: msg.role, content: contentText });
-                }
-            }
         }
 
         if (!userMessage) {
@@ -403,8 +378,15 @@ exports.handleChatCompletion = async (req, res) => {
 
 exports.listModels = async (req, res) => {
     try {
-        // Return models even without key for better n8n discovery, 
-        // but real requests will still need a key.
+        // Optional: Validate API Key for discovery if we want to restrict connection to valid users only.
+        // n8n will call this to verify the connection.
+        const { userConfig, error } = await validateApiKey(req);
+        if (error) {
+            // Some tools might try to list models without a key first.
+            // But for OpenAI compatibility, a key is usually required.
+            return res.status(error.status).json({ error: { message: error.message, type: error.type, code: error.code } });
+        }
+
         return res.json({
             object: "list",
             data: [
