@@ -4,19 +4,7 @@ const liteEngineService = require('../services/liteEngineService');
 const openrouterEngineService = require('../services/openrouterEngineService');
 const crypto = require('crypto');
 
-const PRICING = {
-    PRO: 150,
-    FLASH: 100,
-    LITE: 80
-};
-
-const getCostPerRequest = (modelName) => {
-    let rate = PRICING.PRO;
-    if (modelName.includes('flash')) rate = PRICING.FLASH;
-    else if (modelName.includes('lite')) rate = PRICING.LITE;
-    
-    return rate / 1000;
-};
+const pgClient = require('../services/pgClient');
 
 // Helper to validate API Key and return user config
 const validateApiKey = async (req) => {
@@ -125,8 +113,86 @@ exports.handleChatCompletion = async (req, res) => {
             }
         }
 
+        // --- STREAMING SUPPORT ---
+        if (stream) {
+            console.log(`[ExternalAPI] Streaming request for model: ${requestedModel}`);
+            
+            // Resolve Model & Provider
+            let provider = 'google';
+            let modelToUse = requestedModel;
+            
+            if (isBranded) {
+                try {
+                    const resolved = await aiService.resolveSalesmanchatbotEngine({ chat_model: requestedModel }, 'salesmanchatbot', requestedModel, imageUrls.length > 0, audioUrls.length > 0);
+                    provider = resolved.finalProvider;
+                    modelToUse = resolved.finalModel;
+                } catch (e) {
+                    console.warn(`[ExternalAPI] Resolution failed for ${requestedModel}:`, e.message);
+                }
+            } else if (requestedModel.includes('gpt')) provider = 'openai';
+            else if (requestedModel.includes('mistral')) provider = 'mistral';
+            else if (requestedModel.includes('llama')) provider = 'groq';
+
+            let targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+            if (provider === 'openai') targetUrl = 'https://api.openai.com/v1/chat/completions';
+            else if (provider === 'groq') targetUrl = 'https://api.groq.com/openai/v1/chat/completions';
+            else if (provider === 'mistral') targetUrl = 'https://api.mistral.ai/v1/chat/completions';
+
+            // Update body for upstream
+            req.body.model = modelToUse;
+
+            const maxAttempts = 3;
+            let lastError = null;
+
+            for (let attempt = 0; attempt < maxAttempts; attempt++) {
+                const keyData = await keyService.getSmartKey(provider, modelToUse, imageUrls.length > 0 ? 'vision' : 'text');
+                if (!keyData) break;
+
+                const headers = { 'Content-Type': 'application/json' };
+                if (provider === 'google' || provider === 'gemini') headers['x-goog-api-key'] = keyData.key;
+                else headers['Authorization'] = `Bearer ${keyData.key}`;
+
+                try {
+                    const response = await axios.post(targetUrl, req.body, {
+                        headers,
+                        responseType: 'stream',
+                        timeout: 60000,
+                        validateStatus: () => true
+                    });
+
+                    if (response.status >= 400) {
+                        lastError = { status: response.status, data: response.data };
+                        if (response.status === 429) keyService.markKeyAsDead(keyData.key, 2 * 60 * 1000, 'upstream_429');
+                        else if ([401, 403].includes(response.status)) keyService.markKeyAsDead(keyData.key, 24 * 60 * 60 * 1000, 'upstream_auth');
+                        continue;
+                    }
+
+                    // Success: Pipe the stream
+                    res.setHeader('Content-Type', 'text/event-stream');
+                    res.setHeader('Cache-Control', 'no-cache');
+                    res.setHeader('Connection', 'keep-alive');
+                    
+                    response.data.pipe(res);
+
+        // Billing (Flat rate for stream)
+        if (!freeTierActive) {
+            const cost = await dbService.getCostForModel(requestedModel);
+            dbService.deductUserBalance(userConfig.user_id, cost, `Stream: ${requestedModel}`).catch(() => {});
+            dbService.logApiUsage(userConfig.user_id, requestedModel, 0, cost, 'external_api');
+        }
+                    return;
+                } catch (err) {
+                    console.error(`[ExternalAPI] Stream Attempt ${attempt + 1} failed:`, err.message);
+                    lastError = err;
+                }
+            }
+            return res.status(502).json({ error: { message: "Stream failed after multiple attempts", details: lastError } });
+        }
+
         // 4. Process Request (OpenAI Format)
         const { messages, model, stream, user: externalUser } = req.body;
+        const requestedModel = model || 'salesmanchatbot-pro';
+        const isBranded = requestedModel.startsWith('salesmanchatbot-');
 
         if (!messages || !Array.isArray(messages)) {
             return res.status(400).json({ error: { message: 'messages array is required', type: 'invalid_request_error' } });
@@ -194,7 +260,6 @@ exports.handleChatCompletion = async (req, res) => {
         // 4. ROUTING LOGIC based on Model Name
         let aiText = "";
         let totalTokens = 0;
-        const requestedModel = model || 'salesmanchatbot-pro';
         let responseModelName = requestedModel; 
         let billingLabel = "Cheap Engine API Call";
 
@@ -285,11 +350,11 @@ exports.handleChatCompletion = async (req, res) => {
         else billingLabel = "Pro Engine API Call";
 
         // 5. Calculate Cost & Deduct Balance
-        // Cost calculation moved to centralized dbService
-        const finalCost = getCostPerRequest(model || 'salesmanchatbot-pro');
+        const finalCost = await dbService.getCostForModel(requestedModel);
 
         if (!freeTierActive) {
             await dbService.deductUserBalance(userConfig.user_id, finalCost, `${billingLabel} (${totalTokens} tokens)`);
+            await dbService.logApiUsage(userConfig.user_id, requestedModel, totalTokens, finalCost, 'external_api');
         }
 
         // Usage is now logged inside aiService.js to unify all consumption tracking.
@@ -340,17 +405,14 @@ exports.handleChatCompletion = async (req, res) => {
 
 exports.listModels = async (req, res) => {
     try {
-        const { error: authError } = await validateApiKey(req);
-        if (authError) {
-            return res.status(authError.status).json({ error: { message: authError.message, type: authError.type, code: authError.code } });
-        }
-
+        // Return models even without key for better n8n discovery, 
+        // but real requests will still need a key.
         return res.json({
             object: "list",
             data: [
-                { id: "salesmanchatbot-pro", object: "model", created: 1677610602, owned_by: "salesman" },
-                { id: "salesmanchatbot-flash", object: "model", created: 1709251200, owned_by: "salesman" },
-                { id: "salesmanchatbot-lite", object: "model", created: 1709251200, owned_by: "salesman" }
+                { id: "salesmanchatbot-pro", object: "model", created: 1677610602, owned_by: "salesman", permission: [] },
+                { id: "salesmanchatbot-flash", object: "model", created: 1709251200, owned_by: "salesman", permission: [] },
+                { id: "salesmanchatbot-lite", object: "model", created: 1709251200, owned_by: "salesman", permission: [] }
             ]
         });
     } catch (error) {
@@ -384,10 +446,7 @@ exports.transcribeAudio = async (req, res) => {
         console.log(`[ExternalAPI] Transcribing Audio for User ${userConfig.user_id}...`);
         
         // Use LiteEngine (Groq Whisper)
-        // Since Groq Whisper is very cheap/free currently, we charge minimal or 0.
-        // Let's charge 0.01 BDT per minute? Or fixed per request?
-        // Let's charge 0.005 BDT per request for now.
-        const cost = getCostPerRequest('salesmanchatbot-lite');
+        const cost = await dbService.getCostForModel('salesmanchatbot-lite');
 
         let transcription = "";
         try {

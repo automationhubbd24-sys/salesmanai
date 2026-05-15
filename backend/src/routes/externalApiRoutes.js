@@ -5,6 +5,11 @@ const authMiddleware = require('../middleware/authMiddleware');
 const developerAuthMiddleware = require('../middleware/developerAuthMiddleware');
 
 // Public API Endpoint (Protected by Bearer Token in Header)
+router.post('/chat/completions', externalApiController.handleChatCompletion);
+router.post('/audio/transcriptions', externalApiController.transcribeAudio);
+router.get('/models', externalApiController.listModels);
+
+// Support both with and without /v1 prefix for internal consistency
 router.post('/v1/chat/completions', externalApiController.handleChatCompletion);
 router.post('/v1/audio/transcriptions', externalApiController.transcribeAudio);
 router.get('/v1/models', externalApiController.listModels);

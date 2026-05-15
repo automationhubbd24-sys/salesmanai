@@ -6,23 +6,8 @@ const pgClient = require('../src/services/pgClient');
 const adminAuthMiddleware = require('../src/middleware/adminAuthMiddleware');
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
+const dbService = require('../src/services/dbService');
 const aiService = require('../src/services/aiService');
-
-// --- PRICING ---
-const PRICING = {
-    PRO: 150,
-    FLASH: 100,
-    LITE: 80,
-    BRAIN: 90
-};
-
-const getCostPerRequest = (modelName) => {
-    let rate = PRICING.PRO;
-    if (modelName.includes('flash')) rate = PRICING.FLASH;
-    else if (modelName.includes('lite')) rate = PRICING.LITE;
-    else if (modelName.includes('brain')) rate = PRICING.BRAIN;
-    return rate / 1000;
-};
 
 // --- Proxy Helper ---
 function getProxyUrl(modelName = 'default') {
@@ -624,6 +609,12 @@ router.post('/v1/chat/completions', async (req, res) => {
                 });
 
                 response.data.pipe(res);
+
+                // Deduct balance for streaming (Flat rate)
+                const cost = await dbService.getCostForModel(model);
+                dbService.deductUserBalance(userConfig.user_id, cost, `API Engine Stream: ${model}`).catch(() => {});
+                dbService.logApiUsage(userConfig.user_id, model, 0, cost, 'api_engine');
+
                 return;
             }
 
@@ -679,9 +670,10 @@ router.post('/v1/chat/completions', async (req, res) => {
             keyService.recordKeyUsage(keyData.key, response.data.usage.total_tokens);
             
             // Deduct User Balance
-            const cost = getCostPerRequest(model);
+            const cost = await dbService.getCostForModel(model);
             dbService.deductUserBalance(userConfig.user_id, cost, `API Engine Call: ${model}`)
                 .catch(err => console.error(`[API Engine] Balance deduction failed:`, err.message));
+            dbService.logApiUsage(userConfig.user_id, model, response.data.usage.total_tokens, cost, 'api_engine');
         }
 
         res.json(response.data);

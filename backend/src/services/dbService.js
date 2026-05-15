@@ -327,6 +327,87 @@ async function deductCredit(pageId, amount = 1) {
     }
 }
 
+// --- AI MODEL PRICING SYSTEM ---
+
+let pricingCache = new Map();
+let lastPricingUpdate = 0;
+const PRICING_TTL = 60 * 1000; // 1 minute
+
+async function getModelPricing() {
+    const now = Date.now();
+    if (pricingCache.size > 0 && (now - lastPricingUpdate < PRICING_TTL)) {
+        return Array.from(pricingCache.values());
+    }
+
+    try {
+        const result = await query('SELECT * FROM model_pricing');
+        const list = result.rows || [];
+        
+        const newCache = new Map();
+        list.forEach(p => newCache.set(p.model_id, p));
+        pricingCache = newCache;
+        lastPricingUpdate = now;
+        
+        return list;
+    } catch (err) {
+        console.warn('[DB] Failed to fetch model pricing from DB, using fallback:', err.message);
+        // Fallback pricing if table doesn't exist yet
+        return [
+            { model_id: 'salesmanchatbot-pro', cost_per_request: 0.15 },
+            { model_id: 'salesmanchatbot-flash', cost_per_request: 0.10 },
+            { model_id: 'salesmanchatbot-lite', cost_per_request: 0.08 },
+            { model_id: 'salesmanchatbot-brain', cost_per_request: 0.09 }
+        ];
+    }
+}
+
+async function getCostForModel(modelId) {
+    await getModelPricing(); // Ensure cache is warm
+    
+    // Normalize model ID (e.g. handle versions or prefixes)
+    let id = modelId || 'salesmanchatbot-pro';
+    if (!pricingCache.has(id)) {
+        if (id.includes('flash')) id = 'salesmanchatbot-flash';
+        else if (id.includes('lite')) id = 'salesmanchatbot-lite';
+        else if (id.includes('brain')) id = 'salesmanchatbot-brain';
+        else id = 'salesmanchatbot-pro';
+    }
+
+    const pricing = pricingCache.get(id);
+    return pricing ? Number(pricing.cost_per_request) : 0.15;
+}
+
+/**
+ * Logs API usage for tracking and analytics
+ */
+async function logApiUsage(userId, model, tokens, cost, platform = 'external_api') {
+    try {
+        await query(
+            'INSERT INTO api_usage_stats (user_id, model, tokens, cost, platform) VALUES ($1, $2, $3, $4, $5)',
+            [userId, model, tokens, cost, platform]
+        );
+    } catch (err) {
+        console.error('[DB] Failed to log API usage:', err.message);
+    }
+}
+
+async function deductUserBalance(userId, amount, description = 'API Call') {
+    try {
+        const res = await query(
+            'UPDATE user_configs SET balance = balance - $1 WHERE user_id = $2::uuid RETURNING balance',
+            [amount, userId]
+        );
+        
+        if (res.rows.length > 0) {
+            return res.rows[0].balance;
+        }
+        return null;
+    } catch (err) {
+        console.error('[DB] Balance deduction error:', err.message);
+        throw err;
+    }
+}
+
 // 6. Get Chat History (Context Window)
 async function getChatHistory(sessionId, limit = 10) {
     try {
@@ -3405,7 +3486,11 @@ async function deleteAdContext(adId, pageId) {
 }
 
 module.exports = {
-    getAllKeys,
+  getModelPricing,
+  getCostForModel,
+  logApiUsage,
+  deductUserBalance,
+  getAllKeys,
     addApiKey,
     deleteApiKey,
     deleteApiKeys,

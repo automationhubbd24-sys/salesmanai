@@ -74,6 +74,7 @@ app.use('/api/auth', authRoutes); // Matches frontend call /api/auth/facebook/ex
 app.use('/api/products', productRoutes);
 app.use('/api/ads', adsRoutes);
 app.use('/api/external', externalApiRoutes);
+app.use('/v1', externalApiRoutes); // Alias for n8n/OpenAI compatibility
 app.use('/api/lite', liteEngineRoutes);
 app.use('/api/openrouter', openrouterEngineRoutes);
 app.use('/api/db-admin', dbAdminRoutes);

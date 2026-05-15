@@ -2,7 +2,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Copy, ArrowRight, Key, Globe, BookOpenText, CreditCard, Workflow } from "lucide-react";
+import { Copy, ArrowRight, Key, Globe, BookOpenText, CreditCard, Workflow, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { EXTERNAL_API_BASE } from "@/config";
 import { Link } from "react-router-dom";
@@ -24,6 +24,29 @@ export default function ApiDocsPage() {
   ],
   "stream": false
 }'`;
+
+  const streamExample = `const response = await fetch("${EXTERNAL_API_BASE}/v1/chat/completions", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer YOUR_SERVICE_API_KEY"
+  },
+  body: JSON.stringify({
+    model: "salesmanchatbot-pro",
+    messages: [{ role: "user", content: "Write a long story about AI." }],
+    stream: true
+  })
+});
+
+const reader = response.body.getReader();
+const decoder = new TextDecoder();
+
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+  const chunk = decoder.decode(value);
+  console.log(chunk);
+}`;
 
   const n8nSteps = [
     "n8n খুলে নতুন workflow তৈরি করুন",
@@ -57,6 +80,7 @@ export default function ApiDocsPage() {
       <Tabs defaultValue="overview" className="space-y-4">
         <TabsList className="bg-secondary">
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="streaming">Streaming</TabsTrigger>
           <TabsTrigger value="pricing">Pricing</TabsTrigger>
           <TabsTrigger value="n8n">n8n Setup</TabsTrigger>
           <TabsTrigger value="language">Language</TabsTrigger>
@@ -104,6 +128,29 @@ export default function ApiDocsPage() {
           </Card>
         </TabsContent>
 
+        <TabsContent value="streaming">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Zap className="h-5 w-5 text-primary" />
+                Real-time Streaming
+              </CardTitle>
+              <CardDescription>Server-Sent Events (SSE) support for low-latency responses</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm">
+                To enable streaming, set <code>"stream": true</code> in your request body. The API will return a stream of chunks in OpenAI-compatible format.
+              </p>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">JavaScript Example</label>
+                <pre className="rounded-lg border p-3 bg-muted/40 text-xs overflow-auto">
+{streamExample}
+                </pre>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         <TabsContent value="pricing">
           <Card>
             <CardHeader>
@@ -117,7 +164,8 @@ export default function ApiDocsPage() {
               <div className="rounded-lg border p-4">
                 <ul className="list-disc pl-6 text-sm">
                   <li>Free Trial: নতুন অ্যাকাউন্টে একবারে 20 requests ফ্রি</li>
-                  <li>Lite Engine: প্রতি 1k tokens — dynamic rate (dashboard summary‑তে দেখবেন)</li>
+                  <li>Lite Engine: প্রতি request — dynamic rate</li>
+                  <li>Pro/Flash Engine: প্রতি request — dynamic rate</li>
                   <li>Streaming support: একই রেটে প্রযোজ্য</li>
                   <li>Minimum balance enforcement: 0.01 BDT required</li>
                 </ul>
