@@ -20,24 +20,12 @@ const marketingRoutes = require('./routes/marketingRoutes');
 const path = require('path');
 const app = express();
 
+// CORS Configuration
+app.use(cors());
+
 // Enable trust proxy for Coolify/Nginx/Load Balancers
 app.set('trust proxy', 1);
 
-// CORS Configuration
-app.use(cors({
-    origin: '*', // Allow all origins to definitively solve the issue
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin']
-}));
-
-// Explicitly handle OPTIONS preflight for all routes
-app.options('*', (req, res) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
-    res.sendStatus(200);
-});
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
