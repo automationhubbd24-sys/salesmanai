@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const whatsappController = require('../controllers/whatsappController');
+const whatsappCloudController = require('../controllers/whatsappCloudController');
 const whatsappService = require('../services/whatsappService');
 const dbService = require('../services/dbService');
 const pgClient = require('../services/pgClient');
@@ -42,6 +43,9 @@ async function hasSessionAccess(sessionName, userId, userEmail) {
 
     return false;
 }
+
+// WhatsApp Cloud API Official Routes
+router.post('/official/signup-complete', authMiddleware, whatsappCloudController.completeEmbeddedSignup);
 
 // WAHA Webhook Listener (POST)
 // Endpoint: /whatsapp/webhook

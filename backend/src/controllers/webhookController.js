@@ -299,6 +299,8 @@ function parsePrice(value) {
     return isFinite(num) ? num : 0;
 }
 
+const whatsappCloudService = require('../services/whatsappCloudService');
+
 // Step 1: Webhook Trigger
 const handleWebhook = async (req, res) => {
     const body = req.body;
@@ -428,20 +430,90 @@ const handleWhatsAppWebhook = async (req, res) => {
     
     if (body.object === 'whatsapp_business_account') {
         res.status(200).send('EVENT_RECEIVED');
-        console.log(`[WhatsApp Cloud] Incoming Webhook Event.`);
         
         // Background processing
         (async () => {
             try {
                 for (const entry of body.entry) {
+                    const wabaId = entry.id;
                     for (const change of entry.changes) {
                         if (change.field === 'messages') {
                             const value = change.value;
+                            const phoneNumberId = value.metadata?.phone_number_id;
+                            
+                            // Check for messages
                             if (value.messages) {
                                 for (const message of value.messages) {
-                                    // Process Official WhatsApp Message
-                                    console.log(`[WhatsApp Cloud] New Message from ${message.from}: ${message.text?.body || 'Media'}`);
-                                    // logic for chatbot will go here
+                                    // 1. Duplicate Check (Debounce)
+                                    const messageId = message.id;
+                                    const isDuplicate = await dbService.checkDuplicate(messageId);
+                                    if (isDuplicate) continue;
+
+                                    const senderId = message.from;
+                                    const senderName = value.contacts?.[0]?.profile?.name || 'Unknown';
+                                    const messageText = message.text?.body;
+
+                                    if (!messageText) continue;
+
+                                    console.log(`[WhatsApp Cloud] Message from ${senderName} (${senderId}): ${messageText}`);
+
+                                    // 2. Fetch Page Config & Prompts
+                                    // In Cloud API, we use wabaId or phoneNumberId as the key
+                                    const { config, prompts } = await getCachedPageData(wabaId);
+                                    
+                                    if (!config || config.subscription_status === 'expired') {
+                                        console.warn(`[WhatsApp Cloud] Page ${wabaId} not active or expired.`);
+                                        continue;
+                                    }
+
+                                    // 3. AI Response Generation
+                                    const history = await dbService.getLastNWhatsAppMessages(wabaId, senderId, 10);
+                                    
+                                    const aiResponse = await aiService.generateResponse({
+                                        pageId: wabaId,
+                                        userId: senderId,
+                                        userMessage: messageText,
+                                        history: history.map(h => ({
+                                            role: h.reply_by === 'bot' ? 'assistant' : 'user',
+                                            content: h.text
+                                        })),
+                                        config: config,
+                                        platform: 'whatsapp',
+                                        senderName: senderName
+                                    });
+
+                                    if (aiResponse && aiResponse.reply) {
+                                        // 4. Send Message via Cloud API
+                                        await whatsappCloudService.sendTextMessage(
+                                            phoneNumberId,
+                                            config.cloud_access_token,
+                                            senderId,
+                                            aiResponse.reply
+                                        );
+
+                                        // 5. Save to History
+                                        await dbService.saveWhatsAppChat({
+                                            session_name: wabaId,
+                                            sender_id: senderId,
+                                            recipient_id: wabaId,
+                                            message_id: messageId,
+                                            text: messageText,
+                                            timestamp: Date.now(),
+                                            status: 'received',
+                                            reply_by: 'user'
+                                        });
+
+                                        await dbService.saveWhatsAppChat({
+                                            session_name: wabaId,
+                                            sender_id: wabaId,
+                                            recipient_id: senderId,
+                                            message_id: `reply_${messageId}`,
+                                            text: aiResponse.reply,
+                                            timestamp: Date.now(),
+                                            status: 'sent',
+                                            reply_by: 'bot'
+                                        });
+                                    }
                                 }
                             }
                         }

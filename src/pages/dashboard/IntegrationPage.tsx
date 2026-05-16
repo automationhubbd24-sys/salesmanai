@@ -56,6 +56,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import WhatsAppOfficialIntegration from "@/components/dashboard/whatsapp/WhatsAppOfficialIntegration";
 
 // CustomAlert Removed
 
@@ -195,7 +196,7 @@ export default function IntegrationPage() {
 
   // Poll for QR code continuously to prevent invalidation
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    let interval: any;
     // Condition: Open Modal (qrSession) AND Not Connected (WORKING) AND Not Stopped
     if (qrSession && qrSession.status !== 'WORKING' && qrSession.status !== 'STOPPED') {
       const fetchQr = async () => {
@@ -214,7 +215,7 @@ export default function IntegrationPage() {
                   // Always update to the latest QR to ensure it's valid
                   setQrSession(prev => prev ? { ...prev, qr_code: data.qr_code } : null);
               }
-          } catch (e) {
+          } catch (e: any) {
               console.error("Error polling QR:", e);
           }
       };
@@ -227,7 +228,7 @@ export default function IntegrationPage() {
 
   // Poll for updates when QR dialog is open
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    let interval: any;
     if (qrSession && qrSession.status !== 'WORKING') {
       interval = setInterval(fetchSessions, 3000); // Poll every 3s
     }
@@ -416,7 +417,7 @@ export default function IntegrationPage() {
           body: JSON.stringify({ sessionName })
         });
         toast.success(`Session ${action}ed successfully`);
-      } catch (e) {
+      } catch (e: any) {
         console.error("Delete failed but removed from UI:", e);
         // Don't re-add to UI to avoid confusion, user wants it gone
       }
@@ -537,6 +538,22 @@ export default function IntegrationPage() {
         </div>
       </div>
       
+      {/* Official WhatsApp Integration Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <WhatsAppOfficialIntegration />
+        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10 overflow-hidden">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base font-semibold">Integration Guide</CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground space-y-2">
+            <p>১. "Connect with Facebook" বাটনে ক্লিক করুন।</p>
+            <p>২. আপনার বিজনেস অ্যাকাউন্ট এবং ফোন নম্বর সিলেক্ট করুন।</p>
+            <p>৩. কানেক্ট হয়ে গেলে চ্যাটবট স্বয়ংক্রিয়ভাবে কাজ শুরু করবে।</p>
+            <p className="text-xs text-orange-400 mt-2">সতর্কতা: অফিসিয়াল এপিআই শুধুমাত্র চ্যাটবটের জন্য ব্যবহার করুন, বাল্ক মেসেজের জন্য নয়।</p>
+          </CardContent>
+        </Card>
+      </div>
+
       {/* Controls Bar */}
       <div className="flex flex-col gap-4 bg-[#0f0f0f]/80 backdrop-blur-sm p-4 rounded-lg border border-white/10">
          {/* Plan Selection */}
