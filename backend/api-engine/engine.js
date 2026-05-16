@@ -315,7 +315,7 @@ router.post('/v1/dev/chat', async (req, res) => {
 
 // --- 2. KEY MANAGEMENT (CRUD) ---
 // This route is shared between Admin Panel and Developer Page
-router.post('/keys', async (req, res, next) => {
+router.post('/keys', (req, res, next) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({ error: 'Missing or invalid Authorization header' });
@@ -333,7 +333,7 @@ router.post('/keys', async (req, res, next) => {
             return next();
         }
     } catch (e) {
-        // Not an admin token or invalid secret, continue to regular user check
+        // Not an admin token or invalid secret
     }
 
     // Try Regular User Auth
@@ -344,12 +344,18 @@ router.post('/keys', async (req, res, next) => {
         if (!api || !provider) return res.status(400).json({ error: "API Key and Provider required" });
         
         // If it's a developer adding their own key, enforce their owner_id
-        const finalOwnerId = (req.user && req.user.id) ? req.user.id : owner_id;
+        let finalOwnerId = (req.user && req.user.id) ? req.user.id : owner_id;
+        
+        // Sanitize owner_id to ensure it's a valid string or null (not 'undefined' or '')
+        if (typeof finalOwnerId === 'string' && (finalOwnerId.trim() === '' || finalOwnerId === 'undefined' || finalOwnerId === 'null')) {
+            finalOwnerId = null;
+        }
+
         const finalMode = (req.admin && req.admin.role === 'admin') ? (mode || 'admin') : 'dev';
 
         await dbService.addApiKey({ 
-            api, 
-            provider, 
+            api: api.trim(), 
+            provider: provider.trim(), 
             model: model || 'default', 
             email: email || null,
             gmail: gmail || null,
@@ -359,13 +365,16 @@ router.post('/keys', async (req, res, next) => {
         await keyService.updateKeyCache(true); // Force Refresh
         res.json({ success: true, message: "Key added to rotation pool" });
     } catch (error) {
-        console.error('[API Engine] Error adding key:', error.message);
-        res.status(500).json({ error: error.message });
+        console.error('[API Engine] Error adding key:', error);
+        res.status(500).json({ 
+            error: error.message, 
+            details: 'Failed to add key to database. Please ensure all required fields are correct.' 
+        });
     }
 });
 
 // GET /keys - List keys owned by the user (or all if admin)
-router.get('/keys', async (req, res, next) => {
+router.get('/keys', (req, res, next) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({ error: 'Missing or invalid Authorization header' });
@@ -383,7 +392,7 @@ router.get('/keys', async (req, res, next) => {
             return next();
         }
     } catch (e) {
-        // Not an admin token or invalid secret, continue to regular user check
+        // Not an admin token or invalid secret
     }
 
     // Try Regular User Auth
@@ -410,13 +419,16 @@ router.get('/keys', async (req, res, next) => {
 
         res.json({ success: true, keys: maskedRows });
     } catch (error) {
-        console.error('[API Engine] Error listing keys:', error.message);
-        res.status(500).json({ error: error.message });
+        console.error('[API Engine] Error listing keys:', error);
+        res.status(500).json({ 
+            error: error.message,
+            details: 'Failed to fetch keys from database.'
+        });
     }
 });
 
 // DELETE /keys/:id - Delete a key owned by the user (or any if admin)
-router.delete('/keys/:id', async (req, res, next) => {
+router.delete('/keys/:id', (req, res, next) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({ error: 'Missing or invalid Authorization header' });
@@ -434,7 +446,7 @@ router.delete('/keys/:id', async (req, res, next) => {
             return next();
         }
     } catch (e) {
-        // Not an admin token or invalid secret, continue to regular user check
+        // Not an admin token or invalid secret
     }
 
     // Try Regular User Auth
@@ -459,8 +471,11 @@ router.delete('/keys/:id', async (req, res, next) => {
         await keyService.updateKeyCache(true);
         res.json({ success: true, message: "Key deleted successfully" });
     } catch (error) {
-        console.error('[API Engine] Error deleting key:', error.message);
-        res.status(500).json({ error: error.message });
+        console.error('[API Engine] Error deleting key:', error);
+        res.status(500).json({ 
+            error: error.message,
+            details: 'Failed to delete key from database.'
+        });
     }
 });
 
