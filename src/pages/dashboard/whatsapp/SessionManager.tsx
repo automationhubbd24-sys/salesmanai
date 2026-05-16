@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { WorkspaceSwitcher } from "@/components/dashboard/WorkspaceSwitcher";
 import { BACKEND_URL } from "@/config";
 import { Label } from "@/components/ui/label";
+import WhatsAppOfficialIntegration from "@/components/dashboard/whatsapp/WhatsAppOfficialIntegration";
 import {
   Dialog,
   DialogContent,
@@ -688,95 +689,127 @@ export default function SessionManager() {
 
       {/* CREATE SESSION MODAL */}
       <Dialog open={showCreateModal} onOpenChange={setShowCreateModal}>
-        <DialogContent className="sm:max-w-[600px] bg-slate-950 shadow-2xl border border-slate-800 rounded-2xl overflow-hidden p-0 gap-0 text-slate-100">
+        <DialogContent className="sm:max-w-[700px] bg-slate-950 shadow-2xl border border-slate-800 rounded-2xl overflow-hidden p-0 gap-0 text-slate-100">
           <div className="bg-slate-900/50 p-6 border-b border-slate-800">
             <DialogHeader>
               <DialogTitle className="text-2xl font-bold flex items-center gap-2 text-white">
                  <Zap className="h-6 w-6 text-green-500" />
-                 Create New Session
+                 Add New Connection
               </DialogTitle>
               <DialogDescription className="text-slate-400">
-                Configure your engine and subscription plan to start automating.
+                Choose between official Meta Cloud API or our high-performance Standard engine.
               </DialogDescription>
             </DialogHeader>
           </div>
           
-          <div className="grid gap-6 p-6">
-            {/* Engine Info (Noweb disabled) */}
-            <div className="space-y-3">
-                <Label className="text-base font-semibold text-slate-200">Engine</Label>
-                <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-800 flex items-center gap-3">
-                    <div className="bg-green-500/10 p-2 rounded-lg">
-                        <Zap className="w-5 h-5 text-green-400" />
-                    </div>
-                    <div>
-                        <p className="text-sm font-bold text-green-400">WEBJS (Premium)</p>
-                        <p className="text-xs text-slate-500">🚀 High performance, full browser simulation. Most stable for business.</p>
-                    </div>
-                </div>
+          <Tabs defaultValue="standard" className="w-full">
+            <div className="px-6 pt-4">
+              <TabsList className="grid w-full grid-cols-2 bg-slate-900 border border-slate-800 p-1">
+                <TabsTrigger value="standard" className="data-[state=active]:bg-[#00ff88] data-[state=active]:text-black font-bold">Standard (QR Code)</TabsTrigger>
+                <TabsTrigger value="official" className="data-[state=active]:bg-[#1877F2] data-[state=active]:text-white font-bold">Official (Meta API)</TabsTrigger>
+              </TabsList>
             </div>
 
-            {/* Plan Selection */}
-            <div className="space-y-3">
-                <Label className="text-base font-semibold text-slate-200">Select Duration</Label>
-                <div className="grid grid-cols-4 gap-3">
-                    {["2", "30", "60", "90"].map((plan) => {
-                        const isSelected = selectedPlan === plan;
-                        let price = 0;
-                        if (plan === "2") price = 200;
-                        else if (plan === "30") price = 1500;
-                        else if (plan === "60") price = 2800;
-                        else if (plan === "90") price = 3500;
+            <TabsContent value="standard" className="p-6 mt-0">
+              <div className="grid gap-6">
+                {/* Engine Info */}
+                <div className="space-y-3">
+                    <Label className="text-base font-semibold text-slate-200">Engine</Label>
+                    <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-800 flex items-center gap-3">
+                        <div className="bg-green-500/10 p-2 rounded-lg">
+                            <Zap className="w-5 h-5 text-green-400" />
+                        </div>
+                        <div>
+                            <p className="text-sm font-bold text-green-400">WEBJS (Premium)</p>
+                            <p className="text-xs text-slate-500">🚀 High performance, full browser simulation. Scan QR to connect.</p>
+                        </div>
+                    </div>
+                </div>
 
-                        return (
-                            <div 
-                                key={plan}
-                                onClick={() => setSelectedPlan(plan)}
-                                className={`cursor-pointer rounded-xl border-2 p-2 text-center transition-all duration-200 hover:scale-[1.02] ${
-                                    isSelected 
-                                    ? "border-green-500/50 bg-green-500/10 shadow-[0_0_15px_rgba(34,197,94,0.1)]" 
-                                    : "border-slate-800 bg-slate-900/50 hover:border-slate-700 hover:bg-slate-900"
-                                }`}
-                            >
-                                <div className={`text-sm md:text-base font-bold ${isSelected ? "text-green-400" : "text-slate-300"}`}>
-                                    {plan === "1" ? "1 Day" : plan === "2" ? "48 Hrs" : `${plan} Days`}
+                {/* Plan Selection */}
+                <div className="space-y-3">
+                    <Label className="text-base font-semibold text-slate-200">Select Duration</Label>
+                    <div className="grid grid-cols-4 gap-3">
+                        {["2", "30", "60", "90"].map((plan) => {
+                            const isSelected = selectedPlan === plan;
+                            let price = 0;
+                            if (plan === "2") price = 200;
+                            else if (plan === "30") price = 1500;
+                            else if (plan === "60") price = 2800;
+                            else if (plan === "90") price = 3500;
+
+                            return (
+                                <div 
+                                    key={plan}
+                                    onClick={() => setSelectedPlan(plan)}
+                                    className={`cursor-pointer rounded-xl border-2 p-2 text-center transition-all duration-200 hover:scale-[1.02] ${
+                                        isSelected 
+                                        ? "border-green-500/50 bg-green-500/10 shadow-[0_0_15px_rgba(34,197,94,0.1)]" 
+                                        : "border-slate-800 bg-slate-900/50 hover:border-slate-700 hover:bg-slate-900"
+                                    }`}
+                                >
+                                    <div className={`text-sm md:text-base font-bold ${isSelected ? "text-green-400" : "text-slate-300"}`}>
+                                        {plan === "2" ? "48 Hrs" : `${plan} Days`}
+                                    </div>
+                                    <div className={`text-xs font-medium ${isSelected ? "text-green-500" : "text-slate-500"}`}>{price} BDT</div>
                                 </div>
-                                <div className={`text-xs font-medium ${isSelected ? "text-green-500" : "text-slate-500"}`}>{price} BDT</div>
-                            </div>
-                        );
-                    })}
+                            );
+                        })}
+                    </div>
                 </div>
-            </div>
 
-            {/* Session Name */}
-            <div className="space-y-2">
-                <Label className="text-base font-semibold text-slate-200">Session Name</Label>
-                <Input 
-                    placeholder="e.g. Support Bot 1" 
-                    value={newSessionName}
-                    onChange={(e) => setNewSessionName(e.target.value)}
-                    className="h-11 bg-slate-900 border-slate-800 focus:border-green-500 focus:ring-green-500/20 rounded-lg text-white placeholder:text-slate-600"
-                />
-            </div>
-
-            {/* Total Price */}
-            <div className="flex items-center justify-between rounded-xl border border-slate-800 p-5 bg-slate-900/50">
-                <div className="flex flex-col">
-                    <span className="text-sm font-semibold text-slate-300">Total Cost</span>
-                    <span className="text-xs text-slate-500">Deducted from your balance</span>
+                {/* Session Name */}
+                <div className="space-y-3">
+                    <Label className="text-base font-semibold text-slate-200">Session Name</Label>
+                    <Input 
+                        placeholder="e.g., Marketing Team" 
+                        value={newSessionName}
+                        onChange={(e) => setNewSessionName(e.target.value)}
+                        className="bg-slate-900 border-slate-800 h-12 focus:ring-green-500/50"
+                    />
                 </div>
-                <div className="text-3xl font-black text-green-500">
-                    {getPrice()} <span className="text-sm font-medium text-green-600/70">BDT</span>
-                </div>
-            </div>
-          </div>
 
-          <div className="p-6 bg-slate-900 border-t border-slate-800 flex justify-end gap-3">
-            <Button variant="outline" size="lg" onClick={() => setShowCreateModal(false)} className="border-slate-700 bg-transparent text-slate-300 hover:bg-slate-800 hover:text-white">Cancel</Button>
-            <Button size="lg" onClick={handleCreateSession} disabled={isCreating} className="bg-green-600 hover:bg-green-700 text-white min-w-[150px] shadow-lg shadow-green-900/20">
-                {isCreating ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : "Pay & Create"}
-            </Button>
-          </div>
+                <DialogFooter className="pt-2">
+                  <Button 
+                    className="w-full bg-[#00ff88] hover:bg-[#00cc6e] text-black font-black py-6 rounded-xl shadow-lg shadow-green-500/20" 
+                    onClick={handleCreateSession}
+                    disabled={isCreating}
+                  >
+                    {isCreating ? (
+                        <>
+                            <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                            Creating Session...
+                        </>
+                    ) : (
+                        `Pay & Create (${getPrice()} BDT)`
+                    )}
+                  </Button>
+                </DialogFooter>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="official" className="p-6 mt-0">
+              <div className="space-y-6">
+                <div className="bg-[#1877F2]/10 border border-[#1877F2]/20 p-4 rounded-xl flex items-start gap-3">
+                  <Smartphone className="h-5 w-5 text-[#1877F2] mt-0.5" />
+                  <div>
+                    <p className="font-bold text-[#1877F2]">Recommended for Businesses</p>
+                    <p className="text-sm text-slate-400">Official Meta Cloud API. Stable connection, 24/7 uptime, and you can keep using WhatsApp on your phone.</p>
+                  </div>
+                </div>
+                
+                <div className="p-4 bg-slate-900/50 border border-slate-800 rounded-xl space-y-4">
+                  <WhatsAppOfficialIntegration />
+                </div>
+
+                <div className="text-xs text-slate-500 space-y-2 px-1">
+                  <p>• Connect with one click using your Meta Business Account.</p>
+                  <p>• No QR scan required after setup.</p>
+                  <p>• Only for chatbot automation (highly cost-effective).</p>
+                </div>
+              </div>
+            </TabsContent>
+          </Tabs>
         </DialogContent>
       </Dialog>
 
