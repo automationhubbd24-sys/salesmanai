@@ -191,7 +191,23 @@ exports.handleChatCompletion = async (req, res) => {
         const hasSingleKey = userConfig.api_key && userConfig.api_key.trim() !== '';
 
         if (!hasUserPoolKeys && !hasSingleKey) {
-            return res.status(200).json({ error: { message: "no api key founds", type: "invalid_request_error", code: "no_api_key_found" } });
+            return res.status(200).json({ 
+                id: `err-${Date.now()}`,
+                object: "chat.completion",
+                created: Math.floor(Date.now() / 1000),
+                model: requestedModel,
+                choices: [
+                    {
+                        index: 0,
+                        message: {
+                            role: "assistant",
+                            content: "no api key founds"
+                        },
+                        finish_reason: "stop"
+                    }
+                ],
+                usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+            });
         }
 
         // --- COMMON LOGIC: Fetch Key & Prepare Request ---
