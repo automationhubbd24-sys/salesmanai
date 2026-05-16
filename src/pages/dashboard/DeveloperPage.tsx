@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { Copy, RefreshCw, Code, Eye, EyeOff, Activity, ArrowRight, Key, Sparkles, Plus, AlertCircle, CheckCircle2, TrendingUp, DollarSign, Cpu, ArrowLeft } from "lucide-react";
+import { Copy, RefreshCw, Code, Eye, EyeOff, Activity, ArrowRight, Key, Sparkles, Plus, AlertCircle, CheckCircle2, TrendingUp, DollarSign, Cpu, ArrowLeft, Trash2 } from "lucide-react";
 import { BACKEND_URL, EXTERNAL_API_BASE } from "@/config";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { api } from "@/lib/api";
@@ -34,6 +34,8 @@ export default function DeveloperPage() {
     const [userGmail, setUserGmail] = useState('');
     const [selectedProvider, setSelectedProvider] = useState('google');
     const [isAddingKey, setIsAddingKey] = useState(false);
+    const [userKeys, setUserKeys] = useState<any[]>([]);
+    const [loadingKeys, setLoadingKeys] = useState(false);
     const userId = localStorage.getItem('auth_user_id');
 
     const providers = [
@@ -52,8 +54,40 @@ export default function DeveloperPage() {
         if (isDevLoggedIn) {
             fetchKey();
             fetchUsage(1);
+            fetchUserKeys();
         }
     }, [isDevLoggedIn]);
+
+    const fetchUserKeys = async () => {
+        const token = localStorage.getItem("auth_token");
+        if (!token) return;
+
+        setLoadingKeys(true);
+        try {
+            const { data } = await api.get('/api-engine/keys');
+            if (data.success) {
+                setUserKeys(data.keys || []);
+            }
+        } catch (error) {
+            console.error("Failed to fetch user keys", error);
+        } finally {
+            setLoadingKeys(false);
+        }
+    };
+
+    const handleDeleteKey = async (id: number) => {
+        if (!confirm("Are you sure you want to delete this API key?")) return;
+
+        try {
+            const { data } = await api.delete(`/api-engine/keys/${id}`);
+            if (data.success) {
+                toast.success("API Key deleted successfully");
+                fetchUserKeys();
+            }
+        } catch (error: any) {
+            toast.error(error.response?.data?.error || "Failed to delete key");
+        }
+    };
 
     // Effect to auto-unlock if approved
     useEffect(() => {
@@ -172,6 +206,7 @@ export default function DeveloperPage() {
             toast.success(`${providerName} API Key added successfully`);
             setExternalKey('');
             setUserGmail('');
+            fetchUserKeys(); // Refresh the list
         } catch (err: any) {
             toast.error(err.response?.data?.error || "Failed to add key");
         } finally {
@@ -761,7 +796,59 @@ export default function DeveloperPage() {
                                     </CardContent>
                                 </Card>
 
-                                <Card className="border-white/5 bg-[#121212] rounded-3xl overflow-hidden shadow-xl">
+                                {userKeys.length > 0 && (
+                                    <Card className="border-white/5 bg-[#121212] rounded-3xl overflow-hidden shadow-xl mt-6">
+                                        <CardHeader className="pt-8 px-6 md:px-10">
+                                            <CardTitle className="text-lg font-bold text-white flex items-center gap-2">
+                                                <Key className="h-5 w-5 text-primary" />
+                                                <span>Your API Keys Pool</span>
+                                            </CardTitle>
+                                            <CardDescription className="text-slate-400 text-xs">Manage your added API keys for the rotation pool.</CardDescription>
+                                        </CardHeader>
+                                        <CardContent className="px-6 md:px-10 pb-8">
+                                            <div className="rounded-xl border border-white/5 overflow-hidden">
+                                                <Table>
+                                                    <TableHeader className="bg-white/[0.02]">
+                                                        <TableRow className="border-white/5 hover:bg-transparent">
+                                                            <TableHead className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Provider</TableHead>
+                                                            <TableHead className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Key</TableHead>
+                                                            <TableHead className="text-[10px] font-bold uppercase tracking-widest text-slate-500 text-right">Action</TableHead>
+                                                        </TableRow>
+                                                    </TableHeader>
+                                                    <TableBody>
+                                                        {userKeys.map((k) => (
+                                                            <TableRow key={k.id} className="border-white/5 hover:bg-white/[0.01] transition-colors">
+                                                                <TableCell className="py-4">
+                                                                    <div className="flex items-center gap-2 text-white font-medium text-xs capitalize">
+                                                                        <span>{providers.find(p => p.id === k.provider)?.icon || '✨'}</span>
+                                                                        {k.provider}
+                                                                    </div>
+                                                                </TableCell>
+                                                                <TableCell className="py-4">
+                                                                    <code className="text-[10px] font-mono text-primary bg-primary/5 px-2 py-1 rounded">
+                                                                        {k.api}
+                                                                    </code>
+                                                                </TableCell>
+                                                                <TableCell className="py-4 text-right">
+                                                                    <Button 
+                                                                        variant="ghost" 
+                                                                        size="sm" 
+                                                                        onClick={() => handleDeleteKey(k.id)}
+                                                                        className="h-8 w-8 p-0 text-slate-500 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-all"
+                                                                    >
+                                                                        <Trash2 className="h-4 w-4" />
+                                                                    </Button>
+                                                                </TableCell>
+                                                            </TableRow>
+                                                        ))}
+                                                    </TableBody>
+                                                </Table>
+                                            </div>
+                                        </CardContent>
+                                    </Card>
+                                )}
+
+                                <Card className="border-white/5 bg-[#121212] rounded-3xl overflow-hidden shadow-xl mt-6">
                                     <CardHeader className="pt-8 px-6 md:px-10 cursor-default select-none">
                                         <CardTitle className="text-lg font-bold text-white flex items-center justify-between">
                                             <span>n8n / OpenAI Compatible</span>

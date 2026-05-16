@@ -348,6 +348,76 @@ router.post('/keys', async (req, res, next) => {
     }
 });
 
+// GET /keys - List keys owned by the user (or all if admin)
+router.get('/keys', async (req, res, next) => {
+    adminAuthMiddleware(req, res, (err) => {
+        if (!err) {
+            req.isAdmin = true;
+            return next();
+        }
+        authMiddleware(req, res, next);
+    });
+}, async (req, res) => {
+    try {
+        let queryStr = 'SELECT id, provider, api, model, status, usage_today, created_at, gmail FROM api_list';
+        let params = [];
+
+        if (!req.isAdmin) {
+            queryStr += ' WHERE owner_id = $1::uuid AND mode = $2';
+            params = [req.user.id, 'dev'];
+        }
+        
+        queryStr += ' ORDER BY created_at DESC';
+        
+        const { rows } = await pgClient.query(queryStr, params);
+        
+        // Mask API keys for safety if not admin
+        const maskedRows = rows.map(row => ({
+            ...row,
+            api: req.isAdmin ? row.api : (row.api ? `${row.api.substring(0, 8)}...${row.api.substring(row.api.length - 4)}` : null)
+        }));
+
+        res.json({ success: true, keys: maskedRows });
+    } catch (error) {
+        console.error('[API Engine] Error listing keys:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// DELETE /keys/:id - Delete a key owned by the user (or any if admin)
+router.delete('/keys/:id', async (req, res, next) => {
+    adminAuthMiddleware(req, res, (err) => {
+        if (!err) {
+            req.isAdmin = true;
+            return next();
+        }
+        authMiddleware(req, res, next);
+    });
+}, async (req, res) => {
+    try {
+        const id = req.params.id;
+        let queryStr = 'DELETE FROM api_list WHERE id = $1';
+        let params = [id];
+
+        if (!req.isAdmin) {
+            queryStr += ' AND owner_id = $2::uuid AND mode = $3';
+            params.push(req.user.id, 'dev');
+        }
+
+        const result = await pgClient.query(queryStr, params);
+        
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: "Key not found or unauthorized" });
+        }
+
+        await keyService.updateKeyCache(true);
+        res.json({ success: true, message: "Key deleted successfully" });
+    } catch (error) {
+        console.error('[API Engine] Error deleting key:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 router.get('/keys/:id', adminAuthMiddleware, async (req, res) => {
     try {
         const id = parseInt(req.params.id, 10);
