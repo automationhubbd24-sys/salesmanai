@@ -20,7 +20,8 @@ import {
   Eye,
   Settings,
   MoreVertical,
-  Download
+  Download,
+  MessageSquare
 } from "lucide-react";
 import { BACKEND_URL } from "@/config";
 import {
@@ -292,10 +293,11 @@ export default function IntegrationPage() {
     }
   };
 
-  const handleStartNew = async (e: React.MouseEvent) => {
-    // Force prevent default submission
-    e.preventDefault();
-    e.stopPropagation();
+  const handleStartNew = async (e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
 
     if (!newSessionName.trim()) {
       toast.error("Please enter a session name");
@@ -539,20 +541,73 @@ export default function IntegrationPage() {
       </div>
       
       {/* Official WhatsApp Integration Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <WhatsAppOfficialIntegration />
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10 overflow-hidden">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base font-semibold">Integration Guide</CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm text-muted-foreground space-y-2">
-            <p>১. "Connect with Facebook" বাটনে ক্লিক করুন।</p>
-            <p>২. আপনার বিজনেস অ্যাকাউন্ট এবং ফোন নম্বর সিলেক্ট করুন।</p>
-            <p>৩. কানেক্ট হয়ে গেলে চ্যাটবট স্বয়ংক্রিয়ভাবে কাজ শুরু করবে।</p>
-            <p className="text-xs text-orange-400 mt-2">সতর্কতা: অফিসিয়াল এপিআই শুধুমাত্র চ্যাটবটের জন্য ব্যবহার করুন, বাল্ক মেসেজের জন্য নয়।</p>
-          </CardContent>
-        </Card>
-      </div>
+      <Dialog>
+        <DialogTrigger asChild>
+          <Button className="w-full bg-[#00ff88]/20 hover:bg-[#00ff88]/30 text-[#00ff88] border border-[#00ff88]/40 py-6 text-lg font-bold mb-6">
+            <Plus className="mr-2 h-6 w-6" />
+            Add New WhatsApp Connection
+          </Button>
+        </DialogTrigger>
+        <DialogContent className="sm:max-w-2xl bg-[#0f0f0f] border-white/10">
+          <DialogHeader>
+            <DialogTitle className="text-2xl font-bold">Choose Connection Method</DialogTitle>
+            <DialogDescription>
+              Select how you want to connect your WhatsApp account to our AI system.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 py-6">
+            <Card className="bg-white/5 border-white/10 hover:border-[#00ff88]/40 transition-all cursor-pointer overflow-hidden group">
+              <CardHeader className="pb-2">
+                <div className="w-12 h-12 rounded-full bg-[#00ff88]/20 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                  <QrCode className="h-6 w-6 text-[#00ff88]" />
+                </div>
+                <CardTitle className="text-xl">Standard Method (QR Code)</CardTitle>
+                <CardDescription>Scan QR code with your phone. Supports all WhatsApp versions.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="text-xs text-muted-foreground space-y-1">
+                  <p>• Fast setup via QR scan</p>
+                  <p>• Direct connection to your mobile</p>
+                  <p>• Best for small businesses</p>
+                </div>
+                <div className="space-y-2 mt-4">
+                  <Label>Session Name</Label>
+                  <Input 
+                    placeholder="e.g., My Business" 
+                    value={newSessionName}
+                    onChange={(e) => setNewSessionName(e.target.value)}
+                  />
+                </div>
+                <Button className="w-full mt-4 bg-[#00ff88] hover:bg-[#00cc6e] text-black font-bold" onClick={() => {
+                  handleStartNew();
+                }}>
+                  Connect via QR
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-white/5 border-white/10 hover:border-[#1877F2]/40 transition-all cursor-pointer overflow-hidden group">
+              <CardHeader className="pb-2">
+                <div className="w-12 h-12 rounded-full bg-[#1877F2]/20 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                  <MessageSquare className="h-6 w-6 text-[#1877F2]" />
+                </div>
+                <CardTitle className="text-xl">Official Method (Meta API)</CardTitle>
+                <CardDescription>Recommended. Connect via Meta Cloud API with one click.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="text-xs text-muted-foreground space-y-1">
+                  <p>• Stable 24/7 connection</p>
+                  <p>• Official Meta approval</p>
+                  <p>• Best for high volume scaling</p>
+                </div>
+                <div className="mt-auto pt-10">
+                   <WhatsAppOfficialIntegration />
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Controls Bar */}
       <div className="flex flex-col gap-4 bg-[#0f0f0f]/80 backdrop-blur-sm p-4 rounded-lg border border-white/10">
