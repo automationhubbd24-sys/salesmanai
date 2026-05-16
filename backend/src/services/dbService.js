@@ -3049,8 +3049,7 @@ async function addApiKey({ provider, api, model = 'default', email = null, gmail
                 email = EXCLUDED.email,
                 gmail = EXCLUDED.gmail,
                 mode = EXCLUDED.mode,
-                owner_id = EXCLUDED.owner_id,
-                updated_at = NOW()
+                owner_id = EXCLUDED.owner_id
              RETURNING *`,
             [provider, api, model, 'active', email, gmail, mode, owner_id]
         );
