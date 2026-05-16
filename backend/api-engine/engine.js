@@ -4,6 +4,7 @@ const keyService = require('../src/services/keyService');
 const dbService = require('../src/services/dbService');
 const pgClient = require('../src/services/pgClient');
 const adminAuthMiddleware = require('../src/middleware/adminAuthMiddleware');
+const authMiddleware = require('../src/middleware/authMiddleware');
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const aiService = require('../src/services/aiService');
@@ -107,6 +108,12 @@ const validateUserApiKey = async (req) => {
 // --- GLOBAL AUTH MIDDLEWARE (STRICT) ---
 router.use(async (req, res, next) => {
     if (req.path === '/health' || req.path === '/status' || req.path === '/') return next();
+
+    // Skip strict check for key management if it's an internal dashboard request (JWT)
+    // The individual routes will handle specific JWT or Admin auth
+    if (req.path === '/keys' && req.method === 'POST') {
+        return next();
+    }
 
     const { userConfig, error } = await validateUserApiKey(req);
     if (error) {
@@ -307,23 +314,36 @@ router.post('/v1/dev/chat', async (req, res) => {
 });
 
 // --- 2. KEY MANAGEMENT (CRUD) ---
-router.post('/keys', async (req, res) => {
+// This route is shared between Admin Panel and Developer Page
+router.post('/keys', async (req, res, next) => {
+    // 1. Try Admin Auth
+    adminAuthMiddleware(req, res, (err) => {
+        if (!err) return next();
+        // 2. If not admin, try regular User Auth (for Developer Page)
+        authMiddleware(req, res, next);
+    });
+}, async (req, res) => {
     try {
         const { api, provider, model, email, gmail, mode, owner_id } = req.body;
         if (!api || !provider) return res.status(400).json({ error: "API Key and Provider required" });
         
+        // If it's a developer adding their own key, enforce their owner_id
+        const finalOwnerId = (req.user && req.user.id) ? req.user.id : owner_id;
+        const finalMode = (req.admin && req.admin.role === 'admin') ? (mode || 'admin') : 'dev';
+
         await dbService.addApiKey({ 
             api, 
             provider, 
             model: model || 'default', 
             email: email || null,
             gmail: gmail || null,
-            mode: mode || 'admin',
-            owner_id: owner_id || null
+            mode: finalMode,
+            owner_id: finalOwnerId
         });
         await keyService.updateKeyCache(true); // Force Refresh
         res.json({ success: true, message: "Key added to rotation pool" });
     } catch (error) {
+        console.error('[API Engine] Error adding key:', error.message);
         res.status(500).json({ error: error.message });
     }
 });
