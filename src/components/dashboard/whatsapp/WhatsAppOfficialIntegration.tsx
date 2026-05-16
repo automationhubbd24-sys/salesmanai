@@ -45,37 +45,48 @@ export default function WhatsAppOfficialIntegration() {
   }, []);
 
   const launchWhatsAppSignup = () => {
-    if (!window.FB) {
-      toast.error("Facebook SDK not loaded. Please refresh the page.");
-      return;
-    }
-
-    setLoading(true);
+    const appId = '3741087806186945';
+    const configId = '1592300178695434';
     
-    // Official Meta Embedded Signup v4 flow
-    window.FB.login((response: any) => {
-      if (response.authResponse) {
-        const code = response.authResponse.code;
-        handleSignupCompletion(code);
-      } else {
-        setLoading(false);
-        // Don't show error if cancelled as the message listener might handle it
-        console.log("Facebook login response:", response);
-      }
-    }, {
-      config_id: '1592300178695434', 
-      response_type: 'code',
-      override_default_response_type: true,
-      scope: 'public_profile,email,whatsapp_business_management,whatsapp_business_messaging,business_management',
-      extras: {
-        sessionInfoVersion: 3,
-        setup: {
-          business: {
-            name: "Automation Hub BD"
-          }
+    // Modern v4 Extras for Coexistence
+    const extras = {
+      sessionInfoVersion: 3,
+      setup: {
+        business: {
+          name: "Automation Hub BD"
         }
+      },
+      features: {
+        whatsapp_business_app_coexistence: true
       }
-    });
+    };
+
+    // Construct the direct Meta-hosted onboarding URL
+    const signupUrl = `https://business.facebook.com/messaging/whatsapp/onboard/?app_id=${appId}&config_id=${configId}&extras=${encodeURIComponent(JSON.stringify(extras))}`;
+
+    // Open in a popup window
+    const width = 600;
+    const height = 700;
+    const left = window.screen.width / 2 - width / 2;
+    const top = window.screen.height / 2 - height / 2;
+
+    const popup = window.open(
+      signupUrl,
+      'WhatsAppSignup',
+      `width=${width},height=${height},left=${left},top=${top},scrollbars=yes,status=yes`
+    );
+
+    // Set loading state
+    setLoading(true);
+
+    // Poll for popup close or success message
+    const checkPopup = setInterval(() => {
+      if (!popup || popup.closed) {
+        clearInterval(checkPopup);
+        setLoading(false);
+        // Note: The message listener will still handle the 'FINISH' event
+      }
+    }, 1000);
   };
 
   const handleSignupCompletion = async (code: string) => {
