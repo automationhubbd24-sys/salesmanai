@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -17,27 +17,64 @@ export default function WhatsAppOfficialIntegration() {
   const [connected, setConnected] = useState(false);
   const [wabaInfo, setWabaInfo] = useState<any>(null);
 
+  useEffect(() => {
+    const sessionInfoListener = (event: MessageEvent) => {
+      if (!event.origin?.endsWith('facebook.com')) return;
+      
+      try {
+        const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+        if (data.type === 'WA_EMBEDDED_SIGNUP') {
+          if (data.event === 'FINISH') {
+            const { phone_number_id, waba_id } = data.data;
+            console.log('Embedded Signup Success:', { phone_number_id, waba_id });
+            // The actual token exchange happens after FB.login callback
+          } else if (data.event === 'ERROR') {
+            console.error('Embedded Signup Error:', data.data.error_message);
+            toast.error(`Setup Error: ${data.data.error_message}`);
+          } else if (data.event === 'CANCEL') {
+            console.warn('Embedded Signup Cancelled at step:', data.data.current_step);
+          }
+        }
+      } catch (err) {
+        // Not our message
+      }
+    };
+
+    window.addEventListener('message', sessionInfoListener);
+    return () => window.removeEventListener('message', sessionInfoListener);
+  }, []);
+
   const launchWhatsAppSignup = () => {
+    if (!window.FB) {
+      toast.error("Facebook SDK not loaded. Please refresh the page.");
+      return;
+    }
+
     setLoading(true);
     
-    // Using the Embedded Signup v4 standard
+    // Official Meta Embedded Signup v4 flow
     window.FB.login((response: any) => {
       if (response.authResponse) {
         const code = response.authResponse.code;
         handleSignupCompletion(code);
       } else {
         setLoading(false);
-        toast.error("Facebook login failed or was cancelled.");
+        // Don't show error if cancelled as the message listener might handle it
+        console.log("Facebook login response:", response);
       }
     }, {
       config_id: '1592300178695434', 
       response_type: 'code',
       override_default_response_type: true,
       scope: 'public_profile,email,whatsapp_business_management,whatsapp_business_messaging,business_management',
-      extras: JSON.stringify({
-        sessionInfoVersion: "3",
-        version: "v4"
-      })
+      extras: {
+        sessionInfoVersion: 3,
+        setup: {
+          business: {
+            name: "Automation Hub BD"
+          }
+        }
+      }
     });
   };
 
