@@ -24,20 +24,23 @@ export default function WhatsAppOfficialIntegration() {
     window.FB.login((response: any) => {
       if (response.authResponse) {
         const code = response.authResponse.code;
-        // The response also contains the WABA ID and Phone Number ID in the extras field
-        // We'll need to parse them if available or let the backend handle it
-        
         handleSignupCompletion(code);
       } else {
         setLoading(false);
         toast.error("Facebook login failed or was cancelled.");
       }
     }, {
-      config_id: '1592300178695434', // Your Config ID from Meta
+      config_id: '1592300178695434', 
       response_type: 'code',
       override_default_response_type: true,
       extras: {
-        sessionInfoVersion: 2,
+        sessionInfoVersion: 3,
+        version: 'v4',
+        setup: {
+          business: {
+            name: "Automation Hub BD"
+          }
+        }
       }
     });
   };
