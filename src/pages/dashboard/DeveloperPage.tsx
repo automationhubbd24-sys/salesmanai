@@ -5,9 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { Copy, RefreshCw, Code, Eye, EyeOff, Activity, ArrowRight, Key, Sparkles, Plus, AlertCircle, CheckCircle2, TrendingUp, DollarSign, Cpu, ArrowLeft, Trash2 } from "lucide-react";
+import { Copy, RefreshCw, Code, Eye, EyeOff, Activity, ArrowRight, Key, Sparkles, Plus, AlertCircle, CheckCircle2, TrendingUp, DollarSign, Cpu, ArrowLeft, Trash2, Settings2 } from "lucide-react";
 import { BACKEND_URL, EXTERNAL_API_BASE } from "@/config";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { api } from "@/lib/api";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +36,7 @@ export default function DeveloperPage() {
     const [isAddingKey, setIsAddingKey] = useState(false);
     const [userKeys, setUserKeys] = useState<any[]>([]);
     const [loadingKeys, setLoadingKeys] = useState(false);
+    const [isManageKeysOpen, setIsManageKeysOpen] = useState(false);
     const userId = localStorage.getItem('auth_user_id');
 
     const providers = [
@@ -793,6 +794,97 @@ export default function DeveloperPage() {
                                             {isAddingKey ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
                                             Save {providers.find(p => p.id === selectedProvider)?.name} Key
                                         </Button>
+
+                                        <Dialog open={isManageKeysOpen} onOpenChange={setIsManageKeysOpen}>
+                                            <DialogTrigger asChild>
+                                                <Button 
+                                                    variant="outline"
+                                                    className="w-full h-12 border-white/10 bg-white/5 hover:bg-white/10 text-white font-bold rounded-xl transition-all cursor-pointer mt-2"
+                                                    onClick={fetchUserKeys}
+                                                >
+                                                    <Settings2 className="h-4 w-4 mr-2 text-primary" />
+                                                    Manage API Keys ({userKeys.length})
+                                                </Button>
+                                            </DialogTrigger>
+                                            <DialogContent className="sm:max-w-[600px] bg-zinc-950 border-white/10 text-white rounded-3xl p-0 overflow-hidden">
+                                                <DialogHeader className="pt-8 px-8">
+                                                    <DialogTitle className="text-2xl font-bold flex items-center gap-2">
+                                                        <Key className="h-6 w-6 text-primary" />
+                                                        Your API Keys Pool
+                                                    </DialogTitle>
+                                                    <DialogDescription className="text-slate-400">
+                                                        View and manage your added API keys for the rotation pool.
+                                                    </DialogDescription>
+                                                </DialogHeader>
+                                                
+                                                <div className="px-8 py-6 max-h-[400px] overflow-y-auto">
+                                                    {loadingKeys ? (
+                                                        <div className="flex flex-col items-center justify-center py-12 space-y-4">
+                                                            <RefreshCw className="h-8 w-8 animate-spin text-primary" />
+                                                            <p className="text-slate-400 text-sm">Loading your keys...</p>
+                                                        </div>
+                                                    ) : userKeys.length > 0 ? (
+                                                        <div className="rounded-2xl border border-white/5 overflow-hidden">
+                                                            <Table>
+                                                                <TableHeader className="bg-white/[0.02]">
+                                                                    <TableRow className="border-white/5 hover:bg-transparent">
+                                                                        <TableHead className="text-[10px] font-bold uppercase tracking-widest text-slate-500 py-4">Provider</TableHead>
+                                                                        <TableHead className="text-[10px] font-bold uppercase tracking-widest text-slate-500 py-4">Key (Masked)</TableHead>
+                                                                        <TableHead className="text-[10px] font-bold uppercase tracking-widest text-slate-500 py-4 text-right">Action</TableHead>
+                                                                    </TableRow>
+                                                                </TableHeader>
+                                                                <TableBody>
+                                                                    {userKeys.map((k) => (
+                                                                        <TableRow key={k.id} className="border-white/5 hover:bg-white/[0.01] transition-colors">
+                                                                            <TableCell className="py-4">
+                                                                                <div className="flex items-center gap-2 text-white font-medium text-xs capitalize">
+                                                                                    <span className="text-lg">{providers.find(p => p.id === k.provider)?.icon || '✨'}</span>
+                                                                                    {k.provider}
+                                                                                </div>
+                                                                            </TableCell>
+                                                                            <TableCell className="py-4">
+                                                                                <code className="text-[10px] font-mono text-primary bg-primary/5 px-2 py-1 rounded">
+                                                                                    {k.api}
+                                                                                </code>
+                                                                            </TableCell>
+                                                                            <TableCell className="py-4 text-right">
+                                                                                <Button 
+                                                                                    variant="ghost" 
+                                                                                    size="sm" 
+                                                                                    onClick={() => handleDeleteKey(k.id)}
+                                                                                    className="h-9 w-9 p-0 text-slate-500 hover:text-red-400 hover:bg-red-400/10 rounded-xl transition-all"
+                                                                                >
+                                                                                    <Trash2 className="h-4 w-4" />
+                                                                                </Button>
+                                                                            </TableCell>
+                                                                        </TableRow>
+                                                                    ))}
+                                                                </TableBody>
+                                                            </Table>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="flex flex-col items-center justify-center py-12 text-center space-y-4">
+                                                            <div className="h-16 w-16 bg-white/[0.02] rounded-full flex items-center justify-center">
+                                                                <Key className="h-8 w-8 text-slate-600" />
+                                                            </div>
+                                                            <div>
+                                                                <p className="text-white font-semibold">No API keys added yet</p>
+                                                                <p className="text-slate-500 text-xs mt-1">Add your first key to start using the rotation pool.</p>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                <div className="px-8 py-6 bg-white/[0.02] border-t border-white/5 flex justify-end">
+                                                    <Button 
+                                                        onClick={() => setIsManageKeysOpen(false)}
+                                                        className="bg-white/5 hover:bg-white/10 text-white border-white/10 rounded-xl px-6"
+                                                    >
+                                                        Close
+                                                    </Button>
+                                                </div>
+                                            </DialogContent>
+                                        </Dialog>
                                     </CardContent>
                                 </Card>
 
