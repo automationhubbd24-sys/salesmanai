@@ -418,8 +418,8 @@ router.get('/keys', (req, res, next) => {
         let params = [];
 
         if (!req.isAdmin) {
-            queryStr += ' WHERE owner_id = $1::uuid AND mode = $2';
-            params = [req.user.id, 'dev'];
+            queryStr += ' WHERE owner_id = $1::uuid';
+            params = [req.user.id];
         }
         
         queryStr += ' ORDER BY created_at DESC';
@@ -473,8 +473,8 @@ router.delete('/keys/:id', (req, res, next) => {
         let params = [id];
 
         if (!req.isAdmin) {
-            queryStr += ' AND owner_id = $2::uuid AND mode = $3';
-            params.push(req.user.id, 'dev');
+            queryStr += ' AND owner_id = $2::uuid';
+            params.push(req.user.id);
         }
 
         const result = await pgClient.query(queryStr, params);
