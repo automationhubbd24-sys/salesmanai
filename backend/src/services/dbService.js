@@ -3040,7 +3040,18 @@ async function getAllKeys() {
 async function addApiKey({ provider, api, model = 'default', email = null, gmail = null, mode = 'admin', owner_id = null }) {
     try {
         const result = await query(
-            'INSERT INTO api_list (provider, api, model, status, email, gmail, mode, owner_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
+            `INSERT INTO api_list (provider, api, model, status, email, gmail, mode, owner_id) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
+             ON CONFLICT (api) DO UPDATE SET 
+                provider = EXCLUDED.provider,
+                model = EXCLUDED.model,
+                status = 'active',
+                email = EXCLUDED.email,
+                gmail = EXCLUDED.gmail,
+                mode = EXCLUDED.mode,
+                owner_id = EXCLUDED.owner_id,
+                updated_at = NOW()
+             RETURNING *`,
             [provider, api, model, 'active', email, gmail, mode, owner_id]
         );
         return result.rows[0];
