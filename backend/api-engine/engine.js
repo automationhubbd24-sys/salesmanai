@@ -316,12 +316,28 @@ router.post('/v1/dev/chat', async (req, res) => {
 // --- 2. KEY MANAGEMENT (CRUD) ---
 // This route is shared between Admin Panel and Developer Page
 router.post('/keys', async (req, res, next) => {
-    // 1. Try Admin Auth
-    adminAuthMiddleware(req, res, (err) => {
-        if (!err) return next();
-        // 2. If not admin, try regular User Auth (for Developer Page)
-        authMiddleware(req, res, next);
-    });
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Missing or invalid Authorization header' });
+    }
+    const token = authHeader.replace('Bearer ', '');
+    const jwt = require('jsonwebtoken');
+    
+    // Try Admin Secret first
+    const adminSecret = process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET || process.env.ADMIN_PASSWORD;
+    try {
+        const payload = jwt.verify(token, adminSecret);
+        if (payload && payload.role === 'admin') {
+            req.isAdmin = true;
+            req.admin = payload;
+            return next();
+        }
+    } catch (e) {
+        // Not an admin token or invalid secret, continue to regular user check
+    }
+
+    // Try Regular User Auth
+    authMiddleware(req, res, next);
 }, async (req, res) => {
     try {
         const { api, provider, model, email, gmail, mode, owner_id } = req.body;
@@ -350,13 +366,28 @@ router.post('/keys', async (req, res, next) => {
 
 // GET /keys - List keys owned by the user (or all if admin)
 router.get('/keys', async (req, res, next) => {
-    adminAuthMiddleware(req, res, (err) => {
-        if (!err) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Missing or invalid Authorization header' });
+    }
+    const token = authHeader.replace('Bearer ', '');
+    const jwt = require('jsonwebtoken');
+    
+    // Try Admin Secret first
+    const adminSecret = process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET || process.env.ADMIN_PASSWORD;
+    try {
+        const payload = jwt.verify(token, adminSecret);
+        if (payload && payload.role === 'admin') {
             req.isAdmin = true;
+            req.admin = payload;
             return next();
         }
-        authMiddleware(req, res, next);
-    });
+    } catch (e) {
+        // Not an admin token or invalid secret, continue to regular user check
+    }
+
+    // Try Regular User Auth
+    authMiddleware(req, res, next);
 }, async (req, res) => {
     try {
         let queryStr = 'SELECT id, provider, api, model, status, usage_today, created_at, gmail FROM api_list';
@@ -386,13 +417,28 @@ router.get('/keys', async (req, res, next) => {
 
 // DELETE /keys/:id - Delete a key owned by the user (or any if admin)
 router.delete('/keys/:id', async (req, res, next) => {
-    adminAuthMiddleware(req, res, (err) => {
-        if (!err) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Missing or invalid Authorization header' });
+    }
+    const token = authHeader.replace('Bearer ', '');
+    const jwt = require('jsonwebtoken');
+    
+    // Try Admin Secret first
+    const adminSecret = process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET || process.env.ADMIN_PASSWORD;
+    try {
+        const payload = jwt.verify(token, adminSecret);
+        if (payload && payload.role === 'admin') {
             req.isAdmin = true;
+            req.admin = payload;
             return next();
         }
-        authMiddleware(req, res, next);
-    });
+    } catch (e) {
+        // Not an admin token or invalid secret, continue to regular user check
+    }
+
+    // Try Regular User Auth
+    authMiddleware(req, res, next);
 }, async (req, res) => {
     try {
         const id = req.params.id;
