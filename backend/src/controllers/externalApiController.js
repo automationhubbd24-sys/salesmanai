@@ -191,7 +191,7 @@ exports.handleChatCompletion = async (req, res) => {
         const hasSingleKey = userConfig.api_key && userConfig.api_key.trim() !== '';
 
         if (!hasUserPoolKeys && !hasSingleKey) {
-            return res.status(401).json({ error: { message: "no api key founds", type: "invalid_request_error", code: "no_api_key_found" } });
+            return res.status(200).json({ error: { message: "no api key founds", type: "invalid_request_error", code: "no_api_key_found" } });
         }
 
         // --- COMMON LOGIC: Fetch Key & Prepare Request ---
