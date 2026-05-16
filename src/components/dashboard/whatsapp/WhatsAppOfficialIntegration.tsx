@@ -33,15 +33,11 @@ export default function WhatsAppOfficialIntegration() {
       config_id: '1592300178695434', 
       response_type: 'code',
       override_default_response_type: true,
-      extras: {
-        feature: 'whatsapp_embedded_signup',
-        sessionInfoVersion: 2,
-        setup: {
-          business: {
-            name: "Automation Hub BD"
-          }
-        }
-      }
+      scope: 'public_profile,email,whatsapp_business_management,whatsapp_business_messaging,business_management',
+      extras: JSON.stringify({
+        sessionInfoVersion: "3",
+        version: "v4"
+      })
     });
   };
 
