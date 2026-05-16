@@ -343,18 +343,33 @@ router.post('/keys', (req, res, next) => {
         const { api, provider, model, email, gmail, mode, owner_id } = req.body;
         if (!api || !provider) return res.status(400).json({ error: "API Key and Provider required" });
         
-        // If it's a developer adding their own key, enforce their owner_id
+        const trimmedApi = api.trim();
+        
+        // 1. Check if this key already exists in the rotation pool
+        const existingKey = await pgClient.query(
+            'SELECT id FROM api_list WHERE api = $1 LIMIT 1',
+            [trimmedApi]
+        );
+        
+        if (existingKey.rows.length > 0) {
+            return res.status(400).json({ error: "This API key is already added to the pool." });
+        }
+
+        // 2. Determine and Sanitize owner_id
         let finalOwnerId = (req.user && req.user.id) ? req.user.id : owner_id;
         
-        // Sanitize owner_id to ensure it's a valid string or null (not 'undefined' or '')
-        if (typeof finalOwnerId === 'string' && (finalOwnerId.trim() === '' || finalOwnerId === 'undefined' || finalOwnerId === 'null')) {
+        // Validation: Ensure it looks like a UUID if it's not null
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (typeof finalOwnerId === 'string' && !uuidRegex.test(finalOwnerId)) {
+            finalOwnerId = null; // Fallback to null if not a valid UUID
+        } else if (!finalOwnerId || finalOwnerId === 'undefined' || finalOwnerId === 'null') {
             finalOwnerId = null;
         }
 
         const finalMode = (req.admin && req.admin.role === 'admin') ? (mode || 'admin') : 'dev';
 
         await dbService.addApiKey({ 
-            api: api.trim(), 
+            api: trimmedApi, 
             provider: provider.trim(), 
             model: model || 'default', 
             email: email || null,

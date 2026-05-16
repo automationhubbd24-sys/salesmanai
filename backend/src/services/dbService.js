@@ -3039,15 +3039,9 @@ async function getAllKeys() {
 // Add API Key
 async function addApiKey({ provider, api, model = 'default', email = null, gmail = null, mode = 'admin', owner_id = null }) {
     try {
-        // Ensure owner_id is a valid UUID or null
-        let finalOwnerId = owner_id;
-        if (typeof owner_id === 'string' && (owner_id.trim() === '' || owner_id.trim() === 'null' || owner_id.trim() === 'undefined')) {
-            finalOwnerId = null;
-        }
-
         const result = await query(
             'INSERT INTO api_list (provider, api, model, status, email, gmail, mode, owner_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-            [provider, api, model, 'active', email, gmail, mode, finalOwnerId]
+            [provider, api, model, 'active', email, gmail, mode, owner_id]
         );
         return result.rows[0];
     } catch (error) {
