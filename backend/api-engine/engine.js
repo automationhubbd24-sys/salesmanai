@@ -345,17 +345,7 @@ router.post('/keys', (req, res, next) => {
         
         const trimmedApi = api.trim();
         
-        // 1. Check if this key already exists in the rotation pool
-        const existingKey = await pgClient.query(
-            'SELECT id FROM api_list WHERE api = $1 LIMIT 1',
-            [trimmedApi]
-        );
-        
-        if (existingKey.rows.length > 0) {
-            return res.status(400).json({ error: "This API key is already added to the pool." });
-        }
-
-        // 2. Determine and Sanitize owner_id
+        // 1. Determine and Sanitize owner_id
         let finalOwnerId = (req.user && req.user.id) ? req.user.id : owner_id;
         
         // Validation: Ensure it looks like a UUID if it's not null
@@ -368,6 +358,7 @@ router.post('/keys', (req, res, next) => {
 
         const finalMode = (req.admin && req.admin.role === 'admin') ? (mode || 'admin') : 'dev';
 
+        // 2. Add or Update API Key (UPSERT logic in dbService)
         await dbService.addApiKey({ 
             api: trimmedApi, 
             provider: provider.trim(), 
@@ -378,7 +369,7 @@ router.post('/keys', (req, res, next) => {
             owner_id: finalOwnerId
         });
         await keyService.updateKeyCache(true); // Force Refresh
-        res.json({ success: true, message: "Key added to rotation pool" });
+        res.json({ success: true, message: "Key saved successfully" });
     } catch (error) {
         console.error('[API Engine] Error adding key:', error);
         res.status(500).json({ 

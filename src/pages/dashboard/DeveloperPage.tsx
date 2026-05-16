@@ -57,7 +57,7 @@ export default function DeveloperPage() {
             fetchUsage(1);
             fetchUserKeys();
         }
-    }, [isDevLoggedIn, externalKey]); // Re-fetch keys when a new one is added successfully
+    }, [isDevLoggedIn]); // Removed externalKey dependency to prevent infinite loops/redundant calls
 
     const fetchUserKeys = async () => {
         const token = localStorage.getItem("auth_token");
