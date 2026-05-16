@@ -888,58 +888,6 @@ export default function DeveloperPage() {
                                     </CardContent>
                                 </Card>
 
-                                {userKeys.length > 0 && (
-                                    <Card className="border-white/5 bg-[#121212] rounded-3xl overflow-hidden shadow-xl mt-6">
-                                        <CardHeader className="pt-8 px-6 md:px-10">
-                                            <CardTitle className="text-lg font-bold text-white flex items-center gap-2">
-                                                <Key className="h-5 w-5 text-primary" />
-                                                <span>Your API Keys Pool</span>
-                                            </CardTitle>
-                                            <CardDescription className="text-slate-400 text-xs">Manage your added API keys for the rotation pool.</CardDescription>
-                                        </CardHeader>
-                                        <CardContent className="px-6 md:px-10 pb-8">
-                                            <div className="rounded-xl border border-white/5 overflow-hidden">
-                                                <Table>
-                                                    <TableHeader className="bg-white/[0.02]">
-                                                        <TableRow className="border-white/5 hover:bg-transparent">
-                                                            <TableHead className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Provider</TableHead>
-                                                            <TableHead className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Key</TableHead>
-                                                            <TableHead className="text-[10px] font-bold uppercase tracking-widest text-slate-500 text-right">Action</TableHead>
-                                                        </TableRow>
-                                                    </TableHeader>
-                                                    <TableBody>
-                                                        {userKeys.map((k) => (
-                                                            <TableRow key={k.id} className="border-white/5 hover:bg-white/[0.01] transition-colors">
-                                                                <TableCell className="py-4">
-                                                                    <div className="flex items-center gap-2 text-white font-medium text-xs capitalize">
-                                                                        <span>{providers.find(p => p.id === k.provider)?.icon || '✨'}</span>
-                                                                        {k.provider}
-                                                                    </div>
-                                                                </TableCell>
-                                                                <TableCell className="py-4">
-                                                                    <code className="text-[10px] font-mono text-primary bg-primary/5 px-2 py-1 rounded">
-                                                                        {k.api}
-                                                                    </code>
-                                                                </TableCell>
-                                                                <TableCell className="py-4 text-right">
-                                                                    <Button 
-                                                                        variant="ghost" 
-                                                                        size="sm" 
-                                                                        onClick={() => handleDeleteKey(k.id)}
-                                                                        className="h-8 w-8 p-0 text-slate-500 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-all"
-                                                                    >
-                                                                        <Trash2 className="h-4 w-4" />
-                                                                    </Button>
-                                                                </TableCell>
-                                                            </TableRow>
-                                                        ))}
-                                                    </TableBody>
-                                                </Table>
-                                            </div>
-                                        </CardContent>
-                                    </Card>
-                                )}
-
                                 <Card className="border-white/5 bg-[#121212] rounded-3xl overflow-hidden shadow-xl mt-6">
                                     <CardHeader className="pt-8 px-6 md:px-10 cursor-default select-none">
                                         <CardTitle className="text-lg font-bold text-white flex items-center justify-between">
