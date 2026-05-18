@@ -93,13 +93,31 @@ const getUpstreamTargetUrl = (provider) => {
 };
 
 const buildUpstreamHeaders = (provider, apiKey) => {
-    const headers = { 'Content-Type': 'application/json' };
+    // USE THE ADVANCED STEALTH HEADERS FROM AISERVICE
+    return aiService.getStealthHeaders(apiKey, provider);
+};
+
+// Helper to normalize payload for upstream providers (especially Google OpenAI Compatibility)
+const normalizeUpstreamPayload = (provider, model, body) => {
+    let normalizedModel = model;
+    
+    // 1. Clean Model Name for Google/Gemini
     if (provider === 'google' || provider === 'gemini') {
-        headers['x-goog-api-key'] = apiKey;
-    } else {
-        headers['Authorization'] = `Bearer ${apiKey}`;
+        // Remove 'google/' or 'gemini/' prefix if present
+        normalizedModel = normalizedModel.replace(/^(google|gemini)\//, '');
     }
-    return headers;
+
+    // 2. Normalize Messages (Keep only role and content to prevent 400 errors)
+    const messages = (body.messages || []).map(msg => ({
+        role: msg.role,
+        content: msg.content
+    }));
+
+    return {
+        ...body,
+        model: normalizedModel,
+        messages: messages
+    };
 };
 
 const isRetryableUpstreamStatus = (status) => {
@@ -266,36 +284,42 @@ exports.handleChatCompletion = async (req, res) => {
         let lastError = null;
         const targetUrl = getUpstreamTargetUrl(provider);
 
-        // --- STREAMING SUPPORT ---
-        if (stream) {
-            console.log(`[ExternalAPI] Streaming request for model: ${requestedModel} (User Pool Keys: ${hasUserPoolKeys})`);
+        // --- STREAMING PATH ---
+        if (stream === true || req.headers.accept === 'text/event-stream') {
+            console.log(`[ExternalAPI] Streaming request for model: ${requestedModel}`);
 
             for (const currentModel of modelsToTry) {
-                console.log(`[ExternalAPI] Streaming try for resolved model: ${currentModel}`);
                 for (let attempt = 0; attempt < maxAttemptsPerModel; attempt++) {
-                    let keyData = await keyService.getSmartKey(provider, currentModel, modality, false, userConfig.user_id);
-
-                    if (!keyData && hasSingleKey) {
-                        keyData = { key: userConfig.api_key, provider, model: currentModel };
-                    }
+                    let keyData = await keyService.getSmartKey(provider, currentModel, modality, true, userConfig.user_id);
+                    if (!keyData && hasSingleKey) keyData = { key: userConfig.api_key, provider, model: currentModel };
 
                     if (!keyData || !keyData.key) {
                         lastError = { message: `No active ${provider} keys found for ${currentModel}.` };
                         break;
                     }
 
+                    await aiService.acquireAiSlot(); // --- CONCURRENCY CONTROL ---
                     try {
-                        const upstreamBody = { ...req.body, model: currentModel };
-                        const response = await axios.post(targetUrl, upstreamBody, {
+                        // --- STEALTH: REQUEST JITTER ---
+                        const jitter = Math.floor(Math.random() * 1500) + 500;
+                        await new Promise(resolve => setTimeout(resolve, jitter));
+
+                        const proxyUrl = aiService.getProxyUrl(currentModel);
+                        const agent = aiService.createProxyAgent(proxyUrl);
+
+                        const upstreamPayload = normalizeUpstreamPayload(provider, currentModel, req.body);
+                        const response = await axios.post(targetUrl, upstreamPayload, {
                             headers: buildUpstreamHeaders(provider, keyData.key),
+                            timeout: 120000,
                             responseType: 'stream',
-                            timeout: 60000,
-                            validateStatus: () => true
+                            validateStatus: () => true,
+                            ...(agent ? { httpAgent: agent, httpsAgent: agent } : {})
                         });
 
                         if (response.status >= 400) {
-                            lastError = { status: response.status, data: null, model: currentModel };
-                            if (response.data && response.data.destroy) response.data.destroy();
+                            console.error(`[ExternalAPI] Stream Upstream Error (${response.status}) for ${currentModel}`);
+                            aiService.releaseAiSlot();
+                            lastError = { status: response.status, data: "Stream Error", model: currentModel };
                             await keyService.handleApiKeyError(keyData.key, `status code ${response.status}`, currentModel, modality);
                             if (isRetryableUpstreamStatus(response.status)) continue;
                             break;
@@ -304,6 +328,17 @@ exports.handleChatCompletion = async (req, res) => {
                         res.setHeader('Content-Type', response.headers['content-type'] || 'text/event-stream');
                         res.setHeader('Cache-Control', 'no-cache');
                         res.setHeader('Connection', 'keep-alive');
+                        
+                        // Handle stream errors to prevent hanging
+                        response.data.on('error', (err) => {
+                            console.error(`[ExternalAPI] Stream error for ${currentModel}:`, err.message);
+                            aiService.releaseAiSlot();
+                            if (!res.headersSent) res.status(500).end();
+                            else res.end();
+                        });
+
+                        response.data.on('end', () => aiService.releaseAiSlot());
+
                         response.data.pipe(res);
 
                         if (!freeTierActive) {
@@ -313,6 +348,7 @@ exports.handleChatCompletion = async (req, res) => {
                         }
                         return;
                     } catch (err) {
+                        aiService.releaseAiSlot();
                         console.error(`[ExternalAPI] Stream Attempt ${attempt + 1} failed for ${currentModel}:`, err.message);
                         lastError = err;
                         await keyService.handleApiKeyError(keyData.key, err, currentModel, modality);
@@ -341,15 +377,27 @@ exports.handleChatCompletion = async (req, res) => {
                     break;
                 }
 
+                await aiService.acquireAiSlot(); // --- CONCURRENCY CONTROL ---
                 try {
-                    const upstreamBody = { ...req.body, model: currentModel };
-                    const response = await axios.post(targetUrl, upstreamBody, {
+                    // --- STEALTH: REQUEST JITTER ---
+                    const jitter = Math.floor(Math.random() * 1500) + 500;
+                    await new Promise(resolve => setTimeout(resolve, jitter));
+
+                    const proxyUrl = aiService.getProxyUrl(currentModel);
+                    const agent = aiService.createProxyAgent(proxyUrl);
+
+                    const upstreamPayload = normalizeUpstreamPayload(provider, currentModel, req.body);
+                    const response = await axios.post(targetUrl, upstreamPayload, {
                         headers: buildUpstreamHeaders(provider, keyData.key),
-                        timeout: 60000,
-                        validateStatus: () => true
+                        timeout: 120000,
+                        validateStatus: () => true,
+                        ...(agent ? { httpAgent: agent, httpsAgent: agent } : {})
                     });
 
+                    aiService.releaseAiSlot();
+
                     if (response.status >= 400) {
+                        console.error(`[ExternalAPI] Upstream Error (${response.status}) for ${currentModel}:`, JSON.stringify(response.data));
                         lastError = { status: response.status, data: response.data, model: currentModel };
                         await keyService.handleApiKeyError(keyData.key, `status code ${response.status}`, currentModel, modality);
                         if (isRetryableUpstreamStatus(response.status)) continue;
