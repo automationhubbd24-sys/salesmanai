@@ -1,0 +1,66 @@
+Developer API Temporary Worklog
+Status: Temporary notes file for safe iteration
+Delete when: Testing and verification are complete
+
+Rules
+- This file is temporary.
+- Keep only Developer API related notes here.
+- Do not use this file as a source of truth after final implementation is verified.
+- Delete this file after testing is complete.
+
+Current Scope
+- We are working only on Developer API related behavior.
+- We will not change internal Messenger, WhatsApp, API Engine, or other unrelated flows unless strictly required.
+- No implementation will be done without user approval.
+
+Current Audit Summary
+1. Root issue found in Developer API:
+- externalApiController calls aiService.resolveSalesmanchatbotEngine(...)
+- The function exists in aiService, but it is not exported from module.exports
+- This causes runtime error: resolveSalesmanchatbotEngine is not a function
+
+2. Secondary issue:
+- After resolution fails, Developer API continues with a weak fallback path
+- It proceeds with unresolved branded model/provider assumptions
+- Then user key rotation reaches exhausted or skipped key state
+
+3. Internal system behavior studied:
+- Internal branded models salesmanchatbot-pro / flash / lite are resolved through engine_configs and api_engine_configs
+- Internal flow supports modality-aware provider/model resolution
+- Internal flow supports fallback model logic
+- Internal flow supports smart key rotation, retry, key quarantine, and usage tracking
+
+Planned Safe Fix Scope
+1. Export resolveSalesmanchatbotEngine from aiService
+2. Reuse internal branded model resolution only for Developer API
+3. Add slim retry/fallback logic in Developer API
+4. Keep user-owned dev keys only
+5. Do not touch unrelated systems
+
+Files Expected To Be Touched After Approval
+- backend/src/services/aiService.js
+- backend/src/controllers/externalApiController.js
+
+Implementation Status
+- Approval received
+- Scoped code implementation completed
+- Verification in progress
+
+Update Log
+- Created temporary worklog file
+- Logged audit summary and proposed limited scope
+- Exported resolveSalesmanchatbotEngine from backend/src/services/aiService.js
+- Updated backend/src/controllers/externalApiController.js to:
+  - fail fast if branded model resolution fails
+  - reuse internal branded engine resolution for Developer API
+  - support primary model + fallback model attempts
+  - keep user-owned dev key rotation only
+  - retry per resolved model with slim safe loop
+  - quarantine failed keys through keyService.handleApiKeyError
+  - record token usage on successful non-stream requests
+- Diagnostics checked for edited files and currently clean
+
+Current Testing Notes
+- No unrelated systems were modified
+- Internal Messenger, WhatsApp, and API Engine flows were not changed
+- Temporary file should stay until manual testing is complete
