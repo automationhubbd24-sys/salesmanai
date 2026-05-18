@@ -111,7 +111,7 @@ router.use(async (req, res, next) => {
 
     // Skip strict check for key management if it's an internal dashboard request (JWT)
     // The individual routes will handle specific JWT or Admin auth
-    if (req.path.startsWith('/keys')) {
+    if (req.path.startsWith('/keys') || req.path.startsWith('/stats') || req.path.startsWith('/config')) {
         return next();
     }
 
@@ -146,8 +146,8 @@ const MODELS_LIST = {
     ]
 };
 
-router.get('/', (req, res) => res.json({ status: "online", authenticated: true, user_id: req.userConfig.user_id }));
-router.get('/v1', (req, res) => res.json({ status: "online", version: "v1", authenticated: true }));
+router.get('/', (req, res) => res.json({ status: "online", authenticated: !!req.userConfig, user_id: req.userConfig?.user_id || null }));
+router.get('/v1', (req, res) => res.json({ status: "online", version: "v1", authenticated: !!req.userConfig }));
 router.get('/models', (req, res) => res.json(MODELS_LIST));
 router.get('/v1/models', (req, res) => res.json(MODELS_LIST));
 
