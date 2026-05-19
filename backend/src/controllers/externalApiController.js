@@ -135,12 +135,21 @@ const isRetryableUpstreamStatus = (status) => {
 
 const getFailureDetails = (failure) => {
     if (!failure) return 'unknown_error';
+    
+    // 1. Extract from standard Axios error response
     if (failure.response?.data?.error?.message) return failure.response.data.error.message;
-    if (failure.response?.data?.error) return failure.response.data.error;
+    if (failure.response?.data?.error) return typeof failure.response.data.error === 'string' ? failure.response.data.error : JSON.stringify(failure.response.data.error);
+    if (failure.response?.data?.message) return failure.response.data.message;
+    
+    // 2. Extract from manual lastError objects
     if (failure.data?.error?.message) return failure.data.error.message;
-    if (failure.data?.error) return failure.data.error;
+    if (failure.data?.error) return typeof failure.data.error === 'string' ? failure.data.error : JSON.stringify(failure.data.error);
+    if (failure.data?.message) return failure.data.message;
+    
+    // 3. Fallbacks
     if (failure.message) return failure.message;
     if (failure.status) return `Upstream status ${failure.status}`;
+    
     return String(failure);
 };
 
