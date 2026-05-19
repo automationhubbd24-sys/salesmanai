@@ -93,8 +93,17 @@ const getUpstreamTargetUrl = (provider) => {
 };
 
 const buildUpstreamHeaders = (provider, apiKey) => {
-    // USE THE ADVANCED STEALTH HEADERS FROM AISERVICE
-    return aiService.getStealthHeaders(apiKey, provider);
+    // Standard stealth headers from aiService
+    const headers = aiService.getStealthHeaders(apiKey, provider);
+    
+    // CRITICAL FIX: Google OpenAI Compatibility endpoint requires 'Authorization: Bearer KEY'
+    // instead of 'x-goog-api-key' when using the v1beta/openai path.
+    if (provider === 'google' || provider === 'gemini') {
+        delete headers['x-goog-api-key'];
+        headers['Authorization'] = `Bearer ${apiKey}`;
+    }
+    
+    return headers;
 };
 
 // Helper to normalize payload for upstream providers (especially Google OpenAI Compatibility)
