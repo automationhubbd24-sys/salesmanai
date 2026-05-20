@@ -742,22 +742,6 @@ export default function DeveloperPage() {
                                                         * n8n OpenAI node-এ শুধু এই URL-টি "Base URL" ঘরে বসান।
                                                     </p>
                                                 </div>
-                                                <div className="pt-2">
-                                                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1 mb-2">Available Multimodal Models</p>
-                                                    <div className="grid grid-cols-1 gap-1.5">
-                                                        {[
-                                                            { id: "gemini-2.5-flash", tags: ["Text", "Vision", "Audio"] },
-                                                            { id: "gemini-2.5-pro", tags: ["Text", "Vision", "Audio"] }
-                                                        ].map(m => (
-                                                            <div key={m.id} className="flex items-center justify-between p-2 rounded-lg bg-white/[0.03] border border-white/5 group">
-                                                                <span className="text-[10px] font-mono text-slate-300">{m.id}</span>
-                                                                <div className="flex gap-1">
-                                                                    {m.tags.map(t => <span key={t} className="text-[7px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/10 font-bold uppercase">{t}</span>)}
-                                                                </div>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                </div>
                                             </div>
                                         </div>
 
@@ -778,19 +762,42 @@ export default function DeveloperPage() {
                                                     </div>
                                                 </div>
                                                 <div className="space-y-1.5">
-                                                    <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest ml-1">Vision (Same Endpoint)</p>
-                                                    <div className="p-2.5 rounded-xl bg-black/40 border border-white/5 opacity-60">
-                                                        <p className="text-[10px] font-mono text-slate-400 break-all">POST {EXTERNAL_API_BASE}/v1/chat/completions</p>
-                                                        <p className="text-[8px] text-primary italic mt-1">Use "image_url" in content array</p>
-                                                    </div>
-                                                </div>
-                                                <div className="space-y-1.5">
                                                     <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest ml-1">Audio Transcription</p>
                                                     <div className="p-2.5 rounded-xl bg-black/40 border border-white/5">
                                                         <p className="text-[10px] font-mono text-white break-all">POST {EXTERNAL_API_BASE}/v1/audio/transcriptions</p>
                                                     </div>
                                                 </div>
                                             </div>
+                                        </div>
+                                    </div>
+
+                                    {/* All Available Models Grid */}
+                                    <div className="mt-6 p-6 rounded-2xl bg-white/[0.02] border border-white/5 space-y-4">
+                                        <div className="flex items-center justify-between">
+                                            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                                                <Code className="h-4 w-4 text-primary" />
+                                                Available Model IDs
+                                            </h3>
+                                            <p className="text-[10px] text-slate-500 italic">Click any ID to copy</p>
+                                        </div>
+                                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                                            {[
+                                                "gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash", "gemini-1.5-pro",
+                                                "gemini-3.1-flash-lite", "gemini-3.1-pro-preview", "gemini-3.1-flash-tts-preview",
+                                                "gemini-2.5-flash-image", "imagen-4.0-generate-001", "gemma-4-31b-it",
+                                                "gemini-embedding-2", "gemini-1.0-pro", "gemini-1.5-flash-8b", "gemini-2.5-flash-thinking-preview"
+                                            ].map(modelId => (
+                                                <div key={modelId} 
+                                                    className="flex items-center justify-between p-2 rounded-lg bg-white/[0.03] border border-white/5 group hover:border-primary/30 hover:bg-white/[0.05] transition-all cursor-pointer"
+                                                    onClick={() => {
+                                                        navigator.clipboard.writeText(modelId);
+                                                        toast.success(`${modelId} copied`);
+                                                    }}
+                                                >
+                                                    <span className="text-[9px] font-mono text-slate-300 truncate mr-1">{modelId}</span>
+                                                    <Copy className="h-2.5 w-2.5 text-slate-600 group-hover:text-primary transition-colors flex-shrink-0" />
+                                                </div>
+                                            ))}
                                         </div>
                                     </div>
 
