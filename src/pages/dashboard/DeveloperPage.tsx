@@ -752,29 +752,33 @@ export default function DeveloperPage() {
 
                                             <div className="space-y-1.5">
                                                 <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Available Models</Label>
-                                                <div className="grid grid-cols-1 gap-2">
+                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                                                     {[
-                                                        { id: "gemini-2.5-flash", desc: "Next-gen multimodal (Fast & Accurate)", tags: ["Text", "Vision", "Audio"] },
-                                                        { id: "gemini-2.5-pro", desc: "Most powerful multimodal for complex tasks", tags: ["Text", "Vision", "Audio"] },
-                                                        { id: "gemini-1.5-flash", desc: "Lightweight & extremely fast", tags: ["Text", "Vision"] },
-                                                        { id: "gemini-1.5-pro", desc: "Balanced performance & intelligence", tags: ["Text", "Vision"] }
+                                                        { id: "gemini-2.5-flash", desc: "Next-gen multimodal (Stable)", tags: ["Text", "Vision", "Audio"] },
+                                                        { id: "gemini-2.5-pro", desc: "Most powerful stable multimodal", tags: ["Text", "Vision", "Audio"] },
+                                                        { id: "gemini-3.1-flash-lite", desc: "Latest high-speed lite model", tags: ["Text", "Vision"] },
+                                                        { id: "gemini-3.1-pro-preview", desc: "Gemini 3.1 Pro Preview", tags: ["Text", "Vision"] },
+                                                        { id: "gemini-3.1-flash-tts-preview", desc: "Text-to-Speech Preview", tags: ["Text", "Audio"] },
+                                                        { id: "gemma-4-31b-it", desc: "Gemma 4 Instruction Tuned", tags: ["Text"] },
+                                                        { id: "gemini-2.5-flash-image", desc: "Flash Image Generation", tags: ["Image Gen"] },
+                                                        { id: "imagen-4.0-generate-001", desc: "Imagen 4 High Quality", tags: ["Image Gen"] }
                                                     ].map(m => (
                                                         <div key={m.id} className="flex items-center justify-between p-2.5 rounded-xl bg-white/[0.03] border border-white/5 group hover:border-primary/20 transition-all">
-                                                            <div className="flex flex-col gap-1">
+                                                            <div className="flex flex-col gap-1 overflow-hidden">
                                                                 <div className="flex items-center gap-2">
-                                                                    <span className="text-[11px] font-mono font-bold text-slate-200">{m.id}</span>
-                                                                    <div className="flex gap-1">
-                                                                        {m.tags.map(tag => (
-                                                                            <span key={tag} className="text-[7px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/10 font-bold uppercase">{tag}</span>
+                                                                    <span className="text-[10px] font-mono font-bold text-slate-200 truncate">{m.id}</span>
+                                                                    <div className="flex gap-1 flex-shrink-0">
+                                                                        {m.tags.slice(0, 2).map(tag => (
+                                                                            <span key={tag} className="text-[6px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/10 font-bold uppercase">{tag}</span>
                                                                         ))}
                                                                     </div>
                                                                 </div>
-                                                                <span className="text-[9px] text-slate-500">{m.desc}</span>
+                                                                <span className="text-[8px] text-slate-500 truncate">{m.desc}</span>
                                                             </div>
                                                             <Button 
                                                                 variant="ghost" 
                                                                 size="sm" 
-                                                                className="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-primary"
+                                                                className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-primary flex-shrink-0"
                                                                 onClick={() => {
                                                                     navigator.clipboard.writeText(m.id);
                                                                     toast.success(`${m.id} copied`);
@@ -784,6 +788,9 @@ export default function DeveloperPage() {
                                                             </Button>
                                                         </div>
                                                     ))}
+                                                </div>
+                                                <div className="mt-2 text-center">
+                                                    <p className="text-[9px] text-slate-500 italic">...and 20+ more specialized models available via API</p>
                                                 </div>
                                             </div>
                                         </div>
