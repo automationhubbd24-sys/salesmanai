@@ -715,69 +715,80 @@ export default function DeveloperPage() {
                                         </div>
                                     </div>
 
-                                    {/* Quick Endpoints Card */}
-                                    <div className="mt-8 p-6 rounded-2xl bg-white/[0.02] border border-white/5 space-y-4">
-                                        <div className="flex items-center justify-between">
-                                            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                                                <Globe className="h-4 w-4 text-primary" />
-                                                API Endpoints
-                                            </h3>
-                                            <Badge variant="outline" className="text-[10px] border-primary/20 text-primary uppercase tracking-tighter">OpenAI Compatible</Badge>
-                                        </div>
-                                        
-                                        <div className="space-y-3">
-                                            <div className="space-y-1.5">
-                                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1">Base URL</p>
-                                                <div className="flex gap-2 items-center">
-                                                    <Input value={EXTERNAL_API_BASE} readOnly className="h-9 font-mono bg-black/40 border-white/5 text-xs text-primary" />
-                                                    <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-500 hover:text-white" onClick={() => {
-                                                        navigator.clipboard.writeText(EXTERNAL_API_BASE);
-                                                        toast.success("Base URL copied");
-                                                    }}>
-                                                        <Copy className="h-3.5 w-3.5" />
-                                                    </Button>
-                                                </div>
+                                    {/* Connection Settings */}
+                                    <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                        {/* n8n / SDK Configuration */}
+                                        <div className="p-6 rounded-2xl bg-white/[0.02] border border-white/5 space-y-4">
+                                            <div className="flex items-center justify-between">
+                                                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                                                    <Workflow className="h-4 w-4 text-primary" />
+                                                    n8n / OpenAI SDK
+                                                </h3>
+                                                <Badge variant="outline" className="text-[10px] border-primary/20 text-primary uppercase tracking-tighter">Recommended</Badge>
                                             </div>
-
-                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                                <div className="p-3 rounded-xl bg-black/40 border border-white/5 space-y-1 relative overflow-hidden group">
-                                                    <div className="absolute top-0 right-0 p-1">
-                                                        <Badge className="text-[7px] bg-primary/20 text-primary border-none py-0 px-1">Multimodal</Badge>
+                                            <div className="space-y-3">
+                                                <div className="space-y-1.5">
+                                                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1">Base URL (for n8n/SDK)</p>
+                                                    <div className="flex gap-2 items-center">
+                                                        <Input value={`${EXTERNAL_API_BASE}/v1`} readOnly className="h-9 font-mono bg-black/40 border-white/5 text-xs text-primary" />
+                                                        <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-500 hover:text-white" onClick={() => {
+                                                            navigator.clipboard.writeText(`${EXTERNAL_API_BASE}/v1`);
+                                                            toast.success("Base URL copied");
+                                                        }}>
+                                                            <Copy className="h-3.5 w-3.5" />
+                                                        </Button>
                                                     </div>
-                                                    <p className="text-[9px] font-bold text-slate-500 uppercase">Chat & Vision & Audio</p>
-                                                    <p className="text-[10px] font-mono text-white break-all">POST /v1/chat/completions</p>
-                                                    <p className="text-[8px] text-slate-500 italic mt-1">Supports Text, Image URL, and Audio URL</p>
+                                                    <p className="text-[9px] text-amber-500 italic ml-1">
+                                                        * n8n OpenAI node-এ শুধু এই URL-টি "Base URL" ঘরে বসান।
+                                                    </p>
                                                 </div>
-                                                <div className="p-3 rounded-xl bg-black/40 border border-white/5 space-y-1">
-                                                    <p className="text-[9px] font-bold text-slate-500 uppercase">Audio Transcription</p>
-                                                    <p className="text-[10px] font-mono text-white break-all">POST /v1/audio/transcriptions</p>
-                                                    <p className="text-[8px] text-slate-500 italic mt-1">Convert speech to text (Whisper/Gemini)</p>
+                                                <div className="pt-2">
+                                                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1 mb-2">Available Multimodal Models</p>
+                                                    <div className="grid grid-cols-1 gap-1.5">
+                                                        {[
+                                                            { id: "gemini-2.5-flash", tags: ["Text", "Vision", "Audio"] },
+                                                            { id: "gemini-2.5-pro", tags: ["Text", "Vision", "Audio"] }
+                                                        ].map(m => (
+                                                            <div key={m.id} className="flex items-center justify-between p-2 rounded-lg bg-white/[0.03] border border-white/5 group">
+                                                                <span className="text-[10px] font-mono text-slate-300">{m.id}</span>
+                                                                <div className="flex gap-1">
+                                                                    {m.tags.map(t => <span key={t} className="text-[7px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/10 font-bold uppercase">{t}</span>)}
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
                                                 </div>
                                             </div>
+                                        </div>
 
-                                            <div className="space-y-1.5">
-                                                <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Available Models</Label>
-                                                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-                                                    {[
-                                                        "gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash", "gemini-1.5-pro",
-                                                        "gemini-3.1-flash-lite", "gemini-3.1-pro-preview", "gemini-3.1-flash-tts-preview",
-                                                        "gemini-2.5-flash-image", "imagen-4.0-generate-001", "gemma-4-31b-it",
-                                                        "gemini-embedding-2", "gemini-1.0-pro", "gemini-1.5-flash-8b", "gemini-2.5-flash-thinking-preview"
-                                                    ].map(modelId => (
-                                                        <div key={modelId} 
-                                                            className="flex items-center justify-between p-2 rounded-xl bg-white/[0.03] border border-white/5 group hover:border-primary/30 hover:bg-white/[0.05] transition-all cursor-pointer"
-                                                            onClick={() => {
-                                                                navigator.clipboard.writeText(modelId);
-                                                                toast.success(`${modelId} copied`);
-                                                            }}
-                                                        >
-                                                            <span className="text-[9px] font-mono text-slate-300 truncate mr-2">{modelId}</span>
-                                                            <Copy className="h-2.5 w-2.5 text-slate-600 group-hover:text-primary transition-colors flex-shrink-0" />
-                                                        </div>
-                                                    ))}
+                                        {/* Direct API Endpoints */}
+                                        <div className="p-6 rounded-2xl bg-white/[0.02] border border-white/5 space-y-4">
+                                            <div className="flex items-center justify-between">
+                                                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                                                    <Globe className="h-4 w-4 text-primary" />
+                                                    Direct Endpoints (Native)
+                                                </h3>
+                                                <Badge variant="outline" className="text-[10px] border-white/10 text-slate-500 uppercase tracking-tighter">Curl / Fetch</Badge>
+                                            </div>
+                                            <div className="space-y-3">
+                                                <div className="space-y-1.5">
+                                                    <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest ml-1">Multimodal Chat (Text/Image/Audio)</p>
+                                                    <div className="p-2.5 rounded-xl bg-black/40 border border-white/5">
+                                                        <p className="text-[10px] font-mono text-white break-all">POST {EXTERNAL_API_BASE}/v1/chat/completions</p>
+                                                    </div>
                                                 </div>
-                                                <div className="mt-2 text-center">
-                                                    <p className="text-[9px] text-slate-500 italic">Click on any model ID to copy</p>
+                                                <div className="space-y-1.5">
+                                                    <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest ml-1">Vision (Same Endpoint)</p>
+                                                    <div className="p-2.5 rounded-xl bg-black/40 border border-white/5 opacity-60">
+                                                        <p className="text-[10px] font-mono text-slate-400 break-all">POST {EXTERNAL_API_BASE}/v1/chat/completions</p>
+                                                        <p className="text-[8px] text-primary italic mt-1">Use "image_url" in content array</p>
+                                                    </div>
+                                                </div>
+                                                <div className="space-y-1.5">
+                                                    <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest ml-1">Audio Transcription</p>
+                                                    <div className="p-2.5 rounded-xl bg-black/40 border border-white/5">
+                                                        <p className="text-[10px] font-mono text-white break-all">POST {EXTERNAL_API_BASE}/v1/audio/transcriptions</p>
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>
