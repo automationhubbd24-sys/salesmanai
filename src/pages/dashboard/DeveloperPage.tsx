@@ -746,60 +746,94 @@ export default function DeveloperPage() {
                                         </div>
 
                                         {/* Direct API Endpoints */}
-                                        <div className="p-6 rounded-2xl bg-white/[0.02] border border-white/5 space-y-4">
-                                            <div className="flex items-center justify-between">
-                                                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                                                    <Globe className="h-4 w-4 text-primary" />
-                                                    Direct Endpoints (Native)
-                                                </h3>
-                                                <Badge variant="outline" className="text-[10px] border-white/10 text-slate-500 uppercase tracking-tighter">Curl / Fetch</Badge>
-                                            </div>
-                                            <div className="space-y-3">
-                                                <div className="space-y-1.5">
-                                                    <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest ml-1">Multimodal Chat (Text/Image/Audio)</p>
-                                                    <div className="p-2.5 rounded-xl bg-black/40 border border-white/5">
-                                                        <p className="text-[10px] font-mono text-white break-all">POST {EXTERNAL_API_BASE}/v1/chat/completions</p>
-                                                    </div>
-                                                </div>
-                                                <div className="space-y-1.5">
-                                                    <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest ml-1">Audio Transcription</p>
-                                                    <div className="p-2.5 rounded-xl bg-black/40 border border-white/5">
-                                                        <p className="text-[10px] font-mono text-white break-all">POST {EXTERNAL_API_BASE}/v1/audio/transcriptions</p>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
+                                         <div className="p-6 rounded-2xl bg-white/[0.02] border border-white/5 space-y-4">
+                                             <div className="flex items-center justify-between">
+                                                 <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                                                     <Globe className="h-4 w-4 text-primary" />
+                                                     Universal Endpoint
+                                                 </h3>
+                                                 <Badge variant="outline" className="text-[10px] border-primary/20 text-primary uppercase">All-in-One</Badge>
+                                             </div>
+                                             <div className="space-y-3">
+                                                 <div className="space-y-1.5">
+                                                     <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest ml-1">Multimodal Chat (Text/Image/Audio)</p>
+                                                     <div className="flex gap-2 items-center">
+                                                         <div className="flex-1 p-2.5 rounded-xl bg-black/40 border border-white/5 overflow-hidden">
+                                                             <p className="text-[10px] font-mono text-white truncate">{EXTERNAL_API_BASE}/v1/chat/completions</p>
+                                                         </div>
+                                                         <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-500 hover:text-white" onClick={() => {
+                                                             navigator.clipboard.writeText(`${EXTERNAL_API_BASE}/v1/chat/completions`);
+                                                             toast.success("Endpoint copied");
+                                                         }}>
+                                                             <Copy className="h-3.5 w-3.5" />
+                                                         </Button>
+                                                     </div>
+                                                     <p className="text-[8px] text-slate-500 italic ml-1">
+                                                         * এই একটি এন্ডপয়েন্ট দিয়েই ছবি, ভয়েস এবং টেক্সট অ্যানালাইসিস সম্ভব।
+                                                     </p>
+                                                 </div>
+                                             </div>
+                                         </div>
+                                     </div>
 
-                                    {/* All Available Models Grid */}
-                                    <div className="mt-6 p-6 rounded-2xl bg-white/[0.02] border border-white/5 space-y-4">
-                                        <div className="flex items-center justify-between">
-                                            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                                                <Code className="h-4 w-4 text-primary" />
-                                                Available Model IDs
-                                            </h3>
-                                            <p className="text-[10px] text-slate-500 italic">Click any ID to copy</p>
-                                        </div>
-                                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-                                            {[
-                                                "gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash", "gemini-1.5-pro",
-                                                "gemini-3.1-flash-lite", "gemini-3.1-pro-preview", "gemini-3.1-flash-tts-preview",
-                                                "gemini-2.5-flash-image", "imagen-4.0-generate-001", "gemma-4-31b-it",
-                                                "gemini-embedding-2", "gemini-1.0-pro", "gemini-1.5-flash-8b", "gemini-2.5-flash-thinking-preview"
-                                            ].map(modelId => (
-                                                <div key={modelId} 
-                                                    className="flex items-center justify-between p-2 rounded-lg bg-white/[0.03] border border-white/5 group hover:border-primary/30 hover:bg-white/[0.05] transition-all cursor-pointer"
-                                                    onClick={() => {
-                                                        navigator.clipboard.writeText(modelId);
-                                                        toast.success(`${modelId} copied`);
-                                                    }}
-                                                >
-                                                    <span className="text-[9px] font-mono text-slate-300 truncate mr-1">{modelId}</span>
-                                                    <Copy className="h-2.5 w-2.5 text-slate-600 group-hover:text-primary transition-colors flex-shrink-0" />
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
+                                     {/* Universal Model & Grid */}
+                                     <div className="mt-6 space-y-4">
+                                         <div className="p-6 rounded-2xl bg-primary/5 border border-primary/10 space-y-4">
+                                             <div className="flex items-center justify-between">
+                                                 <div className="space-y-1">
+                                                     <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                                                         <Sparkles className="h-4 w-4 text-primary" />
+                                                         Recommended Universal Model
+                                                     </h3>
+                                                     <p className="text-[10px] text-slate-400 italic">Handles Text, Vision, and Audio analysis natively.</p>
+                                                 </div>
+                                                 <Button 
+                                                     className="bg-primary text-black font-bold h-9 px-4 rounded-xl hover:bg-primary/90 transition-all"
+                                                     onClick={() => {
+                                                         navigator.clipboard.writeText("gemini-2.5-flash");
+                                                         toast.success("gemini-2.5-flash copied");
+                                                     }}
+                                                 >
+                                                     <Copy className="h-3.5 w-3.5 mr-2" /> gemini-2.5-flash
+                                                 </Button>
+                                             </div>
+                                         </div>
+
+                                         <div className="p-6 rounded-2xl bg-white/[0.02] border border-white/5 space-y-4">
+                                             <div className="flex items-center justify-between">
+                                                 <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                                                     <Code className="h-4 w-4 text-slate-400" />
+                                                     Other Available Model IDs
+                                                 </h3>
+                                                 <p className="text-[10px] text-slate-500 italic">Click copy icon for ID</p>
+                                             </div>
+                                             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                                                 {[
+                                                     "gemini-2.5-pro", "gemini-1.5-flash", "gemini-1.5-pro",
+                                                     "gemini-3.1-flash-lite", "gemini-3.1-pro-preview", "gemini-3.1-flash-tts-preview",
+                                                     "gemini-2.5-flash-image", "imagen-4.0-generate-001", "gemma-4-31b-it",
+                                                     "gemini-embedding-2", "gemini-1.0-pro", "gemini-1.5-flash-8b", "gemini-2.5-flash-thinking-preview"
+                                                 ].map(modelId => (
+                                                     <div key={modelId} 
+                                                         className="flex items-center justify-between p-2 pl-3 rounded-lg bg-white/[0.03] border border-white/5 group hover:border-primary/20 transition-all"
+                                                     >
+                                                         <span className="text-[9px] font-mono text-slate-300 truncate mr-1">{modelId}</span>
+                                                         <Button 
+                                                             variant="ghost" 
+                                                             size="icon" 
+                                                             className="h-6 w-6 text-slate-600 hover:text-primary transition-colors"
+                                                             onClick={() => {
+                                                                 navigator.clipboard.writeText(modelId);
+                                                                 toast.success(`${modelId} copied`);
+                                                             }}
+                                                         >
+                                                             <Copy className="h-2.5 w-2.5" />
+                                                         </Button>
+                                                     </div>
+                                                 ))}
+                                             </div>
+                                         </div>
+                                     </div>
 
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4">
                                         <div className="p-5 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2">
