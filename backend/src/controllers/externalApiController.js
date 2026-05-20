@@ -215,10 +215,19 @@ exports.handleChatCompletion = async (req, res) => {
         let lastError = null;
         let targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
         
-        if (provider === 'openai') targetUrl = 'https://api.openai.com/v1/chat/completions';
-        else if (provider === 'groq') targetUrl = 'https://api.groq.com/openai/v1/chat/completions';
-        else if (provider === 'mistral') targetUrl = 'https://api.mistral.ai/v1/chat/completions';
-        else if (provider === 'anthropic') targetUrl = 'https://api.anthropic.com/v1/messages'; 
+        const useAIStudio = process.env.USE_AISTUDIO_FOR_GEMINI === 'true' && (provider === 'google' || provider === 'gemini');
+        const aiStudioUrl = process.env.AISTUDIO_PROXY_URL;
+        const aiStudioKey = process.env.AISTUDIO_INTERNAL_KEY;
+
+        if (useAIStudio && aiStudioUrl) {
+            targetUrl = `${aiStudioUrl.replace(/\/$/, '')}/v1/chat/completions`;
+            console.log(`[ExternalAPI] Routing Gemini request through AIStudio Proxy: ${aiStudioUrl}`);
+        } else {
+            if (provider === 'openai') targetUrl = 'https://api.openai.com/v1/chat/completions';
+            else if (provider === 'groq') targetUrl = 'https://api.groq.com/openai/v1/chat/completions';
+            else if (provider === 'mistral') targetUrl = 'https://api.mistral.ai/v1/chat/completions';
+            else if (provider === 'anthropic') targetUrl = 'https://api.anthropic.com/v1/messages'; 
+        }
 
         // --- STREAMING SUPPORT ---
         if (stream) {
@@ -227,12 +236,17 @@ exports.handleChatCompletion = async (req, res) => {
             for (let attempt = 0; attempt < maxAttempts; attempt++) {
                 let keyData = null;
                 
-                // 1. Try to get a key from the user's personal pool first
-                keyData = await keyService.getSmartKey(provider, modelToUse, imageUrls.length > 0 ? 'vision' : 'text', false, userConfig.user_id);
-                
-                // 2. Fallback to single userConfig.api_key if no pool key found
-                if (!keyData && hasSingleKey) {
-                    keyData = { key: userConfig.api_key };
+                if (useAIStudio && aiStudioKey) {
+                    // Use internal key for AIStudio
+                    keyData = { key: aiStudioKey };
+                } else {
+                    // 1. Try to get a key from the user's personal pool first
+                    keyData = await keyService.getSmartKey(provider, modelToUse, imageUrls.length > 0 ? 'vision' : 'text', false, userConfig.user_id);
+                    
+                    // 2. Fallback to single userConfig.api_key if no pool key found
+                    if (!keyData && hasSingleKey) {
+                        keyData = { key: userConfig.api_key };
+                    }
                 }
                 
                 if (!keyData || !keyData.key) {
@@ -241,8 +255,12 @@ exports.handleChatCompletion = async (req, res) => {
                 }
 
                 const headers = { 'Content-Type': 'application/json' };
-                if (provider === 'google' || provider === 'gemini') headers['x-goog-api-key'] = keyData.key;
-                else headers['Authorization'] = `Bearer ${keyData.key}`;
+                if (useAIStudio) {
+                    headers['Authorization'] = `Bearer ${keyData.key}`;
+                } else {
+                    if (provider === 'google' || provider === 'gemini') headers['x-goog-api-key'] = keyData.key;
+                    else headers['Authorization'] = `Bearer ${keyData.key}`;
+                }
 
                 try {
                     // Update body for upstream
@@ -290,12 +308,17 @@ exports.handleChatCompletion = async (req, res) => {
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
             let keyData = null;
             
-            // 1. Try to get a key from the user's personal pool first
-            keyData = await keyService.getSmartKey(provider, modelToUse, imageUrls.length > 0 ? 'vision' : 'text', false, userConfig.user_id);
-            
-            // 2. Fallback to single userConfig.api_key if no pool key found
-            if (!keyData && hasSingleKey) {
-                keyData = { key: userConfig.api_key };
+            if (useAIStudio && aiStudioKey) {
+                // Use internal key for AIStudio
+                keyData = { key: aiStudioKey };
+            } else {
+                // 1. Try to get a key from the user's personal pool first
+                keyData = await keyService.getSmartKey(provider, modelToUse, imageUrls.length > 0 ? 'vision' : 'text', false, userConfig.user_id);
+                
+                // 2. Fallback to single userConfig.api_key if no pool key found
+                if (!keyData && hasSingleKey) {
+                    keyData = { key: userConfig.api_key };
+                }
             }
             
             if (!keyData || !keyData.key) {
@@ -304,8 +327,12 @@ exports.handleChatCompletion = async (req, res) => {
             }
 
             const headers = { 'Content-Type': 'application/json' };
-            if (provider === 'google' || provider === 'gemini') headers['x-goog-api-key'] = keyData.key;
-            else headers['Authorization'] = `Bearer ${keyData.key}`;
+            if (useAIStudio) {
+                headers['Authorization'] = `Bearer ${keyData.key}`;
+            } else {
+                if (provider === 'google' || provider === 'gemini') headers['x-goog-api-key'] = keyData.key;
+                else headers['Authorization'] = `Bearer ${keyData.key}`;
+            }
 
             try {
                 // Update body for upstream
@@ -372,13 +399,25 @@ exports.listModels = async (req, res) => {
             return res.status(error.status).json({ error: { message: error.message, type: error.type, code: error.code } });
         }
 
+        const models = [
+            { id: "salesmanchatbot-pro", object: "model", created: 1677610602, owned_by: "salesman", permission: [] },
+            { id: "salesmanchatbot-flash", object: "model", created: 1709251200, owned_by: "salesman", permission: [] },
+            { id: "salesmanchatbot-lite", object: "model", created: 1709251200, owned_by: "salesman", permission: [] }
+        ];
+
+        // Add Gemini models if AIStudio Proxy is enabled
+        if (process.env.USE_AISTUDIO_FOR_GEMINI === 'true') {
+            models.push(
+                { id: "gemini-2.5-flash", object: "model", created: 1715817600, owned_by: "google", permission: [] },
+                { id: "gemini-2.5-pro", object: "model", created: 1715817600, owned_by: "google", permission: [] },
+                { id: "gemini-1.5-flash", object: "model", created: 1715817600, owned_by: "google", permission: [] },
+                { id: "gemini-1.5-pro", object: "model", created: 1715817600, owned_by: "google", permission: [] }
+            );
+        }
+
         return res.json({
             object: "list",
-            data: [
-                { id: "salesmanchatbot-pro", object: "model", created: 1677610602, owned_by: "salesman", permission: [] },
-                { id: "salesmanchatbot-flash", object: "model", created: 1709251200, owned_by: "salesman", permission: [] },
-                { id: "salesmanchatbot-lite", object: "model", created: 1709251200, owned_by: "salesman", permission: [] }
-            ]
+            data: models
         });
     } catch (error) {
         console.error('[ExternalAPI] Error:', error);

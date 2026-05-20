@@ -715,7 +715,44 @@ export default function DeveloperPage() {
                                         </div>
                                     </div>
 
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    {/* Quick Endpoints Card */}
+                                    <div className="mt-8 p-6 rounded-2xl bg-white/[0.02] border border-white/5 space-y-4">
+                                        <div className="flex items-center justify-between">
+                                            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                                                <Globe className="h-4 w-4 text-primary" />
+                                                API Endpoints
+                                            </h3>
+                                            <Badge variant="outline" className="text-[10px] border-primary/20 text-primary uppercase tracking-tighter">OpenAI Compatible</Badge>
+                                        </div>
+                                        
+                                        <div className="space-y-3">
+                                            <div className="space-y-1.5">
+                                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1">Base URL</p>
+                                                <div className="flex gap-2 items-center">
+                                                    <Input value={EXTERNAL_API_BASE} readOnly className="h-9 font-mono bg-black/40 border-white/5 text-xs text-primary" />
+                                                    <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-500 hover:text-white" onClick={() => {
+                                                        navigator.clipboard.writeText(EXTERNAL_API_BASE);
+                                                        toast.success("Base URL copied");
+                                                    }}>
+                                                        <Copy className="h-3.5 w-3.5" />
+                                                    </Button>
+                                                </div>
+                                            </div>
+
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                <div className="p-3 rounded-xl bg-black/40 border border-white/5 space-y-1">
+                                                    <p className="text-[9px] font-bold text-slate-500 uppercase">Chat Completions</p>
+                                                    <p className="text-[10px] font-mono text-white break-all">POST /v1/chat/completions</p>
+                                                </div>
+                                                <div className="p-3 rounded-xl bg-black/40 border border-white/5 space-y-1">
+                                                    <p className="text-[9px] font-bold text-slate-500 uppercase">Audio Transcription</p>
+                                                    <p className="text-[10px] font-mono text-white break-all">POST /v1/audio/transcriptions</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4">
                                         <div className="p-5 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2">
                                             <p className="text-sm font-bold text-white">API Docs</p>
                                             <p className="text-xs text-slate-400 leading-relaxed">Learn how to integrate our AI into your workflow.</p>

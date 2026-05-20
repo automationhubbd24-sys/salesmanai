@@ -2,7 +2,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Copy, ArrowRight, Key, Globe, BookOpenText, CreditCard, Workflow, Zap } from "lucide-react";
+import { Copy, ArrowRight, Key, Globe, BookOpenText, CreditCard, Workflow, Zap, Image as ImageIcon, Mic } from "lucide-react";
 import { toast } from "sonner";
 import { EXTERNAL_API_BASE } from "@/config";
 import { Link } from "react-router-dom";
@@ -58,6 +58,32 @@ while (true) {
     "Response JSON থেকে data নিন এবং পরবর্তী node‑এ পাঠান",
   ];
 
+  const imageExample = `{
+  "model": "gemini-2.5-flash",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        { "type": "text", "text": "What is in this image?" },
+        { "type": "image_url", "image_url": { "url": "https://example.com/photo.jpg" } }
+      ]
+    }
+  ]
+}`;
+
+  const voiceExample = `{
+  "model": "gemini-2.5-flash",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        { "type": "text", "text": "Analyze this audio." },
+        { "type": "audio_url", "audio_url": { "url": "https://example.com/voice.mp3" } }
+      ]
+    }
+  ]
+}`;
+
   return (
     <div className="space-y-6 p-4 md:p-8 animate-in fade-in duration-700">
       <div className="flex justify-between items-center">
@@ -80,6 +106,7 @@ while (true) {
       <Tabs defaultValue="overview" className="space-y-4">
         <TabsList className="bg-secondary">
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="multimodal">Multimodal</TabsTrigger>
           <TabsTrigger value="streaming">Streaming</TabsTrigger>
           <TabsTrigger value="pricing">Pricing</TabsTrigger>
           <TabsTrigger value="n8n">n8n Setup</TabsTrigger>
@@ -115,6 +142,9 @@ while (true) {
                   <div className="font-mono mt-1">
                     POST {EXTERNAL_API_BASE}/v1/chat/completions
                   </div>
+                  <div className="font-mono mt-1">
+                    POST {EXTERNAL_API_BASE}/v1/audio/transcriptions
+                  </div>
                 </div>
               </div>
 
@@ -126,6 +156,46 @@ while (true) {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="multimodal">
+          <div className="grid gap-4 md:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-primary">
+                  <ImageIcon className="h-5 w-5" />
+                  Image Analysis
+                </CardTitle>
+                <CardDescription>ছবি থেকে তথ্য সংগ্রহ বা বর্ণনা করা</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm">
+                  ইমেজ প্রসেস করার জন্য <code>image_url</code> ব্যবহার করুন। এটি <code>gemini-2.5-flash</code> মডেলে সবচেয়ে ভালো কাজ করে।
+                </p>
+                <pre className="rounded-lg border p-3 bg-muted/40 text-xs overflow-auto">
+{imageExample}
+                </pre>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-primary">
+                  <Mic className="h-5 w-5" />
+                  Voice Analysis
+                </CardTitle>
+                <CardDescription>অডিও ফাইল থেকে ট্রান্সক্রিপশন বা বিশ্লেষণ</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm">
+                  ভয়েস বা অডিও ফাইল বিশ্লেষণ করতে <code>audio_url</code> ব্যবহার করুন। এটি সরাসরি জেমিনি এপিআই-এর মাধ্যমে প্রসেস হয়।
+                </p>
+                <pre className="rounded-lg border p-3 bg-muted/40 text-xs overflow-auto">
+{voiceExample}
+                </pre>
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
 
         <TabsContent value="streaming">
