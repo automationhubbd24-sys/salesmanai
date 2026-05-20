@@ -17,7 +17,7 @@ export default function ApiDocsPage() {
 -H "Content-Type: application/json" \\
 -H "Authorization: Bearer YOUR_SERVICE_API_KEY" \\
 -d '{
-  "model": "salesmanchatbot-lite",
+  "model": "gemini-2.5-flash",
   "messages": [
     { "role": "system", "content": "You are a helpful assistant. Respond in Bangla." },
     { "role": "user", "content": "আজকের আবহাওয়া কেমন?" }
@@ -32,7 +32,7 @@ export default function ApiDocsPage() {
     "Authorization": "Bearer YOUR_SERVICE_API_KEY"
   },
   body: JSON.stringify({
-    model: "salesmanchatbot-pro",
+    model: "gemini-2.5-flash",
     messages: [{ role: "user", content: "Write a long story about AI." }],
     stream: true
   })
@@ -54,7 +54,7 @@ while (true) {
     `Method: POST, URL: ${EXTERNAL_API_BASE}/v1/chat/completions`,
     "Headers: Content-Type: application/json",
     "Headers: Authorization: Bearer YOUR_SERVICE_API_KEY",
-    `Body (JSON): { "model": "salesmanchatbot-lite", "messages": [ { "role": "user", "content": "Hello" } ] }`,
+    `Body (JSON): { "model": "gemini-2.5-flash", "messages": [ { "role": "user", "content": "Hello" } ] }`,
     "Response JSON থেকে data নিন এবং পরবর্তী node‑এ পাঠান",
   ];
 

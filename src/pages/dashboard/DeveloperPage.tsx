@@ -482,7 +482,7 @@ export default function DeveloperPage() {
   method: 'POST',
   headers: { 'Authorization': 'Bearer YOUR_API_KEY' },
   body: JSON.stringify({
-    model: 'salesmanchatbot-pro',
+    model: 'gemini-2.5-flash',
     prompt: 'Hello AI!'
   })
 });`}
@@ -749,223 +749,15 @@ export default function DeveloperPage() {
                                                     <p className="text-[10px] font-mono text-white break-all">POST /v1/audio/transcriptions</p>
                                                 </div>
                                             </div>
-                                        </div>
-                                    </div>
-
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4">
-                                        <div className="p-5 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2">
-                                            <p className="text-sm font-bold text-white">API Docs</p>
-                                            <p className="text-xs text-slate-400 leading-relaxed">Learn how to integrate our AI into your workflow.</p>
-                                            <Button variant="link" className="text-primary font-bold p-0 h-auto text-xs" asChild>
-                                                <Link to="/dashboard/api-docs" className="flex items-center gap-1">
-                                                    Open Documentation <ArrowRight className="h-3 w-3" />
-                                                </Link>
-                                            </Button>
-                                        </div>
-                                        <div className="p-5 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2">
-                                            <p className="text-sm font-bold text-white">Usage Trial</p>
-                                            <p className="text-xs text-slate-400 leading-relaxed">20 free requests included for initial testing.</p>
-                                        </div>
-                                    </div>
-                                </CardContent>
-                            </Card>
-
-                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                                <Card className="border-white/5 bg-[#121212] rounded-3xl overflow-hidden shadow-xl">
-                                    <CardHeader className="pt-8 px-6 md:px-10 cursor-default select-none">
-                                        <CardTitle className="text-lg font-bold text-white flex items-center gap-2">
-                                            <Cpu className="h-5 w-5 text-primary" />
-                                            External Engine
-                                        </CardTitle>
-                                        <CardDescription className="text-slate-400 text-xs">Connect your own AI models for extra capacity and flexibility.</CardDescription>
-                                    </CardHeader>
-                                    <CardContent className="space-y-4 px-6 md:px-10 pb-10">
-                                        <div className="space-y-4">
-                                            <div className="space-y-2">
-                                                <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">AI Provider</Label>
-                                                <Select value={selectedProvider} onValueChange={setSelectedProvider}>
-                                                    <SelectTrigger className="h-12 bg-white/[0.02] border-white/10 rounded-xl text-white">
-                                                        <SelectValue placeholder="Select Provider" />
-                                                    </SelectTrigger>
-                                                    <SelectContent className="bg-zinc-950 border-white/10 text-white">
-                                                        {providers.map(p => (
-                                                            <SelectItem key={p.id} value={p.id} className="cursor-pointer">
-                                                                <span className="flex items-center gap-2">
-                                                                    <span>{p.icon}</span>
-                                                                    <span>{p.name}</span>
-                                                                </span>
-                                                            </SelectItem>
-                                                        ))}
-                                                    </SelectContent>
-                                                </Select>
-                                            </div>
-
-                                            <div className="space-y-3">
-                                                <div className="space-y-2">
-                                                    <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Admin Email (Gmail)</Label>
-                                                    <Input 
-                                                        placeholder="example@gmail.com" 
-                                                        value={userGmail}
-                                                        onChange={(e) => setUserGmail(e.target.value)}
-                                                        className="h-12 bg-white/[0.02] border-white/10 rounded-xl text-white text-sm"
-                                                    />
-                                                </div>
-                                                <div className="space-y-2">
-                                                    <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">
-                                                        {providers.find(p => p.id === selectedProvider)?.name} API Key
-                                                    </Label>
-                                                    <Input 
-                                                        placeholder={`Paste your ${providers.find(p => p.id === selectedProvider)?.name} key here`}
-                                                        value={externalKey}
-                                                        onChange={(e) => setExternalKey(e.target.value)}
-                                                        className="h-12 bg-white/[0.02] border-white/10 rounded-xl text-white text-sm"
-                                                    />
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <Button 
-                                            onClick={handleAddExternalKey} 
-                                            disabled={isAddingKey || !externalKey || !userGmail}
-                                            className="w-full h-12 bg-primary text-black hover:bg-primary/90 font-bold rounded-xl transition-all cursor-pointer disabled:cursor-not-allowed mt-2"
-                                        >
-                                            {isAddingKey ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
-                                            Save {providers.find(p => p.id === selectedProvider)?.name} Key
-                                        </Button>
-
-                                        <Dialog open={isManageKeysOpen} onOpenChange={setIsManageKeysOpen}>
-                                            <DialogTrigger asChild>
-                                                <Button 
-                                                    variant="outline"
-                                                    className="w-full h-12 border-white/10 bg-white/5 hover:bg-white/10 text-white font-bold rounded-xl transition-all cursor-pointer mt-2"
-                                                    onClick={fetchUserKeys}
-                                                >
-                                                    <Settings2 className="h-4 w-4 mr-2 text-primary" />
-                                                    Manage API Keys ({userKeys.length})
-                                                </Button>
-                                            </DialogTrigger>
-                                            <DialogContent className="sm:max-w-[600px] bg-zinc-950 border-white/10 text-white rounded-3xl p-0 overflow-hidden">
-                                                <DialogHeader className="pt-8 px-8">
-                                                    <DialogTitle className="text-2xl font-bold flex items-center gap-2">
-                                                        <Key className="h-6 w-6 text-primary" />
-                                                        Your API Keys Pool
-                                                    </DialogTitle>
-                                                    <DialogDescription className="text-slate-400">
-                                                        View and manage your added API keys for the rotation pool.
-                                                    </DialogDescription>
-                                                </DialogHeader>
-                                                
-                                                <div className="px-8 py-6 max-h-[400px] overflow-y-auto">
-                                                    {loadingKeys ? (
-                                                        <div className="flex flex-col items-center justify-center py-12 space-y-4">
-                                                            <RefreshCw className="h-8 w-8 animate-spin text-primary" />
-                                                            <p className="text-slate-400 text-sm">Loading your keys...</p>
-                                                        </div>
-                                                    ) : userKeys.length > 0 ? (
-                                                        <div className="rounded-2xl border border-white/5 overflow-hidden">
-                                                            <Table>
-                                                                <TableHeader className="bg-white/[0.02]">
-                                                                    <TableRow className="border-white/5 hover:bg-transparent">
-                                                                        <TableHead className="text-[10px] font-bold uppercase tracking-widest text-slate-500 py-4">Provider</TableHead>
-                                                                        <TableHead className="text-[10px] font-bold uppercase tracking-widest text-slate-500 py-4">Key (Masked)</TableHead>
-                                                                        <TableHead className="text-[10px] font-bold uppercase tracking-widest text-slate-500 py-4 text-right">Action</TableHead>
-                                                                    </TableRow>
-                                                                </TableHeader>
-                                                                <TableBody>
-                                                                    {userKeys.map((k) => (
-                                                                        <TableRow key={k.id} className="border-white/5 hover:bg-white/[0.01] transition-colors">
-                                                                            <TableCell className="py-4">
-                                                                                <div className="flex items-center gap-2 text-white font-medium text-xs capitalize">
-                                                                                    <span className="text-lg">{providers.find(p => p.id === k.provider)?.icon || '✨'}</span>
-                                                                                    {k.provider}
-                                                                                </div>
-                                                                            </TableCell>
-                                                                            <TableCell className="py-4">
-                                                                                <code className="text-[10px] font-mono text-primary bg-primary/5 px-2 py-1 rounded">
-                                                                                    {k.api}
-                                                                                </code>
-                                                                            </TableCell>
-                                                                            <TableCell className="py-4 text-right">
-                                                                                <Button 
-                                                                                    variant="ghost" 
-                                                                                    size="sm" 
-                                                                                    onClick={() => handleDeleteKey(k.id)}
-                                                                                    className="h-9 w-9 p-0 text-slate-500 hover:text-red-400 hover:bg-red-400/10 rounded-xl transition-all"
-                                                                                >
-                                                                                    <Trash2 className="h-4 w-4" />
-                                                                                </Button>
-                                                                            </TableCell>
-                                                                        </TableRow>
-                                                                    ))}
-                                                                </TableBody>
-                                                            </Table>
-                                                        </div>
-                                                    ) : (
-                                                        <div className="flex flex-col items-center justify-center py-12 text-center space-y-4">
-                                                            <div className="h-16 w-16 bg-white/[0.02] rounded-full flex items-center justify-center">
-                                                                <Key className="h-8 w-8 text-slate-600" />
-                                                            </div>
-                                                            <div>
-                                                                <p className="text-white font-semibold">No API keys added yet</p>
-                                                                <p className="text-slate-500 text-xs mt-1">Add your first key to start using the rotation pool.</p>
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                </div>
-
-                                                <div className="px-8 py-6 bg-white/[0.02] border-t border-white/5 flex justify-end">
-                                                    <Button 
-                                                        onClick={() => setIsManageKeysOpen(false)}
-                                                        className="bg-white/5 hover:bg-white/10 text-white border-white/10 rounded-xl px-6"
-                                                    >
-                                                        Close
-                                                    </Button>
-                                                </div>
-                                            </DialogContent>
-                                        </Dialog>
-                                    </CardContent>
-                                </Card>
-
-                                <Card className="border-white/5 bg-[#121212] rounded-3xl overflow-hidden shadow-xl mt-6">
-                                    <CardHeader className="pt-8 px-6 md:px-10 cursor-default select-none">
-                                        <CardTitle className="text-lg font-bold text-white flex items-center justify-between">
-                                            <span>n8n / OpenAI Compatible</span>
-                                            <div className="flex gap-2">
-                                                <Button 
-                                                    variant="ghost" 
-                                                    size="sm" 
-                                                    className="h-8 px-3 text-[10px] font-bold text-slate-500 hover:text-white border border-white/5 rounded-lg"
-                                                    onClick={() => {
-                                                        const baseUrl = `${EXTERNAL_API_BASE}/v1`;
-                                                        navigator.clipboard.writeText(baseUrl);
-                                                        toast.success("Base URL copied");
-                                                    }}
-                                                >
-                                                    <Copy className="h-3 w-3 mr-1" /> Base URL
-                                                </Button>
-                                            </div>
-                                        </CardTitle>
-                                        <CardDescription className="text-slate-400 text-xs">Use these settings for n8n, Flowise, or any OpenAI client.</CardDescription>
-                                    </CardHeader>
-                                    <CardContent className="space-y-4 px-6 md:px-10 pb-10">
-                                        <div className="space-y-4">
-                                            <div className="space-y-1.5">
-                                                <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Base URL</Label>
-                                                <div className="bg-black/40 p-3 rounded-xl border border-white/5 flex items-center justify-between group">
-                                                    <code className="text-[10px] md:text-xs font-mono text-primary break-all">
-                                                        {EXTERNAL_API_BASE}/v1
-                                                    </code>
-                                                </div>
-                                            </div>
 
                                             <div className="space-y-1.5">
                                                 <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Available Models</Label>
                                                 <div className="grid grid-cols-1 gap-2">
                                                     {[
-                                                        { id: "salesmanchatbot-pro", desc: "Complex reasoning & logic", tags: ["Text"] },
-                                                        { id: "salesmanchatbot-flash", desc: "Fast multimodal engine", tags: ["Text", "Vision"] },
-                                                        { id: "gemini-2.5-flash", desc: "Next-gen multimodal (Native)", tags: ["Text", "Vision", "Audio"] },
-                                                        { id: "gemini-2.5-pro", desc: "Most powerful multimodal", tags: ["Text", "Vision", "Audio"] },
-                                                        { id: "salesmanchatbot-lite", desc: "Lightweight & fast", tags: ["Text"] }
+                                                        { id: "gemini-2.5-flash", desc: "Next-gen multimodal (Fast & Accurate)", tags: ["Text", "Vision", "Audio"] },
+                                                        { id: "gemini-2.5-pro", desc: "Most powerful multimodal for complex tasks", tags: ["Text", "Vision", "Audio"] },
+                                                        { id: "gemini-1.5-flash", desc: "Lightweight & extremely fast", tags: ["Text", "Vision"] },
+                                                        { id: "gemini-1.5-pro", desc: "Balanced performance & intelligence", tags: ["Text", "Vision"] }
                                                     ].map(m => (
                                                         <div key={m.id} className="flex items-center justify-between p-2.5 rounded-xl bg-white/[0.03] border border-white/5 group hover:border-primary/20 transition-all">
                                                             <div className="flex flex-col gap-1">
@@ -995,18 +787,32 @@ export default function DeveloperPage() {
                                                 </div>
                                             </div>
                                         </div>
+                                    </div>
 
-                                        <div className="pt-2 flex items-center gap-2 text-[10px] text-slate-500 font-medium">
-                                            <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                                            <span>Streaming & Vision Supported</span>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4">
+                                        <div className="p-5 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2">
+                                            <p className="text-sm font-bold text-white">API Docs</p>
+                                            <p className="text-xs text-slate-400 leading-relaxed">Learn how to integrate our AI into your workflow.</p>
+                                            <Button variant="link" className="text-primary font-bold p-0 h-auto text-xs" asChild>
+                                                <Link to="/dashboard/api-docs" className="flex items-center gap-1">
+                                                    Open Documentation <ArrowRight className="h-3 w-3" />
+                                                </Link>
+                                            </Button>
                                         </div>
-                                    </CardContent>
-                                </Card>
-                            </div>
+                                        <div className="p-5 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2">
+                                            <p className="text-sm font-bold text-white">Usage Trial</p>
+                                            <p className="text-xs text-slate-400 leading-relaxed">20 free requests included for initial testing.</p>
+                                        </div>
+                                    </div>
+                                </CardContent>
+                            </Card>
 
                             <Card className="border-white/5 bg-[#121212] rounded-3xl overflow-hidden shadow-xl">
                                 <CardHeader className="px-6 md:px-10 pt-8 pb-4 cursor-default select-none">
-                                    <CardTitle className="text-lg font-bold text-white">Usage Statistics</CardTitle>
+                                    <CardTitle className="text-lg font-bold text-white flex items-center gap-2">
+                                        <Activity className="h-5 w-5 text-primary" />
+                                        Usage Statistics
+                                    </CardTitle>
                                 </CardHeader>
                                 <CardContent className="px-6 md:px-10 pb-10">
                                     <div className="rounded-xl border border-white/5 overflow-hidden">

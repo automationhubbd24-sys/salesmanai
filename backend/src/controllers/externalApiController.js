@@ -176,6 +176,7 @@ exports.handleChatCompletion = async (req, res) => {
         }
 
         // 6. Check for API Keys (Personal Pool or Single Key) - MANDATORY for Developer API
+        // UNLESS AIStudio Proxy is enabled for Gemini
         let hasUserPoolKeys = false;
         try {
             const pgClient = require('../services/pgClient');
@@ -189,8 +190,12 @@ exports.handleChatCompletion = async (req, res) => {
         }
 
         const hasSingleKey = userConfig.api_key && userConfig.api_key.trim() !== '';
+        
+        const useAIStudio = process.env.USE_AISTUDIO_FOR_GEMINI === 'true' && (provider === 'google' || provider === 'gemini');
+        const aiStudioKey = process.env.AISTUDIO_INTERNAL_KEY;
 
-        if (!hasUserPoolKeys && !hasSingleKey) {
+        // If not using AIStudio and no personal keys found, block the request
+        if (!useAIStudio && !hasUserPoolKeys && !hasSingleKey) {
             return res.status(200).json({ 
                 id: `err-${Date.now()}`,
                 object: "chat.completion",
@@ -215,9 +220,7 @@ exports.handleChatCompletion = async (req, res) => {
         let lastError = null;
         let targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
         
-        const useAIStudio = process.env.USE_AISTUDIO_FOR_GEMINI === 'true' && (provider === 'google' || provider === 'gemini');
         const aiStudioUrl = process.env.AISTUDIO_PROXY_URL;
-        const aiStudioKey = process.env.AISTUDIO_INTERNAL_KEY;
 
         if (useAIStudio && aiStudioUrl) {
             targetUrl = `${aiStudioUrl.replace(/\/$/, '')}/v1/chat/completions`;
@@ -400,20 +403,11 @@ exports.listModels = async (req, res) => {
         }
 
         const models = [
-            { id: "salesmanchatbot-pro", object: "model", created: 1677610602, owned_by: "salesman", permission: [] },
-            { id: "salesmanchatbot-flash", object: "model", created: 1709251200, owned_by: "salesman", permission: [] },
-            { id: "salesmanchatbot-lite", object: "model", created: 1709251200, owned_by: "salesman", permission: [] }
+            { id: "gemini-2.5-flash", object: "model", created: 1715817600, owned_by: "google", permission: [] },
+            { id: "gemini-2.5-pro", object: "model", created: 1715817600, owned_by: "google", permission: [] },
+            { id: "gemini-1.5-flash", object: "model", created: 1715817600, owned_by: "google", permission: [] },
+            { id: "gemini-1.5-pro", object: "model", created: 1715817600, owned_by: "google", permission: [] }
         ];
-
-        // Add Gemini models if AIStudio Proxy is enabled
-        if (process.env.USE_AISTUDIO_FOR_GEMINI === 'true') {
-            models.push(
-                { id: "gemini-2.5-flash", object: "model", created: 1715817600, owned_by: "google", permission: [] },
-                { id: "gemini-2.5-pro", object: "model", created: 1715817600, owned_by: "google", permission: [] },
-                { id: "gemini-1.5-flash", object: "model", created: 1715817600, owned_by: "google", permission: [] },
-                { id: "gemini-1.5-pro", object: "model", created: 1715817600, owned_by: "google", permission: [] }
-            );
-        }
 
         return res.json({
             object: "list",
@@ -449,8 +443,8 @@ exports.transcribeAudio = async (req, res) => {
 
         console.log(`[ExternalAPI] Transcribing Audio for User ${userConfig.user_id}...`);
         
-        // Use LiteEngine (Groq Whisper)
-        const cost = await dbService.getCostForModel('salesmanchatbot-lite');
+        // Use Gemini for cost calculation (Audio Transcription)
+        const cost = await dbService.getCostForModel('gemini-1.5-flash');
 
         let transcription = "";
         try {
@@ -464,7 +458,7 @@ exports.transcribeAudio = async (req, res) => {
         await dbService.deductUserBalance(userConfig.user_id, cost, `Audio Transcription`);
         
         // Log Usage
-        await dbService.logApiUsage(userConfig.user_id, 'salesmanchatbot-lite', 1, cost, 'external_api');
+        await dbService.logApiUsage(userConfig.user_id, 'gemini-1.5-flash', 1, cost, 'external_api');
 
         res.json({ text: transcription });
 
