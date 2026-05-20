@@ -436,17 +436,29 @@ exports.transcribeAudio = async (req, res) => {
             return res.status(402).json({ error: { message: `Insufficient balance. Minimum 0.001 BDT required.`, type: 'insufficient_quota', code: 'insufficient_balance' } });
         }
 
-        const { url } = req.body;
-        if (!url) {
-            // Support both {url: "..."} and {audio: "..."} or directly in body if sent via multipart
-            const audioUrl = req.body.url || req.body.audio || req.body.audio_url;
-            if (!audioUrl) {
-                return res.status(400).json({ error: { message: 'Missing audio URL. Please provide "url" or "audio_url" in request body.', type: 'invalid_request_error' } });
-            }
-            req.body.url = audioUrl; // Normalize for logic below
+        // --- NEW ROBUST URL EXTRACTION ---
+        let targetUrl = null;
+        
+        // 1. Check req.body.url or alternative names
+        if (req.body) {
+            targetUrl = req.body.url || req.body.audio || req.body.audio_url || req.body.file_url;
+        }
+        
+        // 2. Fallback to multipart/form-data if targetUrl is still null
+        if (!targetUrl && req.files && req.files.audio) {
+            // If it's an uploaded file, we might need a different handling logic, 
+            // but for now we look for a URL.
         }
 
-        const targetUrl = req.body.url;
+        if (!targetUrl) {
+            return res.status(400).json({ 
+                error: { 
+                    message: 'Missing audio URL. Please provide "url" in your JSON body.', 
+                    type: 'invalid_request_error' 
+                } 
+            });
+        }
+
         console.log(`[ExternalAPI] Transcribing Audio for User ${userConfig.user_id} | URL: ${targetUrl.substring(0, 50)}...`);
         
         // Use Gemini for cost calculation (Audio Transcription)
@@ -471,11 +483,11 @@ exports.transcribeAudio = async (req, res) => {
     } catch (error) {
         console.error('[ExternalAPI] Audio Error:', error);
         const branded = aiService.formatBrandedError(error);
-        return res.status(branded.code).json({ 
+        return res.status(branded.code || 500).json({ 
             error: { 
-                message: branded.message, 
-                type: branded.type, 
-                code: branded.code 
+                message: branded.message || error.message, 
+                type: branded.type || 'server_error', 
+                code: branded.code || 500
             } 
         });
     }
