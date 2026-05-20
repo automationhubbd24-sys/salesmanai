@@ -803,16 +803,19 @@ export default function DeveloperPage() {
                                              <div className="flex items-center justify-between">
                                                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
                                                      <Code className="h-4 w-4 text-slate-400" />
-                                                     Other Available Model IDs
+                                                     All Available Models
                                                  </h3>
-                                                 <p className="text-[10px] text-slate-500 italic">Click copy icon for ID</p>
+                                                 <p className="text-[10px] text-slate-500 italic">Total 27 specialized models available via AI Studio Proxy</p>
                                              </div>
                                              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
                                                  {[
-                                                     "gemini-2.5-pro", "gemini-1.5-flash", "gemini-1.5-pro",
-                                                     "gemini-3.1-flash-lite", "gemini-3.1-pro-preview", "gemini-3.1-flash-tts-preview",
-                                                     "gemini-2.5-flash-image", "imagen-4.0-generate-001", "gemma-4-31b-it",
-                                                     "gemini-embedding-2", "gemini-1.0-pro", "gemini-1.5-flash-8b", "gemini-2.5-flash-thinking-preview"
+                                                     "gemini-2.5-flash", "gemini-2.5-pro", "gemini-3.1-flash-lite", "gemini-3.1-pro-preview",
+                                                     "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-flash-lite-latest", "gemini-pro-latest",
+                                                     "gemini-3-flash-preview", "gemini-3-pro-preview", "gemini-3.1-flash-lite-preview", "gemini-2.5-flash-thinking-preview",
+                                                     "gemini-2.5-flash-image", "gemini-3-pro-image-preview", "gemini-3.1-flash-image-preview", "imagen-4.0-generate-001",
+                                                     "imagen-4.0-ultra-generate-001", "imagen-4.0-fast-generate-001", "gemini-2.5-flash-preview-tts", "gemini-2.5-pro-preview-tts",
+                                                     "gemini-3.1-flash-tts-preview", "gemma-4-26b-a4b-it", "gemma-4-31b-it", "gemini-embedding-2",
+                                                     "gemini-embedding-001", "gemini-embedding-2-preview", "gemini-robotics-er-1.6-preview"
                                                  ].map(modelId => (
                                                      <div key={modelId} 
                                                          className="flex items-center justify-between p-2 pl-3 rounded-lg bg-white/[0.03] border border-white/5 group hover:border-primary/20 transition-all"
