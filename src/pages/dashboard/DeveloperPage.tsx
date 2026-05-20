@@ -961,19 +961,28 @@ export default function DeveloperPage() {
                                                 <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Available Models</Label>
                                                 <div className="grid grid-cols-1 gap-2">
                                                     {[
-                                                        { id: "salesmanchatbot-pro", desc: "Best for complex reasoning" },
-                                                        { id: "salesmanchatbot-flash", desc: "Fast & multimodal (Vision)" },
-                                                        { id: "salesmanchatbot-lite", desc: "Lightweight & fast" }
+                                                        { id: "salesmanchatbot-pro", desc: "Complex reasoning & logic", tags: ["Text"] },
+                                                        { id: "salesmanchatbot-flash", desc: "Fast multimodal engine", tags: ["Text", "Vision"] },
+                                                        { id: "gemini-2.5-flash", desc: "Next-gen multimodal (Native)", tags: ["Text", "Vision", "Audio"] },
+                                                        { id: "gemini-2.5-pro", desc: "Most powerful multimodal", tags: ["Text", "Vision", "Audio"] },
+                                                        { id: "salesmanchatbot-lite", desc: "Lightweight & fast", tags: ["Text"] }
                                                     ].map(m => (
-                                                        <div key={m.id} className="flex items-center justify-between p-2 rounded-lg bg-white/[0.02] border border-white/5 group">
-                                                            <div className="flex flex-col">
-                                                                <span className="text-[10px] font-mono text-slate-200">{m.id}</span>
-                                                                <span className="text-[8px] text-slate-500">{m.desc}</span>
+                                                        <div key={m.id} className="flex items-center justify-between p-2.5 rounded-xl bg-white/[0.03] border border-white/5 group hover:border-primary/20 transition-all">
+                                                            <div className="flex flex-col gap-1">
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className="text-[11px] font-mono font-bold text-slate-200">{m.id}</span>
+                                                                    <div className="flex gap-1">
+                                                                        {m.tags.map(tag => (
+                                                                            <span key={tag} className="text-[7px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/10 font-bold uppercase">{tag}</span>
+                                                                        ))}
+                                                                    </div>
+                                                                </div>
+                                                                <span className="text-[9px] text-slate-500">{m.desc}</span>
                                                             </div>
                                                             <Button 
                                                                 variant="ghost" 
                                                                 size="sm" 
-                                                                className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                                className="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-primary"
                                                                 onClick={() => {
                                                                     navigator.clipboard.writeText(m.id);
                                                                     toast.success(`${m.id} copied`);
