@@ -55,6 +55,29 @@ export default function ApiDocsPage() {
   ]
 }'`;
 
+  const streamExample = `const response = await fetch("${EXTERNAL_API_BASE}/v1/chat/completions", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer YOUR_SERVICE_API_KEY"
+  },
+  body: JSON.stringify({
+    model: "gemini-2.5-flash",
+    messages: [{ role: "user", content: "Write a long story about AI." }],
+    stream: true
+  })
+});
+
+const reader = response.body.getReader();
+const decoder = new TextDecoder();
+
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+  const chunk = decoder.decode(value);
+  console.log(chunk);
+}`;
+
   const n8nSteps = [
     "n8n খুলে নতুন workflow তৈরি করুন",
     "একটি HTTP Request node যোগ করুন",
