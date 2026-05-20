@@ -438,17 +438,23 @@ exports.transcribeAudio = async (req, res) => {
 
         const { url } = req.body;
         if (!url) {
-            return res.status(400).json({ error: { message: 'Missing audio URL', type: 'invalid_request_error' } });
+            // Support both {url: "..."} and {audio: "..."} or directly in body if sent via multipart
+            const audioUrl = req.body.url || req.body.audio || req.body.audio_url;
+            if (!audioUrl) {
+                return res.status(400).json({ error: { message: 'Missing audio URL. Please provide "url" or "audio_url" in request body.', type: 'invalid_request_error' } });
+            }
+            req.body.url = audioUrl; // Normalize for logic below
         }
 
-        console.log(`[ExternalAPI] Transcribing Audio for User ${userConfig.user_id}...`);
+        const targetUrl = req.body.url;
+        console.log(`[ExternalAPI] Transcribing Audio for User ${userConfig.user_id} | URL: ${targetUrl.substring(0, 50)}...`);
         
         // Use Gemini for cost calculation (Audio Transcription)
         const cost = await dbService.getCostForModel('gemini-1.5-flash');
 
         let transcription = "";
         try {
-            transcription = await liteEngineService.transcribeAudio(url);
+            transcription = await liteEngineService.transcribeAudio(targetUrl);
         } catch (e) {
             console.error('[ExternalAPI] Transcription Failed:', e.message);
             return res.status(500).json({ error: { message: 'Transcription Failed', details: e.message } });
