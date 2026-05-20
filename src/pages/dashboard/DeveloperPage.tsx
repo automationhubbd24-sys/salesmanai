@@ -740,57 +740,44 @@ export default function DeveloperPage() {
                                             </div>
 
                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                                <div className="p-3 rounded-xl bg-black/40 border border-white/5 space-y-1">
-                                                    <p className="text-[9px] font-bold text-slate-500 uppercase">Chat Completions</p>
+                                                <div className="p-3 rounded-xl bg-black/40 border border-white/5 space-y-1 relative overflow-hidden group">
+                                                    <div className="absolute top-0 right-0 p-1">
+                                                        <Badge className="text-[7px] bg-primary/20 text-primary border-none py-0 px-1">Multimodal</Badge>
+                                                    </div>
+                                                    <p className="text-[9px] font-bold text-slate-500 uppercase">Chat & Vision & Audio</p>
                                                     <p className="text-[10px] font-mono text-white break-all">POST /v1/chat/completions</p>
+                                                    <p className="text-[8px] text-slate-500 italic mt-1">Supports Text, Image URL, and Audio URL</p>
                                                 </div>
                                                 <div className="p-3 rounded-xl bg-black/40 border border-white/5 space-y-1">
                                                     <p className="text-[9px] font-bold text-slate-500 uppercase">Audio Transcription</p>
                                                     <p className="text-[10px] font-mono text-white break-all">POST /v1/audio/transcriptions</p>
+                                                    <p className="text-[8px] text-slate-500 italic mt-1">Convert speech to text (Whisper/Gemini)</p>
                                                 </div>
                                             </div>
 
                                             <div className="space-y-1.5">
                                                 <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Available Models</Label>
-                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
                                                     {[
-                                                        { id: "gemini-2.5-flash", desc: "Next-gen multimodal (Stable)", tags: ["Text", "Vision", "Audio"] },
-                                                        { id: "gemini-2.5-pro", desc: "Most powerful stable multimodal", tags: ["Text", "Vision", "Audio"] },
-                                                        { id: "gemini-3.1-flash-lite", desc: "Latest high-speed lite model", tags: ["Text", "Vision"] },
-                                                        { id: "gemini-3.1-pro-preview", desc: "Gemini 3.1 Pro Preview", tags: ["Text", "Vision"] },
-                                                        { id: "gemini-3.1-flash-tts-preview", desc: "Text-to-Speech Preview", tags: ["Text", "Audio"] },
-                                                        { id: "gemma-4-31b-it", desc: "Gemma 4 Instruction Tuned", tags: ["Text"] },
-                                                        { id: "gemini-2.5-flash-image", desc: "Flash Image Generation", tags: ["Image Gen"] },
-                                                        { id: "imagen-4.0-generate-001", desc: "Imagen 4 High Quality", tags: ["Image Gen"] }
-                                                    ].map(m => (
-                                                        <div key={m.id} className="flex items-center justify-between p-2.5 rounded-xl bg-white/[0.03] border border-white/5 group hover:border-primary/20 transition-all">
-                                                            <div className="flex flex-col gap-1 overflow-hidden">
-                                                                <div className="flex items-center gap-2">
-                                                                    <span className="text-[10px] font-mono font-bold text-slate-200 truncate">{m.id}</span>
-                                                                    <div className="flex gap-1 flex-shrink-0">
-                                                                        {m.tags.slice(0, 2).map(tag => (
-                                                                            <span key={tag} className="text-[6px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/10 font-bold uppercase">{tag}</span>
-                                                                        ))}
-                                                                    </div>
-                                                                </div>
-                                                                <span className="text-[8px] text-slate-500 truncate">{m.desc}</span>
-                                                            </div>
-                                                            <Button 
-                                                                variant="ghost" 
-                                                                size="sm" 
-                                                                className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-primary flex-shrink-0"
-                                                                onClick={() => {
-                                                                    navigator.clipboard.writeText(m.id);
-                                                                    toast.success(`${m.id} copied`);
-                                                                }}
-                                                            >
-                                                                <Copy className="h-3 w-3" />
-                                                            </Button>
+                                                        "gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash", "gemini-1.5-pro",
+                                                        "gemini-3.1-flash-lite", "gemini-3.1-pro-preview", "gemini-3.1-flash-tts-preview",
+                                                        "gemini-2.5-flash-image", "imagen-4.0-generate-001", "gemma-4-31b-it",
+                                                        "gemini-embedding-2", "gemini-1.0-pro", "gemini-1.5-flash-8b", "gemini-2.5-flash-thinking-preview"
+                                                    ].map(modelId => (
+                                                        <div key={modelId} 
+                                                            className="flex items-center justify-between p-2 rounded-xl bg-white/[0.03] border border-white/5 group hover:border-primary/30 hover:bg-white/[0.05] transition-all cursor-pointer"
+                                                            onClick={() => {
+                                                                navigator.clipboard.writeText(modelId);
+                                                                toast.success(`${modelId} copied`);
+                                                            }}
+                                                        >
+                                                            <span className="text-[9px] font-mono text-slate-300 truncate mr-2">{modelId}</span>
+                                                            <Copy className="h-2.5 w-2.5 text-slate-600 group-hover:text-primary transition-colors flex-shrink-0" />
                                                         </div>
                                                     ))}
                                                 </div>
                                                 <div className="mt-2 text-center">
-                                                    <p className="text-[9px] text-slate-500 italic">...and 20+ more specialized models available via API</p>
+                                                    <p className="text-[9px] text-slate-500 italic">Click on any model ID to copy</p>
                                                 </div>
                                             </div>
                                         </div>
