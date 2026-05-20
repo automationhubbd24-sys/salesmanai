@@ -19,34 +19,41 @@ export default function ApiDocsPage() {
 -d '{
   "model": "gemini-2.5-flash",
   "messages": [
-    { "role": "system", "content": "You are a helpful assistant. Respond in Bangla." },
-    { "role": "user", "content": "আজকের আবহাওয়া কেমন?" }
-  ],
-  "stream": false
+    { "role": "user", "content": "Hello, how are you?" }
+  ]
 }'`;
 
-  const streamExample = `const response = await fetch("${EXTERNAL_API_BASE}/v1/chat/completions", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    "Authorization": "Bearer YOUR_SERVICE_API_KEY"
-  },
-  body: JSON.stringify({
-    model: "gemini-2.5-flash",
-    messages: [{ role: "user", content: "Write a long story about AI." }],
-    stream: true
-  })
-});
+  const visionCurl = `curl -X POST "${EXTERNAL_API_BASE}/v1/chat/completions" \\
+-H "Content-Type: application/json" \\
+-H "Authorization: Bearer YOUR_SERVICE_API_KEY" \\
+-d '{
+  "model": "gemini-2.5-flash",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        { "type": "text", "text": "What is in this image?" },
+        { "type": "image_url", "image_url": { "url": "https://example.com/photo.jpg" } }
+      ]
+    }
+  ]
+}'`;
 
-const reader = response.body.getReader();
-const decoder = new TextDecoder();
-
-while (true) {
-  const { done, value } = await reader.read();
-  if (done) break;
-  const chunk = decoder.decode(value);
-  console.log(chunk);
-}`;
+  const audioCurl = `curl -X POST "${EXTERNAL_API_BASE}/v1/chat/completions" \\
+-H "Content-Type: application/json" \\
+-H "Authorization: Bearer YOUR_SERVICE_API_KEY" \\
+-d '{
+  "model": "gemini-2.5-flash",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        { "type": "text", "text": "Analyze this voice memo." },
+        { "type": "audio_url", "audio_url": { "url": "https://example.com/voice.mp3" } }
+      ]
+    }
+  ]
+}'`;
 
   const n8nSteps = [
     "n8n খুলে নতুন workflow তৈরি করুন",
@@ -54,8 +61,13 @@ while (true) {
     `Method: POST, URL: ${EXTERNAL_API_BASE}/v1/chat/completions`,
     "Headers: Content-Type: application/json",
     "Headers: Authorization: Bearer YOUR_SERVICE_API_KEY",
-    `Body (JSON): { "model": "gemini-2.5-flash", "messages": [ { "role": "user", "content": "Hello" } ] }`,
-    "Response JSON থেকে data নিন এবং পরবর্তী node‑এ পাঠান",
+    `Body (JSON): { 
+  "model": "gemini-2.5-flash", 
+  "messages": [ 
+    { "role": "user", "content": "Your message or multimodal content" } 
+  ] 
+}`,
+    "Response JSON থেকে 'choices[0].message.content' ডাটা নিন",
   ];
 
   const imageExample = `{
@@ -148,11 +160,30 @@ while (true) {
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <label className="text-sm font-medium">cURL Example</label>
-                <pre className="rounded-lg border p-3 bg-muted/40 text-xs overflow-auto">
+              <div className="space-y-4">
+                <label className="text-sm font-medium">cURL Examples</label>
+                <Tabs defaultValue="text-curl" className="w-full">
+                  <TabsList className="bg-muted w-full justify-start overflow-x-auto">
+                    <TabsTrigger value="text-curl">Text Only</TabsTrigger>
+                    <TabsTrigger value="vision-curl">Vision (Image)</TabsTrigger>
+                    <TabsTrigger value="voice-curl">Voice (Audio)</TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="text-curl">
+                    <pre className="rounded-lg border p-3 bg-muted/40 text-[10px] overflow-auto">
 {curlExample}
-                </pre>
+                    </pre>
+                  </TabsContent>
+                  <TabsContent value="vision-curl">
+                    <pre className="rounded-lg border p-3 bg-muted/40 text-[10px] overflow-auto">
+{visionCurl}
+                    </pre>
+                  </TabsContent>
+                  <TabsContent value="voice-curl">
+                    <pre className="rounded-lg border p-3 bg-muted/40 text-[10px] overflow-auto">
+{audioCurl}
+                    </pre>
+                  </TabsContent>
+                </Tabs>
               </div>
             </CardContent>
           </Card>
