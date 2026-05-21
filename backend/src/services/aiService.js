@@ -3239,18 +3239,54 @@ async function transcribeAudio(audioUrl, config) {
                     });
                     transcribedText = res.data.text;
                 } else if (option.provider === 'custom' && option.baseURL) {
-                    const formData = new FormData();
-                    const fileExt = mimeType === 'audio/mpeg' ? 'mp3' : (mimeType.split('/')[1] || 'mp3');
-                    formData.append('file', audioBuffer, { filename: `audio.${fileExt}`, contentType: mimeType });
-                    formData.append('model', option.model || 'whisper-1');
-                    formData.append('language', 'bn');
+                    const modelId = option.model || 'gemini-2.5-flash';
+                    const isGeminiModel = modelId.toLowerCase().includes('gemini');
 
-                    const url = `${option.baseURL.replace(/\/+$/, '')}/audio/transcriptions`;
-                    const res = await axios.post(url, formData, {
-                        headers: { ...formData.getHeaders(), 'Authorization': `Bearer ${apiKey}` },
-                        httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false, timeout: 45000
-                    });
-                    transcribedText = res.data?.text;
+                    if (isGeminiModel) {
+                        // Use Multimodal Chat for Gemini via Custom Proxy (OpenAI Compatible)
+                        console.log(`[Audio] Using Multimodal Chat for Gemini model: ${modelId}`);
+                        const url = `${option.baseURL.replace(/\/+$/, '')}/chat/completions`;
+                        
+                        let voicePrompt = config.voice_prompt || (config.page_prompts && config.page_prompts.voice_prompt) || "Transcribe this audio. Priority languages: Bangla, then English, then Hindi. Output ONLY the transcription text.";
+
+                        const payload = {
+                            model: modelId,
+                            messages: [{
+                                role: "user",
+                                content: [
+                                    { type: "text", text: voicePrompt },
+                                    { 
+                                        type: "input_audio", 
+                                        input_audio: { 
+                                            data: audioBuffer.toString('base64'),
+                                            format: mimeType.split('/')[1] || 'mp3'
+                                        } 
+                                    }
+                                ]
+                            }]
+                        };
+
+                        const res = await axios.post(url, payload, {
+                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                            httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false, timeout: 45000
+                        });
+                        transcribedText = res.data?.choices?.[0]?.message?.content;
+                        usageTokens = res.data?.usage?.total_tokens || 0;
+                    } else {
+                        // Standard Whisper Transcription
+                        const formData = new FormData();
+                        const fileExt = mimeType === 'audio/mpeg' ? 'mp3' : (mimeType.split('/')[1] || 'mp3');
+                        formData.append('file', audioBuffer, { filename: `audio.${fileExt}`, contentType: mimeType });
+                        formData.append('model', modelId || 'whisper-1');
+                        formData.append('language', 'bn');
+
+                        const url = `${option.baseURL.replace(/\/+$/, '')}/audio/transcriptions`;
+                        const res = await axios.post(url, formData, {
+                            headers: { ...formData.getHeaders(), 'Authorization': `Bearer ${apiKey}` },
+                            httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false, timeout: 45000
+                        });
+                        transcribedText = res.data?.text;
+                    }
                 }
 
                 if (transcribedText) {
