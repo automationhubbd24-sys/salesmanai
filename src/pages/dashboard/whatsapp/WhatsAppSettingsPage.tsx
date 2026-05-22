@@ -103,6 +103,7 @@ export default function WhatsAppSettingsPage() {
   const [dbId, setDbId] = useState<string | null>(null);
   const [mode, setMode] = useState<"own" | "managed" | null>(null);
   const [activeMode, setActiveMode] = useState<"own" | "managed" | null>(null);
+  const [activeModelLabel, setActiveModelLabel] = useState("");
   const [proPlusTestEnabled, setProPlusTestEnabled] = useState(false);
   const [proPlusToggleSaving, setProPlusToggleSaving] = useState(false);
   const [proPlusTestMobile, setProPlusTestMobile] = useState("");
@@ -350,20 +351,24 @@ export default function WhatsAppSettingsPage() {
 
       setMode(isManaged ? "managed" : "own");
       setActiveMode(isManaged ? "managed" : "own");
-      setProPlusTestEnabled(dbRow.pro_plus_test === true || dbRow.pro_plus_test === 'true');
+      const currentProPlusEnabled = dbRow.pro_plus_test === true || dbRow.pro_plus_test === 'true';
+      setProPlusTestEnabled(currentProPlusEnabled);
 
       const rawModel = dbRow.chat_model || dbRow.chatmodel || "openrouter/auto";
       const displayModel = rawModel.replace(":free", "");
+      const currentProPlusModel = dbRow.pro_plus_model || DEFAULT_PRO_PLUS_TEST_MODEL;
+      const effectiveManagedModel = currentProPlusEnabled ? currentProPlusModel : (displayModel || MANAGED_MODEL);
 
       // AI Settings
       form.reset({
         provider: dbRow.ai || dbRow.ai_provider || "openrouter",
         api_key: isManaged ? "" : dbApiKey,
         chatmodel: displayModel,
-        pro_plus_model: dbRow.pro_plus_model || DEFAULT_PRO_PLUS_TEST_MODEL,
+        pro_plus_model: currentProPlusModel,
         text_prompt: dbRow.text_prompt || "",
         base_url: dbRow.custom_base_url || "",
       });
+      setActiveModelLabel(isManaged ? effectiveManagedModel : displayModel);
 
       // Behavior
       setWait(dbRow.wait !== undefined && dbRow.wait !== null ? Number(dbRow.wait) : 8);
@@ -410,6 +415,10 @@ export default function WhatsAppSettingsPage() {
     const token = localStorage.getItem("auth_token");
     if (!token) throw new Error("Please login again");
 
+    const nextModel = nextValue
+      ? (form.getValues("pro_plus_model") || DEFAULT_PRO_PLUS_TEST_MODEL)
+      : MANAGED_MODEL;
+
     const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${dbId}`, {
       method: "PUT",
       headers: {
@@ -419,6 +428,7 @@ export default function WhatsAppSettingsPage() {
       body: JSON.stringify({
         pro_plus_test: nextValue,
         pro_plus_model: form.getValues("pro_plus_model") || DEFAULT_PRO_PLUS_TEST_MODEL,
+        chat_model: nextModel,
       }),
     });
 
@@ -613,9 +623,12 @@ export default function WhatsAppSettingsPage() {
     setLoading(true);
 
     if (mode === "managed") {
+        const managedModelToUse = proPlusTestEnabled
+          ? (values.pro_plus_model || DEFAULT_PRO_PLUS_TEST_MODEL)
+          : MANAGED_MODEL;
         values.provider = "salesmanchatbot"; 
         values.api_key = MANAGED_SECRET_KEY;
-        values.chatmodel = MANAGED_MODEL;
+        values.chatmodel = managedModelToUse;
         values.pro_plus_model = values.pro_plus_model || DEFAULT_PRO_PLUS_TEST_MODEL;
     } else {
         if (!values.api_key) {
@@ -655,6 +668,7 @@ export default function WhatsAppSettingsPage() {
       if (!res.ok) throw new Error("Failed to save AI settings");
 
       setActiveMode(mode);
+      setActiveModelLabel(values.chatmodel);
       toast.success("AI Settings updated successfully");
     } catch (error: any) {
       toast.error(error.message);
@@ -736,7 +750,10 @@ export default function WhatsAppSettingsPage() {
                           : 'border-white/30 text-white/70'
                       }
                     >
-                        Status: {activeMode === 'managed' ? "User Cloud API" : "Own API"}
+                        Status: {activeMode === 'managed'
+                          ? `User Cloud API • ${activeModelLabel || MANAGED_MODEL}`
+                          : `Own API • ${activeModelLabel || form.getValues("chatmodel") || "No model"}`
+                        }
                     </Badge>
                 )}
             </CardTitle>
@@ -990,6 +1007,11 @@ export default function WhatsAppSettingsPage() {
                                                           setProPlusToggleSaving(true);
                                                           try {
                                                             await persistProPlusTest(nextValue);
+                                                            setActiveModelLabel(
+                                                              nextValue
+                                                                ? (form.getValues("pro_plus_model") || DEFAULT_PRO_PLUS_TEST_MODEL)
+                                                                : MANAGED_MODEL
+                                                            );
                                                             toast.success(`Pro Plus Test ${nextValue ? "activated" : "deactivated"}`);
                                                           } catch (error: any) {
                                                             setProPlusTestEnabled(!nextValue);

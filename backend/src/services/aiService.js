@@ -972,9 +972,12 @@ async function getEmbedding(text, customApiKey = null, pageConfig = null) {
                 setCachedEmbedding(text, embedResult.vector);
                 return embedResult.vector;
             }
-            console.warn(`[AI Embedding] ProPlus chain failed: ${embedResult.error}. Falling back to internal engine.`);
+            const strictProPlusError = embedResult.error || 'Pro Plus embedding chain failed';
+            console.warn(`[AI Embedding] ${strictProPlusError}. Strict isolation active; blocking internal fallback.`);
+            throw new Error(strictProPlusError);
         } catch (proPlusErr) {
-            console.error(`[AI Embedding] ProPlus chain error: ${proPlusErr.message}. Falling back to internal engine.`);
+            console.error(`[AI Embedding] ProPlus chain error: ${proPlusErr.message}. Strict isolation active; blocking internal fallback.`);
+            throw proPlusErr;
         }
     }
 
@@ -2446,24 +2449,40 @@ ${productContext || "No specific product context provided yet."}
                         token_usage: audioResult.usage,
                         model: 'salesmanchatbot-pro-plus'
                     });
-                } else {
-                    console.warn(`[AI] ProPlus Audio failed: ${audioResult.error}. Falling through to standard chain.`);
                 }
+                console.warn(`[AI] ProPlus Audio failed: ${audioResult.error}. Strict isolation active; blocking standard chain.`);
+                return finalize({
+                    reply: null,
+                    error: audioResult.error || 'Pro Plus audio chain failed.',
+                    token_usage: audioResult.usage || 0,
+                    model: 'salesmanchatbot-pro-plus'
+                });
             } else if (isVision) {
                 const imageResults = await Promise.all(
                     imageUrls.map(url => proPlusMediaChain.processProPlusVision(url, pageConfig))
                 );
                 const visionText = imageResults.map(r => r.text).filter(t => t).join('\n\n');
                 const totalUsage = imageResults.reduce((sum, r) => sum + (r.usage || 0), 0);
-                if (visionText) {
+                const visionErrors = imageResults
+                    .filter(r => !r.text)
+                    .map(r => r.error)
+                    .filter(Boolean);
+
+                if (visionText && visionErrors.length === 0) {
                     return finalize({
                         reply: visionText,
                         token_usage: totalUsage,
                         model: 'salesmanchatbot-pro-plus'
                     });
-                } else {
-                    console.warn(`[AI] ProPlus Vision failed. Falling through to standard chain.`);
                 }
+                const visionError = visionErrors[0] || 'Pro Plus vision chain failed.';
+                console.warn(`[AI] ProPlus Vision failed: ${visionError}. Strict isolation active; blocking standard chain.`);
+                return finalize({
+                    reply: null,
+                    error: visionError,
+                    token_usage: totalUsage,
+                    model: 'salesmanchatbot-pro-plus'
+                });
             } else {
                 const textResult = await proPlusResolver.generateProPlusTextResponse({
                     pageConfig,
@@ -2486,12 +2505,23 @@ ${productContext || "No specific product context provided yet."}
                         token_usage: textResult.token_usage,
                         model: 'salesmanchatbot-pro-plus'
                     });
-                } else {
-                    console.warn(`[AI] ProPlus Text failed: ${textResult.error}. Falling through to standard chain.`);
                 }
+                console.warn(`[AI] ProPlus Text failed: ${textResult.error}. Strict isolation active; blocking standard chain.`);
+                return finalize({
+                    reply: null,
+                    error: textResult.error || 'Pro Plus text chain failed.',
+                    token_usage: textResult.token_usage || 0,
+                    model: 'salesmanchatbot-pro-plus'
+                });
             }
         } catch (proPlusErr) {
-            console.error(`[AI] ProPlus chain error: ${proPlusErr.message}. Falling through to standard chain.`);
+            console.error(`[AI] ProPlus chain error: ${proPlusErr.message}. Strict isolation active; blocking standard chain.`);
+            return finalize({
+                reply: null,
+                error: proPlusErr.message || 'Pro Plus chain failed.',
+                token_usage: 0,
+                model: 'salesmanchatbot-pro-plus'
+            });
         }
     }
 

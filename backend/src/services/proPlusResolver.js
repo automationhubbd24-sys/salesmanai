@@ -1,13 +1,9 @@
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const keyService = require('./keyService');
-const { createChatCompletion, PRO_PLUS_API_BASE_URL } = require('./proPlusApiClient');
+const { createChatCompletion, PRO_PLUS_API_BASE_URL, getConfiguredProPlusModel, PRO_PLUS_SINGLE_MODEL_OPTIONS } = require('./proPlusApiClient');
 
-const PRO_PLUS_TEXT_CHAIN = [
-    'gemini-2.5-flash',
-    'gemini-2.5-pro',
-    'gemini-3-flash-preview'
-];
+const PRO_PLUS_TEXT_CHAIN = PRO_PLUS_SINGLE_MODEL_OPTIONS;
 
 const PROXY_BASE_URL = process.env.BRIGHT_DATA_PROXY_URL;
 const PROXY_USER = process.env.BRIGHT_DATA_USER;
@@ -64,11 +60,13 @@ async function generateProPlusTextResponse({ pageConfig, userMessage, history, m
     let attemptedKeys = new Set();
     let lastError = null;
     const modality = 'text';
+    const selectedModel = getConfiguredProPlusModel(pageConfig);
+    const modelsToTry = [selectedModel];
     const preparedMessages = Array.isArray(messages) && messages.length > 0
         ? messages
         : buildMessages({ userMessage, history, pageConfig, senderName });
 
-    for (const currentModel of PRO_PLUS_TEXT_CHAIN) {
+    for (const currentModel of modelsToTry) {
         console.log(`[ProPlus Text] Trying branded endpoint: ${currentModel}`);
 
         for (let attempt = 0; attempt < MAX_RETRIES_PER_MODEL; attempt++) {
@@ -98,7 +96,7 @@ async function generateProPlusTextResponse({ pageConfig, userMessage, history, m
         }
     }
 
-    for (const currentModel of PRO_PLUS_TEXT_CHAIN) {
+    for (const currentModel of modelsToTry) {
         console.log(`[ProPlus Text] Trying model: ${currentModel}`);
         let modelRetryCount = 0;
 

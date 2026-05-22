@@ -340,8 +340,14 @@ router.get('/config/:id', async (req, res) => {
 
         const pageId = configRow.page_id;
 
+        try {
+            await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS pro_plus_model text`);
+        } catch (e) {
+            console.warn("[Messenger] Failed to add GET migration column:", e.message);
+        }
+
         const pageResult = await pgClient.query(
-            'SELECT page_id, email, page_access_token, api_key, ai, chat_model, cheap_engine, custom_base_url, pro_plus_test FROM page_access_token_message WHERE page_id = $1',
+            'SELECT page_id, email, page_access_token, api_key, ai, chat_model, cheap_engine, custom_base_url, pro_plus_test, pro_plus_model FROM page_access_token_message WHERE page_id = $1',
             [pageId]
         );
 
@@ -385,7 +391,8 @@ router.get('/config/:id', async (req, res) => {
                 chat_model: pageRow.chat_model || configRow.chat_model,
                 cheap_engine: pageRow.cheap_engine !== undefined ? pageRow.cheap_engine : configRow.cheap_engine,
                 custom_base_url: pageRow.custom_base_url || configRow.custom_base_url,
-                pro_plus_test: pageRow.pro_plus_test !== undefined ? pageRow.pro_plus_test : configRow.pro_plus_test
+                pro_plus_test: pageRow.pro_plus_test !== undefined ? pageRow.pro_plus_test : configRow.pro_plus_test,
+                pro_plus_model: pageRow.pro_plus_model || configRow.pro_plus_model
             };
         }
 
@@ -609,6 +616,7 @@ router.put('/config/:id', async (req, res) => {
             await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS custom_base_url text`);
             await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS cheap_engine boolean DEFAULT false`);
             await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS pro_plus_test boolean DEFAULT false`);
+            await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS pro_plus_model text`);
         } catch (e) {
             console.warn("[Messenger] Failed to add migration columns:", e.message);
         }
@@ -621,6 +629,7 @@ router.put('/config/:id', async (req, res) => {
         const cheapEngine = req.body.cheap_engine;
         const customBaseUrl = req.body.custom_base_url;
         const proPlusTest = req.body.pro_plus_test;
+        const proPlusModel = req.body.pro_plus_model;
 
         console.log(`[PUT /config/:id] Token Updates - API Key: ${apiKey ? 'Provided' : 'Missing'}, Provider: ${aiProvider}, Model: ${chatModel}`);
 
@@ -652,6 +661,11 @@ router.put('/config/:id', async (req, res) => {
         if (proPlusTest !== undefined) {
             tokenUpdates.push(`pro_plus_test = $${tIdx}`);
             tokenValues.push(proPlusTest);
+            tIdx++;
+        }
+        if (proPlusModel !== undefined) {
+            tokenUpdates.push(`pro_plus_model = $${tIdx}`);
+            tokenValues.push(proPlusModel || null);
             tIdx++;
         }
         // Always update custom_base_url (can be null)

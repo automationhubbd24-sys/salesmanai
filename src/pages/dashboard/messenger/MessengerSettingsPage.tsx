@@ -110,6 +110,7 @@ export default function MessengerSettingsPage() {
   const [verified, setVerified] = useState(true);
   const [mode, setMode] = useState<"own" | "managed" | null>(null);
   const [activeMode, setActiveMode] = useState<"own" | "managed" | null>(null);
+  const [activeModelLabel, setActiveModelLabel] = useState("");
   const [proPlusTestEnabled, setProPlusTestEnabled] = useState(false);
   const [proPlusToggleSaving, setProPlusToggleSaving] = useState(false);
   const [proPlusTestMobile, setProPlusTestMobile] = useState("");
@@ -287,19 +288,23 @@ export default function MessengerSettingsPage() {
 
           setMode(isManaged ? "managed" : "own");
           setActiveMode(isManaged ? "managed" : "own");
-          setProPlusTestEnabled(dbRow.pro_plus_test === true || dbRow.pro_plus_test === 'true');
+          const currentProPlusEnabled = dbRow.pro_plus_test === true || dbRow.pro_plus_test === 'true';
+          setProPlusTestEnabled(currentProPlusEnabled);
 
           const rawModel = dbModel || "openrouter/auto";
           const displayModel = rawModel.replace(":free", "");
+          const currentProPlusModel = dbRow.pro_plus_model || pageRow.pro_plus_model || DEFAULT_PRO_PLUS_TEST_MODEL;
+          const effectiveManagedModel = currentProPlusEnabled ? currentProPlusModel : (displayModel || MANAGED_MODEL);
 
           form.reset({
             provider: dbRow.ai || dbRow.ai_provider || pageRow.ai || "openrouter",
             api_key: isManaged ? "" : dbApiKey,
             chatmodel: displayModel,
-            pro_plus_model: dbRow.pro_plus_model || pageRow.pro_plus_model || DEFAULT_PRO_PLUS_TEST_MODEL,
+            pro_plus_model: currentProPlusModel,
             text_prompt: dbRow.text_prompt || "",
             base_url: dbRow.custom_base_url || pageRow.custom_base_url || "",
           });
+          setActiveModelLabel(isManaged ? effectiveManagedModel : displayModel);
 
           setWait(dbRow.wait !== undefined && dbRow.wait !== null ? Number(dbRow.wait) : 8);
           setMemoryLimit(dbRow.check_conversion || 20);
@@ -375,12 +380,17 @@ export default function MessengerSettingsPage() {
       headers["x-team-owner"] = teamOwner;
     }
 
+    const nextModel = nextValue
+      ? (form.getValues("pro_plus_model") || DEFAULT_PRO_PLUS_TEST_MODEL)
+      : MANAGED_MODEL;
+
     const res = await fetch(`${BACKEND_URL}/api/messenger/config/${dbId}`, {
       method: "PUT",
       headers,
       body: JSON.stringify({
         pro_plus_test: nextValue,
         pro_plus_model: form.getValues("pro_plus_model") || DEFAULT_PRO_PLUS_TEST_MODEL,
+        chat_model: nextModel,
       }),
     });
 
@@ -766,9 +776,12 @@ export default function MessengerSettingsPage() {
     setLoading(true);
 
     if (mode === "managed") {
+        const managedModelToUse = proPlusTestEnabled
+          ? (values.pro_plus_model || DEFAULT_PRO_PLUS_TEST_MODEL)
+          : MANAGED_MODEL;
         values.provider = "gemini"; 
         values.api_key = MANAGED_SECRET_KEY;
-        values.chatmodel = MANAGED_MODEL;
+        values.chatmodel = managedModelToUse;
         values.pro_plus_model = values.pro_plus_model || DEFAULT_PRO_PLUS_TEST_MODEL;
     } else {
         if (!values.api_key) {
@@ -825,6 +838,7 @@ export default function MessengerSettingsPage() {
       }
 
       setActiveMode(mode); // Update active mode indicator
+      setActiveModelLabel(values.chatmodel);
       toast.success("AI settings saved successfully");
       
     } catch (error: any) {
@@ -1040,7 +1054,10 @@ export default function MessengerSettingsPage() {
                           : 'border-white/30 text-white/70'
                       }
                     >
-                        Status: {activeMode === 'managed' ? "User Cloud API" : "Own API"}
+                        Status: {activeMode === 'managed'
+                          ? `User Cloud API • ${activeModelLabel || MANAGED_MODEL}`
+                          : `Own API • ${activeModelLabel || form.getValues("chatmodel") || "No model"}`
+                        }
                     </Badge>
                 )}
             </CardTitle>
@@ -1304,6 +1321,11 @@ export default function MessengerSettingsPage() {
                                                           setProPlusToggleSaving(true);
                                                           try {
                                                             await persistProPlusTest(nextValue);
+                                                            setActiveModelLabel(
+                                                              nextValue
+                                                                ? (form.getValues("pro_plus_model") || DEFAULT_PRO_PLUS_TEST_MODEL)
+                                                                : MANAGED_MODEL
+                                                            );
                                                             toast.success(`Pro Plus Test ${nextValue ? "activated" : "deactivated"}`);
                                                           } catch (error: any) {
                                                             setProPlusTestEnabled(!nextValue);

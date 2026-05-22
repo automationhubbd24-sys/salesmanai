@@ -619,7 +619,8 @@ router.put('/config/:id', async (req, res) => {
             'embed_enabled',
             'order_email_confirmation_enabled',
             'admin_notification_email',
-            'pro_plus_test'
+            'pro_plus_test',
+            'pro_plus_model'
         ];
 
         // Ensure new columns exist
@@ -636,6 +637,7 @@ router.put('/config/:id', async (req, res) => {
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS order_email_confirmation_enabled boolean DEFAULT false`);
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS admin_notification_email text`);
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS pro_plus_test boolean DEFAULT false`);
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS pro_plus_model text`);
         } catch (e) {
             console.warn("[WhatsApp] Failed to add migration columns:", e.message);
         }
@@ -653,6 +655,7 @@ router.put('/config/:id', async (req, res) => {
         if (req.body.provider !== undefined) updates.ai_provider = req.body.provider;
         if (req.body.chatmodel !== undefined) updates.chat_model = req.body.chatmodel;
         if (req.body.base_url !== undefined) updates.custom_base_url = req.body.base_url;
+        if (req.body.pro_plus_model !== undefined) updates.pro_plus_model = req.body.pro_plus_model;
 
         const keys = Object.keys(updates);
         if (keys.length === 0) {
