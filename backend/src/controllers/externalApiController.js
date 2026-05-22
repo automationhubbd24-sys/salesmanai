@@ -393,21 +393,31 @@ exports.handleChatCompletion = async (req, res) => {
 
 exports.listModels = async (req, res) => {
     try {
-        // Optional: Validate API Key for discovery if we want to restrict connection to valid users only.
-        // n8n will call this to verify the connection.
+        // Optional: Validate API Key for discovery
         const { userConfig, error } = await validateApiKey(req);
         if (error) {
-            // Some tools might try to list models without a key first.
-            // But for OpenAI compatibility, a key is usually required.
             return res.status(error.status).json({ error: { message: error.message, type: error.type, code: error.code } });
         }
 
-        const models = [
-            { id: "gemini-2.5-flash", object: "model", created: 1715817600, owned_by: "google", permission: [] },
-            { id: "gemini-2.5-pro", object: "model", created: 1715817600, owned_by: "google", permission: [] },
-            { id: "gemini-1.5-flash", object: "model", created: 1715817600, owned_by: "google", permission: [] },
-            { id: "gemini-1.5-pro", object: "model", created: 1715817600, owned_by: "google", permission: [] }
-        ];
+        // Load models from models.json
+        let models = [];
+        try {
+            const modelsData = require('../../models.json');
+            models = (modelsData.models || []).map(m => ({
+                id: m.id,
+                object: "model",
+                created: 1715817600,
+                owned_by: m.owned_by || "google",
+                permission: []
+            }));
+        } catch (e) {
+            console.error("[ExternalAPI] Failed to load models.json:", e.message);
+            // Fallback to minimal list if file reading fails
+            models = [
+                { id: "gemini-2.5-flash", object: "model", created: 1715817600, owned_by: "google", permission: [] },
+                { id: "gemini-2.5-pro", object: "model", created: 1715817600, owned_by: "google", permission: [] }
+            ];
+        }
 
         return res.json({
             object: "list",

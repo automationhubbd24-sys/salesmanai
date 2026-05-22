@@ -809,13 +809,13 @@ export default function DeveloperPage() {
                                              </div>
                                              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
                                                  {[
-                                                     "gemini-2.5-flash", "gemini-2.5-pro", "gemini-3.1-flash-lite", "gemini-3.1-pro-preview",
-                                                     "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-flash-lite-latest", "gemini-pro-latest",
-                                                     "gemini-3-flash-preview", "gemini-3-pro-preview", "gemini-3.1-flash-lite-preview", "gemini-2.5-flash-thinking-preview",
-                                                     "gemini-2.5-flash-image", "gemini-3-pro-image-preview", "gemini-3.1-flash-image-preview", "imagen-4.0-generate-001",
-                                                     "imagen-4.0-ultra-generate-001", "imagen-4.0-fast-generate-001", "gemini-2.5-flash-preview-tts", "gemini-2.5-pro-preview-tts",
-                                                     "gemini-3.1-flash-tts-preview", "gemma-4-26b-a4b-it", "gemma-4-31b-it", "gemini-embedding-2",
-                                                     "gemini-embedding-001", "gemini-embedding-2-preview", "gemini-robotics-er-1.6-preview"
+                                                     "gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-preview-tts", "gemini-2.5-pro-preview-tts",
+                                                     "gemini-3.1-flash-tts-preview", "gemma-4-26b-a4b-it", "gemma-4-31b-it", "gemini-flash-latest",
+                                                     "gemini-flash-lite-latest", "gemini-pro-latest", "gemini-2.5-flash-lite", "gemini-2.5-flash-image",
+                                                     "gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite-preview",
+                                                     "gemini-3.1-flash-lite", "gemini-3-pro-image-preview", "gemini-3.1-flash-image-preview", "gemini-robotics-er-1.6-preview",
+                                                     "gemini-embedding-001", "gemini-embedding-2-preview", "gemini-embedding-2", "imagen-4.0-generate-001",
+                                                     "imagen-4.0-ultra-generate-001", "imagen-4.0-fast-generate-001"
                                                  ].map(modelId => (
                                                      <div key={modelId} 
                                                          className="flex items-center justify-between p-2 pl-3 rounded-lg bg-white/[0.03] border border-white/5 group hover:border-primary/20 transition-all"
