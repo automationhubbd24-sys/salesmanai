@@ -73,6 +73,7 @@ export default function WhatsAppSettingsPage() {
   const [mode, setMode] = useState<"own" | "managed" | null>(null);
   const [activeMode, setActiveMode] = useState<"own" | "managed" | null>(null);
   const [proPlusTestEnabled, setProPlusTestEnabled] = useState(false);
+  const [proPlusToggleSaving, setProPlusToggleSaving] = useState(false);
   
   const [isPromptOpen, setIsPromptOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("text");
@@ -354,6 +355,29 @@ export default function WhatsAppSettingsPage() {
     }
   }, [id, fetchConfig, currentSession]);
 
+  const persistProPlusTest = async (nextValue: boolean) => {
+    if (!dbId) return;
+
+    const token = localStorage.getItem("auth_token");
+    if (!token) throw new Error("Please login again");
+
+    const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${dbId}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        pro_plus_test: nextValue,
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || "Failed to update Pro Plus Test");
+    }
+  };
+
   // fetchUserBalance is now called inside fetchConfig or the connection effect
   /*
   useEffect(() => {
@@ -541,7 +565,7 @@ export default function WhatsAppSettingsPage() {
     if (mode === "managed") {
         values.provider = "salesmanchatbot"; 
         values.api_key = MANAGED_SECRET_KEY;
-        values.chatmodel = "salesmanchatbot-pro";
+        values.chatmodel = MANAGED_MODEL;
     } else {
         if (!values.api_key) {
             toast.error("API Key is required for own provider");
@@ -572,7 +596,7 @@ export default function WhatsAppSettingsPage() {
           text_prompt: values.text_prompt,
           base_url: values.base_url,
           cheap_engine: mode === "managed",
-          pro_plus_test: proPlusTestEnabled
+          pro_plus_test: mode === "managed" ? proPlusTestEnabled : false
         }),
       });
 
@@ -904,13 +928,27 @@ export default function WhatsAppSettingsPage() {
                                                     <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider">Pro Plus Test</span>
                                                     <button
                                                         type="button"
-                                                        onClick={() => setProPlusTestEnabled(!proPlusTestEnabled)}
+                                                        disabled={proPlusToggleSaving}
+                                                        onClick={async () => {
+                                                          const nextValue = !proPlusTestEnabled;
+                                                          setProPlusTestEnabled(nextValue);
+                                                          setProPlusToggleSaving(true);
+                                                          try {
+                                                            await persistProPlusTest(nextValue);
+                                                            toast.success(`Pro Plus Test ${nextValue ? "activated" : "deactivated"}`);
+                                                          } catch (error: any) {
+                                                            setProPlusTestEnabled(!nextValue);
+                                                            toast.error(error.message || "Failed to update Pro Plus Test");
+                                                          } finally {
+                                                            setProPlusToggleSaving(false);
+                                                          }
+                                                        }}
                                                         className={`relative w-12 h-6 rounded-full transition-colors duration-200 ${proPlusTestEnabled ? 'bg-[#00ff88]' : 'bg-gray-600'}`}
                                                     >
                                                         <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${proPlusTestEnabled ? 'translate-x-6' : ''}`} />
                                                     </button>
                                                     <span className={`text-[9px] font-bold ${proPlusTestEnabled ? 'text-[#00ff88]' : 'text-muted-foreground'}`}>
-                                                        {proPlusTestEnabled ? 'Active' : 'Inactive'}
+                                                        {proPlusToggleSaving ? 'Saving...' : proPlusTestEnabled ? 'Active' : 'Inactive'}
                                                     </span>
                                                 </div>
                                             )}

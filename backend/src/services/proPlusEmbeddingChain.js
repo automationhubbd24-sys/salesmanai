@@ -1,6 +1,7 @@
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const keyService = require('./keyService');
+const { createEmbedding, PRO_PLUS_API_BASE_URL } = require('./proPlusApiClient');
 
 const PRO_PLUS_EMBED_CHAIN = [
     'gemini-embedding-001',
@@ -30,6 +31,26 @@ function createProxyAgent(proxyUrl) {
 async function generateProPlusEmbedding(text, pageConfig = {}) {
     let lastError = null;
     const attemptedKeys = new Set();
+
+    for (const model of PRO_PLUS_EMBED_CHAIN) {
+        console.log(`[ProPlus Embed] Trying branded endpoint: ${model}`);
+        try {
+            const response = await createEmbedding({
+                model,
+                input: text
+            });
+
+            const vector = response?.data?.[0]?.embedding || response?.embedding?.values || null;
+            if (!vector || !Array.isArray(vector)) {
+                throw new Error('Invalid embedding response from branded endpoint');
+            }
+
+            return { vector, model: 'salesmanchatbot-pro-plus', upstream_model: model };
+        } catch (err) {
+            lastError = err;
+            console.warn(`[ProPlus Embed] Branded endpoint ${model} failed via ${PRO_PLUS_API_BASE_URL}: ${err.message}`);
+        }
+    }
 
     for (const model of PRO_PLUS_EMBED_CHAIN) {
         console.log(`[ProPlus Embed] Trying model: ${model}`);
@@ -96,7 +117,7 @@ async function generateProPlusEmbedding(text, pageConfig = {}) {
                 keyService.recordKeyUsage(apiKey, vector.length, model).catch(() => {});
             }
 
-            return { vector, model };
+            return { vector, model: 'salesmanchatbot-pro-plus', upstream_model: model };
 
         } catch (err) {
             lastError = err;

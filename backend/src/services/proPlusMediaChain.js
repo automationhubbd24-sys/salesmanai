@@ -1,8 +1,7 @@
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
-const FormData = require('form-data');
 const keyService = require('./keyService');
-const dbService = require('./dbService');
+const { createChatCompletion, PRO_PLUS_API_BASE_URL } = require('./proPlusApiClient');
 
 const PRO_PLUS_VISION_CHAIN = [
     { model: 'gemini-3.1-flash-lite-preview', retries: 3 },
@@ -87,6 +86,41 @@ async function processProPlusVision(imageUrl, pageConfig = {}, customOptions = {
 
     for (const chainItem of PRO_PLUS_VISION_CHAIN) {
         const { model, retries } = chainItem;
+        console.log(`[ProPlus Vision] Trying branded endpoint: ${model}`);
+
+        for (let attempt = 0; attempt < retries; attempt++) {
+            try {
+                const response = await createChatCompletion({
+                    model,
+                    messages: [{
+                        role: 'user',
+                        content: [
+                            { type: 'text', text: systemPrompt },
+                            {
+                                type: 'image_url',
+                                image_url: {
+                                    url: imageUrl.startsWith('data:') ? imageUrl : `data:${mimeType};base64,${base64Image}`
+                                }
+                            }
+                        ]
+                    }],
+                    max_tokens: maxTokens
+                });
+
+                const resultText = response?.choices?.[0]?.message?.content;
+                const usageTokens = response?.usage?.total_tokens || 0;
+                if (!resultText) throw new Error('Empty response from branded endpoint');
+
+                return { text: resultText, usage: usageTokens, model: 'salesmanchatbot-pro-plus', upstream_model: model };
+            } catch (err) {
+                lastError = err;
+                console.warn(`[ProPlus Vision] Branded endpoint ${model} attempt ${attempt + 1} failed via ${PRO_PLUS_API_BASE_URL}: ${err.message}`);
+            }
+        }
+    }
+
+    for (const chainItem of PRO_PLUS_VISION_CHAIN) {
+        const { model, retries } = chainItem;
         console.log(`[ProPlus Vision] Trying model: ${model}`);
 
         for (let attempt = 0; attempt < retries; attempt++) {
@@ -145,7 +179,7 @@ async function processProPlusVision(imageUrl, pageConfig = {}, customOptions = {
                     keyService.recordKeyUsage(apiKey, usageTokens, model).catch(() => {});
                 }
 
-                return { text: resultText, usage: usageTokens, model };
+                return { text: resultText, usage: usageTokens, model: 'salesmanchatbot-pro-plus', upstream_model: model };
 
             } catch (err) {
                 lastError = err;
@@ -200,6 +234,40 @@ async function processProPlusAudio(audioUrl, pageConfig = {}) {
 
     for (const chainItem of PRO_PLUS_VOICE_CHAIN) {
         const { model, retries } = chainItem;
+        console.log(`[ProPlus Audio] Trying branded endpoint: ${model}`);
+
+        for (let attempt = 0; attempt < retries; attempt++) {
+            try {
+                const response = await createChatCompletion({
+                    model,
+                    messages: [{
+                        role: 'user',
+                        content: [
+                            { type: 'text', text: voicePrompt },
+                            {
+                                type: 'audio_url',
+                                audio_url: {
+                                    url: `data:${mimeType};base64,${audioBuffer.toString('base64')}`
+                                }
+                            }
+                        ]
+                    }]
+                });
+
+                const resultText = response?.choices?.[0]?.message?.content;
+                const usageTokens = response?.usage?.total_tokens || 0;
+                if (!resultText) throw new Error('Empty response from branded endpoint');
+
+                return { text: resultText, usage: usageTokens, model: 'salesmanchatbot-pro-plus', upstream_model: model };
+            } catch (err) {
+                lastError = err;
+                console.warn(`[ProPlus Audio] Branded endpoint ${model} attempt ${attempt + 1} failed via ${PRO_PLUS_API_BASE_URL}: ${err.message}`);
+            }
+        }
+    }
+
+    for (const chainItem of PRO_PLUS_VOICE_CHAIN) {
+        const { model, retries } = chainItem;
         console.log(`[ProPlus Audio] Trying model: ${model}`);
 
         for (let attempt = 0; attempt < retries; attempt++) {
@@ -250,7 +318,7 @@ async function processProPlusAudio(audioUrl, pageConfig = {}) {
                     keyService.recordKeyUsage(apiKey, usageTokens, model).catch(() => {});
                 }
 
-                return { text: resultText, usage: usageTokens, model };
+                return { text: resultText, usage: usageTokens, model: 'salesmanchatbot-pro-plus', upstream_model: model };
 
             } catch (err) {
                 lastError = err;

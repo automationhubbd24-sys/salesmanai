@@ -1,7 +1,7 @@
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const keyService = require('./keyService');
-const dbService = require('./dbService');
+const { createChatCompletion, PRO_PLUS_API_BASE_URL } = require('./proPlusApiClient');
 
 const PRO_PLUS_TEXT_CHAIN = [
     'gemini-2.5-flash',
@@ -64,6 +64,39 @@ async function generateProPlusTextResponse({ pageConfig, userMessage, history, m
     let attemptedKeys = new Set();
     let lastError = null;
     const modality = 'text';
+    const preparedMessages = Array.isArray(messages) && messages.length > 0
+        ? messages
+        : buildMessages({ userMessage, history, pageConfig, senderName });
+
+    for (const currentModel of PRO_PLUS_TEXT_CHAIN) {
+        console.log(`[ProPlus Text] Trying branded endpoint: ${currentModel}`);
+
+        for (let attempt = 0; attempt < MAX_RETRIES_PER_MODEL; attempt++) {
+            try {
+                const response = await createChatCompletion({
+                    model: currentModel,
+                    messages: preparedMessages,
+                    temperature: 0.7,
+                    top_p: 0.9,
+                    max_tokens: 2048
+                });
+
+                const resultText = response?.choices?.[0]?.message?.content;
+                const usageTokens = response?.usage?.total_tokens || 0;
+                if (!resultText) throw new Error('Empty response from branded endpoint');
+
+                return {
+                    reply: resultText,
+                    token_usage: usageTokens + (extraTokenUsage || 0),
+                    model: 'salesmanchatbot-pro-plus',
+                    upstream_model: currentModel
+                };
+            } catch (err) {
+                lastError = err;
+                console.warn(`[ProPlus Text] Branded endpoint ${currentModel} attempt ${attempt + 1} failed via ${PRO_PLUS_API_BASE_URL}: ${err.message}`);
+            }
+        }
+    }
 
     for (const currentModel of PRO_PLUS_TEXT_CHAIN) {
         console.log(`[ProPlus Text] Trying model: ${currentModel}`);
@@ -89,10 +122,6 @@ async function generateProPlusTextResponse({ pageConfig, userMessage, history, m
 
                 apiKey = keyData.key;
                 attemptedKeys.add(apiKey);
-
-                const preparedMessages = Array.isArray(messages) && messages.length > 0
-                    ? messages
-                    : buildMessages({ userMessage, history, pageConfig, senderName });
 
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/${currentModel}:generateContent?key=${apiKey}`;
                 const payload = {
@@ -134,7 +163,8 @@ async function generateProPlusTextResponse({ pageConfig, userMessage, history, m
                 return {
                     reply: resultText,
                     token_usage: usageTokens + (extraTokenUsage || 0),
-                    model: currentModel
+                    model: 'salesmanchatbot-pro-plus',
+                    upstream_model: currentModel
                 };
 
             } catch (err) {

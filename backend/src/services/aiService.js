@@ -2444,7 +2444,7 @@ ${productContext || "No specific product context provided yet."}
                     return finalize({
                         reply: audioResult.text,
                         token_usage: audioResult.usage,
-                        model: audioResult.model || 'salesmanchatbot-pro-plus'
+                        model: 'salesmanchatbot-pro-plus'
                     });
                 } else {
                     console.warn(`[AI] ProPlus Audio failed: ${audioResult.error}. Falling through to standard chain.`);
@@ -2484,7 +2484,7 @@ ${productContext || "No specific product context provided yet."}
                         image_urls: Array.isArray(structuredText.image_urls) ? structuredText.image_urls : [],
                         order_details: structuredText.order_details || null,
                         token_usage: textResult.token_usage,
-                        model: textResult.model || 'salesmanchatbot-pro-plus'
+                        model: 'salesmanchatbot-pro-plus'
                     });
                 } else {
                     console.warn(`[AI] ProPlus Text failed: ${textResult.error}. Falling through to standard chain.`);

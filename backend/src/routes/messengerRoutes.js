@@ -341,7 +341,7 @@ router.get('/config/:id', async (req, res) => {
         const pageId = configRow.page_id;
 
         const pageResult = await pgClient.query(
-            'SELECT page_id, email, page_access_token, api_key, ai, chat_model, cheap_engine, custom_base_url FROM page_access_token_message WHERE page_id = $1',
+            'SELECT page_id, email, page_access_token, api_key, ai, chat_model, cheap_engine, custom_base_url, pro_plus_test FROM page_access_token_message WHERE page_id = $1',
             [pageId]
         );
 
@@ -384,7 +384,8 @@ router.get('/config/:id', async (req, res) => {
                 ai_provider: pageRow.ai || configRow.ai_provider,
                 chat_model: pageRow.chat_model || configRow.chat_model,
                 cheap_engine: pageRow.cheap_engine !== undefined ? pageRow.cheap_engine : configRow.cheap_engine,
-                custom_base_url: pageRow.custom_base_url || configRow.custom_base_url
+                custom_base_url: pageRow.custom_base_url || configRow.custom_base_url,
+                pro_plus_test: pageRow.pro_plus_test !== undefined ? pageRow.pro_plus_test : configRow.pro_plus_test
             };
         }
 
