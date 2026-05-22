@@ -2,7 +2,8 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 
-const PRO_PLUS_API_BASE_URL = (process.env.PRO_PLUS_API_BASE_URL || 'https://api.salesmanchatbot.online/v1').replace(/\/+$/, '');
+const DEFAULT_PRO_PLUS_API_BASE_URL = 'https://gemini.salesmanchatbot.online/';
+const PRO_PLUS_API_BASE_URL = (process.env.PRO_PLUS_API_BASE_URL || DEFAULT_PRO_PLUS_API_BASE_URL).replace(/\/+$/, '');
 const DEFAULT_PRO_PLUS_MODEL = process.env.PRO_PLUS_DEFAULT_MODEL || 'gemini-3-flash-preview';
 const PRO_PLUS_SINGLE_MODEL_OPTIONS = [
     'gemini-2.5-flash',
@@ -49,7 +50,7 @@ function getLocalTestApiKey() {
     }
 }
 
-function getProPlusApiKey() {
+function getFallbackProPlusApiKey() {
     if (cachedApiKey) return cachedApiKey;
 
     cachedApiKey =
@@ -63,8 +64,26 @@ function getProPlusApiKey() {
     return cachedApiKey;
 }
 
-function createHeaders() {
-    const apiKey = getProPlusApiKey();
+function getProPlusApiBaseUrl(pageConfig = {}) {
+    const customBaseUrl = String(pageConfig?.custom_base_url || pageConfig?.base_url || '').trim();
+    return (customBaseUrl || PRO_PLUS_API_BASE_URL).replace(/\/+$/, '');
+}
+
+function isCustomProPlusEndpointConfigured(pageConfig = {}) {
+    return Boolean(String(pageConfig?.custom_base_url || pageConfig?.base_url || '').trim());
+}
+
+function getProPlusApiKey(pageConfig = {}) {
+    if (isCustomProPlusEndpointConfigured(pageConfig)) {
+        const pageApiKey = String(pageConfig?.api_key || '').trim();
+        return pageApiKey || null;
+    }
+
+    return getFallbackProPlusApiKey();
+}
+
+function createHeaders(pageConfig = {}) {
+    const apiKey = getProPlusApiKey(pageConfig);
     if (!apiKey) {
         throw new Error('Pro Plus external API key not configured');
     }
@@ -75,18 +94,20 @@ function createHeaders() {
     };
 }
 
-async function createChatCompletion(payload, timeout = 60000) {
-    const response = await axios.post(`${PRO_PLUS_API_BASE_URL}/chat/completions`, payload, {
-        headers: createHeaders(),
+async function createChatCompletion(payload, timeout = 60000, pageConfig = {}) {
+    const baseUrl = getProPlusApiBaseUrl(pageConfig);
+    const response = await axios.post(`${baseUrl}/chat/completions`, payload, {
+        headers: createHeaders(pageConfig),
         timeout
     });
 
     return response.data;
 }
 
-async function createEmbedding(payload, timeout = 30000) {
-    const response = await axios.post(`${PRO_PLUS_API_BASE_URL}/embeddings`, payload, {
-        headers: createHeaders(),
+async function createEmbedding(payload, timeout = 30000, pageConfig = {}) {
+    const baseUrl = getProPlusApiBaseUrl(pageConfig);
+    const response = await axios.post(`${baseUrl}/embeddings`, payload, {
+        headers: createHeaders(pageConfig),
         timeout
     });
 
@@ -94,11 +115,8 @@ async function createEmbedding(payload, timeout = 30000) {
 }
 
 function getConfiguredProPlusModel(pageConfig = {}) {
-    const requestedModel = String(pageConfig?.pro_plus_model || '').trim();
-    if (PRO_PLUS_SINGLE_MODEL_OPTIONS.includes(requestedModel)) {
-        return requestedModel;
-    }
-    return DEFAULT_PRO_PLUS_MODEL;
+    const requestedModel = String(pageConfig?.pro_plus_model || pageConfig?.chat_model || '').trim();
+    return requestedModel || DEFAULT_PRO_PLUS_MODEL;
 }
 
 module.exports = {
@@ -106,6 +124,8 @@ module.exports = {
     DEFAULT_PRO_PLUS_MODEL,
     PRO_PLUS_SINGLE_MODEL_OPTIONS,
     getProPlusApiKey,
+    getProPlusApiBaseUrl,
+    isCustomProPlusEndpointConfigured,
     getConfiguredProPlusModel,
     createChatCompletion,
     createEmbedding

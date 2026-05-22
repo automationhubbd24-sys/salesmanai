@@ -1,7 +1,7 @@
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const keyService = require('./keyService');
-const { createChatCompletion, PRO_PLUS_API_BASE_URL, getConfiguredProPlusModel, PRO_PLUS_SINGLE_MODEL_OPTIONS } = require('./proPlusApiClient');
+const { createChatCompletion, PRO_PLUS_API_BASE_URL, getProPlusApiBaseUrl, getConfiguredProPlusModel, PRO_PLUS_SINGLE_MODEL_OPTIONS } = require('./proPlusApiClient');
 
 const PRO_PLUS_VISION_CHAIN = PRO_PLUS_SINGLE_MODEL_OPTIONS;
 const PRO_PLUS_VOICE_CHAIN = PRO_PLUS_SINGLE_MODEL_OPTIONS;
@@ -74,6 +74,7 @@ async function processProPlusVision(imageUrl, pageConfig = {}, customOptions = {
     const systemPrompt = customOptions?.prompt || "Describe this image briefly.";
     const maxTokens = customOptions?.max_tokens || 10000;
     const attemptedKeys = new Set();
+    const proPlusBaseUrl = getProPlusApiBaseUrl(pageConfig);
     const selectedChain = [{ model: getConfiguredProPlusModel(pageConfig), retries: 1 }];
 
     for (const chainItem of selectedChain) {
@@ -97,7 +98,7 @@ async function processProPlusVision(imageUrl, pageConfig = {}, customOptions = {
                         ]
                     }],
                     max_tokens: maxTokens
-                });
+                }, 60000, pageConfig);
 
                 const resultText = response?.choices?.[0]?.message?.content;
                 const usageTokens = response?.usage?.total_tokens || 0;
@@ -106,7 +107,7 @@ async function processProPlusVision(imageUrl, pageConfig = {}, customOptions = {
                 return { text: resultText, usage: usageTokens, model: 'salesmanchatbot-pro-plus', upstream_model: model };
             } catch (err) {
                 lastError = err;
-                console.warn(`[ProPlus Vision] Branded endpoint ${model} attempt ${attempt + 1} failed via ${PRO_PLUS_API_BASE_URL}: ${err.message}`);
+                console.warn(`[ProPlus Vision] Branded endpoint ${model} attempt ${attempt + 1} failed via ${proPlusBaseUrl || PRO_PLUS_API_BASE_URL}: ${err.message}`);
             }
         }
     }
@@ -228,6 +229,7 @@ async function processProPlusAudio(audioUrl, pageConfig = {}) {
 
     const voicePrompt = "Transcribe this audio. Priority: Bangla, English, Hindi. Output only transcription text.";
     const attemptedKeys2 = new Set();
+    const proPlusBaseUrl = getProPlusApiBaseUrl(pageConfig);
     const selectedChain = [{ model: getConfiguredProPlusModel(pageConfig), retries: 1 }];
 
     for (const chainItem of selectedChain) {
@@ -250,7 +252,7 @@ async function processProPlusAudio(audioUrl, pageConfig = {}) {
                             }
                         ]
                     }]
-                });
+                }, 60000, pageConfig);
 
                 const resultText = response?.choices?.[0]?.message?.content;
                 const usageTokens = response?.usage?.total_tokens || 0;
@@ -259,7 +261,7 @@ async function processProPlusAudio(audioUrl, pageConfig = {}) {
                 return { text: resultText, usage: usageTokens, model: 'salesmanchatbot-pro-plus', upstream_model: model };
             } catch (err) {
                 lastError = err;
-                console.warn(`[ProPlus Audio] Branded endpoint ${model} attempt ${attempt + 1} failed via ${PRO_PLUS_API_BASE_URL}: ${err.message}`);
+                console.warn(`[ProPlus Audio] Branded endpoint ${model} attempt ${attempt + 1} failed via ${proPlusBaseUrl || PRO_PLUS_API_BASE_URL}: ${err.message}`);
             }
         }
     }

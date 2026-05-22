@@ -203,6 +203,8 @@ export default function MessengerSettingsPage() {
         text_prompt: "You are a helpful assistant for a Facebook page.",
       },
   });
+  const showManagedProPlusCustomEndpoint = mode === "managed" && proPlusTestEnabled;
+  const showCustomBaseUrlField = form.watch("provider") === "custom" || showManagedProPlusCustomEndpoint;
 
   const fetchConfig = useCallback(async (id: string, pId: string) => {
     try {
@@ -774,15 +776,27 @@ export default function MessengerSettingsPage() {
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
     if (!dbId || !pageId) return;
     setLoading(true);
+    const trimmedBaseUrl = values.base_url?.trim() || "";
+    const isManagedOpenAICompatibleProPlus = mode === "managed" && proPlusTestEnabled && Boolean(trimmedBaseUrl);
 
     if (mode === "managed") {
         const managedModelToUse = proPlusTestEnabled
           ? (values.pro_plus_model || DEFAULT_PRO_PLUS_TEST_MODEL)
           : MANAGED_MODEL;
         values.provider = "gemini"; 
-        values.api_key = MANAGED_SECRET_KEY;
         values.chatmodel = managedModelToUse;
         values.pro_plus_model = values.pro_plus_model || DEFAULT_PRO_PLUS_TEST_MODEL;
+        values.base_url = trimmedBaseUrl;
+        if (isManagedOpenAICompatibleProPlus) {
+          if (!values.api_key?.trim()) {
+            toast.error("OpenAI-compatible endpoint er jonno API Key din");
+            setLoading(false);
+            return;
+          }
+          values.api_key = values.api_key.trim();
+        } else {
+          values.api_key = MANAGED_SECRET_KEY;
+        }
     } else {
         if (!values.api_key) {
             toast.error("API Key is required for own provider");
@@ -819,7 +833,7 @@ export default function MessengerSettingsPage() {
         api_key: values.api_key,
         chat_model: values.chatmodel,
         pro_plus_model: values.pro_plus_model || DEFAULT_PRO_PLUS_TEST_MODEL,
-        custom_base_url: values.provider === 'custom' ? values.base_url : null,
+        custom_base_url: (values.provider === 'custom' || isManagedOpenAICompatibleProPlus) ? (values.base_url?.trim() || null) : null,
         cheap_engine: mode === "managed",
         pro_plus_test: mode === "managed" ? proPlusTestEnabled : false
       };
@@ -1153,7 +1167,7 @@ export default function MessengerSettingsPage() {
                     )}
                   />
 
-                  {form.watch("provider") === "custom" && (
+                  {showCustomBaseUrlField && (
                     <FormField
                       control={form.control}
                       name="base_url"
@@ -1161,10 +1175,15 @@ export default function MessengerSettingsPage() {
                         <FormItem>
                           <FormLabel>Base URL</FormLabel>
                           <FormControl>
-                            <Input placeholder="https://api.example.com/v1" {...field} />
+                            <Input
+                              placeholder={showManagedProPlusCustomEndpoint ? "https://your-openai-compatible-server/v1" : "https://api.example.com/v1"}
+                              {...field}
+                            />
                           </FormControl>
                           <FormDescription>
-                            Enter the custom API Base URL.
+                            {showManagedProPlusCustomEndpoint
+                              ? "Pro Plus Test request ei OpenAI-compatible endpoint e jabe."
+                              : "Enter the custom API Base URL."}
                           </FormDescription>
                           <FormMessage />
                         </FormItem>
@@ -1182,7 +1201,9 @@ export default function MessengerSettingsPage() {
                           <Input placeholder="sk-..." type="password" {...field} />
                         </FormControl>
                         <FormDescription>
-                          {form.watch("provider") === "salesmanchatbot" 
+                          {showManagedProPlusCustomEndpoint
+                            ? "OpenAI-compatible backend er API key din."
+                            : form.watch("provider") === "salesmanchatbot" 
                             ? "Enter your SalesmanChatbot 2.0 API Key from the Developer API page."
                             : "Your secret API key from the provider dashboard."}
                         </FormDescription>

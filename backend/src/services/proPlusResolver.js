@@ -1,7 +1,7 @@
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const keyService = require('./keyService');
-const { createChatCompletion, PRO_PLUS_API_BASE_URL, getConfiguredProPlusModel, PRO_PLUS_SINGLE_MODEL_OPTIONS } = require('./proPlusApiClient');
+const { createChatCompletion, PRO_PLUS_API_BASE_URL, getProPlusApiBaseUrl, getConfiguredProPlusModel, PRO_PLUS_SINGLE_MODEL_OPTIONS } = require('./proPlusApiClient');
 
 const PRO_PLUS_TEXT_CHAIN = PRO_PLUS_SINGLE_MODEL_OPTIONS;
 
@@ -61,6 +61,7 @@ async function generateProPlusTextResponse({ pageConfig, userMessage, history, m
     let lastError = null;
     const modality = 'text';
     const selectedModel = getConfiguredProPlusModel(pageConfig);
+    const proPlusBaseUrl = getProPlusApiBaseUrl(pageConfig);
     const modelsToTry = [selectedModel];
     const preparedMessages = Array.isArray(messages) && messages.length > 0
         ? messages
@@ -77,7 +78,7 @@ async function generateProPlusTextResponse({ pageConfig, userMessage, history, m
                     temperature: 0.7,
                     top_p: 0.9,
                     max_tokens: 2048
-                });
+                }, 60000, pageConfig);
 
                 const resultText = response?.choices?.[0]?.message?.content;
                 const usageTokens = response?.usage?.total_tokens || 0;
@@ -91,7 +92,7 @@ async function generateProPlusTextResponse({ pageConfig, userMessage, history, m
                 };
             } catch (err) {
                 lastError = err;
-                console.warn(`[ProPlus Text] Branded endpoint ${currentModel} attempt ${attempt + 1} failed via ${PRO_PLUS_API_BASE_URL}: ${err.message}`);
+                console.warn(`[ProPlus Text] Branded endpoint ${currentModel} attempt ${attempt + 1} failed via ${proPlusBaseUrl || PRO_PLUS_API_BASE_URL}: ${err.message}`);
             }
         }
     }
