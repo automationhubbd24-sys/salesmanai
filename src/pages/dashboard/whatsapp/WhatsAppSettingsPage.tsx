@@ -52,11 +52,42 @@ const formSchema = z.object({
   provider: z.string().min(1, "Please select a provider"),
   api_key: z.string().optional(),
   chatmodel: z.string().min(1, "Model name is required"),
+  pro_plus_model: z.string().optional(),
   text_prompt: z.string().optional(),
   base_url: z.string().optional(),
 });
 
 const MANAGED_MODEL = import.meta.env.VITE_MANAGED_MODEL || "salesmanchatbot-pro";
+const DEFAULT_PRO_PLUS_TEST_MODEL = "gemini-3-flash-preview";
+const PRO_PLUS_MODEL_OPTIONS = [
+  "gemini-2.5-flash",
+  "gemini-2.5-computer-use-preview-10-2025",
+  "gemini-2.5-flash-image",
+  "gemini-2.5-flash-lite",
+  "gemini-2.5-flash-preview-tts",
+  "gemini-2.5-pro",
+  "gemini-2.5-pro-preview-tts",
+  "gemini-3-flash-preview",
+  "gemini-3-pro-image-preview",
+  "gemini-3-pro-preview",
+  "gemini-3.1-flash-image-preview",
+  "gemini-3.1-flash-lite",
+  "gemini-3.1-flash-lite-preview",
+  "gemini-3.1-flash-tts-preview",
+  "gemini-3.1-pro-preview",
+  "gemini-embedding-001",
+  "gemini-embedding-2",
+  "gemini-embedding-2-preview",
+  "gemini-flash-latest",
+  "gemini-flash-lite-latest",
+  "gemini-pro-latest",
+  "gemini-robotics-er-1.6-preview",
+  "gemma-4-26b-a4b-it",
+  "gemma-4-31b-it",
+  "imagen-4.0-fast-generate-001",
+  "imagen-4.0-generate-001",
+  "imagen-4.0-ultra-generate-001",
+].map((value) => ({ value, label: value }));
 
 type PromptProduct = {
   id: string | number;
@@ -74,6 +105,7 @@ export default function WhatsAppSettingsPage() {
   const [activeMode, setActiveMode] = useState<"own" | "managed" | null>(null);
   const [proPlusTestEnabled, setProPlusTestEnabled] = useState(false);
   const [proPlusToggleSaving, setProPlusToggleSaving] = useState(false);
+  const [proPlusTestMobile, setProPlusTestMobile] = useState("");
   
   const [isPromptOpen, setIsPromptOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("text");
@@ -123,10 +155,26 @@ export default function WhatsAppSettingsPage() {
       provider: "openrouter",
       api_key: "",
       chatmodel: "openrouter/auto",
+      pro_plus_model: DEFAULT_PRO_PLUS_TEST_MODEL,
       text_prompt: "",
       base_url: "",
     },
   });
+
+  useEffect(() => {
+    const storageKey = dbId
+      ? `whatsapp_pro_plus_test_mobile_${dbId}`
+      : "whatsapp_pro_plus_test_mobile";
+    const savedMobile = localStorage.getItem(storageKey) || "";
+    setProPlusTestMobile(savedMobile);
+  }, [dbId]);
+
+  useEffect(() => {
+    const storageKey = dbId
+      ? `whatsapp_pro_plus_test_mobile_${dbId}`
+      : "whatsapp_pro_plus_test_mobile";
+    localStorage.setItem(storageKey, proPlusTestMobile);
+  }, [dbId, proPlusTestMobile]);
 
   const handleApplyCoupon = () => {
     // Simple validation for demo - in production this would verify with backend
@@ -312,6 +360,7 @@ export default function WhatsAppSettingsPage() {
         provider: dbRow.ai || dbRow.ai_provider || "openrouter",
         api_key: isManaged ? "" : dbApiKey,
         chatmodel: displayModel,
+        pro_plus_model: dbRow.pro_plus_model || DEFAULT_PRO_PLUS_TEST_MODEL,
         text_prompt: dbRow.text_prompt || "",
         base_url: dbRow.custom_base_url || "",
       });
@@ -369,6 +418,7 @@ export default function WhatsAppSettingsPage() {
       },
       body: JSON.stringify({
         pro_plus_test: nextValue,
+        pro_plus_model: form.getValues("pro_plus_model") || DEFAULT_PRO_PLUS_TEST_MODEL,
       }),
     });
 
@@ -566,6 +616,7 @@ export default function WhatsAppSettingsPage() {
         values.provider = "salesmanchatbot"; 
         values.api_key = MANAGED_SECRET_KEY;
         values.chatmodel = MANAGED_MODEL;
+        values.pro_plus_model = values.pro_plus_model || DEFAULT_PRO_PLUS_TEST_MODEL;
     } else {
         if (!values.api_key) {
             toast.error("API Key is required for own provider");
@@ -593,6 +644,7 @@ export default function WhatsAppSettingsPage() {
           ai_provider: values.provider,
           api_key: values.api_key,
           chat_model: values.chatmodel,
+          pro_plus_model: values.pro_plus_model || DEFAULT_PRO_PLUS_TEST_MODEL,
           text_prompt: values.text_prompt,
           base_url: values.base_url,
           cheap_engine: mode === "managed",
@@ -920,9 +972,9 @@ export default function WhatsAppSettingsPage() {
                                                         )}
                                                     </div>
                                                 )}
+
                                             </div>
                                         </div>
-
                                             {mode === "managed" && !isTeamView && (
                                                 <div className="flex flex-col items-center gap-1 border-l border-white/10 pl-4">
                                                     <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider">Pro Plus Test</span>
@@ -931,6 +983,9 @@ export default function WhatsAppSettingsPage() {
                                                         disabled={proPlusToggleSaving}
                                                         onClick={async () => {
                                                           const nextValue = !proPlusTestEnabled;
+                                                          if (nextValue && !form.getValues("pro_plus_model")) {
+                                                            form.setValue("pro_plus_model", DEFAULT_PRO_PLUS_TEST_MODEL);
+                                                          }
                                                           setProPlusTestEnabled(nextValue);
                                                           setProPlusToggleSaving(true);
                                                           try {
@@ -994,6 +1049,58 @@ export default function WhatsAppSettingsPage() {
                                 )}
                             </div>
                         </div>
+
+                        {proPlusTestEnabled && (
+                          <div className="rounded-lg border border-[#00ff88]/20 bg-[#00ff88]/5 p-4 space-y-4">
+                            <div>
+                              <h4 className="font-semibold text-foreground">Pro Plus Test Model</h4>
+                              <p className="text-xs text-muted-foreground">
+                                Ei single model text, voice, vision sob jaygay use hobe. Kono model fallback thakbe na.
+                              </p>
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor="whatsapp-pro-plus-test-mobile">Mobile Number</Label>
+                              <Input
+                                id="whatsapp-pro-plus-test-mobile"
+                                type="tel"
+                                inputMode="tel"
+                                placeholder="+8801712345678"
+                                value={proPlusTestMobile}
+                                onChange={(e) => setProPlusTestMobile(e.target.value.replace(/[^\d+]/g, ""))}
+                              />
+                              <p className="text-xs text-muted-foreground">
+                                Pro Plus test button use korar somoy mobile number input deyar jayga. Value browser-e save thakbe.
+                              </p>
+                            </div>
+                            <FormField
+                              control={form.control}
+                              name="pro_plus_model"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Single Test Model</FormLabel>
+                                  <Select onValueChange={field.onChange} value={field.value || DEFAULT_PRO_PLUS_TEST_MODEL}>
+                                    <FormControl>
+                                      <SelectTrigger>
+                                        <SelectValue placeholder="Select Pro Plus model" />
+                                      </SelectTrigger>
+                                    </FormControl>
+                                    <SelectContent>
+                                      {PRO_PLUS_MODEL_OPTIONS.map((option) => (
+                                        <SelectItem key={option.value} value={option.value}>
+                                          {option.label}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                  <FormDescription>
+                                    Testing mode e same model text, image ar voice sob request-e use hobe.
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+                        )}
 
                         {/* Pricing Modal */}
                         <Dialog open={isPricingOpen} onOpenChange={setIsPricingOpen}>
