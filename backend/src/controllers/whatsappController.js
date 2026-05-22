@@ -1222,6 +1222,7 @@ async function queueMessage(session, messagePayload) {
     }
 
     if (mediaUrl) {
+        console.log(`[WA] Extracted FULL Media URL: ${mediaUrl}`);
         const mime = messagePayload.mimetype || messagePayload.media?.mimetype || '';
         if (mime.startsWith('image/') || messagePayload.type === 'image') {
             imageUrls.push(mediaUrl);

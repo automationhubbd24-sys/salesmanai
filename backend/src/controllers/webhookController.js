@@ -701,7 +701,7 @@ async function queueMessage(event, entryPageId = null) {
             .map(att => att.payload.url);
         
         if (imageUrls.length > 0) {
-            console.log(`[Webhook] Image URLs Queued: ${imageUrls.length}`);
+            console.log(`[Webhook] Image URLs Queued:`, imageUrls);
         }
 
         // 3. Handle Audio (Voice Messages) - DEFERRED PROCESSING
@@ -710,7 +710,7 @@ async function queueMessage(event, entryPageId = null) {
             .map(att => att.payload.url);
             
         if (audioUrls.length > 0) {
-            console.log(`[Webhook] Audio URLs Queued: ${audioUrls.length}`);
+            console.log(`[Webhook] Audio URLs Queued:`, audioUrls);
         }
 
         // Handle other attachments (file, video) placeholders

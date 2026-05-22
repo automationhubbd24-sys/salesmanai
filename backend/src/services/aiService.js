@@ -2570,6 +2570,9 @@ async function processImageWithVision(imageUrl, pageConfig = {}, customOptions =
     let mimeType = null;
     let errors = [];
 
+    // Log FULL URL for debugging
+    console.log(`[Vision] Processing FULL Image URL: ${imageUrl}`);
+
     // Helper to ensure we have Base64 data (Lazy Loading)
     const ensureBase64 = async () => {
         if (base64Image) return; // Already loaded
@@ -2923,7 +2926,7 @@ Rules:
 
 // --- HELPER: Transcribe Audio (Multi-Engine Priority) ---
 async function transcribeAudio(audioUrl, config) {
-    console.log(`[Audio] Processing: ${audioUrl.substring(0, 50)}...`);
+    console.log(`[Audio] Processing FULL Audio URL: ${audioUrl}`);
     let audioBuffer, mimeType;
 
     // 1. Download Audio
