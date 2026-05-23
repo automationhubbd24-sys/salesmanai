@@ -938,10 +938,15 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             allAudios = messages.flatMap(m => m.audios || []);
         }
 
+        const hasAudioTurn = allAudios.length > 0;
+        const delayedAudioHistoryMessageId = hasAudioTurn
+            ? `audio_turn_${messages.map(m => m.id).filter(Boolean).join('_') || Date.now()}`
+            : null;
+
         // --- QUICK SEMANTIC CACHE CHECK (ULTRA-FAST PATH) ---
         const semEnabled = pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1;
         const threshold = pageConfig.semantic_cache_threshold ? Math.max(0.5, Math.min(0.99, Number(pageConfig.semantic_cache_threshold))) : 0.96;
-        const isMediaTurn = allImages.length > 0 || allAudios.length > 0;
+        const isMediaTurn = allImages.length > 0 || hasAudioTurn;
         
         // IMPORTANT: Use workflow combinedText (raw user text) for cache check, EXCLUDING adContext
         if (semEnabled && !isMediaTurn && combinedText.trim()) {
@@ -1006,7 +1011,10 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 reply_by: 'user'
             }).catch(() => {});
 
-            dbService.saveChatMessage(sessionId, 'user', msgText).catch(() => {});
+            const hasAudioMessage = Array.isArray(msg.audios) && msg.audios.length > 0;
+            if (!hasAudioMessage) {
+                dbService.saveChatMessage(sessionId, 'user', msgText, msg.id).catch(() => {});
+            }
         }
         // -------------------------------------------
 
@@ -1301,39 +1309,78 @@ STRICT RULES:
             if (audioEnabled) {
                 console.log(`[Batch] Transcribing ${allAudios.length} voice messages...`);
                 
-                // Process in parallel and WAIT
-                const audioPromises = allAudios.map(url => aiService.transcribeAudio(url, pageConfig));
-                const audioResultsRaw = await Promise.all(audioPromises);
+                const audioJobs = [];
+                for (const msg of messages) {
+                    const msgAudios = Array.isArray(msg.audios) ? msg.audios.filter(Boolean) : [];
+                    for (const audioUrl of msgAudios) {
+                        audioJobs.push({
+                            messageId: msg.id || `audio_${audioJobs.length}`,
+                            rawText: msg.text || '',
+                            url: audioUrl
+                        });
+                    }
+                }
+
+                const audioResultsRaw = await Promise.all(
+                    audioJobs.map(job => aiService.transcribeAudio(job.url, pageConfig))
+                );
                 
                 let lastAudioModel = 'whisper-large-v3';
-                // Extract text and usage
+                const transcriptsByMessage = new Map();
                 const audioTranscripts = audioResultsRaw.map((res, i) => {
+                    const job = audioJobs[i];
                     const text = typeof res === 'object' ? (res.text || '') : String(res || '');
                     const usage = typeof res === 'object' ? (res.usage || 0) : 0;
                     const model = typeof res === 'object' ? (res.model || 'unknown') : 'unknown';
                     totalAudioTokens += usage;
                     lastAudioModel = model;
+
+                    if (job && text.trim()) {
+                        const existing = transcriptsByMessage.get(job.messageId) || {
+                            rawText: job.rawText,
+                            transcriptParts: []
+                        };
+                        existing.transcriptParts.push(text.trim());
+                        transcriptsByMessage.set(job.messageId, existing);
+                    }
+
                     return text;
                 });
 
-                const combinedAudioTranscript = audioTranscripts.join('\n');
-                combinedText += `\n\n[System: User sent ${allAudios.length} voice messages. Transcripts follow:]\n${combinedAudioTranscript}`;
-                
+                const combinedAudioTranscript = audioTranscripts.join('\n').trim();
+                if (combinedAudioTranscript) {
+                    combinedText = combinedText
+                        ? `${combinedText}\n${combinedAudioTranscript}`.trim()
+                        : combinedAudioTranscript;
+                }
+
                 try {
-                    const audioMsgText = `[Voice Transcript] ${combinedAudioTranscript}`;
-                    // Parallel Save (No await)
-                    dbService.saveFbChat({
-                        page_id: pageId,
-                        sender_id: pageId, // Bot (Page) is sender
-                        recipient_id: senderId, // User is recipient
-                        message_id: `audio_transcript_${Date.now()}`,
-                        text: audioMsgText,
-                        timestamp: Date.now(),
-                        status: 'bot_reply',
-                        reply_by: 'bot',
-                        token: totalAudioTokens, // Specific tokens for audio
-                        ai_model: lastAudioModel
-                    }).catch(e => console.error(`[FB] Failed to save audio transcript:`, e.message));
+                    const transcriptEntries = Array.from(transcriptsByMessage.entries());
+                    const saveTranscriptPromises = transcriptEntries.map(([messageId, data], index) => {
+                        const transcriptText = data.transcriptParts.join('\n').trim();
+                        if (!transcriptText) return Promise.resolve();
+
+                        const mergedText = data.rawText && data.rawText.trim()
+                            ? `${data.rawText.trim()}\n${transcriptText}`
+                            : transcriptText;
+
+                        return dbService.saveFbChat({
+                            page_id: pageId,
+                            sender_id: senderId,
+                            recipient_id: pageId,
+                            message_id: messageId,
+                            text: mergedText,
+                            timestamp: Date.now(),
+                            status: 'transcribed',
+                            reply_by: 'user',
+                            token: index === 0 ? totalAudioTokens : 0,
+                            ai_model: index === 0 ? lastAudioModel : null
+                        });
+                    });
+
+                    Promise.allSettled(saveTranscriptPromises).catch(e => {
+                        console.error(`[FB] Failed to save audio transcript:`, e.message);
+                    });
                 } catch (e) {
                     console.error(`[FB] Failed to save audio transcript:`, e.message);
                 }
@@ -1507,6 +1554,9 @@ STRICT RULES:
         }
         
         const finalUserMessage = `${smartAdContext}${replyContext}${combinedText}${promptProductContext}`;
+        if (hasAudioTurn) {
+            await dbService.saveChatMessage(sessionId, 'user', finalUserMessage, delayedAudioHistoryMessageId);
+        }
         // ------------------------------------
 
         // 5. Generate AI Reply
@@ -2467,7 +2517,9 @@ STRICT RULES:
 
         // 7. Save History & Lead
         // Save User Message (Combined with Context)
-        await dbService.saveChatMessage(sessionId, 'user', finalUserMessage);
+        if (!hasAudioTurn) {
+            await dbService.saveChatMessage(sessionId, 'user', finalUserMessage);
+        }
 
         // Prepare Assistant History Content
         let historyReplyText = replyText;

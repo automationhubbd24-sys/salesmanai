@@ -341,7 +341,7 @@ router.get('/config/:id', async (req, res) => {
         const pageId = configRow.page_id;
 
         const pageResult = await pgClient.query(
-            'SELECT page_id, email, page_access_token, api_key, ai, chat_model, cheap_engine, custom_base_url FROM page_access_token_message WHERE page_id = $1',
+            'SELECT page_id, email, page_access_token, api_key, ai, chat_model, voice_model, cheap_engine, custom_base_url FROM page_access_token_message WHERE page_id = $1',
             [pageId]
         );
 
@@ -383,6 +383,7 @@ router.get('/config/:id', async (req, res) => {
                 api_key: pageRow.api_key || configRow.api_key,
                 ai_provider: pageRow.ai || configRow.ai_provider,
                 chat_model: pageRow.chat_model || configRow.chat_model,
+                voice_model: pageRow.voice_model || configRow.voice_model,
                 cheap_engine: pageRow.cheap_engine !== undefined ? pageRow.cheap_engine : configRow.cheap_engine,
                 custom_base_url: pageRow.custom_base_url || configRow.custom_base_url
             };
@@ -607,6 +608,7 @@ router.put('/config/:id', async (req, res) => {
         try {
             await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS custom_base_url text`);
             await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS cheap_engine boolean DEFAULT false`);
+            await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS voice_model text`);
         } catch (e) {
             console.warn("[Messenger] Failed to add migration columns:", e.message);
         }
@@ -614,12 +616,13 @@ router.put('/config/:id', async (req, res) => {
         // Map frontend fields to DB columns
         const aiProvider = req.body.ai_provider || req.body.ai || req.body.provider;
         const chatModel = req.body.chat_model || req.body.model || req.body.model_name;
+        const voiceModel = req.body.voice_model || req.body.audio_model;
         const apiKey = req.body.api_key;
         const pageAccessToken = req.body.page_access_token_message || req.body.page_access_token;
         const cheapEngine = req.body.cheap_engine;
         const customBaseUrl = req.body.custom_base_url;
 
-        console.log(`[PUT /config/:id] Token Updates - API Key: ${apiKey ? 'Provided' : 'Missing'}, Provider: ${aiProvider}, Model: ${chatModel}`);
+        console.log(`[PUT /config/:id] Token Updates - API Key: ${apiKey ? 'Provided' : 'Missing'}, Provider: ${aiProvider}, Model: ${chatModel}, Voice Model: ${voiceModel || 'unchanged'}`);
 
         if (aiProvider !== undefined) {
             tokenUpdates.push(`ai = $${tIdx}`);
@@ -629,6 +632,11 @@ router.put('/config/:id', async (req, res) => {
         if (chatModel !== undefined) {
             tokenUpdates.push(`chat_model = $${tIdx}`);
             tokenValues.push(chatModel);
+            tIdx++;
+        }
+        if (voiceModel !== undefined) {
+            tokenUpdates.push(`voice_model = $${tIdx}`);
+            tokenValues.push(voiceModel);
             tIdx++;
         }
         if (apiKey !== undefined) {
@@ -673,6 +681,7 @@ router.put('/config/:id', async (req, res) => {
                         api_key: updatedTokenRow.api_key,
                         ai_provider: updatedTokenRow.ai,
                         chat_model: updatedTokenRow.chat_model,
+                        voice_model: updatedTokenRow.voice_model,
                         cheap_engine: updatedTokenRow.cheap_engine,
                         custom_base_url: updatedTokenRow.custom_base_url
                      };

@@ -2991,7 +2991,7 @@ async function transcribeAudio(audioUrl, config) {
     // Ensure config exists to prevent crashes
     const safeConfig = config || {};
     const providerHint = safeConfig.ai_provider || safeConfig.ai || safeConfig.operator;
-    const modelHint = safeConfig.chat_model || safeConfig.chatmodel;
+    const modelHint = safeConfig.voice_model || safeConfig.audio_model || safeConfig.chat_model || safeConfig.chatmodel;
     const isOwnAPI = safeConfig.cheap_engine === false;
 
     let resolved = null;
@@ -3006,8 +3006,8 @@ async function transcribeAudio(audioUrl, config) {
         const userKeys = safeConfig.api_key.split(',').map(k => k.trim()).filter(k => k);
         userKey = userKeys[0]; // Use first key for simplicity in audio
         
-        // Strict Model Selection
-        const userModel = safeConfig.chat_model || safeConfig.chatmodel;
+        // Use a dedicated voice model when available; fall back to chat model only if needed.
+        const userModel = safeConfig.voice_model || safeConfig.audio_model || safeConfig.chat_model || safeConfig.chatmodel;
 
         if (userKey) {
             // FIX: Check if this is a SALESMANCHATBOT KEY or a REAL USER KEY
@@ -3054,7 +3054,7 @@ async function transcribeAudio(audioUrl, config) {
     // ONLY run if NOT in Own API mode OR if no user key was provided at all
     if (!userKey && !isOwnAPI) {
         // Use the chat model if it's provided, otherwise fallback to default
-        let voiceModel = safeConfig.chat_model || safeConfig.chatmodel || safeConfig.voice_model || safeConfig.audio_model || 'gemini-2.5-flash';
+        let voiceModel = safeConfig.voice_model || safeConfig.audio_model || safeConfig.chat_model || safeConfig.chatmodel || 'gemini-2.5-flash';
         let provider = safeConfig.ai_provider || safeConfig.ai || safeConfig.operator || 'google';
 
         // Map SalesmanChatbot branded names to actual models for audio
