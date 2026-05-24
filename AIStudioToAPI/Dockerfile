@@ -80,8 +80,10 @@ COPY --chown=node:node ui ./ui
 ARG VERSION
 RUN VERSION=${VERSION} npm run build:ui
 
-# Remove dev dependencies after build to reduce image size
-RUN npm prune --omit=dev && npm cache clean --force
+# Keep the build stable on low-memory deploy hosts.
+# `npm prune --omit=dev` can spike memory and get killed with exit code 137.
+# We only clear the npm cache here and accept a slightly larger image.
+RUN npm cache clean --force
 
 # TODO: Temporarily use the root user, and in the future we will switch to the node user
 USER root

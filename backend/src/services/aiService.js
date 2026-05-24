@@ -3238,27 +3238,30 @@ async function transcribeAudio(audioUrl, config) {
                     });
                     transcribedText = res.data.text;
                 } else if (option.provider === 'custom' && option.baseURL) {
-                    const formData = new FormData();
+                    const normalizedBaseURL = option.baseURL.replace(/\/+$/, '');
                     const fileExt = mimeType === 'audio/mpeg' ? 'mp3' : (mimeType.split('/')[1] || 'mp3');
-                    formData.append('file', audioBuffer, { filename: `audio.${fileExt}`, contentType: mimeType });
-                    formData.append('model', option.model || 'whisper-1');
-                    formData.append('language', 'bn');
+                    const selectedModel = option.model || 'whisper-1';
+                    const prefersChatCompletions = /gemini/i.test(selectedModel) || /gemini/i.test(normalizedBaseURL);
+                    const customTimeout = prefersChatCompletions ? 90000 : 60000;
 
-                    const url = `${option.baseURL.replace(/\/+$/, '')}/audio/transcriptions`;
-                    try {
-                        const res = await axios.post(url, formData, {
+                    const callCustomTranscriptions = async () => {
+                        const formData = new FormData();
+                        formData.append('file', audioBuffer, { filename: `audio.${fileExt}`, contentType: mimeType });
+                        formData.append('model', selectedModel);
+                        formData.append('language', 'bn');
+
+                        return axios.post(`${normalizedBaseURL}/audio/transcriptions`, formData, {
                             headers: { ...formData.getHeaders(), 'Authorization': `Bearer ${apiKey}` },
-                            httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false, timeout: 45000
+                            httpsAgent: proxyAgent,
+                            httpAgent: proxyAgent,
+                            proxy: false,
+                            timeout: customTimeout
                         });
-                        transcribedText = res.data?.text;
-                    } catch (customErr) {
-                        const statusCode = customErr.response?.status;
-                        const isTimeout = customErr.code === 'ECONNABORTED' || /timeout/i.test(customErr.message || '');
-                        const supportsChatFallback = isTimeout || [404, 405, 408, 429, 500, 501, 502, 503, 504].includes(statusCode);
-                        if (!supportsChatFallback) throw customErr;
+                    };
 
+                    const callCustomChatCompletions = async () => {
                         const chatPayload = {
-                            model: option.model || 'gemini-2.5-flash',
+                            model: selectedModel || 'gemini-2.5-flash',
                             messages: [{
                                 role: 'user',
                                 content: [
@@ -3274,12 +3277,47 @@ async function transcribeAudio(audioUrl, config) {
                             }]
                         };
 
-                        const chatRes = await axios.post(`${option.baseURL.replace(/\/+$/, '')}/chat/completions`, chatPayload, {
+                        return axios.post(`${normalizedBaseURL}/chat/completions`, chatPayload, {
                             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-                            httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false, timeout: 45000
+                            httpsAgent: proxyAgent,
+                            httpAgent: proxyAgent,
+                            proxy: false,
+                            timeout: customTimeout
                         });
-                        transcribedText = chatRes.data?.choices?.[0]?.message?.content;
-                        usageTokens = chatRes.data?.usage?.total_tokens || 0;
+                    };
+
+                    if (prefersChatCompletions) {
+                        try {
+                            const chatRes = await callCustomChatCompletions();
+                            transcribedText = chatRes.data?.choices?.[0]?.message?.content;
+                            usageTokens = chatRes.data?.usage?.total_tokens || 0;
+                        } catch (chatErr) {
+                            const statusCode = chatErr.response?.status;
+                            const errMsg = String(chatErr.message || '').toLowerCase();
+                            const supportsTranscriptionFallback =
+                                [404, 405, 406, 408, 415, 422, 429, 500, 501, 502, 503, 504].includes(statusCode) ||
+                                errMsg.includes('not found') ||
+                                errMsg.includes('unsupported') ||
+                                errMsg.includes('invalid');
+                            if (!supportsTranscriptionFallback) throw chatErr;
+
+                            const res = await callCustomTranscriptions();
+                            transcribedText = res.data?.text;
+                        }
+                    } else {
+                        try {
+                            const res = await callCustomTranscriptions();
+                            transcribedText = res.data?.text;
+                        } catch (customErr) {
+                            const statusCode = customErr.response?.status;
+                            const isTimeout = customErr.code === 'ECONNABORTED' || /timeout/i.test(customErr.message || '');
+                            const supportsChatFallback = isTimeout || [404, 405, 408, 415, 422, 429, 500, 501, 502, 503, 504].includes(statusCode);
+                            if (!supportsChatFallback) throw customErr;
+
+                            const chatRes = await callCustomChatCompletions();
+                            transcribedText = chatRes.data?.choices?.[0]?.message?.content;
+                            usageTokens = chatRes.data?.usage?.total_tokens || 0;
+                        }
                     }
                 }
 
