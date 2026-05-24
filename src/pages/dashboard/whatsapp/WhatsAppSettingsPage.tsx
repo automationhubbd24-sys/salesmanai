@@ -567,6 +567,8 @@ export default function WhatsAppSettingsPage() {
           ai_provider: values.provider,
           api_key: values.api_key,
           chat_model: values.chatmodel,
+          vision_model: null,
+          voice_model: null,
           text_prompt: values.text_prompt,
           base_url: values.base_url,
           cheap_engine: mode === "managed"
@@ -822,6 +824,7 @@ export default function WhatsAppSettingsPage() {
                       </FormItem>
                     )}
                   />
+
                     </>
                 ) : (
                     <div className="space-y-6">

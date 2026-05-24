@@ -341,7 +341,7 @@ router.get('/config/:id', async (req, res) => {
         const pageId = configRow.page_id;
 
         const pageResult = await pgClient.query(
-            'SELECT page_id, email, page_access_token, api_key, ai, chat_model, voice_model, cheap_engine, custom_base_url FROM page_access_token_message WHERE page_id = $1',
+            'SELECT page_id, email, page_access_token, api_key, ai, chat_model, voice_model, vision_model, cheap_engine, custom_base_url FROM page_access_token_message WHERE page_id = $1',
             [pageId]
         );
 
@@ -384,6 +384,7 @@ router.get('/config/:id', async (req, res) => {
                 ai_provider: pageRow.ai || configRow.ai_provider,
                 chat_model: pageRow.chat_model || configRow.chat_model,
                 voice_model: pageRow.voice_model || configRow.voice_model,
+                vision_model: pageRow.vision_model || configRow.vision_model,
                 cheap_engine: pageRow.cheap_engine !== undefined ? pageRow.cheap_engine : configRow.cheap_engine,
                 custom_base_url: pageRow.custom_base_url || configRow.custom_base_url
             };
@@ -609,6 +610,7 @@ router.put('/config/:id', async (req, res) => {
             await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS custom_base_url text`);
             await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS cheap_engine boolean DEFAULT false`);
             await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS voice_model text`);
+            await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS vision_model text`);
         } catch (e) {
             console.warn("[Messenger] Failed to add migration columns:", e.message);
         }
@@ -617,6 +619,7 @@ router.put('/config/:id', async (req, res) => {
         const aiProvider = req.body.ai_provider || req.body.ai || req.body.provider;
         const chatModel = req.body.chat_model || req.body.model || req.body.model_name;
         const voiceModel = req.body.voice_model || req.body.audio_model;
+        const visionModel = req.body.vision_model || req.body.image_model;
         const apiKey = req.body.api_key;
         const pageAccessToken = req.body.page_access_token_message || req.body.page_access_token;
         const cheapEngine = req.body.cheap_engine;
@@ -637,6 +640,11 @@ router.put('/config/:id', async (req, res) => {
         if (voiceModel !== undefined) {
             tokenUpdates.push(`voice_model = $${tIdx}`);
             tokenValues.push(voiceModel);
+            tIdx++;
+        }
+        if (visionModel !== undefined) {
+            tokenUpdates.push(`vision_model = $${tIdx}`);
+            tokenValues.push(visionModel);
             tIdx++;
         }
         if (apiKey !== undefined) {
@@ -682,6 +690,7 @@ router.put('/config/:id', async (req, res) => {
                         ai_provider: updatedTokenRow.ai,
                         chat_model: updatedTokenRow.chat_model,
                         voice_model: updatedTokenRow.voice_model,
+                        vision_model: updatedTokenRow.vision_model,
                         cheap_engine: updatedTokenRow.cheap_engine,
                         custom_base_url: updatedTokenRow.custom_base_url
                      };

@@ -613,6 +613,8 @@ router.put('/config/:id', async (req, res) => {
             'ai_provider',
             'api_key',
             'chat_model',
+            'vision_model',
+            'voice_model',
             'cheap_engine',
             'custom_base_url',
             'temperature',
@@ -628,6 +630,8 @@ router.put('/config/:id', async (req, res) => {
         try {
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS ai_provider text`);
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS chat_model text`);
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS vision_model text`);
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS voice_model text`);
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS custom_base_url text`);
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS temperature numeric DEFAULT 0.7`);
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS top_p numeric DEFAULT 0.9`);

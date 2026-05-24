@@ -719,6 +719,8 @@ export default function MessengerSettingsPage() {
         ai: values.provider,
         api_key: values.api_key,
         chat_model: values.chatmodel,
+        vision_model: null,
+        voice_model: null,
         custom_base_url: values.provider === 'custom' ? values.base_url : null,
         cheap_engine: mode === "managed" 
       };
@@ -1119,6 +1121,7 @@ export default function MessengerSettingsPage() {
                       </FormItem>
                     )}
                   />
+
                     </>
                 ) : (
                     <div className="space-y-6">

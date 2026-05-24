@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { useWhatsApp } from "@/context/WhatsAppContext";
 import { Button } from "@/components/ui/button";
@@ -88,7 +88,7 @@ export default function SessionManager() {
 
   // Poll for updates when QR dialog is open
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    let interval: ReturnType<typeof setInterval> | undefined;
     if (viewingSessionQr) {
       interval = setInterval(refreshSessions, 3000); // Poll every 3s
     }
@@ -97,7 +97,7 @@ export default function SessionManager() {
 
   // Poll for QR code specifically if it's missing in the active dialog
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    let interval: ReturnType<typeof setInterval> | undefined;
     // We poll if:
     // 1. We are viewing a session
     // 2. The QR code is missing OR we just want to keep it fresh

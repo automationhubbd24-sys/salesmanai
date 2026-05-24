@@ -3178,6 +3178,7 @@ async function transcribeAudio(audioUrl, config) {
 
                 let transcribedText = null;
                 let usageTokens = 0;
+                const voicePrompt = config.voice_prompt || (config.page_prompts && config.page_prompts.voice_prompt) || "Transcribe this audio. Priority languages: Bangla, then English, then Hindi. Output ONLY the transcription text.";
 
                 // --- PROVIDER DISPATCH ---
                 if (option.provider === 'openai') {
@@ -3197,8 +3198,6 @@ async function transcribeAudio(audioUrl, config) {
                 } else if (option.provider === 'google') {
                     let modelName = option.model.replace('models/', '');
                     const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
-                    
-                    let voicePrompt = config.voice_prompt || (config.page_prompts && config.page_prompts.voice_prompt) || "Transcribe this audio. Priority languages: Bangla, then English, then Hindi. Output ONLY the transcription text.";
 
                     const payload = {
                         contents: [{
@@ -3246,11 +3245,42 @@ async function transcribeAudio(audioUrl, config) {
                     formData.append('language', 'bn');
 
                     const url = `${option.baseURL.replace(/\/+$/, '')}/audio/transcriptions`;
-                    const res = await axios.post(url, formData, {
-                        headers: { ...formData.getHeaders(), 'Authorization': `Bearer ${apiKey}` },
-                        httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false, timeout: 45000
-                    });
-                    transcribedText = res.data?.text;
+                    try {
+                        const res = await axios.post(url, formData, {
+                            headers: { ...formData.getHeaders(), 'Authorization': `Bearer ${apiKey}` },
+                            httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false, timeout: 45000
+                        });
+                        transcribedText = res.data?.text;
+                    } catch (customErr) {
+                        const statusCode = customErr.response?.status;
+                        const isTimeout = customErr.code === 'ECONNABORTED' || /timeout/i.test(customErr.message || '');
+                        const supportsChatFallback = isTimeout || [404, 405, 408, 429, 500, 501, 502, 503, 504].includes(statusCode);
+                        if (!supportsChatFallback) throw customErr;
+
+                        const chatPayload = {
+                            model: option.model || 'gemini-2.5-flash',
+                            messages: [{
+                                role: 'user',
+                                content: [
+                                    { type: 'text', text: voicePrompt },
+                                    {
+                                        type: 'input_audio',
+                                        input_audio: {
+                                            data: audioBuffer.toString('base64'),
+                                            format: fileExt
+                                        }
+                                    }
+                                ]
+                            }]
+                        };
+
+                        const chatRes = await axios.post(`${option.baseURL.replace(/\/+$/, '')}/chat/completions`, chatPayload, {
+                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                            httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false, timeout: 45000
+                        });
+                        transcribedText = chatRes.data?.choices?.[0]?.message?.content;
+                        usageTokens = chatRes.data?.usage?.total_tokens || 0;
+                    }
                 }
 
                 if (transcribedText) {

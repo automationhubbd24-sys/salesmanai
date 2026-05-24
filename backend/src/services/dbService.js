@@ -584,6 +584,7 @@ async function initTables() {
             ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS ai_provider TEXT;
             ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS chat_model TEXT;
             ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS voice_model TEXT;
+            ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS vision_model TEXT;
             ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS cheap_engine BOOLEAN DEFAULT TRUE;
         `);
 
@@ -1465,8 +1466,8 @@ async function getWhatsAppConfig(sessionName) {
     }
     if (needsAiUpdate) {
         await query(
-            'UPDATE whatsapp_message_database SET ai_provider = $1, chat_model = $2, voice_model = $3, cheap_engine = $4 WHERE session_name = $5',
-            [data.ai_provider || data.ai, data.chat_model, data.voice_model || null, data.cheap_engine, sessionName]
+            'UPDATE whatsapp_message_database SET ai_provider = $1, chat_model = $2, voice_model = $3, vision_model = $4, cheap_engine = $5 WHERE session_name = $6',
+            [data.ai_provider || data.ai, data.chat_model, data.voice_model || null, data.vision_model || null, data.cheap_engine, sessionName]
         );
     }
 
