@@ -1282,9 +1282,9 @@ STRICT RULES:
                         sender_id: pageId, // Bot (Page) is sender
                         recipient_id: senderId, // User is recipient
                         message_id: `img_analysis_${Date.now()}_${idx}`,
-                        text: `[Visual Data]:\n${perMsgText}`,
+                        text: `[Analyzed Image]:\n${perMsgText}`,
                         timestamp: Date.now(),
-                        status: 'sent',
+                        status: 'analyzed',
                         reply_by: 'bot',
                         token: totalVisionTokens, // Specific tokens for vision
                         ai_model: lastModelUsed

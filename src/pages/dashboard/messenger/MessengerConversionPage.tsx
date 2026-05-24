@@ -491,7 +491,11 @@ export default function MessengerConversionPage() {
                         className={`px-2 py-1 rounded-full text-xs border ${
                           msg.status === 'sent'
                             ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/40'
-                            : 'bg-yellow-500/10 text-yellow-300 border-yellow-500/40'
+                            : msg.status === 'transcribed'
+                              ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/40'
+                              : msg.status === 'analyzed'
+                                ? 'bg-violet-500/10 text-violet-300 border-violet-500/40'
+                                : 'bg-yellow-500/10 text-yellow-300 border-yellow-500/40'
                         }`}
                       >
                         {msg.status}

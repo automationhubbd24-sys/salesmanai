@@ -2748,7 +2748,17 @@ Rules:
 
     // Resolve models and provider once
     if (!resolved) {
-        resolved = await resolveSalesmanchatbotEngine(pageConfig, providerHint, modelHint, true, false);
+        if (pageConfig.cheap_engine === false && model && provider) {
+            resolved = {
+                finalModel: model,
+                fallbackModel: null,
+                finalProvider: provider,
+                modality: 'vision',
+                targetEngineName: model
+            };
+        } else {
+            resolved = await resolveSalesmanchatbotEngine(pageConfig, providerHint, modelHint, true, false);
+        }
     }
     
     const primaryModel = resolved.finalModel;
@@ -2771,7 +2781,7 @@ Rules:
         let modelRetryCount = 0;
 
         while (modelRetryCount < MAX_RETRIES_PER_MODEL) {
-            let apiKey = null;
+            let activeApiKey = null;
             let currentProvider = finalProvider;
 
             // If we are on the last fallback model, ensure we use openrouter
@@ -2781,18 +2791,22 @@ Rules:
 
             try {
                 // 1. Get Key
-                let keyData = await keyService.getSmartKey(currentProvider, currentModel, modality);
-                if (!keyData || !keyData.key || attemptedKeys.has(keyData.key)) {
-                    keyData = await keyService.getSmartKey(currentProvider, 'default', modality);
-                }
+                if (pageConfig.cheap_engine === false && apiKey) {
+                    activeApiKey = apiKey;
+                } else {
+                    let keyData = await keyService.getSmartKey(currentProvider, currentModel, modality);
+                    if (!keyData || !keyData.key || attemptedKeys.has(keyData.key)) {
+                        keyData = await keyService.getSmartKey(currentProvider, 'default', modality);
+                    }
 
-                if (!keyData || !keyData.key || attemptedKeys.has(keyData.key)) {
-                    console.warn(`[Vision] Pool ${currentProvider}/${currentModel} exhausted.`);
-                    break;
-                }
+                    if (!keyData || !keyData.key || attemptedKeys.has(keyData.key)) {
+                        console.warn(`[Vision] Pool ${currentProvider}/${currentModel} exhausted.`);
+                        break;
+                    }
 
-                apiKey = keyData.key;
-                attemptedKeys.add(apiKey);
+                    activeApiKey = keyData.key;
+                    attemptedKeys.add(activeApiKey);
+                }
 
                 // 2. Setup Proxy
                 const isBranded = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(resolved.targetEngineName || modelHint);
@@ -2826,7 +2840,7 @@ Rules:
                         safetySettings: getGeminiSafetySettings()
                     };
                     const res = await axios.post(url, payload, {
-                        headers: getStealthHeaders(apiKey, 'google'),
+                        headers: getStealthHeaders(activeApiKey, 'google'),
                         timeout: 300000,
                         httpsAgent: proxyAgent,
                         httpAgent: proxyAgent,
@@ -2860,7 +2874,7 @@ Rules:
                     };
 
                     const res = await axios.post(`${baseURL}/chat/completions`, payload, {
-                        headers: getStealthHeaders(apiKey, currentProvider === 'openrouter' ? 'openrouter' : 'openai'),
+                        headers: getStealthHeaders(activeApiKey, currentProvider === 'openrouter' ? 'openrouter' : 'openai'),
                         httpsAgent: proxyAgent,
                         httpAgent: proxyAgent,
                         proxy: false,
@@ -2873,8 +2887,8 @@ Rules:
                 if (!resultText) throw new Error(`Empty response from ${currentProvider}`);
 
                 // Record Success
-                if (apiKey && usageTokens > 0) {
-                    keyService.recordKeyUsage(apiKey, usageTokens, currentModel).catch(() => {});
+                if (activeApiKey && usageTokens > 0) {
+                    keyService.recordKeyUsage(activeApiKey, usageTokens, currentModel).catch(() => {});
                 }
 
                 let returnModel = currentModel;
@@ -2891,8 +2905,8 @@ Rules:
                 const errorMsg = (err.message || '').toLowerCase();
                 console.warn(`[Vision Retry Loop] Failed: ${currentModel} | Status: ${statusCode} | Msg: ${errorMsg}`);
 
-                if (apiKey) {
-                    await handleAiError(err, apiKey, currentModel, modality);
+                if (activeApiKey) {
+                    await handleAiError(err, activeApiKey, currentModel, modality);
                 }
 
                 const isRetryable = statusCode === 429 || statusCode === 401 || statusCode >= 500 || 
