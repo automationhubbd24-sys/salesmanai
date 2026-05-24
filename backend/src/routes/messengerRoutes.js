@@ -295,6 +295,16 @@ router.get('/config/:id', async (req, res) => {
 
         console.log(`[GET /config/:id] Request ID: ${id}, User: ${userEmail}`);
 
+        // Ensure columns exist in page_access_token_message (Migration on the fly)
+        try {
+            await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS custom_base_url text`);
+            await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS cheap_engine boolean DEFAULT false`);
+            await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS voice_model text`);
+            await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS vision_model text`);
+        } catch (e) {
+            console.warn("[Messenger] GET migration failed:", e.message);
+        }
+
         // Try lookup by page_id (String) first since that's what the frontend mostly sends
         const configByPageId = await pgClient.query(
             'SELECT * FROM fb_message_database WHERE page_id = $1 OR CAST(id AS TEXT) = $1',
