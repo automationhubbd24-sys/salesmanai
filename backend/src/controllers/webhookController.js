@@ -325,6 +325,10 @@ const handleWebhook = async (req, res) => {
     console.log(`[Webhook] Incoming POST Request. Object: ${body.object}`); 
     // console.log('Webhook Body Received:', JSON.stringify(body, null, 2)); // Too verbose for production
 
+    if (body.object === 'whatsapp_business_account') {
+        return handleWhatsAppWebhook(req, res);
+    }
+
     if (body.object === 'page') {
         // --- REALTIME OPTIMIZATION: Respond Immediately ---
         // Facebook requires a 200 OK within a few seconds.
@@ -400,7 +404,14 @@ const handleWebhook = async (req, res) => {
 };
 
 const verifyWebhook = (req, res) => {
-    const VERIFY_TOKEN = process.env.FACEBOOK_VERIFY_TOKEN || process.env.VERIFY_TOKEN || '123456'; 
+    const verifyTokens = new Set([
+        process.env.FACEBOOK_VERIFY_TOKEN,
+        process.env.WHATSAPP_OFFICIAL_VERIFY_TOKEN,
+        process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN,
+        process.env.VERIFY_TOKEN,
+        '123456',
+        'salesman_monster_wa_2026_official'
+    ].filter(Boolean));
     console.log(`[Webhook] Verification Request: Mode=${req.query['hub.mode']}, Token=${req.query['hub.verify_token']}`);
 
     const mode = req.query['hub.mode'];
@@ -408,7 +419,7 @@ const verifyWebhook = (req, res) => {
     const challenge = req.query['hub.challenge'];
 
     if (mode && token) {
-        if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+        if (mode === 'subscribe' && verifyTokens.has(token)) {
             console.log('WEBHOOK_VERIFIED');
             res.status(200).send(challenge);
         } else {
@@ -480,16 +491,41 @@ const handleWhatsAppWebhook = async (req, res) => {
 
                                     console.log(`[WhatsApp Cloud] Message from ${senderName} (${senderId}): ${messageText}`);
 
-                                    // 2. Fetch Page Config & Prompts
-                                    // In Cloud API, we use wabaId or phoneNumberId as the key
-                                    const { config, prompts } = await getCachedPageData(wabaId);
+                                    // Prefer phone_number_id because inbound delivery is tied to the connected number.
+                                    const lookupKeys = [
+                                        phoneNumberId,
+                                        wabaId,
+                                        phoneNumberId ? `official_${phoneNumberId}` : null,
+                                        wabaId ? `official_${wabaId}` : null
+                                    ].filter(Boolean);
+
+                                    let pageData = { config: null, prompts: null };
+                                    let matchedLookupKey = null;
+
+                                    for (const lookupKey of lookupKeys) {
+                                        const candidate = await getCachedPageData(lookupKey);
+                                        if (candidate?.config) {
+                                            pageData = candidate;
+                                            matchedLookupKey = lookupKey;
+                                            break;
+                                        }
+                                    }
+
+                                    const { config, prompts } = pageData;
                                     
-                                    if (!config || config.subscription_status === 'expired') {
-                                        console.warn(`[WhatsApp Cloud] Page ${wabaId} not active or expired.`);
+                                    if (!config || config.subscription_status === 'expired' || config.subscription_status === 'banned') {
+                                        console.warn(`[WhatsApp Cloud] No active config found for lookup keys: ${lookupKeys.join(', ')}`);
                                         continue;
                                     }
 
-                                    const effectiveSessionName = config.session_name || `official_${wabaId}`;
+                                    if (!config.cloud_access_token) {
+                                        console.warn(`[WhatsApp Cloud] Missing cloud access token for ${matchedLookupKey || wabaId || phoneNumberId}`);
+                                        continue;
+                                    }
+
+                                    const effectiveSessionName =
+                                        config.session_name ||
+                                        `official_${config.waba_id || wabaId || phoneNumberId}`;
 
                                     // 3. AI Response Generation
                                     const history = await dbService.getLastNWhatsAppMessages(effectiveSessionName, senderId, 10);

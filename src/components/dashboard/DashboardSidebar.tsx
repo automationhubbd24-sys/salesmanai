@@ -72,7 +72,7 @@ export function DashboardSidebar({ isMobile, onLinkClick }: { isMobile?: boolean
     // Platform Specific Items
     const platformItems = [
       { title: "Dashboard", icon: LayoutDashboard, path: base },
-      { title: platform === 'whatsapp' ? "Sessions" : "Integration", icon: Plug, path: platform === 'whatsapp' ? `${base}/sessions` : `${base}/integration` },
+      { title: "Integration", icon: Plug, path: platform === 'whatsapp' ? `${base}/sessions` : `${base}/integration` },
       { title: "Database Connect", icon: Database, path: `${base}/database` },
       { title: "Control Page", icon: Settings, path: `${base}/control` },
     ];

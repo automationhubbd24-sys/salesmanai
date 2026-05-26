@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, Loader2, Radio, ShieldCheck, Sparkles, AlertCircle, Info, ChevronRight } from "lucide-react";
+import { CheckCircle2, Loader2, Radio, ShieldCheck, Sparkles, Info } from "lucide-react";
 import { toast } from "sonner";
 import { BACKEND_URL } from "@/config";
 import { useWhatsApp } from "@/context/WhatsAppContext";
@@ -295,7 +295,7 @@ export default function WhatsAppOfficialIntegration() {
           <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3">
             <div>
               <p className="text-sm font-medium text-white">Integration Fee</p>
-              <p className="text-xs text-slate-400">Session connection on your dashboard stays free.</p>
+              <p className="text-xs text-slate-400">Official integration setup on your dashboard stays free.</p>
             </div>
             <Badge className="bg-green-600 text-white hover:bg-green-600">Free</Badge>
           </div>
@@ -308,21 +308,21 @@ export default function WhatsAppOfficialIntegration() {
                 <ShieldCheck className="h-4 w-4 text-emerald-400" />
                 <span className="text-sm font-medium">Official API</span>
               </div>
-              <p className="mt-2 text-xs text-slate-400">Meta-supported stable connection for production chatbot flows.</p>
+              <p className="mt-2 text-xs text-slate-400">Stable Meta Cloud API for a production-ready chatbot.</p>
             </div>
             <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-3">
               <div className="flex items-center gap-2 text-slate-200">
                 <Radio className="h-4 w-4 text-sky-400" />
                 <span className="text-sm font-medium">Coexistence</span>
               </div>
-              <p className="mt-2 text-xs text-slate-400">Use an existing WhatsApp Business App number without QR pairing.</p>
+              <p className="mt-2 text-xs text-slate-400">Connect an existing WhatsApp Business App number without QR pairing.</p>
             </div>
             <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-3">
               <div className="flex items-center gap-2 text-slate-200">
                 <Sparkles className="h-4 w-4 text-violet-400" />
-                <span className="text-sm font-medium">No Setup Fee</span>
+                <span className="text-sm font-medium">Simple Manage Flow</span>
               </div>
-              <p className="mt-2 text-xs text-slate-400">Dashboard connection stays free. Meta message pricing may still apply.</p>
+              <p className="mt-2 text-xs text-slate-400">Connect once, then manage bot, settings, and orders from one integration.</p>
             </div>
           </div>
 

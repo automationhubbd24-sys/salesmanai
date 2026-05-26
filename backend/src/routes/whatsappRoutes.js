@@ -2,8 +2,6 @@ const express = require('express');
 const router = express.Router();
 const whatsappController = require('../controllers/whatsappController');
 const whatsappCloudController = require('../controllers/whatsappCloudController');
-const whatsappService = require('../services/whatsappService');
-const dbService = require('../services/dbService');
 const pgClient = require('../services/pgClient');
 const jwt = require('jsonwebtoken');
 const authMiddleware = require('../middleware/authMiddleware');
@@ -62,17 +60,18 @@ function sendLegacySessionRetired(res) {
     });
 }
 
+function handleLegacyWhatsAppRoute(req, res) {
+    return sendLegacySessionRetired(res);
+}
+
 // WhatsApp Cloud API Official Routes
 router.post('/official/signup-complete', authMiddleware, whatsappCloudController.completeEmbeddedSignup);
 
-// WAHA Webhook Listener (POST)
-// Endpoint: /whatsapp/webhook
-router.post('/webhook', whatsappController.handleWebhook);
+// Legacy WAHA webhook listener retired.
+router.post('/webhook', handleLegacyWhatsAppRoute);
 
 // Get Session QR (Real-time)
-router.get('/session/qr/:sessionName', async (req, res) => {
-    return sendLegacySessionRetired(res);
-});
+router.get('/session/qr/:sessionName', handleLegacyWhatsAppRoute);
 
 // Get Sessions (Merged with DB Info & Team Permissions)
 router.get('/sessions', async (req, res) => {
@@ -133,31 +132,18 @@ router.get('/sessions', async (req, res) => {
         }
 
         // 4. Combine DB Sessions
-        // Deduplicate by ID
+        // Deduplicate by session_name
         const allDBSessions = [...(mySessions || []), ...sharedSessions];
         const uniqueDBSessions = Array.from(new Map(allDBSessions.map(item => [item.session_name, item])).values());
 
-        // 5. Get WAHA Sessions (Real-time Status)
-        let wahaSessions = [];
-        try {
-            wahaSessions = await whatsappService.getSessions(true);
-        } catch (e) {
-            console.warn("WAHA Sessions Fetch Failed:", e.message);
-        }
-        
-        // 6. Merge and Format
-        const finalSessions = uniqueDBSessions.map(ds => {
-            const ws = wahaSessions.find(s => s.name === ds.session_name);
-            const isOfficial = ds.provider_type === 'official' || String(ds.session_name || '').startsWith('official_');
-            const resolvedStatus = isOfficial
-                ? (String(ds.status || '').toLowerCase() === 'active' ? 'WORKING' : (ds.status || 'WORKING'))
-                : (ws ? ws.status : (ds.status || 'STOPPED'));
-
-            return {
+        // 5. Only expose official integrations in the current product flow.
+        const finalSessions = uniqueDBSessions
+            .filter((ds) => ds.provider_type === 'official' || String(ds.session_name || '').startsWith('official_'))
+            .map((ds) => ({
                 name: ds.session_name,
-                status: resolvedStatus,
-                config: ws ? ws.config : {},
-                me: ws ? ws.me : null,
+                status: String(ds.status || '').toLowerCase() === 'active' ? 'WORKING' : (ds.status || 'WORKING'),
+                config: {},
+                me: null,
                 wp_db_id: ds.id,
                 wp_id: ds.id,
                 expires_at: ds.expires_at,
@@ -165,12 +151,11 @@ router.get('/sessions', async (req, res) => {
                 subscription_status: ds.subscription_status || 'unknown',
                 db_status: ds.status || 'unknown',
                 engine_override: ds.engine_override || null,
-                provider_type: ds.provider_type || (isOfficial ? 'official' : null),
+                provider_type: ds.provider_type || 'official',
                 waba_id: ds.waba_id || null,
                 phone_number_id: ds.phone_number_id || null,
-                is_shared: ds.user_id !== userId // Flag if it's a shared session
-            };
-        });
+                is_shared: ds.user_id !== userId
+            }));
 
         res.json(finalSessions);
     } catch (err) {
@@ -712,501 +697,28 @@ router.put('/config/:id', async (req, res) => {
 });
 
 // Get Pairing Code
-router.post('/session/pairing-code', async (req, res) => {
-    return sendLegacySessionRetired(res);
-    try {
-        const { sessionName, phoneNumber } = req.body;
-        if (!sessionName || !phoneNumber) {
-            return res.status(400).json({ error: "Missing sessionName or phoneNumber" });
-        }
-        
-        console.log(`[WhatsApp] Requesting Pairing Code for ${sessionName} (Phone: ${phoneNumber})...`);
-
-        // --- Switch to Pairing Mode Config (Ubuntu/Chrome) if needed ---
-        try {
-            // Check current config
-            const currentSession = await whatsappService.getSession(sessionName);
-            const currentDeviceName = currentSession?.config?.client?.deviceName || "";
-            
-            // If using the "QR Branding" name (or any non-standard name), switch to "Ubuntu"
-            // This ensures reliable pairing code generation as WAHA/WhatsApp prefers standard browser agents for this flow.
-            if (!currentDeviceName.includes("Ubuntu")) {
-                console.log(`[WhatsApp] Switching session '${sessionName}' to Pairing Mode (Ubuntu)...`);
-                
-                // 1. Stop & Delete
-                try { await whatsappService.stopSession(sessionName); } catch (e) {}
-                try { await whatsappService.deleteSession(sessionName); } catch (e) {}
-                await new Promise(r => setTimeout(r, 1500));
-
-                // 2. Re-create with Ubuntu Config
-                const backendWebhookUrl = process.env.BACKEND_URL 
-                    ? `${process.env.BACKEND_URL}/whatsapp/webhook`
-                    : "https://webhook.salesmanchatbot.online/whatsapp/webhook";
-
-                const pairingConfig = {
-                    metadata: {},
-                    debug: false,
-                    noweb: {
-                        markOnline: true,
-                        store: { enabled: true, fullSync: true }
-                    },
-                    webhooks: [
-                        {
-                            url: backendWebhookUrl,
-                            events: ["message", "message.any", "state.change"],
-                            retries: { delaySeconds: 2, attempts: 15, policy: "linear" }
-                        }
-                    ],
-                    client: {
-                        deviceName: "Ubuntu",
-                        browserName: "Chrome"
-                    }
-                };
-
-                await whatsappService.createSession({ name: sessionName, config: pairingConfig });
-                
-                // 3. Start and Wait
-                await new Promise(r => setTimeout(r, 1000));
-                try { await whatsappService.startSession(sessionName); } catch (e) {}
-                
-                // Wait for 'SCAN_QR_CODE' status
-                let attempts = 0;
-                while (attempts < 15) {
-                    await new Promise(r => setTimeout(r, 1000));
-                    try {
-                        const s = await whatsappService.getSession(sessionName);
-                        if (s.status === 'SCAN_QR_CODE' || s.status === 'WORKING') break;
-                    } catch (e) { /* ignore */ }
-                    attempts++;
-                }
-                console.log(`[WhatsApp] Switched to Pairing Mode.`);
-            }
-        } catch (switchErr) {
-            console.warn(`[WhatsApp] Warning: Failed to switch to Pairing Mode config: ${switchErr.message}`);
-        }
-        // -----------------------------------------------------------
-
-        const code = await whatsappService.getPairingCode(sessionName, phoneNumber);
-        
-        res.json({ success: true, code: code });
-    } catch (err) {
-        console.error("Get Pairing Code Error:", err);
-        // Extract helpful error message if possible
-        const msg = err.response?.data?.error || err.message;
-        res.status(500).json({ error: msg });
-    }
-});
+router.post('/session/pairing-code', handleLegacyWhatsAppRoute);
 
 // Create Session
-router.post('/session/create', async (req, res) => {
-    return sendLegacySessionRetired(res);
-    try {
-        const { name, sessionName, config, engine, planDays } = req.body;
-        const finalName = (sessionName || name || '').toLowerCase().replace(/[^a-z0-9_]/g, '');
-        const duration = planDays ? parseInt(planDays) : 30; // Default 30 days
-        const selectedEngine = engine || 'WEBJS'; // Default WEBJS if not sent
-
-        const authHeader = req.headers.authorization;
-        if (!authHeader || !authHeader.startsWith('Bearer ')) {
-            return res.status(401).json({ error: 'Unauthorized' });
-        }
-        const token = authHeader.replace('Bearer ', '');
-        const secret = process.env.JWT_SECRET;
-        const payload = jwt.verify(token, secret);
-        const user = { id: payload.sub, email: payload.email };
-
-        // Pricing Logic
-        const PRICING = {
-            'WEBJS': { 2: 200, 30: 1500, 60: 2800, 90: 3500 }
-        };
-        
-        // Fallback pricing if duration not found
-        const enginePricing = PRICING['WEBJS'];
-        const cost = enginePricing[duration] || (duration * 10); // Fallback safe default 
-
-        // Deduct Balance
-        try {
-            await dbService.deductUserBalance(user.id, cost, `Create WhatsApp Session '${finalName}' (${duration} days, ${selectedEngine})`);
-        } catch (paymentError) {
-            return res.status(402).json({ error: `Insufficient Balance. Required: ${cost} BDT.` });
-        }
-        
-        // Construct WAHA Config
-        const backendWebhookUrl = process.env.BACKEND_URL 
-            ? `${process.env.BACKEND_URL}/whatsapp/webhook`
-            : "https://webhook.salesmanchatbot.online/whatsapp/webhook";
-
-        const wahaConfig = config || {
-            metadata: {},
-            debug: false,
-            noweb: {
-                markOnline: true,
-                    store: {
-                        enabled: true,
-                        fullSync: true
-                    }
-                },
-            webhooks: [
-                {
-                    url: backendWebhookUrl,
-                    events: ["message", "message.any", "state.change"],
-                    retries: {
-                        delaySeconds: 2,
-                        attempts: 15,
-                        policy: "linear"
-                    },
-                    customHeaders: null
-                }
-            ],
-            client: {
-                deviceName: "salesmanchatbot.online || wp : +8801956871403",
-                browserName: "Chrome"
-            }
-        };
-
-        // 1. Insert into DB immediately with 'created' status (So card appears in UI)
-        console.log(`[WhatsApp] Inserting session '${finalName}' into DB for User ${user.id}...`);
-        const dbEntry = await dbService.createWhatsAppEntry(finalName, user.id, duration, 'created', user.email);
-        whatsappController.clearPageCache(finalName);
-        console.log(`[WhatsApp] DB Entry Created: ID=${dbEntry.id}, Session=${dbEntry.session_name}`);
-
-        // 1.5 Insert into public.whatsapp_sessions table (Requested by User)
-        try {
-            await dbService.createWhatsAppSessionEntry(finalName, user.id, duration, 'created', user.email);
-            console.log(`[WhatsApp] Inserted into public.whatsapp_sessions for '${finalName}'`);
-        } catch (dbErr) {
-            console.warn(`[WhatsApp] Warning: Failed to insert into public.whatsapp_sessions: ${dbErr.message}`);
-        }
-
-        // 2. Create Session in WAHA
-        console.log(`[WhatsApp] Creating session '${finalName}'...`);
-        try {
-            await whatsappService.createSession({ name: finalName, config: wahaConfig });
-        } catch (wahaError) {
-             console.warn(`[WhatsApp] WAHA Create Session warning (might exist): ${wahaError.message}`);
-        }
-
-        // 3. Wait for Session to appear and Start it
-        let sessionReady = false;
-        let attempts = 0;
-        let detectedStatus = 'created'; // Default
-        const maxAttempts = 20; // 20 seconds timeout
-
-        while (!sessionReady && attempts < maxAttempts) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            attempts++;
-            
-            try {
-                // Check if session exists and its status
-                const allSessions = await whatsappService.getSessions(true);
-                const session = allSessions.find(s => s.name === finalName);
-
-                if (session) {
-                    console.log(`[WhatsApp] Session '${finalName}' found. Status: ${session.status}`);
-                    detectedStatus = session.status; // Capture status
-                    
-                    if (session.status === 'STOPPED') {
-                        console.log(`[WhatsApp] Session '${finalName}' is STOPPED. Starting...`);
-                        await whatsappService.startSession(finalName);
-                    } else if (session.status === 'STARTING' || session.status === 'SCAN_QR_CODE' || session.status === 'SCAN_QR' || session.status === 'WORKING') {
-                         sessionReady = true;
-                         console.log(`[WhatsApp] Session '${finalName}' is active/starting.`);
-                    } else {
-                        console.log(`[WhatsApp] Session '${finalName}' status: ${session.status}. Waiting...`);
-                    }
-                } else {
-                    console.log(`[WhatsApp] Session '${finalName}' not found yet. Attempt ${attempts}/${maxAttempts}`);
-                }
-            } catch (err) {
-                console.warn(`[WhatsApp] Error checking session status: ${err.message}`);
-            }
-        }
-
-        if (!sessionReady) {
-            console.warn(`[WhatsApp] Session '${finalName}' creation/start timed out.`);
-        }
-        
-        // 4. Update DB with final status
-        await dbService.updateWhatsAppEntry(dbEntry.id, { 
-             status: detectedStatus 
-        });
-        
-        let qr = null;
-
-        // ALWAYS fetch QR Code
-        try {
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            qr = await whatsappService.getScreenshot(finalName);
-        } catch (error) {
-            console.warn(`[WhatsApp] Failed to fetch QR code: ${error.message}`);
-        }
-
-        // Save QR to DB for frontend polling
-        if (qr) {
-             await dbService.updateWhatsAppEntry(dbEntry.id, { 
-                 qr_code: qr,
-                 status: 'scanned' 
-             });
-        }
-
-        res.json({ 
-            success: true, 
-            id: dbEntry.id,
-            wp_db_id: dbEntry.id, // Explicitly return wp_db_id for frontend consistency
-            session_name: finalName,
-            qr_code: qr
-        });
-        
-    } catch (err) {
-        console.error("Create Session Error:", err);
-        res.status(500).json({ error: err.message });
-    }
-});
+router.post('/session/create', handleLegacyWhatsAppRoute);
 
 // Restart Session
-router.post('/session/restart', async (req, res) => {
-    return sendLegacySessionRetired(res);
-    try {
-        const { sessionName } = req.body;
-        console.log(`[WhatsApp] Restarting session '${sessionName}'...`);
-        
-        // 0. Update DB status immediately to 'RESTARTING' to clear 'FAILED' status in UI
-        await dbService.updateWhatsAppEntryByName(sessionName, { status: 'RESTARTING' });
-
-        // 1. Try to fetch existing config first (to preserve settings)
-        let existingConfig = null;
-        try {
-            const sessionInfo = await whatsappService.getSession(sessionName);
-            if (sessionInfo && sessionInfo.config) {
-                existingConfig = sessionInfo.config;
-            }
-        } catch (e) {
-            console.warn(`[WhatsApp] Could not fetch config for restart (will use default): ${e.message}`);
-        }
-
-        // 2. Stop & Delete Session (Clean Slate)
-        try {
-            await whatsappService.stopSession(sessionName);
-        } catch (e) { /* Ignore */ }
-        
-        try {
-            await whatsappService.deleteSession(sessionName);
-            await new Promise(r => setTimeout(r, 2000)); // Wait for deletion
-        } catch (e) { 
-             console.warn(`[WhatsApp] Delete failed during restart: ${e.message}`);
-        }
-        
-        // 3. Re-create Session
-        const backendWebhookUrl = process.env.BACKEND_URL 
-            ? `${process.env.BACKEND_URL}/whatsapp/webhook`
-            : "https://webhook.salesmanchatbot.online/whatsapp/webhook";
-
-        const defaultConfig = {
-            metadata: {},
-            debug: false,
-            noweb: {
-                markOnline: true,
-                store: {
-                    enabled: true,
-                    fullSync: false
-                }
-            },
-            webhooks: [
-                {
-                    url: backendWebhookUrl,
-                    events: ["message", "message.any", "state.change"],
-                    retries: {
-                        delaySeconds: 2,
-                        attempts: 15,
-                        policy: "linear"
-                    },
-                    customHeaders: null
-                }
-            ],
-            client: {
-                deviceName: "salesmanchatbot.online || wp : +8801956871403",
-                browserName: "Chrome"
-            }
-        };
-
-        const finalConfig = existingConfig || defaultConfig;
-        
-        await whatsappService.createSession({ 
-            name: sessionName, 
-            config: finalConfig 
-        });
-
-        // 4. Start (Just in case create didn't start)
-        await new Promise(r => setTimeout(r, 2000));
-        try {
-             await whatsappService.startSession(sessionName);
-        } catch (e) { /* Ignore if already started */ }
-        
-        res.json({ success: true });
-    } catch (err) {
-        console.error("Restart Session Error:", err);
-        res.status(500).json({ error: err.message });
-    }
-});
+router.post('/session/restart', handleLegacyWhatsAppRoute);
 
 // Stop Session
-router.post('/session/stop', async (req, res) => {
-    return sendLegacySessionRetired(res);
-    try {
-        const { sessionName } = req.body;
-        console.log(`[WhatsApp] Stopping session '${sessionName}'...`);
-        
-        // 1. Try to Stop on WAHA (Best Effort)
-        try {
-            await whatsappService.stopSession(sessionName);
-        } catch (wahaError) {
-            console.warn(`[WhatsApp] WAHA Stop failed for '${sessionName}' (ignoring to update DB): ${wahaError.message}`);
-        }
-        
-        // 2. Update DB status immediately (Force Update)
-        await dbService.updateWhatsAppEntryByName(sessionName, { 
-            status: 'STOPPED', 
-            active: false 
-        });
-
-        res.json({ success: true });
-    } catch (err) {
-        console.error("Stop Session Error:", err);
-        res.status(500).json({ error: err.message });
-    }
-});
+router.post('/session/stop', handleLegacyWhatsAppRoute);
 
 // Renew Session
-router.post('/session/renew', async (req, res) => {
-    return sendLegacySessionRetired(res);
-    try {
-        const { sessionName, days } = req.body;
-        if (!sessionName || !days) return res.status(400).json({ error: "Missing sessionName or days" });
-
-        // Pricing Logic (Configurable)
-        const PLAN_COSTS = {
-            2: 200,   // 48 Hrs
-            30: 1500, // 30 Days
-            60: 2800,
-            90: 3500
-        };
-
-        const cost = PLAN_COSTS[days] || (days * 10); // Fallback to 10 per day
-
-        const pgClient = require('../services/pgClient');
-
-        const sessionRes = await pgClient.query(
-            'SELECT user_id FROM whatsapp_message_database WHERE session_name = $1 LIMIT 1',
-            [sessionName]
-        );
-
-        if (sessionRes.rows.length === 0 || !sessionRes.rows[0].user_id) {
-            return res.status(404).json({ error: "Session not found" });
-        }
-
-        const session = sessionRes.rows[0];
-
-        // 2. Deduct Balance
-        try {
-            await dbService.deductUserBalance(session.user_id, cost, `Renew Session ${sessionName} for ${days} days`);
-        } catch (paymentError) {
-            return res.status(402).json({ error: `Payment Failed: ${paymentError.message}` });
-        }
-        
-        // 3. Renew
-        const result = await dbService.renewWhatsAppSession(sessionName, parseInt(days));
-        res.json({ success: true, data: result, cost_deducted: cost });
-    } catch (err) {
-        console.error("Renew Session Error:", err);
-        res.status(500).json({ error: err.message });
-    }
-});
+router.post('/session/renew', handleLegacyWhatsAppRoute);
 
 // Delete Session
-router.delete('/session/delete', async (req, res) => {
-    return sendLegacySessionRetired(res);
-    try {
-        const { sessionName, name } = req.body; // Support both
-        const target = sessionName || name;
-        
-        console.log(`[WhatsApp] Deleting session '${target}'...`);
+router.delete('/session/delete', handleLegacyWhatsAppRoute);
 
-        // 1. Try Logout (Best Effort)
-        try {
-            await whatsappService.logoutSession(target);
-            await new Promise(resolve => setTimeout(resolve, 1000));
-        } catch (e) { 
-            console.warn(`[WhatsApp] Logout failed (ignoring): ${e.message}`);
-        }
-
-        // 2. Try Stop (Best Effort)
-        try {
-            await whatsappService.stopSession(target);
-            await new Promise(resolve => setTimeout(resolve, 1000)); 
-        } catch (stopErr) {
-            console.warn(`[WhatsApp] Stop failed (ignoring): ${stopErr.message}`);
-        }
-
-        // 3. Try Delete from WAHA (Best Effort)
-        try {
-            await whatsappService.deleteSession(target);
-        } catch (delErr) {
-            console.warn(`[WhatsApp] WAHA Delete failed for '${target}' (might be already gone): ${delErr.message}`);
-            // Do NOT throw here, proceed to DB delete
-        }
-        
-        // 4. Always Delete from DB
-        await dbService.deleteWhatsAppEntry(target);
-        whatsappController.clearPageCache(target);
-        console.log(`[WhatsApp] DB Entry deleted for '${target}'.`);
-        
-        res.json({ success: true });
-    } catch (err) {
-        console.error("Delete Session Error:", err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Get Contacts (Only Locked Ones for Performance)
-router.get('/contacts/:sessionName', async (req, res) => {
-    try {
-        const { sessionName } = req.params;
-        const pgClient = require('../services/pgClient');
-
-        const result = await pgClient.query(
-            `SELECT phone_number, is_locked
-             FROM whatsapp_contacts
-             WHERE session_name = $1 AND is_locked = true`,
-            [sessionName]
-        );
-
-        res.json(result.rows || []);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
+// Legacy contacts shortcut retired.
+router.get('/contacts/:sessionName', handleLegacyWhatsAppRoute);
 
 // Toggle Lock Status (Handover)
-router.post('/toggle-lock', async (req, res) => {
-    try {
-        const { sessionName, phoneNumber, isLocked } = req.body;
-        
-        if (!sessionName || !phoneNumber || typeof isLocked !== 'boolean') {
-            return res.status(400).json({ error: "Missing required fields" });
-        }
-
-        const success = await dbService.toggleWhatsAppLock(sessionName, phoneNumber, isLocked);
-        
-        if (success) {
-            res.json({ success: true, isLocked });
-        } else {
-            res.status(500).json({ error: "Failed to update lock status" });
-        }
-    } catch (err) {
-        console.error("Toggle Lock Error:", err);
-        res.status(500).json({ error: err.message });
-    }
-});
+router.post('/toggle-lock', handleLegacyWhatsAppRoute);
 
 router.get('/download-conversation', authMiddleware, async (req, res) => {
     try {
