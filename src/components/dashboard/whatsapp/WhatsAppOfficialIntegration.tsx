@@ -232,7 +232,7 @@ export default function WhatsAppOfficialIntegration() {
     setLoading(true);
 
     window.FB.login(
-      async (response) => {
+      (response) => {
         const code = response?.authResponse?.code;
         if (!code) {
           setLoading(false);
@@ -240,8 +240,10 @@ export default function WhatsAppOfficialIntegration() {
           return;
         }
 
-        const signupMeta = await waitForEmbeddedSignupMeta();
-        await handleSignupCompletion(code, signupMeta);
+        void (async () => {
+          const signupMeta = await waitForEmbeddedSignupMeta();
+          await handleSignupCompletion(code, signupMeta);
+        })();
       },
       {
         config_id: CONFIG_ID,
