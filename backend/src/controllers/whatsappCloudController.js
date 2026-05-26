@@ -9,6 +9,14 @@ const completeEmbeddedSignup = async (req, res) => {
         const { code, wabaId, phoneNumberId } = req.body;
         const userId = req.user?.id; // From authMiddleware
         const userEmail = req.user?.email;
+
+        await pgClient.query(`
+            ALTER TABLE whatsapp_message_database
+            ADD COLUMN IF NOT EXISTS provider_type text,
+            ADD COLUMN IF NOT EXISTS waba_id text,
+            ADD COLUMN IF NOT EXISTS phone_number_id text,
+            ADD COLUMN IF NOT EXISTS cloud_access_token text
+        `);
         
         if (!code) {
             return res.status(400).json({ error: 'Missing code' });

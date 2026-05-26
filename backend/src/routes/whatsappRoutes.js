@@ -8,7 +8,19 @@ const pgClient = require('../services/pgClient');
 const jwt = require('jsonwebtoken');
 const authMiddleware = require('../middleware/authMiddleware');
 
+async function ensureOfficialWhatsAppColumns() {
+    await pgClient.query(`
+        ALTER TABLE whatsapp_message_database
+        ADD COLUMN IF NOT EXISTS provider_type text,
+        ADD COLUMN IF NOT EXISTS waba_id text,
+        ADD COLUMN IF NOT EXISTS phone_number_id text,
+        ADD COLUMN IF NOT EXISTS cloud_access_token text
+    `);
+}
+
 async function hasSessionAccess(sessionName, userId, userEmail) {
+    await ensureOfficialWhatsAppColumns();
+
     const configResult = await pgClient.query(
         'SELECT user_id, email, session_name FROM whatsapp_message_database WHERE session_name = $1 LIMIT 1',
         [sessionName]
@@ -65,6 +77,8 @@ router.get('/session/qr/:sessionName', async (req, res) => {
 // Get Sessions (Merged with DB Info & Team Permissions)
 router.get('/sessions', async (req, res) => {
     try {
+        await ensureOfficialWhatsAppColumns();
+
         const authHeader = req.headers.authorization;
         let userId = null;
         let userEmail = null;

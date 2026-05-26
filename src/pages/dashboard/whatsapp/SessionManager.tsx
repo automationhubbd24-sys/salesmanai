@@ -1,4 +1,3 @@
-import React from "react";
 import { Link } from "react-router-dom";
 import { useWhatsApp } from "@/context/WhatsAppContext";
 import { Button } from "@/components/ui/button";
@@ -14,6 +13,8 @@ import {
   MessageSquare,
   RefreshCw,
   Settings,
+  ShieldCheck,
+  Sparkles,
   Smartphone,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -41,47 +42,87 @@ export default function SessionManager() {
   };
 
   return (
-    <div className="space-y-8 animate-fade-in">
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
-        <div>
-          <h1 className="text-3xl font-black text-white tracking-tight flex items-center gap-3">
-            <Smartphone className="text-primary h-8 w-8" />
-            WhatsApp Official Manager
-          </h1>
-          <p className="text-gray-400 mt-2 font-medium">
-            Connect Meta official WhatsApp, keep coexistence support, and run your chatbot without QR sessions.
-          </p>
-          <div className="mt-2">
-            <WorkspaceSwitcher platform="whatsapp" />
+    <div className="space-y-6 animate-fade-in">
+      <Card className="overflow-hidden rounded-3xl border border-emerald-500/10 bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.14),_rgba(2,6,23,0.96)_38%,_rgba(2,6,23,1)_100%)]">
+        <CardContent className="p-6 md:p-8">
+          <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
+            <div className="max-w-3xl">
+              <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-300">
+                <ShieldCheck className="h-3.5 w-3.5" />
+                Official WhatsApp Cloud API
+              </div>
+              <h1 className="mt-4 flex items-center gap-3 text-3xl font-black tracking-tight text-white md:text-4xl">
+                <Smartphone className="h-8 w-8 text-primary" />
+                WhatsApp Official Manager
+              </h1>
+              <p className="mt-3 max-w-2xl text-sm font-medium leading-6 text-slate-300 md:text-base">
+                Connect Meta official WhatsApp, keep coexistence support, and run your chatbot without QR sessions or third-party pairing flow.
+              </p>
+              <div className="mt-4">
+                <WorkspaceSwitcher platform="whatsapp" />
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <Badge variant="outline" className="border-green-500/30 bg-green-500/10 px-3 py-1 text-green-400">
+                Integration Fee: Free
+              </Badge>
+              <Button onClick={() => refreshSessions()} variant="outline" size="sm" className="border-white/10 bg-black/20">
+                <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+                Refresh
+              </Button>
+            </div>
           </div>
-        </div>
 
-        <div className="flex flex-wrap gap-2 items-center">
-          <Badge variant="outline" className="border-green-500/30 bg-green-500/10 text-green-400">
-            Integration Fee: Free
-          </Badge>
-          <Button onClick={() => refreshSessions()} variant="outline" size="sm">
-            <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-            Refresh
-          </Button>
-        </div>
-      </div>
+          <div className="mt-6 grid gap-3 md:grid-cols-3">
+            <div className="rounded-2xl border border-white/10 bg-slate-950/50 p-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Connection Model</p>
+              <p className="mt-2 text-lg font-semibold text-white">Official Only</p>
+              <p className="mt-1 text-sm text-slate-400">Legacy QR onboarding is removed from this page.</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-slate-950/50 p-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Coexistence</p>
+              <p className="mt-2 text-lg font-semibold text-white">Supported</p>
+              <p className="mt-1 text-sm text-slate-400">Existing WhatsApp Business App numbers can stay active.</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-slate-950/50 p-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Connected Accounts</p>
+              <p className="mt-2 text-lg font-semibold text-white">{officialSessions.length}</p>
+              <p className="mt-1 text-sm text-slate-400">Use one active connection for bot, settings, and orders.</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
-      <Card className="bg-[#0f0f0f]/80 border border-white/10 rounded-2xl">
-        <CardHeader>
-          <CardTitle className="text-white">Connect Official WhatsApp</CardTitle>
-          <CardDescription>
-            Only Meta official Cloud API is enabled here. QR-based third-party session onboarding has been removed.
-          </CardDescription>
+      <Card className="rounded-3xl border border-white/10 bg-[#0b1220]/90 shadow-[0_18px_60px_rgba(2,6,23,0.28)]">
+        <CardHeader className="pb-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <CardTitle className="text-white">Connect Official WhatsApp</CardTitle>
+              <CardDescription className="mt-1">
+                Only Meta official Cloud API is enabled here. The design below guides users through the stable onboarding path.
+              </CardDescription>
+            </div>
+            <Badge className="bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/15">
+              <Sparkles className="mr-1 h-3.5 w-3.5" />
+              Recommended
+            </Badge>
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4 text-sm text-slate-300 space-y-1">
-            <p>No dashboard integration fee for session setup.</p>
-            <p>Your users can connect existing WhatsApp Business App numbers through coexistence.</p>
-            <p>Meta template and bulk messaging charges may still apply outside free support windows.</p>
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4 text-sm text-slate-300">
+              No dashboard integration fee for session setup.
+            </div>
+            <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4 text-sm text-slate-300">
+              Users can connect an existing WhatsApp Business App number via coexistence.
+            </div>
+            <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4 text-sm text-slate-300">
+              Meta template and bulk messaging charges may still apply outside support windows.
+            </div>
           </div>
 
-          <div className="rounded-xl border border-white/10 bg-slate-950/60 p-4">
+          <div className="rounded-3xl border border-white/10 bg-slate-950/70 p-4 md:p-5">
             <WhatsAppOfficialIntegration />
           </div>
         </CardContent>
@@ -106,12 +147,16 @@ export default function SessionManager() {
             </CardContent>
           </Card>
         ) : officialSessions.length === 0 ? (
-          <Card className="bg-[#0f0f0f]/80 border border-dashed border-white/10 rounded-2xl">
-            <CardContent className="py-12 text-center space-y-3">
-              <CheckCircle2 className="mx-auto h-10 w-10 text-slate-500" />
+          <Card className="rounded-3xl border border-dashed border-white/10 bg-[#0f0f0f]/80">
+            <CardContent className="py-14 text-center space-y-4">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-white/10 bg-slate-900/80">
+                <CheckCircle2 className="h-7 w-7 text-slate-500" />
+              </div>
               <div>
                 <p className="text-white font-semibold">No official WhatsApp connected yet</p>
-                <p className="text-sm text-slate-400">Use the official Meta flow above to connect your first chatbot number.</p>
+                <p className="mx-auto mt-1 max-w-xl text-sm text-slate-400">
+                  Use the official Meta onboarding flow above to connect your first chatbot number. After connection, settings, database, and order tools will activate automatically.
+                </p>
               </div>
             </CardContent>
           </Card>

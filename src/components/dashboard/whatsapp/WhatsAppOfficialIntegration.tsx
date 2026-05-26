@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, Loader2 } from "lucide-react";
+import { CheckCircle2, Loader2, Radio, ShieldCheck, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { BACKEND_URL } from "@/config";
 import { useWhatsApp } from "@/context/WhatsAppContext";
@@ -196,51 +196,81 @@ export default function WhatsAppOfficialIntegration() {
     <div className="space-y-4">
       {connected ? (
         <div className="space-y-4">
-          <div className="bg-green-500/10 border border-green-500/20 p-4 rounded-lg flex items-start gap-3">
-            <CheckCircle2 className="h-5 w-5 text-green-500 mt-0.5" />
+          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4 md:p-5 flex items-start gap-3">
+            <CheckCircle2 className="h-5 w-5 text-emerald-400 mt-0.5" />
             <div>
-              <p className="font-medium text-green-500">Official Connection Active</p>
-              <p className="text-sm text-muted-foreground">
+              <p className="font-semibold text-emerald-300">Official Connection Active</p>
+              <p className="text-sm text-slate-300">
                 Your chatbot now runs on Meta official WhatsApp Cloud API.
               </p>
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-            <div className="p-3 bg-white/5 rounded-md">
-              <p className="text-muted-foreground text-xs mb-1">WABA ID</p>
-              <p className="font-mono break-all">{wabaInfo?.wabaId || "Pending sync"}</p>
+            <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+              <p className="text-slate-500 text-xs mb-2 uppercase tracking-[0.2em]">WABA ID</p>
+              <p className="font-mono break-all text-slate-100">{wabaInfo?.wabaId || "Pending sync"}</p>
             </div>
-            <div className="p-3 bg-white/5 rounded-md">
-              <p className="text-muted-foreground text-xs mb-1">Phone Number ID</p>
-              <p className="font-mono break-all">{wabaInfo?.phoneNumberId || "Pending sync"}</p>
+            <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+              <p className="text-slate-500 text-xs mb-2 uppercase tracking-[0.2em]">Phone Number ID</p>
+              <p className="font-mono break-all text-slate-100">{wabaInfo?.phoneNumberId || "Pending sync"}</p>
             </div>
           </div>
 
-          <div className="flex items-center justify-between rounded-lg border border-white/10 bg-white/5 px-4 py-3">
+          <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3">
             <div>
               <p className="text-sm font-medium text-white">Integration Fee</p>
-              <p className="text-xs text-muted-foreground">Session connection on your dashboard stays free.</p>
+              <p className="text-xs text-slate-400">Session connection on your dashboard stays free.</p>
             </div>
             <Badge className="bg-green-600 text-white hover:bg-green-600">Free</Badge>
           </div>
         </div>
       ) : (
         <div className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-3">
+              <div className="flex items-center gap-2 text-slate-200">
+                <ShieldCheck className="h-4 w-4 text-emerald-400" />
+                <span className="text-sm font-medium">Official API</span>
+              </div>
+              <p className="mt-2 text-xs text-slate-400">Meta-supported stable connection for production chatbot flows.</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-3">
+              <div className="flex items-center gap-2 text-slate-200">
+                <Radio className="h-4 w-4 text-sky-400" />
+                <span className="text-sm font-medium">Coexistence</span>
+              </div>
+              <p className="mt-2 text-xs text-slate-400">Use an existing WhatsApp Business App number without QR pairing.</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-3">
+              <div className="flex items-center gap-2 text-slate-200">
+                <Sparkles className="h-4 w-4 text-violet-400" />
+                <span className="text-sm font-medium">No Setup Fee</span>
+              </div>
+              <p className="mt-2 text-xs text-slate-400">Dashboard connection stays free. Meta message pricing may still apply.</p>
+            </div>
+          </div>
+
           <Button
             onClick={launchWhatsAppSignup}
             disabled={loading || !sdkReady}
-            className="w-full bg-[#1877F2] hover:bg-[#166fe5] text-white font-semibold py-6"
+            className="h-14 w-full rounded-2xl bg-gradient-to-r from-[#1877F2] to-[#1f6fe5] text-white font-semibold shadow-lg shadow-blue-950/30 transition-all hover:scale-[1.01] hover:from-[#166fe5] hover:to-[#166fe5] disabled:cursor-not-allowed disabled:opacity-70"
           >
             {loading ? (
               <Loader2 className="mr-2 h-5 w-5 animate-spin" />
             ) : (
-              <img src="https://www.facebook.com/favicon.ico" className="w-5 h-5 mr-2 invert" alt="FB" />
+              <img src="https://www.facebook.com/favicon.ico" className="mr-2 h-5 w-5 invert" alt="FB" />
             )}
-            Connect Official WhatsApp
+            {loading ? "Opening Meta Signup..." : sdkReady ? "Connect Official WhatsApp" : "Preparing Meta SDK..."}
           </Button>
 
-          <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-xs text-slate-300 space-y-1">
+          <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4 text-xs text-slate-300 space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <p className="font-medium text-sky-300">Connection Notes</p>
+              <Badge variant="outline" className="border-sky-500/30 bg-sky-500/10 text-sky-300">
+                {sdkReady ? "Ready" : "Loading SDK"}
+              </Badge>
+            </div>
             <p>Use your existing WhatsApp Business App number via coexistence.</p>
             <p>No QR session, no third-party connector, no dashboard integration fee.</p>
             <p>Meta message charges may still apply for template and bulk messaging.</p>
