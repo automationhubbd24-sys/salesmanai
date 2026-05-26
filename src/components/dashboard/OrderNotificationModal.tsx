@@ -33,7 +33,7 @@ export function OrderNotificationModal({ dbId, platform, trigger }: OrderNotific
         try {
             const token = localStorage.getItem("auth_token");
             const endpoint = platform === 'messenger' 
-                ? `${BACKEND_URL}/messenger/config/${dbId}`
+                ? `${BACKEND_URL}/api/messenger/config/${dbId}`
                 : `${BACKEND_URL}/api/whatsapp/config/${dbId}`;
                 
             const res = await fetch(endpoint, {
@@ -57,7 +57,7 @@ export function OrderNotificationModal({ dbId, platform, trigger }: OrderNotific
         try {
             const token = localStorage.getItem("auth_token");
             const endpoint = platform === 'messenger' 
-                ? `${BACKEND_URL}/messenger/config/${dbId}`
+                ? `${BACKEND_URL}/api/messenger/config/${dbId}`
                 : `${BACKEND_URL}/api/whatsapp/config/${dbId}`;
 
             const res = await fetch(endpoint, {

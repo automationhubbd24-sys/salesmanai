@@ -181,6 +181,12 @@ router.get('/config/:id', async (req, res) => {
         res.set('Expires', '0');
         res.set('Surrogate-Control', 'no-store');
 
+        try {
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS pro_plus_mode boolean DEFAULT false`);
+        } catch (e) {
+            console.warn("[WhatsApp] GET migration failed:", e.message);
+        }
+
         const configResult = await pgClient.query(
             `SELECT w.*, u.message_credit 
              FROM whatsapp_message_database w
@@ -622,6 +628,7 @@ router.put('/config/:id', async (req, res) => {
             'semantic_cache_enabled',
             'semantic_cache_threshold',
             'embed_enabled',
+            'pro_plus_mode',
             'order_email_confirmation_enabled',
             'admin_notification_email'
         ];
@@ -639,6 +646,7 @@ router.put('/config/:id', async (req, res) => {
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS semantic_cache_threshold numeric DEFAULT 0.96`);
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS embed_enabled boolean DEFAULT false`);
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS cheap_engine boolean DEFAULT false`);
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS pro_plus_mode boolean DEFAULT false`);
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS order_email_confirmation_enabled boolean DEFAULT false`);
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS admin_notification_email text`);
         } catch (e) {

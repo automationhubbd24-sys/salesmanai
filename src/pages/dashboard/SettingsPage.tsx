@@ -48,7 +48,7 @@ export default function SettingsPage() {
   const fetchConfig = useCallback(async (id: string) => {
     try {
       const token = localStorage.getItem("auth_token");
-      const res = await fetch(`${BACKEND_URL}/whatsapp/config/${id}`, {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${id}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         cache: 'no-store'
       });
@@ -105,7 +105,7 @@ export default function SettingsPage() {
     setLoading(true);
     try {
       const token = localStorage.getItem("auth_token");
-      const res = await fetch(`${BACKEND_URL}/whatsapp/config/${dbId}`, {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${dbId}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -148,7 +148,7 @@ export default function SettingsPage() {
         <h2 className="text-2xl font-bold">No Database Connected</h2>
         <p className="text-muted-foreground">Please connect to a database to manage AI settings.</p>
         <Button asChild>
-            <Link to="/dashboard/database">Go to Database</Link>
+            <Link to="/dashboard/whatsapp/database">Go to Database</Link>
         </Button>
       </div>
     );

@@ -180,6 +180,17 @@ async function updateKeyCache(force = false) {
                 CREATE INDEX IF NOT EXISTS idx_api_model_usage_model_name ON api_key_model_usage(model_name);
                 CREATE INDEX IF NOT EXISTS idx_api_model_usage_status ON api_key_model_usage(status);
 
+                CREATE TABLE IF NOT EXISTS public.managed_model_locks (
+                    model_name TEXT PRIMARY KEY,
+                    status TEXT DEFAULT 'locked',
+                    cooldown_until TIMESTAMP WITH TIME ZONE,
+                    reason TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS idx_managed_model_locks_status ON managed_model_locks(status);
+                CREATE INDEX IF NOT EXISTS idx_managed_model_locks_cooldown ON managed_model_locks(cooldown_until);
+
                 -- ADD FALLBACK COLUMNS TO api_engine_configs IF THEY DON'T EXIST
                 DO $$ 
                 BEGIN 
@@ -242,6 +253,12 @@ async function updateKeyCache(force = false) {
              WHERE (cooldown_until IS NOT NULL AND cooldown_until < NOW()) 
              OR (last_date_checked != $1)`,
             [today]
+        );
+
+        await pgClient.query(
+            `UPDATE managed_model_locks
+             SET status = 'active', updated_at = NOW()
+             WHERE cooldown_until IS NOT NULL AND cooldown_until < NOW()`
         );
 
         const result = await pgClient.query(
@@ -400,6 +417,21 @@ async function updateKeyCache(force = false) {
                 }
             });
             console.log(`[KeyService] 🔒 Synced ${modelLockResult.rows.length} model-specific usage/lock records from database.`);
+        }
+
+        const globalModelLockResult = await pgClient.query(
+            "SELECT model_name, cooldown_until, reason FROM managed_model_locks WHERE status = 'locked'"
+        );
+        if (globalModelLockResult.rows && globalModelLockResult.rows.length > 0) {
+            globalModelLockResult.rows.forEach(row => {
+                const modelName = String(row.model_name || '').toLowerCase().trim();
+                if (!modelName) return;
+                const expiry = row.cooldown_until ? new Date(row.cooldown_until).getTime() : Date.now() + 24 * 60 * 60 * 1000;
+                if (expiry > nowMs) {
+                    modelLockMap.set(modelName, { expiry, reason: row.reason || 'persisted_global_lock', strikes: 3 });
+                }
+            });
+            console.log(`[KeyService] 🌐 Synced ${globalModelLockResult.rows.length} global managed model locks from database.`);
         }
 
         lastCacheUpdate = now;
@@ -563,6 +595,36 @@ async function markModelAsDead(apiKey, modelName, duration = DEFAULT_COOLDOWN, r
         console.log(`[KeyService] 💾 Persisted model-specific lock for ${modelName} on ${apiKey.substring(0,8)}...`);
     } catch (err) {
         console.error(`[KeyService] Failed to persist model-specific lock:`, err.message);
+    }
+}
+
+async function lockGlobalModel(modelName, duration = getMsUntilPacificMidnight(), reason = 'global_model_lock') {
+    if (!modelName) return;
+
+    const normalizedModel = String(modelName).toLowerCase().trim();
+    if (!normalizedModel) return;
+
+    const expiry = Date.now() + duration;
+    const expiryDate = new Date(expiry);
+
+    console.warn(`[KeyService] 🌐 Locking model ${normalizedModel} globally for ${(duration / 1000 / 60).toFixed(1)} mins. Reason: ${reason}`);
+    modelLockMap.set(normalizedModel, { expiry, reason, strikes: 3 });
+
+    try {
+        await pgClient.query(
+            `INSERT INTO managed_model_locks (model_name, status, cooldown_until, reason, updated_at)
+             VALUES ($1, 'locked', $2, $3, NOW())
+             ON CONFLICT (model_name)
+             DO UPDATE SET
+                status = 'locked',
+                cooldown_until = EXCLUDED.cooldown_until,
+                reason = EXCLUDED.reason,
+                updated_at = NOW()`,
+            [normalizedModel, expiryDate.toISOString(), reason]
+        );
+        console.log(`[KeyService] 💾 Persisted global lock for model ${normalizedModel} until ${expiryDate.toISOString()}`);
+    } catch (err) {
+        console.error(`[KeyService] Failed to persist global model lock for ${normalizedModel}:`, err.message);
     }
 }
 
@@ -1473,6 +1535,7 @@ module.exports = {
     markKeyAsDead,
     markKeyAsSuspended,
     markKeyAsQuotaExceeded,
+    lockGlobalModel,
     handleApiKeyError,
     recordKeyUsage,
     updateKeyStatusFromHeaders,

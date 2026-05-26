@@ -301,6 +301,7 @@ router.get('/config/:id', async (req, res) => {
             await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS cheap_engine boolean DEFAULT false`);
             await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS voice_model text`);
             await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS vision_model text`);
+            await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS pro_plus_mode boolean DEFAULT false`);
         } catch (e) {
             console.warn("[Messenger] GET migration failed:", e.message);
         }
@@ -351,7 +352,7 @@ router.get('/config/:id', async (req, res) => {
         const pageId = configRow.page_id;
 
         const pageResult = await pgClient.query(
-            'SELECT page_id, email, page_access_token, api_key, ai, chat_model, voice_model, vision_model, cheap_engine, custom_base_url FROM page_access_token_message WHERE page_id = $1',
+            'SELECT page_id, email, page_access_token, api_key, ai, chat_model, voice_model, vision_model, cheap_engine, custom_base_url, pro_plus_mode FROM page_access_token_message WHERE page_id = $1',
             [pageId]
         );
 
@@ -396,7 +397,8 @@ router.get('/config/:id', async (req, res) => {
                 voice_model: pageRow.voice_model || configRow.voice_model,
                 vision_model: pageRow.vision_model || configRow.vision_model,
                 cheap_engine: pageRow.cheap_engine !== undefined ? pageRow.cheap_engine : configRow.cheap_engine,
-                custom_base_url: pageRow.custom_base_url || configRow.custom_base_url
+                custom_base_url: pageRow.custom_base_url || configRow.custom_base_url,
+                pro_plus_mode: pageRow.pro_plus_mode !== undefined ? pageRow.pro_plus_mode : configRow.pro_plus_mode
             };
         }
 
@@ -621,6 +623,7 @@ router.put('/config/:id', async (req, res) => {
             await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS cheap_engine boolean DEFAULT false`);
             await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS voice_model text`);
             await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS vision_model text`);
+            await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS pro_plus_mode boolean DEFAULT false`);
         } catch (e) {
             console.warn("[Messenger] Failed to add migration columns:", e.message);
         }
@@ -634,6 +637,7 @@ router.put('/config/:id', async (req, res) => {
         const pageAccessToken = req.body.page_access_token_message || req.body.page_access_token;
         const cheapEngine = req.body.cheap_engine;
         const customBaseUrl = req.body.custom_base_url;
+        const proPlusMode = req.body.pro_plus_mode;
 
         console.log(`[PUT /config/:id] Token Updates - API Key: ${apiKey ? 'Provided' : 'Missing'}, Provider: ${aiProvider}, Model: ${chatModel}, Voice Model: ${voiceModel || 'unchanged'}`);
 
@@ -672,6 +676,11 @@ router.put('/config/:id', async (req, res) => {
             tokenValues.push(cheapEngine);
             tIdx++;
         }
+        if (proPlusMode !== undefined) {
+            tokenUpdates.push(`pro_plus_mode = $${tIdx}`);
+            tokenValues.push(proPlusMode);
+            tIdx++;
+        }
         // Always update custom_base_url (can be null)
         if (customBaseUrl !== undefined) {
              tokenUpdates.push(`custom_base_url = $${tIdx}`);
@@ -702,7 +711,8 @@ router.put('/config/:id', async (req, res) => {
                         voice_model: updatedTokenRow.voice_model,
                         vision_model: updatedTokenRow.vision_model,
                         cheap_engine: updatedTokenRow.cheap_engine,
-                        custom_base_url: updatedTokenRow.custom_base_url
+                        custom_base_url: updatedTokenRow.custom_base_url,
+                        pro_plus_mode: updatedTokenRow.pro_plus_mode
                      };
                 } else {
                     console.warn(`[PUT /config/:id] Failed to update token table for Page ${pageId}. Row not found?`);

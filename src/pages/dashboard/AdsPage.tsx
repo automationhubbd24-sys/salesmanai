@@ -40,6 +40,12 @@ export default function AdsPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [activePageName, setActivePageName] = useState("");
+  const activeMessengerPageId = localStorage.getItem("active_fb_page_id");
+  const activeWhatsAppSessionId = localStorage.getItem("active_wa_session_id");
+  const integrationPath =
+    platform === "whatsapp" || (!platform && activeWhatsAppSessionId && !activeMessengerPageId)
+      ? "/dashboard/whatsapp/sessions"
+      : "/dashboard/messenger/integration";
 
   // Form State
   const [adId, setAdId] = useState("");
@@ -67,9 +73,9 @@ export default function AdsPage() {
       
       // Check if there is an active page in localStorage (sidebar selection)
       const activeFbPageId = localStorage.getItem("active_fb_page_id");
-      const activeWpSession = localStorage.getItem("active_wp_session");
+      const activeWaSession = localStorage.getItem("active_wa_session_id");
       
-      if (activeFbPageId || activeWpSession) {
+      if (activeFbPageId || activeWaSession) {
         setHasActivePages(true);
         return;
       }
@@ -266,11 +272,12 @@ export default function AdsPage() {
     setAdId("");
     // Auto-fill pageId from localStorage if available
     const activeFbPageId = localStorage.getItem("active_fb_page_id");
-    const activeWpSession = localStorage.getItem("active_wp_session");
+    const activeWaSession = localStorage.getItem("active_wa_session_id");
     const activeFbPageName = localStorage.getItem("active_fb_page_name");
+    const activeWaSessionName = localStorage.getItem("active_wa_session_name");
 
-    setPageId(activeFbPageId || activeWpSession || "");
-    setActivePageName(activeFbPageName || activeWpSession || "");
+    setPageId(activeFbPageId || activeWaSession || "");
+    setActivePageName(activeFbPageName || activeWaSessionName || activeWaSession || "");
     
     setDescription("");
     setSelectedProducts([]);
@@ -293,12 +300,12 @@ export default function AdsPage() {
         <p className="text-muted-foreground max-w-md mt-2 mb-6">
           To use the Ads Library, you first need to connect at least one Facebook Page or WhatsApp session.
         </p>
-        <a href="https://salesmanchatbot.online/dashboard/messenger/integration">
-          <Button>
+        <Button asChild>
+          <Link to={integrationPath}>
             Go to Integration
             <ArrowRight className="ml-2 h-4 w-4" />
-          </Button>
-        </a>
+          </Link>
+        </Button>
       </div>
     );
   }

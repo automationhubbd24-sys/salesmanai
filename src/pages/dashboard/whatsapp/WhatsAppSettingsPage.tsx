@@ -57,6 +57,7 @@ const formSchema = z.object({
 });
 
 const MANAGED_MODEL = import.meta.env.VITE_MANAGED_MODEL || "salesmanchatbot-pro";
+const PRO_PLUS_MANAGED_MODEL = "salesmanchatbot-pro-plus";
 
 type PromptProduct = {
   id: string | number;
@@ -72,6 +73,8 @@ export default function WhatsAppSettingsPage() {
   const [dbId, setDbId] = useState<string | null>(null);
   const [mode, setMode] = useState<"own" | "managed" | null>(null);
   const [activeMode, setActiveMode] = useState<"own" | "managed" | null>(null);
+  const [proPlusMode, setProPlusMode] = useState(false);
+  const [activeProPlusMode, setActiveProPlusMode] = useState(false);
   
   const [isPromptOpen, setIsPromptOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("text");
@@ -300,6 +303,9 @@ export default function WhatsAppSettingsPage() {
 
       setMode(isManaged ? "managed" : "own");
       setActiveMode(isManaged ? "managed" : "own");
+      const isProPlusActive = Boolean(dbRow.pro_plus_mode);
+      setProPlusMode(isManaged ? isProPlusActive : false);
+      setActiveProPlusMode(isManaged ? isProPlusActive : false);
 
       const rawModel = dbRow.chat_model || dbRow.chatmodel || "openrouter/auto";
       const displayModel = rawModel.replace(":free", "");
@@ -539,7 +545,7 @@ export default function WhatsAppSettingsPage() {
     if (mode === "managed") {
         values.provider = "salesmanchatbot"; 
         values.api_key = MANAGED_SECRET_KEY;
-        values.chatmodel = "salesmanchatbot-pro";
+        values.chatmodel = proPlusMode ? PRO_PLUS_MANAGED_MODEL : "salesmanchatbot-pro";
     } else {
         if (!values.api_key) {
             toast.error("API Key is required for own provider");
@@ -571,13 +577,15 @@ export default function WhatsAppSettingsPage() {
           voice_model: null,
           text_prompt: values.text_prompt,
           base_url: values.base_url,
-          cheap_engine: mode === "managed"
+          cheap_engine: mode === "managed",
+          pro_plus_mode: mode === "managed" ? proPlusMode : false
         }),
       });
 
       if (!res.ok) throw new Error("Failed to save AI settings");
 
       setActiveMode(mode);
+      setActiveProPlusMode(mode === "managed" ? proPlusMode : false);
       toast.success("AI Settings updated successfully");
     } catch (error: any) {
       toast.error(error.message);
@@ -659,7 +667,7 @@ export default function WhatsAppSettingsPage() {
                           : 'border-white/30 text-white/70'
                       }
                     >
-                        Status: {activeMode === 'managed' ? "User Cloud API" : "Own API"}
+                        Status: {activeMode === 'managed' ? (activeProPlusMode ? PRO_PLUS_MANAGED_MODEL : "User Cloud API") : "Own API"}
                     </Badge>
                 )}
             </CardTitle>
@@ -830,6 +838,23 @@ export default function WhatsAppSettingsPage() {
                     <div className="space-y-6">
                         {/* Compact Managed Mode Banner */}
                         <div className="rounded-lg border border-emerald-200 bg-emerald-50/30 p-4 dark:border-emerald-800/30 dark:bg-emerald-900/10 shadow-sm transition-all hover:shadow-md">
+                            <div className="mb-4 flex items-center justify-between gap-4 rounded-xl border border-emerald-500/20 bg-black/20 p-3">
+                                <div>
+                                    <div className="text-sm font-semibold text-emerald-100">Switch Pro Plus Mode</div>
+                                    <p className="text-xs text-emerald-200/80">
+                                        On korle AI Studio endpoint diye text, audio, image smart fallback-e cholbe.
+                                    </p>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <Badge
+                                        variant="outline"
+                                        className={proPlusMode ? "border-[#00ff88]/60 text-[#00ff88]" : "border-white/20 text-white/60"}
+                                    >
+                                        {proPlusMode ? PRO_PLUS_MANAGED_MODEL : "Standard Cloud"}
+                                    </Badge>
+                                    <Switch checked={proPlusMode} onCheckedChange={setProPlusMode} />
+                                </div>
+                            </div>
                             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                                 <div className="flex items-center gap-4">
                                     <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/50">
@@ -838,7 +863,7 @@ export default function WhatsAppSettingsPage() {
                                     <div>
                                         <h3 className="font-bold text-emerald-900 dark:text-emerald-100">User Cloud API</h3>
                                         <p className="text-xs text-emerald-700 dark:text-emerald-300 font-medium">
-                                            High-speed engine. No setup required.
+                                            {proPlusMode ? "AI Studio Pro Plus routing with smart fallback." : "High-speed engine. No setup required."}
                                         </p>
                                     </div>
                                 </div>

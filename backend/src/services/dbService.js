@@ -93,10 +93,14 @@ async function getPageConfig(pageId) {
       data.cheap_engine = true;
       needsAiUpdate = true;
     }
+    if (data.pro_plus_mode === undefined || data.pro_plus_mode === null) {
+      data.pro_plus_mode = false;
+      needsAiUpdate = true;
+    }
     if (needsAiUpdate) {
       await query(
-        'UPDATE page_access_token_message SET ai = $1, chat_model = $2, cheap_engine = $3 WHERE page_id = $4',
-        [data.ai, data.chat_model, data.cheap_engine, pageId]
+        'UPDATE page_access_token_message SET ai = $1, chat_model = $2, cheap_engine = $3, pro_plus_mode = $4 WHERE page_id = $5',
+        [data.ai, data.chat_model, data.cheap_engine, data.pro_plus_mode, pageId]
       );
     }
 
@@ -586,6 +590,7 @@ async function initTables() {
             ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS voice_model TEXT;
             ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS vision_model TEXT;
             ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS cheap_engine BOOLEAN DEFAULT TRUE;
+            ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS pro_plus_mode BOOLEAN DEFAULT FALSE;
         `);
 
         await query(`
@@ -706,6 +711,9 @@ async function initTables() {
             BEGIN 
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='page_access_token_message' AND column_name='custom_base_url') THEN
                     ALTER TABLE page_access_token_message ADD COLUMN custom_base_url TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='page_access_token_message' AND column_name='pro_plus_mode') THEN
+                    ALTER TABLE page_access_token_message ADD COLUMN pro_plus_mode BOOLEAN DEFAULT FALSE;
                 END IF;
             END $$;
         `);
@@ -1464,10 +1472,14 @@ async function getWhatsAppConfig(sessionName) {
         data.cheap_engine = true;
         needsAiUpdate = true;
     }
+    if (data.pro_plus_mode === undefined || data.pro_plus_mode === null) {
+        data.pro_plus_mode = false;
+        needsAiUpdate = true;
+    }
     if (needsAiUpdate) {
         await query(
-            'UPDATE whatsapp_message_database SET ai_provider = $1, chat_model = $2, voice_model = $3, vision_model = $4, cheap_engine = $5 WHERE session_name = $6',
-            [data.ai_provider || data.ai, data.chat_model, data.voice_model || null, data.vision_model || null, data.cheap_engine, sessionName]
+            'UPDATE whatsapp_message_database SET ai_provider = $1, chat_model = $2, voice_model = $3, vision_model = $4, cheap_engine = $5, pro_plus_mode = $6 WHERE session_name = $7',
+            [data.ai_provider || data.ai, data.chat_model, data.voice_model || null, data.vision_model || null, data.cheap_engine, data.pro_plus_mode, sessionName]
         );
     }
 

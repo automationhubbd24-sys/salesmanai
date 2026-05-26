@@ -17,6 +17,17 @@ const { spawn } = require('child_process');
 const embeddingCache = new Map();
 const EMBED_CACHE_MAX = 500;
 const EMBED_CACHE_TTL = 3600 * 1000;
+const PRO_PLUS_BRANDED_MODEL = 'salesmanchatbot-pro-plus';
+const BRANDED_MODELS = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite', PRO_PLUS_BRANDED_MODEL];
+const PRO_PLUS_FALLBACK_MODELS = [
+    'gemini-3.5-flash',
+    'gemini-3.1-pro-preview',
+    'gemini-pro-latest',
+    'gemini-flash-latest',
+    'gemini-3.1-flash-preview',
+    'gemini-flash-lite-latest',
+    'gemini-3.1-flash-lite'
+];
 
 function getCachedEmbedding(text) {
     const key = text.trim().toLowerCase();
@@ -135,6 +146,103 @@ function getGeminiSafetySettings() {
         { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
         { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_NONE' }
     ];
+}
+
+function isTruthyFlag(value) {
+    return value === true || value === 1 || value === '1' || value === 'true';
+}
+
+function isProPlusMode(config = {}) {
+    return config && config.cheap_engine !== false && isTruthyFlag(config.pro_plus_mode);
+}
+
+function getProPlusBaseUrl() {
+    const raw = process.env.AISTUDIO_OPENAI_BASE_URL ||
+        process.env.AISTUDIO_API_BASE_URL ||
+        'https://gemini.salesmanchatbot.online/v1';
+    return String(raw).replace(/\/+$/, '');
+}
+
+function getProPlusApiKeys() {
+    const raw = process.env.AISTUDIOAPIKEY ||
+        process.env.AISTUDIOAPIEKEY ||
+        process.env.AISTUDIO_API_KEY ||
+        process.env.AISTUDIO_API_EKEY ||
+        process.env.aistudioapiekey ||
+        '';
+    return String(raw)
+        .split(',')
+        .map(key => key.trim())
+        .filter(Boolean);
+}
+
+function getProPlusModelChain() {
+    return [...PRO_PLUS_FALLBACK_MODELS];
+}
+
+function isRetryableManagedError(error) {
+    const statusCode = error?.status || error?.response?.status || null;
+    const errorMsg = String(error?.message || '').toLowerCase();
+    return statusCode === 429 || statusCode === 401 || statusCode >= 500 ||
+        errorMsg.includes('limit') || errorMsg.includes('quota') ||
+        errorMsg.includes('timeout') || errorMsg.includes('network') ||
+        errorMsg.includes('temporar') || errorMsg.includes('overloaded') ||
+        errorMsg.includes('exhausted');
+}
+
+function shouldSkipManagedModel(error) {
+    const statusCode = error?.status || error?.response?.status || null;
+    const errorMsg = String(error?.message || '').toLowerCase();
+    return statusCode === 429 ||
+        errorMsg.includes('429') ||
+        errorMsg.includes('limit') ||
+        errorMsg.includes('quota') ||
+        errorMsg.includes('exhausted');
+}
+
+function getProPlusErrorDecision(error) {
+    const statusCode = error?.status || error?.response?.status || null;
+    const errorMsg = String(error?.message || error?.response?.data?.error?.message || '').toLowerCase();
+    const responseBody = JSON.stringify(error?.response?.data || '').toLowerCase();
+    const combined = `${errorMsg} ${responseBody}`.trim();
+
+    const isAuthFailure = statusCode === 401 ||
+        statusCode === 403 ||
+        combined.includes('unauthorized') ||
+        combined.includes('forbidden') ||
+        combined.includes('authentication') ||
+        combined.includes('invalid api key') ||
+        combined.includes('incorrect api key') ||
+        combined.includes('api key not valid') ||
+        combined.includes('invalid key') ||
+        combined.includes('expired key');
+
+    const isEndpointMisconfig = combined.includes('invalid url') ||
+        combined.includes('unsupported protocol') ||
+        combined.includes('base url') ||
+        combined.includes('econnrefused') ||
+        combined.includes('enotfound') ||
+        combined.includes('getaddrinfo');
+
+    if (isAuthFailure || isEndpointMisconfig) {
+        return { hardFail: true, skipModel: false };
+    }
+
+    const isModelUnavailable = statusCode === 404 ||
+        combined.includes('model not found') ||
+        combined.includes('does not exist') ||
+        combined.includes('unsupported model') ||
+        combined.includes('not found');
+
+    if (shouldSkipManagedModel(error) || isModelUnavailable) {
+        return { hardFail: false, skipModel: true };
+    }
+
+    return { hardFail: false, skipModel: false };
+}
+
+function shouldRememberProPlusModelLimit(error) {
+    return shouldSkipManagedModel(error);
 }
 
 /**
@@ -1656,6 +1764,73 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
     };
 }
 
+async function runProPlusChatChain({ messages, pageConfig, totalTokenUsage, userId, pageId, temperature = 0.2, topP = 0.9 }) {
+    const apiKeys = getProPlusApiKeys();
+    if (apiKeys.length === 0) {
+        throw new Error('AISTUDIOAPIKEY/AISTUDIOAPIEKEY env is missing for Pro Plus mode.');
+    }
+
+    const baseURL = getProPlusBaseUrl();
+    const modelsToTry = getProPlusModelChain();
+    let lastError = null;
+
+    for (const currentModel of modelsToTry) {
+        console.log(`[Pro Plus] Trying model: ${currentModel}`);
+
+        for (const apiKey of apiKeys) {
+            if (keyService.isModelLocked(currentModel, apiKey)) {
+                console.log(`[Pro Plus] Skipping locked model ${currentModel} for current key.`);
+                continue;
+            }
+
+            try {
+                const result = await runAgentLoop({
+                    apiKey,
+                    baseURL,
+                    model: currentModel,
+                    messages: [...messages],
+                    tools: [],
+                    pageConfig,
+                    proxyAgent: null,
+                    totalTokenUsage,
+                    foundProducts: [],
+                    userId,
+                    temperature,
+                    top_p: topP,
+                    pageId
+                });
+
+                let tokensToRecord = result.token_usage || 0;
+                if (tokensToRecord === 0 && result.reply) {
+                    tokensToRecord = estimateTokenUsage(messages, result.reply, 0);
+                }
+
+                return {
+                    ...result,
+                    token_usage: tokensToRecord,
+                    model: currentModel
+                };
+            } catch (err) {
+                lastError = err;
+                await handleAiError(err, apiKey, currentModel, 'text');
+                const decision = getProPlusErrorDecision(err);
+                if (decision.hardFail) {
+                    throw err;
+                }
+                if (decision.skipModel) {
+                    if (shouldRememberProPlusModelLimit(err) && keyService.lockGlobalModel) {
+                        await keyService.lockGlobalModel(currentModel, undefined, 'pro_plus_model_limit_reached');
+                    }
+                    console.warn(`[Pro Plus] Model ${currentModel} reached limit or quota. Moving to next model.`);
+                    break;
+                }
+            }
+        }
+    }
+
+    throw lastError || new Error('All Pro Plus models failed.');
+}
+
 // Step 2: Business Logic / AI Brain
 async function generateReply(userMessage, pageConfig, pagePrompts, history = [], senderName = 'Customer', ownerName = 'Automation Hub BD', senderGender = null, imageUrls = [], audioUrls = [], extraTokenUsage = 0, userId = null, pageId = null) {
     // --- SAFETY FIX: Ensure names are not null ---
@@ -1664,6 +1839,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
 
     let cleanUserMessage = (userMessage || '').trim();
     let currentContextId = null; // For context-aware semantic cache
+    let primaryModel = null;
 
     // 0. Unified Logger Helper (Defined at top to avoid Hoisting/Initialization errors)
     const finalize = async (result) => {
@@ -2085,7 +2261,7 @@ ${productContext}`;
     const tools = []; // Tool calls are disabled by user request to prefer JSON.
 
     // --- IDENTITY PROTECTION PROTOCOL (WHITE-LABEL) ---
-    const isBrandedModel = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(userModel);
+    const isBrandedModel = BRANDED_MODELS.includes(userModel);
     const identityInvariant = isBrandedModel 
         ? `[STRICT IDENTITY RULE]: You are SalesmanChatbot, a proprietary high-performance AI developed by SalesmanChatbot Team. You are NOT Google Gemini, Groq, Meta, or any other LLM. NEVER mention any other company's name or model name. If asked about your training or identity, state that you are a proprietary SalesmanChatbot AI.`
         : "";
@@ -2321,7 +2497,7 @@ ${productContext || "No specific product context provided yet."}
 
                 // Determine if proxy should be used
                 // User Request: Proxy ONLY for branded models to save costs and avoid 429/400 errors for direct keys.
-                const isBranded = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(modelToUse);
+                const isBranded = BRANDED_MODELS.includes(modelToUse);
                 const useProxy = isBranded; 
                 
                 let proxyAgent = null;
@@ -2414,6 +2590,30 @@ ${productContext || "No specific product context provided yet."}
         });
     }
 
+    if (isProPlusMode(pageConfig)) {
+        try {
+            primaryModel = getProPlusModelChain()[0] || pageConfig.chat_model || PRO_PLUS_BRANDED_MODEL;
+            const result = await runProPlusChatChain({
+                messages,
+                pageConfig,
+                totalTokenUsage,
+                userId,
+                pageId,
+                temperature: (pageConfig.temperature !== undefined && pageConfig.temperature !== null ? Number(pageConfig.temperature) : (pageConfig.is_external_api ? 0.7 : 0.2)),
+                topP: (pageConfig.top_p !== undefined && pageConfig.top_p !== null ? Number(pageConfig.top_p) : 0.9)
+            });
+            return finalize({ ...result, sentiment: 'neutral' });
+        } catch (err) {
+            const branded = formatBrandedError(err);
+            return finalize({
+                reply: null,
+                error: branded.message,
+                token_usage: 0,
+                model: PRO_PLUS_BRANDED_MODEL
+            });
+        }
+    }
+
     // --- FALLBACK & RETRY LOGIC FOR SYSTEM ENGINES (SMART MULTI-MODEL FALLBACK) ---
     let retryCount = 0;
     const MAX_RETRIES_PER_MODEL = 3; // User Request: 3 attempts per model
@@ -2424,7 +2624,7 @@ ${productContext || "No specific product context provided yet."}
     // Resolve Modality and Fallback Models once
     let resolved = await resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio);
     
-    const primaryModel = resolved.finalModel;
+    primaryModel = resolved.finalModel;
     const fallbackModel = resolved.fallbackModel;
     const finalProvider = resolved.finalProvider;
     modality = resolved.modality || (isVision ? 'vision' : (isAudio ? 'voice' : 'text'));
@@ -2468,7 +2668,7 @@ ${productContext || "No specific product context provided yet."}
                 else if (finalProvider === 'xai') baseURL = 'https://api.x.ai/v1';
                 else if (finalProvider === 'google' || finalProvider === 'gemini') baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
                 
-                const isBrandedEngine = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(resolved.targetEngineName);
+                const isBrandedEngine = BRANDED_MODELS.includes(resolved.targetEngineName);
                 
                 let proxyAgent = null;
                 if (isBrandedEngine) {
@@ -2627,8 +2827,69 @@ Rules:
     const providerHint = pageConfig.ai_provider || pageConfig.ai || pageConfig.operator;
     const modelHint = pageConfig.chat_model || pageConfig.chatmodel;
     let resolved = null;
-    if (providerHint === 'salesmanchatbot' || modelHint === 'salesmanchatbot-pro' || modelHint === 'salesmanchatbot-flash' || modelHint === 'salesmanchatbot-lite') {
+    if (providerHint === 'salesmanchatbot' || BRANDED_MODELS.includes(modelHint)) {
         resolved = await resolveSalesmanchatbotEngine(pageConfig, providerHint, modelHint, true, false);
+    }
+
+    if (isProPlusMode(pageConfig)) {
+        try {
+            await ensureBase64();
+            const apiKeys = getProPlusApiKeys();
+            const baseURL = getProPlusBaseUrl();
+            let lastError = null;
+
+            for (const currentModel of getProPlusModelChain()) {
+                for (const apiKey of apiKeys) {
+                    if (keyService.isModelLocked(currentModel, apiKey)) {
+                        continue;
+                    }
+
+                    try {
+                        const payload = {
+                            model: currentModel,
+                            max_tokens: maxTokens,
+                            messages: [
+                                {
+                                    role: "user",
+                                    content: [
+                                        { type: "text", text: systemPrompt },
+                                        { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Image}` } }
+                                    ]
+                                }
+                            ]
+                        };
+
+                        const res = await axios.post(`${baseURL}/chat/completions`, payload, {
+                            headers: getStealthHeaders(apiKey, 'openai'),
+                            proxy: false,
+                            timeout: 120000
+                        });
+
+                        const resultText = res.data?.choices?.[0]?.message?.content;
+                        const usageTokens = res.data?.usage?.total_tokens || 0;
+                        if (!resultText) throw new Error(`Empty response from Pro Plus model ${currentModel}`);
+
+                        return { text: resultText, usage: usageTokens, model: PRO_PLUS_BRANDED_MODEL };
+                    } catch (err) {
+                        lastError = err;
+                        await handleAiError(err, apiKey, currentModel, 'vision');
+                        const decision = getProPlusErrorDecision(err);
+                        if (decision.hardFail) throw err;
+                        if (decision.skipModel) {
+                            if (shouldRememberProPlusModelLimit(err) && keyService.lockGlobalModel) {
+                                await keyService.lockGlobalModel(currentModel, undefined, 'pro_plus_vision_model_limit_reached');
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+
+            throw lastError || new Error('All Pro Plus vision models failed.');
+        } catch (error) {
+            console.error(`[Vision][Pro Plus] Unexpected Error:`, error.message);
+            return { text: `[Vision Analysis Failed] Error: ${error.message}`, usage: 0, model: PRO_PLUS_BRANDED_MODEL };
+        }
     }
 
     // --- PRIORITY ATTEMPT (Custom Options) ---
@@ -2809,7 +3070,7 @@ Rules:
                 }
 
                 // 2. Setup Proxy
-                const isBranded = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(resolved.targetEngineName || modelHint);
+                const isBranded = BRANDED_MODELS.includes(resolved.targetEngineName || modelHint);
                 let proxyAgent = null;
                 if (isBranded) {
                     if (currentProvider === 'google' || currentProvider === 'gemini') {
@@ -3008,8 +3269,66 @@ async function transcribeAudio(audioUrl, config) {
     const modelHint = safeConfig.voice_model || safeConfig.audio_model || safeConfig.chat_model || safeConfig.chatmodel;
     const isOwnAPI = safeConfig.cheap_engine === false;
 
+    if (isProPlusMode(safeConfig)) {
+        const apiKeys = getProPlusApiKeys();
+        const baseURL = getProPlusBaseUrl();
+        let lastError = null;
+
+        for (const currentModel of getProPlusModelChain()) {
+            for (const apiKey of apiKeys) {
+                if (keyService.isModelLocked(currentModel, apiKey)) {
+                    continue;
+                }
+
+                try {
+                    const chatPayload = {
+                        model: currentModel,
+                        messages: [{
+                            role: 'user',
+                            content: [
+                                { type: 'text', text: "Transcribe this audio. Priority languages: Bangla, then English, then Hindi. Output ONLY the transcription text." },
+                                {
+                                    type: 'input_audio',
+                                    input_audio: {
+                                        data: audioBuffer.toString('base64'),
+                                        format: mimeType === 'audio/mpeg' ? 'mp3' : (mimeType.split('/')[1] || 'mp3')
+                                    }
+                                }
+                            ]
+                        }]
+                    };
+
+                    const res = await axios.post(`${baseURL}/chat/completions`, chatPayload, {
+                        headers: getStealthHeaders(apiKey, 'openai'),
+                        proxy: false,
+                        timeout: 120000
+                    });
+
+                    const transcribedText = res.data?.choices?.[0]?.message?.content;
+                    const usageTokens = res.data?.usage?.total_tokens || 0;
+                    if (!transcribedText) throw new Error(`Empty response from Pro Plus audio model ${currentModel}`);
+
+                    return { text: transcribedText.trim(), usage: usageTokens, model: PRO_PLUS_BRANDED_MODEL };
+                } catch (err) {
+                    lastError = err;
+                    await handleAiError(err, apiKey, currentModel, 'voice');
+                    const decision = getProPlusErrorDecision(err);
+                    if (decision.hardFail) throw err;
+                    if (decision.skipModel) {
+                        if (shouldRememberProPlusModelLimit(err) && keyService.lockGlobalModel) {
+                            await keyService.lockGlobalModel(currentModel, undefined, 'pro_plus_voice_model_limit_reached');
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        return { text: `[Audio Transcription Failed] Error: ${lastError?.message || 'Unknown'}`, usage: 0, model: PRO_PLUS_BRANDED_MODEL };
+    }
+
     let resolved = null;
-    if ((providerHint === 'salesmanchatbot' || modelHint === 'salesmanchatbot-pro' || modelHint === 'salesmanchatbot-flash' || modelHint === 'salesmanchatbot-lite') && !safeConfig.api_key) {
+    if ((providerHint === 'salesmanchatbot' || BRANDED_MODELS.includes(modelHint)) && !safeConfig.api_key) {
         resolved = await resolveSalesmanchatbotEngine(safeConfig, providerHint, modelHint, false, true);
     }
 
@@ -3173,7 +3492,7 @@ async function transcribeAudio(audioUrl, config) {
                 attemptedKeys.add(apiKey);
 
                 // 2. Setup Proxy
-                const isBrandedEngine = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(resolved?.targetEngineName || modelHint || config.chat_model);
+                const isBrandedEngine = BRANDED_MODELS.includes(resolved?.targetEngineName || modelHint || config.chat_model);
                 const useProxy = isBrandedEngine;
                 
                 let proxyAgent = null;
