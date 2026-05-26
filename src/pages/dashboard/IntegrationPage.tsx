@@ -58,6 +58,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import WhatsAppOfficialIntegration from "@/components/dashboard/whatsapp/WhatsAppOfficialIntegration";
+import SessionManager from "@/pages/dashboard/whatsapp/SessionManager";
 
 // CustomAlert Removed
 
@@ -135,6 +136,10 @@ export default function IntegrationPage() {
     { code: "+90", label: "Turkey (+90)" },
     { code: "+7", label: "Russia/Kazakhstan (+7)" },
   ];
+
+  if (platform === "whatsapp") {
+    return <SessionManager />;
+  }
 
   const fetchBalance = React.useCallback(async () => {
   }, []);

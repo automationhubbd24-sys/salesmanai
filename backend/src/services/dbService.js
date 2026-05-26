@@ -1414,7 +1414,19 @@ async function getWhatsAppConfig(sessionName) {
     const { query } = require('./pgClient');
 
     const mainResult = await query(
-        'SELECT * FROM whatsapp_message_database WHERE session_name = $1 LIMIT 1',
+        `SELECT *
+         FROM whatsapp_message_database
+         WHERE session_name = $1
+            OR waba_id = $1
+            OR phone_number_id = $1
+         ORDER BY
+            CASE
+                WHEN session_name = $1 THEN 0
+                WHEN waba_id = $1 THEN 1
+                WHEN phone_number_id = $1 THEN 2
+                ELSE 3
+            END
+         LIMIT 1`,
         [sessionName]
     );
     if (mainResult.rows.length === 0) return null;

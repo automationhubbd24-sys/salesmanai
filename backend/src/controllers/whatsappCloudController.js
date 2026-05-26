@@ -23,6 +23,7 @@ const completeEmbeddedSignup = async (req, res) => {
         // 2. Save to Database
         // Note: Using a query to update or insert the official connection
         // We link it to the user who performed the signup
+        const sessionName = `official_${wabaId || phoneNumberId || userId || 'wa'}`;
         const query = `
             INSERT INTO whatsapp_message_database 
             (user_id, email, phone_number_id, waba_id, cloud_access_token, provider_type, status, session_name)
@@ -35,10 +36,11 @@ const completeEmbeddedSignup = async (req, res) => {
             cloud_access_token = EXCLUDED.cloud_access_token,
             provider_type = 'official',
             status = 'active'
+            RETURNING id, session_name, waba_id, phone_number_id
         `;
         
-        const sessionName = `official_${wabaId || 'wa'}`;
-        await pgClient.query(query, [userId, userEmail, phoneNumberId, wabaId, accessToken, sessionName]);
+        const insertResult = await pgClient.query(query, [userId, userEmail, phoneNumberId, wabaId, accessToken, sessionName]);
+        const savedConnection = insertResult.rows[0] || {};
 
         // 3. Subscribe the App to WABA (to receive webhooks)
         if (wabaId) {
@@ -48,7 +50,12 @@ const completeEmbeddedSignup = async (req, res) => {
         res.status(200).json({ 
             success: true, 
             message: 'WhatsApp Official account connected successfully',
-            data: { wabaId, phoneNumberId }
+            data: {
+                id: savedConnection.id,
+                sessionName: savedConnection.session_name || sessionName,
+                wabaId: savedConnection.waba_id || wabaId,
+                phoneNumberId: savedConnection.phone_number_id || phoneNumberId
+            }
         });
 
     } catch (error) {

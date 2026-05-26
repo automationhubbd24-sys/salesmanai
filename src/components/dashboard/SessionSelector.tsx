@@ -7,7 +7,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { MessageSquare, PlusCircle, AlertCircle } from "lucide-react";
+import { MessageSquare, PlusCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 export function SessionSelector() {
@@ -88,7 +88,7 @@ export function SessionSelector() {
          onClick={() => navigate("/dashboard/whatsapp/sessions")}
        >
          <PlusCircle size={16} />
-         <span>Create Session</span>
+         <span>Connect WhatsApp</span>
        </div>
     );
   }
@@ -96,7 +96,7 @@ export function SessionSelector() {
   return (
     <div className="px-2 mb-4">
       <label className="text-xs font-medium text-muted-foreground mb-1.5 block px-1">
-        Active Session
+        Active WhatsApp
       </label>
       <Select
         value={currentSession?.name || ""}

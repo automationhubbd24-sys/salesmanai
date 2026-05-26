@@ -44,6 +44,12 @@ async function hasSessionAccess(sessionName, userId, userEmail) {
     return false;
 }
 
+function sendLegacySessionRetired(res) {
+    return res.status(410).json({
+        error: 'Legacy QR/session-based WhatsApp has been retired. Please use the Meta official connection flow.'
+    });
+}
+
 // WhatsApp Cloud API Official Routes
 router.post('/official/signup-complete', authMiddleware, whatsappCloudController.completeEmbeddedSignup);
 
@@ -53,15 +59,7 @@ router.post('/webhook', whatsappController.handleWebhook);
 
 // Get Session QR (Real-time)
 router.get('/session/qr/:sessionName', async (req, res) => {
-    try {
-        const { sessionName } = req.params;
-        // console.log(`[WhatsApp] Fetching real-time QR for ${sessionName}...`);
-        const qr = await whatsappService.getScreenshot(sessionName);
-        res.json({ qr_code: qr });
-    } catch (err) {
-        console.error("Get QR Error:", err);
-        res.status(500).json({ error: err.message });
-    }
+    return sendLegacySessionRetired(res);
 });
 
 // Get Sessions (Merged with DB Info & Team Permissions)
@@ -90,7 +88,7 @@ router.get('/sessions', async (req, res) => {
         let mySessions = [];
         if (!requestedOwner || requestedOwner === userEmail) {
             const { rows } = await pgClient.query(
-                'SELECT id, session_name, expires_at, plan_days, status, subscription_status, user_id, email, engine_override FROM whatsapp_message_database WHERE user_id::uuid = $1::uuid OR email = $2',
+                'SELECT id, session_name, expires_at, plan_days, status, subscription_status, user_id, email, engine_override, provider_type, waba_id, phone_number_id FROM whatsapp_message_database WHERE user_id::uuid = $1::uuid OR email = $2',
                 [userId, userEmail]
             );
             mySessions = rows;
@@ -114,7 +112,7 @@ router.get('/sessions', async (req, res) => {
         let sharedSessions = [];
         if (sharedSessionNames.length > 0) {
             const { rows: sharedData } = await pgClient.query(
-                'SELECT id, session_name, expires_at, plan_days, status, subscription_status, user_id, email, engine_override FROM whatsapp_message_database WHERE session_name = ANY($1::text[])',
+                'SELECT id, session_name, expires_at, plan_days, status, subscription_status, user_id, email, engine_override, provider_type, waba_id, phone_number_id FROM whatsapp_message_database WHERE session_name = ANY($1::text[])',
                 [sharedSessionNames]
             );
             sharedSessions = sharedData;
@@ -136,9 +134,14 @@ router.get('/sessions', async (req, res) => {
         // 6. Merge and Format
         const finalSessions = uniqueDBSessions.map(ds => {
             const ws = wahaSessions.find(s => s.name === ds.session_name);
+            const isOfficial = ds.provider_type === 'official' || String(ds.session_name || '').startsWith('official_');
+            const resolvedStatus = isOfficial
+                ? (String(ds.status || '').toLowerCase() === 'active' ? 'WORKING' : (ds.status || 'WORKING'))
+                : (ws ? ws.status : (ds.status || 'STOPPED'));
+
             return {
                 name: ds.session_name,
-                status: ws ? ws.status : (ds.status || 'STOPPED'), // Use WAHA status if available, else DB
+                status: resolvedStatus,
                 config: ws ? ws.config : {},
                 me: ws ? ws.me : null,
                 wp_db_id: ds.id,
@@ -148,6 +151,9 @@ router.get('/sessions', async (req, res) => {
                 subscription_status: ds.subscription_status || 'unknown',
                 db_status: ds.status || 'unknown',
                 engine_override: ds.engine_override || null,
+                provider_type: ds.provider_type || (isOfficial ? 'official' : null),
+                waba_id: ds.waba_id || null,
+                phone_number_id: ds.phone_number_id || null,
                 is_shared: ds.user_id !== userId // Flag if it's a shared session
             };
         });
@@ -693,6 +699,7 @@ router.put('/config/:id', async (req, res) => {
 
 // Get Pairing Code
 router.post('/session/pairing-code', async (req, res) => {
+    return sendLegacySessionRetired(res);
     try {
         const { sessionName, phoneNumber } = req.body;
         if (!sessionName || !phoneNumber) {
@@ -778,6 +785,7 @@ router.post('/session/pairing-code', async (req, res) => {
 
 // Create Session
 router.post('/session/create', async (req, res) => {
+    return sendLegacySessionRetired(res);
     try {
         const { name, sessionName, config, engine, planDays } = req.body;
         const finalName = (sessionName || name || '').toLowerCase().replace(/[^a-z0-9_]/g, '');
@@ -943,6 +951,7 @@ router.post('/session/create', async (req, res) => {
 
 // Restart Session
 router.post('/session/restart', async (req, res) => {
+    return sendLegacySessionRetired(res);
     try {
         const { sessionName } = req.body;
         console.log(`[WhatsApp] Restarting session '${sessionName}'...`);
@@ -1028,6 +1037,7 @@ router.post('/session/restart', async (req, res) => {
 
 // Stop Session
 router.post('/session/stop', async (req, res) => {
+    return sendLegacySessionRetired(res);
     try {
         const { sessionName } = req.body;
         console.log(`[WhatsApp] Stopping session '${sessionName}'...`);
@@ -1054,6 +1064,7 @@ router.post('/session/stop', async (req, res) => {
 
 // Renew Session
 router.post('/session/renew', async (req, res) => {
+    return sendLegacySessionRetired(res);
     try {
         const { sessionName, days } = req.body;
         if (!sessionName || !days) return res.status(400).json({ error: "Missing sessionName or days" });
@@ -1099,6 +1110,7 @@ router.post('/session/renew', async (req, res) => {
 
 // Delete Session
 router.delete('/session/delete', async (req, res) => {
+    return sendLegacySessionRetired(res);
     try {
         const { sessionName, name } = req.body; // Support both
         const target = sessionName || name;

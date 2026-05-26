@@ -35,6 +35,20 @@ setInterval(refreshAllowedPages, CACHE_TTL);
 const configCache = new Map(); // Key: pageId, Value: { config, prompts, timestamp }
 const recentBotReplies = new Map(); // Key: senderId, Value: Array of { text, timestamp }
 
+function matchesCachedConfigKey(config, lookupKey) {
+    if (!config || !lookupKey) return false;
+
+    const normalizedKey = String(lookupKey);
+    const candidateKeys = [
+        config.page_id,
+        config.session_name,
+        config.waba_id,
+        config.phone_number_id
+    ].filter(Boolean).map(String);
+
+    return candidateKeys.includes(normalizedKey) || candidateKeys.includes(`official_${normalizedKey}`);
+}
+
 // Helper to get cached page data (Fast Path with Strict Validation)
 async function getCachedPageData(pageId) {
     if (!pageId) return { config: null, prompts: null };
@@ -47,15 +61,19 @@ async function getCachedPageData(pageId) {
     if (!cached || (now - cached.timestamp > 10 * 60 * 1000)) {
         try {
             // console.log(`[Cache Miss] Fetching fresh data for Page: ${pageId}`);
-            const [config, prompts] = await Promise.all([
+            const [messengerConfig, messengerPrompts, whatsappConfig] = await Promise.all([
                 dbService.getPageConfig(pageId),
-                dbService.getPagePrompts(pageId)
+                dbService.getPagePrompts(pageId),
+                dbService.getWhatsAppConfig(pageId)
             ]);
+
+            const config = messengerConfig || whatsappConfig;
+            const prompts = messengerPrompts || whatsappConfig;
             
             if (config) {
                 // Ensure data belongs to THIS pageId before caching
-                const validatedConfig = String(config.page_id) === String(pageId) ? config : null;
-                const validatedPrompts = prompts && String(prompts.page_id) === String(pageId) ? prompts : prompts;
+                const validatedConfig = matchesCachedConfigKey(config, pageId) ? config : null;
+                const validatedPrompts = prompts && matchesCachedConfigKey(prompts, pageId) ? prompts : prompts;
 
                 if (validatedConfig) {
                     configCache.set(String(pageId), { 
@@ -72,7 +90,7 @@ async function getCachedPageData(pageId) {
     }
     
     // Extra safety check on returned cached data
-    if (cached && cached.config && String(cached.config.page_id) !== String(pageId)) {
+    if (cached && cached.config && !matchesCachedConfigKey(cached.config, pageId)) {
         console.error(`[Security Alert] Cache mismatch detected for ${pageId}! Purging invalid entry.`);
         configCache.delete(String(pageId));
         return { config: null, prompts: null };
@@ -466,11 +484,13 @@ const handleWhatsAppWebhook = async (req, res) => {
                                         continue;
                                     }
 
+                                    const effectiveSessionName = config.session_name || `official_${wabaId}`;
+
                                     // 3. AI Response Generation
-                                    const history = await dbService.getLastNWhatsAppMessages(wabaId, senderId, 10);
+                                    const history = await dbService.getLastNWhatsAppMessages(effectiveSessionName, senderId, 10);
                                     
                                     const aiResponse = await aiService.generateResponse({
-                                        pageId: wabaId,
+                                        pageId: effectiveSessionName,
                                         userId: senderId,
                                         userMessage: messageText,
                                         history: history.map(h => ({
@@ -493,9 +513,9 @@ const handleWhatsAppWebhook = async (req, res) => {
 
                                         // 5. Save to History
                                         await dbService.saveWhatsAppChat({
-                                            session_name: wabaId,
+                                            session_name: effectiveSessionName,
                                             sender_id: senderId,
-                                            recipient_id: wabaId,
+                                            recipient_id: effectiveSessionName,
                                             message_id: messageId,
                                             text: messageText,
                                             timestamp: Date.now(),
@@ -504,8 +524,8 @@ const handleWhatsAppWebhook = async (req, res) => {
                                         });
 
                                         await dbService.saveWhatsAppChat({
-                                            session_name: wabaId,
-                                            sender_id: wabaId,
+                                            session_name: effectiveSessionName,
+                                            sender_id: effectiveSessionName,
                                             recipient_id: senderId,
                                             message_id: `reply_${messageId}`,
                                             text: aiResponse.reply,

@@ -1,120 +1,195 @@
-import React, { useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, CheckCircle2, MessageSquare } from "lucide-react";
+import { CheckCircle2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { BACKEND_URL } from "@/config";
+import { useWhatsApp } from "@/context/WhatsAppContext";
 
 declare global {
   interface Window {
-    FB: any;
+    FB: {
+      init: (options: Record<string, unknown>) => void;
+      login: (
+        callback: (response: { authResponse?: { code?: string } }) => void,
+        options?: Record<string, unknown>
+      ) => void;
+    };
+    fbAsyncInit: () => void;
   }
 }
 
+type EmbeddedSignupMeta = {
+  wabaId?: string;
+  phoneNumberId?: string;
+};
+
+const APP_ID = import.meta.env.VITE_FACEBOOK_APP_ID || "3741087806186945";
+const CONFIG_ID = import.meta.env.VITE_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID || "1592300178695434";
+const GRAPH_VERSION = import.meta.env.VITE_FACEBOOK_GRAPH_VERSION || "v22.0";
+
 export default function WhatsAppOfficialIntegration() {
+  const { refreshSessions } = useWhatsApp();
   const [loading, setLoading] = useState(false);
+  const [sdkReady, setSdkReady] = useState(false);
   const [connected, setConnected] = useState(false);
-  const [wabaInfo, setWabaInfo] = useState<any>(null);
+  const [wabaInfo, setWabaInfo] = useState<EmbeddedSignupMeta | null>(null);
+  const embeddedSignupMetaRef = useRef<EmbeddedSignupMeta>({});
+
+  useEffect(() => {
+    const initFacebookSdk = () => {
+      if (!window.FB) return;
+
+      window.FB.init({
+        appId: APP_ID,
+        autoLogAppEvents: true,
+        xfbml: false,
+        version: GRAPH_VERSION,
+      });
+
+      setSdkReady(true);
+    };
+
+    if (window.FB) {
+      initFacebookSdk();
+      return;
+    }
+
+    window.fbAsyncInit = initFacebookSdk;
+
+    if (document.getElementById("facebook-jssdk")) {
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.id = "facebook-jssdk";
+    script.async = true;
+    script.defer = true;
+    script.crossOrigin = "anonymous";
+    script.src = "https://connect.facebook.net/en_US/sdk.js";
+    document.body.appendChild(script);
+  }, []);
 
   useEffect(() => {
     const sessionInfoListener = (event: MessageEvent) => {
-      if (!event.origin?.endsWith('facebook.com')) return;
-      
+      if (!event.origin || !/facebook\.com$/.test(new URL(event.origin).hostname)) {
+        return;
+      }
+
       try {
-        const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
-        if (data.type === 'WA_EMBEDDED_SIGNUP') {
-          if (data.event === 'FINISH') {
-            const { phone_number_id, waba_id } = data.data;
-            console.log('Embedded Signup Success:', { phone_number_id, waba_id });
-            // The actual token exchange happens after FB.login callback
-          } else if (data.event === 'ERROR') {
-            console.error('Embedded Signup Error:', data.data.error_message);
-            toast.error(`Setup Error: ${data.data.error_message}`);
-          } else if (data.event === 'CANCEL') {
-            console.warn('Embedded Signup Cancelled at step:', data.data.current_step);
-          }
+        const payload = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
+        if (payload?.type !== "WA_EMBEDDED_SIGNUP") {
+          return;
         }
-      } catch (err) {
-        // Not our message
+
+        if (payload.event === "FINISH") {
+          embeddedSignupMetaRef.current = {
+            wabaId: payload.data?.waba_id,
+            phoneNumberId: payload.data?.phone_number_id,
+          };
+          return;
+        }
+
+        if (payload.event === "ERROR") {
+          const message = payload.data?.error_message || "WhatsApp setup failed.";
+          toast.error(message);
+          setLoading(false);
+          return;
+        }
+
+        if (payload.event === "CANCEL") {
+          setLoading(false);
+        }
+      } catch {
+        // Ignore unrelated postMessage traffic.
       }
     };
 
-    window.addEventListener('message', sessionInfoListener);
-    return () => window.removeEventListener('message', sessionInfoListener);
+    window.addEventListener("message", sessionInfoListener);
+    return () => window.removeEventListener("message", sessionInfoListener);
   }, []);
-
-  const launchWhatsAppSignup = () => {
-    const appId = '3741087806186945';
-    const configId = '1592300178695434';
-    
-    // Modern v4 Extras for Coexistence
-    const extras = {
-      sessionInfoVersion: 3,
-      setup: {
-        business: {
-          name: "Automation Hub BD"
-        }
-      },
-      features: {
-        whatsapp_business_app_coexistence: true
-      }
-    };
-
-    // Construct the direct Meta-hosted onboarding URL
-    const signupUrl = `https://business.facebook.com/messaging/whatsapp/onboard/?app_id=${appId}&config_id=${configId}&extras=${encodeURIComponent(JSON.stringify(extras))}`;
-
-    // Open in a popup window
-    const width = 600;
-    const height = 700;
-    const left = window.screen.width / 2 - width / 2;
-    const top = window.screen.height / 2 - height / 2;
-
-    const popup = window.open(
-      signupUrl,
-      'WhatsAppSignup',
-      `width=${width},height=${height},left=${left},top=${top},scrollbars=yes,status=yes`
-    );
-
-    // Set loading state
-    setLoading(true);
-
-    // Poll for popup close or success message
-    const checkPopup = setInterval(() => {
-      if (!popup || popup.closed) {
-        clearInterval(checkPopup);
-        setLoading(false);
-        // Note: The message listener will still handle the 'FINISH' event
-      }
-    }, 1000);
-  };
 
   const handleSignupCompletion = async (code: string) => {
     try {
       const token = localStorage.getItem("auth_token");
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/official/signup-complete`, {
-        method: 'POST',
+      if (!token) {
+        throw new Error("Please login again and reconnect WhatsApp.");
+      }
+
+      const response = await fetch(`${BACKEND_URL}/api/whatsapp/official/signup-complete`, {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ code })
+        body: JSON.stringify({
+          code,
+          wabaId: embeddedSignupMetaRef.current.wabaId,
+          phoneNumberId: embeddedSignupMetaRef.current.phoneNumberId,
+        }),
       });
 
-      const data = await res.json();
-      if (data.success) {
-        setConnected(true);
-        setWabaInfo(data.data);
-        toast.success("Official WhatsApp connected successfully!");
-      } else {
-        throw new Error(data.error || "Failed to connect official WhatsApp");
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || "Failed to complete official WhatsApp connection.");
       }
-    } catch (error: any) {
-      console.error("Signup error:", error);
-      toast.error(error.message);
+
+      setConnected(true);
+      setWabaInfo(data.data || embeddedSignupMetaRef.current);
+      if (data.data?.sessionName) {
+        localStorage.setItem("active_wa_session_id", data.data.sessionName);
+      }
+      if (data.data?.id) {
+        localStorage.setItem("active_wp_db_id", String(data.data.id));
+      }
+      await refreshSessions();
+      toast.success("Official WhatsApp connected successfully.");
+      window.dispatchEvent(new Event("db-connection-changed"));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to connect official WhatsApp.";
+      toast.error(message);
     } finally {
       setLoading(false);
     }
+  };
+
+  const launchWhatsAppSignup = () => {
+    if (!sdkReady || !window.FB) {
+      toast.error("Facebook SDK is still loading. Please try again.");
+      return;
+    }
+
+    embeddedSignupMetaRef.current = {};
+    setLoading(true);
+
+    window.FB.login(
+      async (response) => {
+        const code = response?.authResponse?.code;
+        if (!code) {
+          setLoading(false);
+          toast.error("Facebook authorization was cancelled or failed.");
+          return;
+        }
+
+        await handleSignupCompletion(code);
+      },
+      {
+        config_id: CONFIG_ID,
+        response_type: "code",
+        override_default_response_type: true,
+        extras: {
+          sessionInfoVersion: 3,
+          setup: {
+            business: {
+              name: "Automation Hub BD",
+            },
+          },
+          features: {
+            whatsapp_business_app_coexistence: true,
+          },
+        },
+      }
+    );
   };
 
   return (
@@ -125,25 +200,36 @@ export default function WhatsAppOfficialIntegration() {
             <CheckCircle2 className="h-5 w-5 text-green-500 mt-0.5" />
             <div>
               <p className="font-medium text-green-500">Official Connection Active</p>
-              <p className="text-sm text-muted-foreground">Your chatbot is now using the official Meta Cloud API.</p>
+              <p className="text-sm text-muted-foreground">
+                Your chatbot now runs on Meta official WhatsApp Cloud API.
+              </p>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4 text-sm">
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
             <div className="p-3 bg-white/5 rounded-md">
-              <p className="text-muted-foreground text-xs">WABA ID</p>
-              <p className="font-mono">{wabaInfo?.wabaId || '********'}</p>
+              <p className="text-muted-foreground text-xs mb-1">WABA ID</p>
+              <p className="font-mono break-all">{wabaInfo?.wabaId || "Pending sync"}</p>
             </div>
             <div className="p-3 bg-white/5 rounded-md">
-              <p className="text-muted-foreground text-xs">Phone ID</p>
-              <p className="font-mono">{wabaInfo?.phoneNumberId || '********'}</p>
+              <p className="text-muted-foreground text-xs mb-1">Phone Number ID</p>
+              <p className="font-mono break-all">{wabaInfo?.phoneNumberId || "Pending sync"}</p>
             </div>
+          </div>
+
+          <div className="flex items-center justify-between rounded-lg border border-white/10 bg-white/5 px-4 py-3">
+            <div>
+              <p className="text-sm font-medium text-white">Integration Fee</p>
+              <p className="text-xs text-muted-foreground">Session connection on your dashboard stays free.</p>
+            </div>
+            <Badge className="bg-green-600 text-white hover:bg-green-600">Free</Badge>
           </div>
         </div>
       ) : (
         <div className="space-y-4">
-          <Button 
-            onClick={launchWhatsAppSignup} 
-            disabled={loading}
+          <Button
+            onClick={launchWhatsAppSignup}
+            disabled={loading || !sdkReady}
             className="w-full bg-[#1877F2] hover:bg-[#166fe5] text-white font-semibold py-6"
           >
             {loading ? (
@@ -151,11 +237,14 @@ export default function WhatsAppOfficialIntegration() {
             ) : (
               <img src="https://www.facebook.com/favicon.ico" className="w-5 h-5 mr-2 invert" alt="FB" />
             )}
-            Connect with Facebook
+            Connect Official WhatsApp
           </Button>
-          <p className="text-[10px] text-center text-muted-foreground uppercase tracking-widest">
-            Powered by Meta Embedded Signup
-          </p>
+
+          <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-xs text-slate-300 space-y-1">
+            <p>Use your existing WhatsApp Business App number via coexistence.</p>
+            <p>No QR session, no third-party connector, no dashboard integration fee.</p>
+            <p>Meta message charges may still apply for template and bulk messaging.</p>
+          </div>
         </div>
       )}
     </div>

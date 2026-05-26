@@ -5,6 +5,11 @@ import { BACKEND_URL } from "@/config";
 export interface WahaSession {
   name: string;
   status?: string;
+  provider_type?: string;
+  waba_id?: string;
+  phone_number_id?: string;
+  is_shared?: boolean;
+  wp_db_id?: number | string;
   [key: string]: unknown;
 }
 
@@ -148,8 +153,11 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
       });
       const wahaSessions = await res.json();
       const allSessions: WahaSession[] = Array.isArray(wahaSessions) ? wahaSessions : [];
+      const officialSessions = allSessions.filter((session) =>
+        session.provider_type === "official" || String(session.name || "").startsWith("official_")
+      );
 
-      setSessions(allSessions);
+      setSessions(officialSessions);
       
       // Auto-select logic (Prioritize localStorage)
       const storedSessionId = localStorage.getItem("active_wa_session_id");
@@ -157,31 +165,36 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
       const current = currentSessionRef.current;
       
       if (storedSessionId && !current) {
-        const found = allSessions.find(s => s.name === storedSessionId);
+        const found = officialSessions.find(s => s.name === storedSessionId);
         if (found) {
             setCurrentSession(found);
-        } else if (allSessions.length > 0) {
+        } else if (officialSessions.length > 0) {
             if (viewMode === 'personal' || (viewMode === 'team' && effectiveTeamOwner)) {
-                setCurrentSession(allSessions[0]);
+                setCurrentSession(officialSessions[0]);
             }
         }
       } else if (storedDbId && !current) {
         // Fallback to DB ID if Session ID is missing
-        const found = allSessions.find(s => String((s as any).wp_db_id) === String(storedDbId));
+        const found = officialSessions.find(s => String((s as any).wp_db_id) === String(storedDbId));
         if (found) {
             setCurrentSession(found);
-        } else if (allSessions.length > 0) {
-            setCurrentSession(allSessions[0]);
+        } else if (officialSessions.length > 0) {
+            setCurrentSession(officialSessions[0]);
         }
-      } else if (!current && allSessions.length > 0) {
+      } else if (!current && officialSessions.length > 0) {
         if (viewMode === 'personal' || (viewMode === 'team' && effectiveTeamOwner)) {
-            setCurrentSession(allSessions[0]);
+            setCurrentSession(officialSessions[0]);
         }
       } else if (current) {
         // Update current session object with latest data
-        const updated = allSessions.find((s) => s.name === current.name);
-        if (updated) setCurrentSession(updated);
-        else setCurrentSession(null);
+        const updated = officialSessions.find((s) => s.name === current.name);
+        if (updated) {
+          setCurrentSession(updated);
+        } else {
+          localStorage.removeItem("active_wa_session_id");
+          localStorage.removeItem("active_wp_db_id");
+          setCurrentSession(null);
+        }
       }
     } catch (error) {
       console.error("Failed to fetch sessions", error);
