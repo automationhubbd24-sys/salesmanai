@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, Loader2, Radio, ShieldCheck, Sparkles } from "lucide-react";
+import { CheckCircle2, Loader2, Radio, ShieldCheck, Sparkles, AlertCircle, Info, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { BACKEND_URL } from "@/config";
 import { useWhatsApp } from "@/context/WhatsAppContext";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 declare global {
   interface Window {
@@ -29,7 +30,7 @@ type EmbeddedSignupMeta = {
 const APP_ID = import.meta.env.VITE_FACEBOOK_APP_ID || "3741087806186945";
 const CONFIG_ID = import.meta.env.VITE_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID || "1592300178695434";
 const GRAPH_VERSION = import.meta.env.VITE_FACEBOOK_GRAPH_VERSION || "v22.0";
-const SIGNUP_META_WAIT_MS = 8000;
+const SIGNUP_META_WAIT_MS = 15000;
 
 function isAllowedFacebookOrigin(origin: string) {
   try {
@@ -228,6 +229,11 @@ export default function WhatsAppOfficialIntegration() {
       return;
     }
 
+    // Coexistence Warning
+    toast.info("Meta Popup খুললে 'Create a WhatsApp Business account' select না করে existing account select করার চেষ্টা করুন (যদি থাকে)।", {
+      duration: 6000,
+    });
+
     embeddedSignupMetaRef.current = {};
     setLoading(true);
 
@@ -322,6 +328,27 @@ export default function WhatsAppOfficialIntegration() {
               <p className="mt-2 text-xs text-slate-400">Dashboard connection stays free. Meta message pricing may still apply.</p>
             </div>
           </div>
+
+          <Alert className="border-amber-500/20 bg-amber-500/5 text-amber-200 rounded-2xl">
+            <Info className="h-4 w-4 text-amber-400" />
+            <AlertTitle className="text-sm font-bold flex items-center gap-2">
+              Coexistence Flow Guide (গুরুত্বপূর্ণ)
+            </AlertTitle>
+            <AlertDescription className="mt-2 space-y-2 text-xs text-slate-300">
+              <div className="flex items-start gap-2">
+                <div className="h-4 w-4 rounded-full bg-amber-500/20 flex items-center justify-center text-[10px] mt-0.5 shrink-0">1</div>
+                <p>Meta Popup ওপেন হলে <span className="text-amber-400 font-semibold">"Create a WhatsApp Business account"</span> অপশনটি এড়িয়ে চলার চেষ্টা করুন।</p>
+              </div>
+              <div className="flex items-start gap-2">
+                <div className="h-4 w-4 rounded-full bg-amber-500/20 flex items-center justify-center text-[10px] mt-0.5 shrink-0">2</div>
+                <p>আপনার যদি আগে থেকেই WABA একাউন্ট থাকে, সেটি সিলেক্ট করুন।</p>
+              </div>
+              <div className="flex items-start gap-2">
+                <div className="h-4 w-4 rounded-full bg-amber-500/20 flex items-center justify-center text-[10px] mt-0.5 shrink-0">3</div>
+                <p>যদি বারবার <span className="text-rose-400 font-semibold">"Add your WhatsApp phone number"</span> স্ক্রিন আসে, তবে বুঝবেন Meta আপনাকে Coexistence ফ্লো-তে নিচ্ছে না। এক্ষেত্রে Meta Dashboard থেকে Config ID চেক করতে হবে।</p>
+              </div>
+            </AlertDescription>
+          </Alert>
 
           <Button
             onClick={launchWhatsAppSignup}
