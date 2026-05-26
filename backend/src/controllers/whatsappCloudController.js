@@ -24,14 +24,54 @@ const completeEmbeddedSignup = async (req, res) => {
 
         const appId = process.env.FACEBOOK_APP_ID;
         const appSecret = process.env.FACEBOOK_APP_SECRET;
+        if (!appId || !appSecret) {
+            return res.status(500).json({ error: 'Missing FACEBOOK_APP_ID or FACEBOOK_APP_SECRET' });
+        }
 
         // 1. Exchange code for Long-lived Access Token
         const accessToken = await whatsappCloudService.getAccessTokenFromCode(code, appId, appSecret);
 
-        // 2. Save to Database
-        // Note: Using a query to update or insert the official connection
-        // We link it to the user who performed the signup
-        const sessionName = `official_${wabaId || phoneNumberId || userId || 'wa'}`;
+        // 2. Resolve final signup metadata. The SDK code and postMessage payload can arrive out of order.
+        const resolvedDetails = await whatsappCloudService.getEmbeddedSignupDetails({
+            accessToken,
+            appId,
+            appSecret,
+            wabaId,
+            phoneNumberId
+        });
+
+        const resolvedWabaId = resolvedDetails.wabaId || wabaId || null;
+        const resolvedPhoneNumberId = resolvedDetails.phoneNumberId || phoneNumberId || null;
+
+        if (!resolvedWabaId && !resolvedPhoneNumberId) {
+            return res.status(422).json({
+                error: 'Embedded signup finished, but no WhatsApp asset IDs were returned. Please retry the connection flow.'
+            });
+        }
+
+        // 3. Reuse an existing official row for this business/user when possible.
+        const existingConnectionResult = await pgClient.query(
+            `SELECT id, session_name
+             FROM whatsapp_message_database
+             WHERE provider_type = 'official'
+               AND (
+                    waba_id = $1
+                    OR phone_number_id = $2
+                    OR (user_id = $3 AND email = $4)
+               )
+             ORDER BY
+                CASE
+                    WHEN waba_id = $1 THEN 0
+                    WHEN phone_number_id = $2 THEN 1
+                    WHEN user_id = $3 AND email = $4 THEN 2
+                    ELSE 3
+                END
+             LIMIT 1`,
+            [resolvedWabaId, resolvedPhoneNumberId, userId, userEmail]
+        );
+
+        const existingConnection = existingConnectionResult.rows[0];
+        const sessionName = existingConnection?.session_name || `official_${resolvedWabaId || resolvedPhoneNumberId || userId || 'wa'}`;
         const query = `
             INSERT INTO whatsapp_message_database 
             (user_id, email, phone_number_id, waba_id, cloud_access_token, provider_type, status, session_name)
@@ -47,12 +87,19 @@ const completeEmbeddedSignup = async (req, res) => {
             RETURNING id, session_name, waba_id, phone_number_id
         `;
         
-        const insertResult = await pgClient.query(query, [userId, userEmail, phoneNumberId, wabaId, accessToken, sessionName]);
+        const insertResult = await pgClient.query(query, [
+            userId,
+            userEmail,
+            resolvedPhoneNumberId,
+            resolvedWabaId,
+            accessToken,
+            sessionName
+        ]);
         const savedConnection = insertResult.rows[0] || {};
 
-        // 3. Subscribe the App to WABA (to receive webhooks)
-        if (wabaId) {
-            await whatsappCloudService.subscribeAppToWaba(wabaId, accessToken);
+        // 4. Subscribe the App to WABA (to receive webhooks)
+        if (resolvedWabaId) {
+            await whatsappCloudService.subscribeAppToWaba(resolvedWabaId, accessToken);
         }
 
         res.status(200).json({ 
@@ -61,8 +108,10 @@ const completeEmbeddedSignup = async (req, res) => {
             data: {
                 id: savedConnection.id,
                 sessionName: savedConnection.session_name || sessionName,
-                wabaId: savedConnection.waba_id || wabaId,
-                phoneNumberId: savedConnection.phone_number_id || phoneNumberId
+                wabaId: savedConnection.waba_id || resolvedWabaId,
+                phoneNumberId: savedConnection.phone_number_id || resolvedPhoneNumberId,
+                displayPhoneNumber: resolvedDetails.displayPhoneNumber,
+                verifiedName: resolvedDetails.verifiedName
             }
         });
 

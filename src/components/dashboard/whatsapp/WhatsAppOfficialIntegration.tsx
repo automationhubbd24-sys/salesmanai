@@ -22,19 +22,43 @@ declare global {
 type EmbeddedSignupMeta = {
   wabaId?: string;
   phoneNumberId?: string;
+  displayPhoneNumber?: string;
+  verifiedName?: string;
 };
 
 const APP_ID = import.meta.env.VITE_FACEBOOK_APP_ID || "3741087806186945";
 const CONFIG_ID = import.meta.env.VITE_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID || "1592300178695434";
 const GRAPH_VERSION = import.meta.env.VITE_FACEBOOK_GRAPH_VERSION || "v22.0";
+const SIGNUP_META_WAIT_MS = 8000;
+
+function isAllowedFacebookOrigin(origin: string) {
+  try {
+    const { hostname } = new URL(origin);
+    return hostname === "facebook.com" || hostname === "www.facebook.com" || hostname === "web.facebook.com";
+  } catch {
+    return false;
+  }
+}
 
 export default function WhatsAppOfficialIntegration() {
-  const { refreshSessions } = useWhatsApp();
+  const { refreshSessions, sessions, currentSession } = useWhatsApp();
   const [loading, setLoading] = useState(false);
   const [sdkReady, setSdkReady] = useState(false);
   const [connected, setConnected] = useState(false);
   const [wabaInfo, setWabaInfo] = useState<EmbeddedSignupMeta | null>(null);
   const embeddedSignupMetaRef = useRef<EmbeddedSignupMeta>({});
+  const metaResolverRef = useRef<((meta: EmbeddedSignupMeta | null) => void) | null>(null);
+  const metaTimeoutRef = useRef<number | null>(null);
+
+  const resolvePendingMeta = (meta: EmbeddedSignupMeta | null) => {
+    if (metaTimeoutRef.current) {
+      window.clearTimeout(metaTimeoutRef.current);
+      metaTimeoutRef.current = null;
+    }
+
+    metaResolverRef.current?.(meta);
+    metaResolverRef.current = null;
+  };
 
   useEffect(() => {
     const initFacebookSdk = () => {
@@ -72,7 +96,7 @@ export default function WhatsAppOfficialIntegration() {
 
   useEffect(() => {
     const sessionInfoListener = (event: MessageEvent) => {
-      if (!event.origin || !/facebook\.com$/.test(new URL(event.origin).hostname)) {
+      if (!event.origin || !isAllowedFacebookOrigin(event.origin)) {
         return;
       }
 
@@ -83,21 +107,25 @@ export default function WhatsAppOfficialIntegration() {
         }
 
         if (payload.event === "FINISH") {
-          embeddedSignupMetaRef.current = {
+          const meta = {
             wabaId: payload.data?.waba_id,
             phoneNumberId: payload.data?.phone_number_id,
           };
+          embeddedSignupMetaRef.current = meta;
+          resolvePendingMeta(meta);
           return;
         }
 
         if (payload.event === "ERROR") {
           const message = payload.data?.error_message || "WhatsApp setup failed.";
+          resolvePendingMeta(null);
           toast.error(message);
           setLoading(false);
           return;
         }
 
         if (payload.event === "CANCEL") {
+          resolvePendingMeta(null);
           setLoading(false);
         }
       } catch {
@@ -106,15 +134,56 @@ export default function WhatsAppOfficialIntegration() {
     };
 
     window.addEventListener("message", sessionInfoListener);
-    return () => window.removeEventListener("message", sessionInfoListener);
+    return () => {
+      if (metaTimeoutRef.current) {
+        window.clearTimeout(metaTimeoutRef.current);
+      }
+      metaResolverRef.current = null;
+      window.removeEventListener("message", sessionInfoListener);
+    };
   }, []);
 
-  const handleSignupCompletion = async (code: string) => {
+  useEffect(() => {
+    const officialSession = (currentSession?.provider_type === "official" ? currentSession : null)
+      || sessions.find((session) => session.provider_type === "official" || String(session.name || "").startsWith("official_"))
+      || null;
+
+    if (!officialSession) {
+      setConnected(false);
+      setWabaInfo(null);
+      return;
+    }
+
+    setConnected(true);
+    setWabaInfo({
+      wabaId: officialSession.waba_id,
+      phoneNumberId: officialSession.phone_number_id,
+    });
+  }, [currentSession, sessions]);
+
+  const waitForEmbeddedSignupMeta = async () => {
+    if (embeddedSignupMetaRef.current.wabaId || embeddedSignupMetaRef.current.phoneNumberId) {
+      return embeddedSignupMetaRef.current;
+    }
+
+    return new Promise<EmbeddedSignupMeta | null>((resolve) => {
+      metaResolverRef.current = resolve;
+      metaTimeoutRef.current = window.setTimeout(() => {
+        resolvePendingMeta(null);
+      }, SIGNUP_META_WAIT_MS);
+    });
+  };
+
+  const handleSignupCompletion = async (code: string, signupMeta?: EmbeddedSignupMeta | null) => {
     try {
       const token = localStorage.getItem("auth_token");
       if (!token) {
         throw new Error("Please login again and reconnect WhatsApp.");
       }
+
+      const meta = signupMeta && (signupMeta.wabaId || signupMeta.phoneNumberId)
+        ? signupMeta
+        : embeddedSignupMetaRef.current;
 
       const response = await fetch(`${BACKEND_URL}/api/whatsapp/official/signup-complete`, {
         method: "POST",
@@ -124,8 +193,8 @@ export default function WhatsAppOfficialIntegration() {
         },
         body: JSON.stringify({
           code,
-          wabaId: embeddedSignupMetaRef.current.wabaId,
-          phoneNumberId: embeddedSignupMetaRef.current.phoneNumberId,
+          wabaId: meta.wabaId,
+          phoneNumberId: meta.phoneNumberId,
         }),
       });
 
@@ -135,7 +204,7 @@ export default function WhatsAppOfficialIntegration() {
       }
 
       setConnected(true);
-      setWabaInfo(data.data || embeddedSignupMetaRef.current);
+      setWabaInfo(data.data || meta);
       if (data.data?.sessionName) {
         localStorage.setItem("active_wa_session_id", data.data.sessionName);
       }
@@ -171,7 +240,8 @@ export default function WhatsAppOfficialIntegration() {
           return;
         }
 
-        await handleSignupCompletion(code);
+        const signupMeta = await waitForEmbeddedSignupMeta();
+        await handleSignupCompletion(code, signupMeta);
       },
       {
         config_id: CONFIG_ID,
@@ -261,7 +331,7 @@ export default function WhatsAppOfficialIntegration() {
             ) : (
               <img src="https://www.facebook.com/favicon.ico" className="mr-2 h-5 w-5 invert" alt="FB" />
             )}
-            {loading ? "Opening Meta Signup..." : sdkReady ? "Connect Official WhatsApp" : "Preparing Meta SDK..."}
+            {loading ? "Opening Meta Signup..." : sdkReady ? "Connect WhatsApp Business" : "Preparing Meta SDK..."}
           </Button>
 
           <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4 text-xs text-slate-300 space-y-2">
@@ -271,7 +341,7 @@ export default function WhatsAppOfficialIntegration() {
                 {sdkReady ? "Ready" : "Loading SDK"}
               </Badge>
             </div>
-            <p>Use your existing WhatsApp Business App number via coexistence.</p>
+            <p>Business owners can connect their own WhatsApp Business App number via coexistence.</p>
             <p>No QR session, no third-party connector, no dashboard integration fee.</p>
             <p>Meta message charges may still apply for template and bulk messaging.</p>
           </div>

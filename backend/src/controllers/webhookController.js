@@ -422,7 +422,12 @@ const verifyWebhook = (req, res) => {
 
 // WhatsApp Webhook Verification (GET)
 const verifyWhatsAppWebhook = (req, res) => {
-    const OFFICIAL_WA_TOKEN = 'salesman_monster_wa_2026_official';
+    const OFFICIAL_WA_TOKEN =
+        process.env.WHATSAPP_OFFICIAL_VERIFY_TOKEN ||
+        process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN ||
+        process.env.FACEBOOK_VERIFY_TOKEN ||
+        process.env.VERIFY_TOKEN ||
+        'salesman_monster_wa_2026_official';
     
     console.log(`[WhatsApp Webhook Verification] Mode: ${req.query['hub.mode']}, Token: ${req.query['hub.verify_token']}`);
 
