@@ -107,7 +107,10 @@ export default function WhatsAppOfficialIntegration() {
           return;
         }
 
-        if (payload.event === "FINISH") {
+        if (
+          payload.event === "FINISH"
+          || payload.event === "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING"
+        ) {
           const meta = {
             wabaId: payload.data?.waba_id,
             phoneNumberId: payload.data?.phone_number_id,
@@ -256,15 +259,9 @@ export default function WhatsAppOfficialIntegration() {
         response_type: "code",
         override_default_response_type: true,
         extras: {
-          sessionInfoVersion: 3,
-          setup: {
-            business: {
-              name: "Automation Hub BD",
-            },
-          },
-          features: {
-            whatsapp_business_app_coexistence: true,
-          },
+          setup: {},
+          featureType: "whatsapp_business_app_onboarding",
+          sessionInfoVersion: "3",
         },
       }
     );
