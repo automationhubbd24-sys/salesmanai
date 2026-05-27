@@ -3,22 +3,32 @@ import { useWhatsApp } from "@/context/WhatsAppContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { WorkspaceSwitcher } from "@/components/dashboard/WorkspaceSwitcher";
 import WhatsAppOfficialIntegration from "@/components/dashboard/whatsapp/WhatsAppOfficialIntegration";
+import { BACKEND_URL } from "@/config";
 import {
+  Bot,
   CheckCircle2,
+  Facebook,
+  Gift,
+  Info,
   Loader2,
   MessageSquare,
   RefreshCw,
+  RotateCcw,
+  Settings2,
   ShieldCheck,
-  Sparkles,
   Smartphone,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 
 type SessionWithMeta = {
   name: string;
   status?: string;
+  db_status?: string;
+  subscription_status?: string;
   provider_type?: string;
   wp_db_id?: number;
   waba_id?: string;
@@ -29,10 +39,34 @@ type SessionWithMeta = {
 export default function SessionManager() {
   const navigate = useNavigate();
   const { sessions, currentSession, refreshSessions, loading, setCurrentSession } = useWhatsApp();
+  const webhookUrl = `${BACKEND_URL}/webhook/whatsapp`;
 
   const officialSessions = (sessions as SessionWithMeta[]).filter(
     (session) => session.provider_type === "official" || session.name.startsWith("official_")
   );
+  const setupJourney = [
+    {
+      title: "Connect Number",
+      description: "Meta Embedded Signup popup diye existing WhatsApp Business App number connect korun.",
+      icon: Facebook,
+    },
+    {
+      title: "Configure Bot",
+      description: "AI settings, prompt, reply delay, order email, memory context set korun.",
+      icon: Settings2,
+    },
+    {
+      title: "Go Live",
+      description: "Control page theke bot check korun, orders track korun, reconnect/disconnect manage korun.",
+      icon: Bot,
+    },
+  ];
+  const metaChecklist = [
+    "Meta app-e WhatsApp product add kora thakte hobe.",
+    "Webhook callback URL hisebe use korun: " + webhookUrl,
+    "Verify token backend-er `WHATSAPP_OFFICIAL_VERIFY_TOKEN` er sathe match korte hobe.",
+    "Business verification / phone verification complete thakle coexistence flow smooth hoy.",
+  ];
 
   const selectSession = (session: SessionWithMeta) => {
     setCurrentSession(session);
@@ -44,79 +78,183 @@ export default function SessionManager() {
     navigate("/dashboard/whatsapp/control");
   };
 
+  const handleReconnectHelp = (session: SessionWithMeta) => {
+    selectSession(session);
+    document.getElementById("whatsapp-connect-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    toast.info("Uporer Reconnect button diye abar Meta signup flow complete korun.");
+  };
+
+  const scrollToConnectCard = () => {
+    document.getElementById("whatsapp-connect-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const handleDisconnect = async (session: SessionWithMeta) => {
+    if (!window.confirm(`Apni ki ${session.name} disconnect korte chan? Ete bot reply off hoye jabe.`)) {
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        throw new Error("Please login again");
+      }
+
+      const response = await fetch(`${BACKEND_URL}/api/whatsapp/official/${encodeURIComponent(session.name)}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(body.error || "Failed to disconnect WhatsApp");
+      }
+
+      if (currentSession?.name === session.name) {
+        localStorage.removeItem("active_wa_session_id");
+        localStorage.removeItem("active_wp_db_id");
+        setCurrentSession(null);
+      }
+
+      await refreshSessions();
+      toast.success(`${session.name} disconnected successfully.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to disconnect WhatsApp.";
+      toast.error(message);
+    }
+  };
+
+  const getStatusMeta = (session: SessionWithMeta) => {
+    const status = String(session.status || session.db_status || "").toUpperCase();
+    const hasOfficialCredentials = !!session.phone_number_id;
+    const subscriptionStatus = String(session.subscription_status || "").toLowerCase();
+    const hasUsablePlan = ["active", "trial", "active_trial", "active_paid", "none"].includes(subscriptionStatus);
+    const isHealthyOfficialConnection = hasOfficialCredentials && hasUsablePlan;
+    const needsReconnect = !isHealthyOfficialConnection && !!status && !["WORKING", "ACTIVE", "CONNECTED"].includes(status);
+
+    if (needsReconnect) {
+      return {
+        label: "Reconnect Needed",
+        className: "bg-amber-500/15 text-amber-300 hover:bg-amber-500/15",
+      };
+    }
+
+    return {
+      label: currentSession?.name === session.name ? "Active" : "Connected",
+      className:
+        currentSession?.name === session.name
+          ? "bg-green-600 text-white hover:bg-green-600"
+          : "bg-slate-700 text-slate-100 hover:bg-slate-700",
+    };
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
-      <Card className="overflow-hidden rounded-3xl border border-emerald-500/10 bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.14),_rgba(2,6,23,0.96)_38%,_rgba(2,6,23,1)_100%)]">
-        <CardContent className="p-6 md:p-8">
-          <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
-            <div className="max-w-3xl">
-              <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-300">
-                <ShieldCheck className="h-3.5 w-3.5" />
-                Official WhatsApp Cloud API
-              </div>
-              <h1 className="mt-4 flex items-center gap-3 text-3xl font-black tracking-tight text-white md:text-4xl">
-                <Smartphone className="h-8 w-8 text-primary" />
-                WhatsApp Integration
-              </h1>
-              <p className="mt-3 max-w-2xl text-sm font-medium leading-6 text-slate-300 md:text-base">
-                Connect Meta official WhatsApp and manage one clean integration for bot, database, settings, and orders.
-              </p>
-              <div className="mt-4">
-                <WorkspaceSwitcher platform="whatsapp" />
-              </div>
+      <div className="rounded-[32px] border border-white/10 bg-[linear-gradient(135deg,rgba(24,119,242,0.18),rgba(15,23,42,0.94))] p-6 shadow-[0_24px_80px_rgba(2,6,23,0.28)]">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+          <div className="max-w-3xl">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#1877F2]">
+                <Facebook className="mr-1.5 h-3.5 w-3.5" />
+                Meta Style Integration
+              </span>
+              <span className="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-200">
+                Coexistence + Chatbot Ready
+              </span>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
-              <Badge variant="outline" className="border-green-500/30 bg-green-500/10 px-3 py-1 text-green-400">
-                Integration Fee: Free
-              </Badge>
-              <Button onClick={() => refreshSessions()} variant="outline" size="sm" className="border-white/10 bg-black/20">
-                <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-                Refresh
-              </Button>
-            </div>
+            <h1 className="mt-4 flex items-center gap-3 text-3xl font-black tracking-tight text-white">
+              <Smartphone className="h-8 w-8 text-[#25D366]" />
+              WhatsApp Integration
+            </h1>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
+              Facebook/Meta onboarding feel maintain kore official WhatsApp Business number connect, disconnect, reconnect, chatbot configuration, and live management ek page thekei handle korun.
+            </p>
           </div>
 
-          <div className="mt-6 grid gap-3 md:grid-cols-3">
-            <div className="rounded-2xl border border-white/10 bg-slate-950/50 p-4">
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Flow</p>
-              <p className="mt-2 text-lg font-semibold text-white">Official Only</p>
-              <p className="mt-1 text-sm text-slate-400">Meta Cloud API only. Legacy QR flow stays hidden.</p>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-slate-950/50 p-4">
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Style</p>
-              <p className="mt-2 text-lg font-semibold text-white">Supported</p>
-              <p className="mt-1 text-sm text-slate-400">Existing WhatsApp Business App numbers can stay active.</p>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-slate-950/50 p-4">
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Connected</p>
-              <p className="mt-2 text-lg font-semibold text-white">{officialSessions.length}</p>
-              <p className="mt-1 text-sm text-slate-400">Use one active integration for bot, settings, and orders.</p>
+          <div className="rounded-3xl border border-[#00ff88]/20 bg-[#00ff88]/10 px-6 py-4">
+            <div className="flex items-center gap-4">
+              <div className="rounded-full bg-[#00ff88] p-2">
+                <Gift className="h-5 w-5 text-black" />
+              </div>
+              <div>
+                <p className="text-sm font-black uppercase tracking-wider text-[#00ff88]">Official Meta Flow</p>
+                <p className="text-xs text-white/70">Existing WhatsApp Business number diye clean coexistence connect korun.</p>
+              </div>
             </div>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
-      <Card className="rounded-3xl border border-white/10 bg-[#0b1220]/90 shadow-[0_18px_60px_rgba(2,6,23,0.28)]">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-wrap items-center gap-3">
+          <WorkspaceSwitcher platform="whatsapp" />
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+          <Button variant="outline" onClick={() => refreshSessions()} className="w-full sm:w-auto border-white/10 bg-black/20">
+            <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
+          <Button onClick={scrollToConnectCard} className="w-full sm:w-auto bg-[#1877F2] hover:bg-[#166fe5]">
+            <Smartphone className="mr-2 h-4 w-4" />
+            {officialSessions.length > 0 ? "Connect Another Number" : "Connect WhatsApp"}
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
+        <div className="grid gap-3 md:grid-cols-3">
+          {setupJourney.map((item) => {
+            const Icon = item.icon;
+            return (
+              <Card key={item.title} className="rounded-3xl border border-white/10 bg-[#0b1220]/75">
+                <CardContent className="space-y-3 p-5">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white/5">
+                    <Icon className="h-5 w-5 text-sky-300" />
+                  </div>
+                  <div>
+                    <p className="text-base font-semibold text-white">{item.title}</p>
+                    <p className="mt-2 text-sm leading-6 text-slate-400">{item.description}</p>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+
+        <Card className="rounded-3xl border border-white/10 bg-[#0b1220]/75">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-white">
+              <ShieldCheck className="h-5 w-5 text-emerald-300" />
+              Meta Developer Checklist
+            </CardTitle>
+            <CardDescription>Connect er age ei 4 ta jinis ready thakle setup smooth hoy.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm text-slate-300">
+            {metaChecklist.map((item) => (
+              <div key={item} className="rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3">
+                {item}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card id="whatsapp-connect-card" className="rounded-3xl border border-white/10 bg-[#0b1220]/90 shadow-[0_18px_60px_rgba(2,6,23,0.28)]">
         <CardHeader className="pb-4">
           <div className="flex items-start justify-between gap-4">
             <div>
               <CardTitle className="text-white">Connect WhatsApp</CardTitle>
               <CardDescription className="mt-1">
-                Facebook-style simple onboarding for Meta official WhatsApp.
+                Facebook integration page-er feel maintain kore official WhatsApp flow, direct reconnect, and visible disconnect action diya optimized.
               </CardDescription>
             </div>
-            <Badge className="bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/15">
-              <Sparkles className="mr-1 h-3.5 w-3.5" />
-              Recommended
-            </Badge>
+            <Badge className="bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/15">Official</Badge>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 px-4 py-3 text-sm text-slate-300">
-            Connect one official integration, then use `Manage` to control bot, database, settings, and orders from the same place.
-          </div>
-
           <div className="rounded-3xl border border-white/10 bg-slate-950/70 p-4 md:p-5">
             <WhatsAppOfficialIntegration />
           </div>
@@ -127,12 +265,19 @@ export default function SessionManager() {
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-xl font-bold text-white">Connected Integrations</h2>
-            <p className="text-sm text-slate-400">Keep it simple. Pick one integration and manage everything from there.</p>
+            <p className="text-sm text-slate-400">Manage korun, reconnect korun, ba dorkar hole disconnect korun.</p>
           </div>
           <Badge variant="secondary" className="bg-slate-800 text-slate-200">
             {officialSessions.length} Connected
           </Badge>
         </div>
+
+        <Alert className="border-blue-500/20 bg-blue-500/5 text-slate-200 rounded-2xl">
+          <Info className="h-4 w-4 text-blue-300" />
+          <AlertDescription className="text-sm text-slate-300">
+            Jodi phone disconnect hoy, `Reconnect` e click kore abar Meta flow complete korun.
+          </AlertDescription>
+        </Alert>
 
         {loading ? (
           <Card className="bg-[#0f0f0f]/80 border border-white/10 rounded-2xl">
@@ -149,9 +294,7 @@ export default function SessionManager() {
               </div>
               <div>
                 <p className="text-white font-semibold">No WhatsApp integration connected yet</p>
-                <p className="mx-auto mt-1 max-w-xl text-sm text-slate-400">
-                  Use the official Meta onboarding flow above to connect your first chatbot number. After connection, the `Manage` button opens your active bot workspace.
-                </p>
+                <p className="mx-auto mt-1 max-w-xl text-sm text-slate-400">Uporer button diye connect korun.</p>
               </div>
             </CardContent>
           </Card>
@@ -159,6 +302,8 @@ export default function SessionManager() {
           <div className="space-y-3">
             {officialSessions.map((session) => {
               const isActive = currentSession?.name === session.name;
+              const statusMeta = getStatusMeta(session);
+              const hasPhoneId = !!session.phone_number_id;
 
               return (
                 <Card
@@ -169,9 +314,7 @@ export default function SessionManager() {
                     <div className="min-w-0 space-y-2">
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="text-base font-semibold text-white break-all">{session.name}</p>
-                        <Badge className={isActive ? "bg-green-600 text-white" : "bg-slate-700 text-slate-100"}>
-                          {isActive ? "Active" : "Connected"}
-                        </Badge>
+                        <Badge className={statusMeta.className}>{statusMeta.label}</Badge>
                         {session.is_shared ? (
                           <Badge variant="outline" className="border-white/10 text-slate-300">
                             Shared
@@ -179,20 +322,32 @@ export default function SessionManager() {
                         ) : null}
                       </div>
                       <p className="text-sm text-slate-400">
-                        {isActive
-                          ? "This integration is currently powering your bot workspace."
-                          : "Set this as active and open the manage workspace."}
+                        {statusMeta.label === "Reconnect Needed"
+                          ? "Number disconnected hole reconnect diye abar connect korun."
+                          : isActive
+                            ? "Ei integration ekhon bot run kortese."
+                            : "Manage diye etake active workspace hisebe use korun."}
                       </p>
                       <div className="flex flex-col gap-1 text-xs text-slate-500 md:flex-row md:flex-wrap md:gap-4">
-                        <span className="font-mono">WABA: {session.waba_id || "Pending sync"}</span>
-                        <span className="font-mono">Phone ID: {session.phone_number_id || "Pending sync"}</span>
+                        <span className="font-mono">{hasPhoneId ? `Phone ID: ${session.phone_number_id}` : "Phone ID: Pending sync"}</span>
+                        {session.waba_id ? <span className="font-mono">WABA: {session.waba_id}</span> : null}
                       </div>
                     </div>
 
-                    <Button className="min-w-[160px] bg-[#1877F2] hover:bg-[#166fe5]" onClick={() => handleManage(session)}>
-                      <MessageSquare className="mr-2 h-4 w-4" />
-                      Manage
-                    </Button>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Button variant="outline" className="min-w-[140px] border-white/10" onClick={() => handleReconnectHelp(session)}>
+                        <RotateCcw className="mr-2 h-4 w-4" />
+                        Reconnect
+                      </Button>
+                      <Button className="min-w-[140px] bg-[#1877F2] hover:bg-[#166fe5]" onClick={() => handleManage(session)}>
+                        <MessageSquare className="mr-2 h-4 w-4" />
+                        Manage
+                      </Button>
+                      <Button variant="destructive" className="min-w-[140px]" onClick={() => handleDisconnect(session)}>
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        Disconnect
+                      </Button>
+                    </div>
                   </CardContent>
                 </Card>
               );

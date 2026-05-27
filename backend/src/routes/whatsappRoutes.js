@@ -2,7 +2,10 @@ const express = require('express');
 const router = express.Router();
 const whatsappController = require('../controllers/whatsappController');
 const whatsappCloudController = require('../controllers/whatsappCloudController');
+const webhookController = require('../controllers/webhookController');
 const pgClient = require('../services/pgClient');
+const dbService = require('../services/dbService');
+const whatsappCloudService = require('../services/whatsappCloudService');
 const jwt = require('jsonwebtoken');
 const authMiddleware = require('../middleware/authMiddleware');
 
@@ -66,9 +69,64 @@ function handleLegacyWhatsAppRoute(req, res) {
 
 // WhatsApp Cloud API Official Routes
 router.post('/official/signup-complete', authMiddleware, whatsappCloudController.completeEmbeddedSignup);
+router.delete('/official/:sessionName', authMiddleware, async (req, res) => {
+    try {
+        await ensureOfficialWhatsAppColumns();
 
-// Legacy WAHA webhook listener retired.
-router.post('/webhook', handleLegacyWhatsAppRoute);
+        const sessionName = String(req.params.sessionName || '').trim();
+        if (!sessionName) {
+            return res.status(400).json({ error: 'Session name is required' });
+        }
+
+        const userId = req.user?.id || null;
+        const userEmail = req.user?.email || null;
+        const allowed = await hasSessionAccess(sessionName, userId, userEmail);
+
+        if (!allowed) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
+
+        const result = await pgClient.query(
+            `SELECT session_name, waba_id, phone_number_id, cloud_access_token
+             FROM whatsapp_message_database
+             WHERE session_name = $1
+             LIMIT 1`,
+            [sessionName]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'WhatsApp connection not found' });
+        }
+
+        const row = result.rows[0];
+
+        if (row.waba_id && row.cloud_access_token) {
+            try {
+                await whatsappCloudService.unsubscribeAppFromWaba(row.waba_id, row.cloud_access_token);
+            } catch (unsubscribeError) {
+                console.warn(`[WhatsApp Official] Failed to unsubscribe app from WABA ${row.waba_id}:`, unsubscribeError.response?.data || unsubscribeError.message);
+            }
+        }
+
+        await dbService.deleteWhatsAppEntry(row.session_name);
+        whatsappController.clearPageCache(row.session_name);
+        if (row.waba_id) {
+            whatsappController.clearPageCache(row.waba_id);
+        }
+        if (row.phone_number_id) {
+            whatsappController.clearPageCache(row.phone_number_id);
+        }
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Delete official WhatsApp connection error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Backward-compatible official webhook route.
+router.get('/webhook', webhookController.verifyWhatsAppWebhook);
+router.post('/webhook', webhookController.handleWhatsAppWebhook);
 
 // Get Session QR (Real-time)
 router.get('/session/qr/:sessionName', handleLegacyWhatsAppRoute);
@@ -101,7 +159,7 @@ router.get('/sessions', async (req, res) => {
         let mySessions = [];
         if (!requestedOwner || requestedOwner === userEmail) {
             const { rows } = await pgClient.query(
-                'SELECT id, session_name, expires_at, plan_days, status, subscription_status, user_id, email, engine_override, provider_type, waba_id, phone_number_id FROM whatsapp_message_database WHERE user_id::uuid = $1::uuid OR email = $2',
+                'SELECT id, session_name, expires_at, plan_days, status, subscription_status, user_id, email, engine_override, provider_type, waba_id, phone_number_id, cloud_access_token FROM whatsapp_message_database WHERE user_id::uuid = $1::uuid OR email = $2',
                 [userId, userEmail]
             );
             mySessions = rows;
@@ -125,7 +183,7 @@ router.get('/sessions', async (req, res) => {
         let sharedSessions = [];
         if (sharedSessionNames.length > 0) {
             const { rows: sharedData } = await pgClient.query(
-                'SELECT id, session_name, expires_at, plan_days, status, subscription_status, user_id, email, engine_override, provider_type, waba_id, phone_number_id FROM whatsapp_message_database WHERE session_name = ANY($1::text[])',
+                'SELECT id, session_name, expires_at, plan_days, status, subscription_status, user_id, email, engine_override, provider_type, waba_id, phone_number_id, cloud_access_token FROM whatsapp_message_database WHERE session_name = ANY($1::text[])',
                 [sharedSessionNames]
             );
             sharedSessions = sharedData;
@@ -139,9 +197,18 @@ router.get('/sessions', async (req, res) => {
         // 5. Only expose official integrations in the current product flow.
         const finalSessions = uniqueDBSessions
             .filter((ds) => ds.provider_type === 'official' || String(ds.session_name || '').startsWith('official_'))
-            .map((ds) => ({
+            .map((ds) => {
+                const rawStatus = String(ds.status || '').toUpperCase();
+                const hasOfficialCredentials = Boolean(ds.phone_number_id && ds.cloud_access_token);
+                const hasActiveSubscription = String(ds.subscription_status || '').toLowerCase() === 'active';
+                const resolvedStatus =
+                    hasOfficialCredentials && hasActiveSubscription
+                        ? 'WORKING'
+                        : (rawStatus === 'ACTIVE' ? 'WORKING' : (ds.status || 'WORKING'));
+
+                return {
                 name: ds.session_name,
-                status: String(ds.status || '').toLowerCase() === 'active' ? 'WORKING' : (ds.status || 'WORKING'),
+                status: resolvedStatus,
                 config: {},
                 me: null,
                 wp_db_id: ds.id,
@@ -155,7 +222,7 @@ router.get('/sessions', async (req, res) => {
                 waba_id: ds.waba_id || null,
                 phone_number_id: ds.phone_number_id || null,
                 is_shared: ds.user_id !== userId
-            }));
+            }});
 
         res.json(finalSessions);
     } catch (err) {

@@ -32,6 +32,17 @@ class WhatsAppCloudService {
         return response.data;
     }
 
+    async graphDelete(pathname, accessToken, params = {}) {
+        const response = await axios.delete(getGraphUrl(pathname), {
+            params,
+            headers: accessToken ? {
+                Authorization: `Bearer ${accessToken}`
+            } : undefined
+        });
+
+        return response.data;
+    }
+
     /**
      * Exchange code from Embedded Signup for an Access Token
      * @param {string} code - The code received from frontend
@@ -99,6 +110,17 @@ class WhatsAppCloudService {
         }
     }
 
+    async getMediaDetails(mediaId, accessToken) {
+        try {
+            return await this.graphGet(`/${mediaId}`, accessToken, {
+                fields: 'id,mime_type,sha256,file_size,url'
+            });
+        } catch (error) {
+            console.error('[WhatsApp Cloud] Media details error:', error.response?.data || error.message);
+            return null;
+        }
+    }
+
     async getEmbeddedSignupDetails({ accessToken, appId, appSecret, wabaId, phoneNumberId }) {
         let resolvedWabaId = wabaId || null;
         let resolvedPhoneNumberId = phoneNumberId || null;
@@ -150,6 +172,27 @@ class WhatsAppCloudService {
         }
     }
 
+    async sendImageMessage(phoneNumberId, accessToken, recipientNumber, imageUrl, caption) {
+        try {
+            const image = { link: imageUrl };
+            if (caption) {
+                image.caption = caption;
+            }
+
+            const response = await this.graphPost(`/${phoneNumberId}/messages`, {
+                messaging_product: "whatsapp",
+                recipient_type: "individual",
+                to: recipientNumber,
+                type: "image",
+                image
+            }, accessToken);
+            return response;
+        } catch (error) {
+            console.error('[WhatsApp Cloud] Send Image Error:', error.response?.data || error.message);
+            throw error;
+        }
+    }
+
     /**
      * Subscribe app to WABA (Required to receive webhooks)
      */
@@ -157,7 +200,24 @@ class WhatsAppCloudService {
         try {
             return await this.graphPost(`/${wabaId}/subscribed_apps`, {}, accessToken);
         } catch (error) {
+            const metaError = error.response?.data?.error;
+            const metaMessage = String(metaError?.message || "").toLowerCase();
+
+            // Meta can return an error when the app is already subscribed. Treat that as success.
+            if (metaMessage.includes('already') && metaMessage.includes('subscribed')) {
+                return { success: true, alreadySubscribed: true };
+            }
+
             console.error('[WhatsApp Cloud] WABA Subscription Error:', error.response?.data || error.message);
+            throw error;
+        }
+    }
+
+    async unsubscribeAppFromWaba(wabaId, accessToken) {
+        try {
+            return await this.graphDelete(`/${wabaId}/subscribed_apps`, accessToken);
+        } catch (error) {
+            console.error('[WhatsApp Cloud] WABA Unsubscribe Error:', error.response?.data || error.message);
             throw error;
         }
     }

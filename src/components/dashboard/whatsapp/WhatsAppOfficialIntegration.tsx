@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, Loader2, Radio, ShieldCheck, Sparkles, Info } from "lucide-react";
+import { CheckCircle2, Facebook, Link2, Loader2, MessageSquare, RotateCcw, Settings2, ShieldCheck, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { BACKEND_URL } from "@/config";
 import { useWhatsApp } from "@/context/WhatsAppContext";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { useNavigate } from "react-router-dom";
 
 declare global {
   interface Window {
@@ -42,14 +42,20 @@ function isAllowedFacebookOrigin(origin: string) {
 }
 
 export default function WhatsAppOfficialIntegration() {
-  const { refreshSessions, sessions, currentSession } = useWhatsApp();
+  const navigate = useNavigate();
+  const { refreshSessions, sessions, currentSession, setCurrentSession } = useWhatsApp();
   const [loading, setLoading] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
   const [sdkReady, setSdkReady] = useState(false);
   const [connected, setConnected] = useState(false);
   const [wabaInfo, setWabaInfo] = useState<EmbeddedSignupMeta | null>(null);
   const embeddedSignupMetaRef = useRef<EmbeddedSignupMeta>({});
   const metaResolverRef = useRef<((meta: EmbeddedSignupMeta | null) => void) | null>(null);
   const metaTimeoutRef = useRef<number | null>(null);
+
+  const officialSession = (currentSession?.provider_type === "official" ? currentSession : null)
+    || sessions.find((session) => session.provider_type === "official" || String(session.name || "").startsWith("official_"))
+    || null;
 
   const resolvePendingMeta = (meta: EmbeddedSignupMeta | null) => {
     if (metaTimeoutRef.current) {
@@ -148,10 +154,6 @@ export default function WhatsAppOfficialIntegration() {
   }, []);
 
   useEffect(() => {
-    const officialSession = (currentSession?.provider_type === "official" ? currentSession : null)
-      || sessions.find((session) => session.provider_type === "official" || String(session.name || "").startsWith("official_"))
-      || null;
-
     if (!officialSession) {
       setConnected(false);
       setWabaInfo(null);
@@ -164,6 +166,53 @@ export default function WhatsAppOfficialIntegration() {
       phoneNumberId: officialSession.phone_number_id,
     });
   }, [currentSession, sessions]);
+
+  const handleDisconnect = async () => {
+    if (!officialSession?.name) {
+      toast.error("Connected WhatsApp session khuje paoa jacche na.");
+      return;
+    }
+
+    if (!window.confirm(`Apni ki ${officialSession.name} disconnect korte chan?`)) {
+      return;
+    }
+
+    try {
+      setDisconnecting(true);
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        throw new Error("Please login again and retry.");
+      }
+
+      const response = await fetch(`${BACKEND_URL}/api/whatsapp/official/${encodeURIComponent(officialSession.name)}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to disconnect WhatsApp.");
+      }
+
+      if (currentSession?.name === officialSession.name) {
+        localStorage.removeItem("active_wa_session_id");
+        localStorage.removeItem("active_wp_db_id");
+        setCurrentSession(null);
+      }
+
+      setConnected(false);
+      setWabaInfo(null);
+      await refreshSessions();
+      toast.success("WhatsApp disconnected successfully.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to disconnect WhatsApp.";
+      toast.error(message);
+    } finally {
+      setDisconnecting(false);
+    }
+  };
 
   const waitForEmbeddedSignupMeta = async () => {
     if (embeddedSignupMetaRef.current.wabaId || embeddedSignupMetaRef.current.phoneNumberId) {
@@ -271,105 +320,190 @@ export default function WhatsAppOfficialIntegration() {
     <div className="space-y-4">
       {connected ? (
         <div className="space-y-4">
-          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4 md:p-5 flex items-start gap-3">
-            <CheckCircle2 className="h-5 w-5 text-emerald-400 mt-0.5" />
-            <div>
-              <p className="font-semibold text-emerald-300">Official Connection Active</p>
-              <p className="text-sm text-slate-300">
-                Your chatbot now runs on Meta official WhatsApp Cloud API.
-              </p>
+          <div className="rounded-[28px] border border-emerald-500/20 bg-[linear-gradient(135deg,rgba(24,119,242,0.16),rgba(16,185,129,0.14))] p-5 text-white">
+            <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge className="bg-white text-[#1877F2] hover:bg-white">
+                    <Facebook className="mr-1 h-3.5 w-3.5" />
+                    Meta Connected
+                  </Badge>
+                  <Badge variant="outline" className="border-emerald-400/30 bg-emerald-500/10 text-emerald-200">
+                    Coexistence Ready
+                  </Badge>
+                </div>
+                <div>
+                  <p className="text-xl font-semibold">Official WhatsApp Business number connected</p>
+                  <p className="mt-1 text-sm text-slate-200">
+                    Same number diye mobile app + Cloud API chatbot ekshathe cholbe. Dorkar hole ekhanei reconnect ba disconnect korte parben.
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-slate-950/40 px-4 py-3 text-sm text-slate-200">
+                <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Active Session</p>
+                <p className="mt-1 break-all font-medium">{officialSession?.name || "official_session"}</p>
+              </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-            <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
-              <p className="text-slate-500 text-xs mb-2 uppercase tracking-[0.2em]">WABA ID</p>
-              <p className="font-mono break-all text-slate-100">{wabaInfo?.wabaId || "Pending sync"}</p>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3 text-sm">
+            <div className="rounded-3xl border border-white/10 bg-slate-950/70 p-4">
+              <p className="mb-2 text-xs uppercase tracking-[0.2em] text-slate-500">Connection</p>
+              <p className="font-semibold text-emerald-300">Live</p>
+              <p className="mt-1 text-xs text-slate-400">Webhook, token, and session linked.</p>
             </div>
-            <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
-              <p className="text-slate-500 text-xs mb-2 uppercase tracking-[0.2em]">Phone Number ID</p>
+            <div className="rounded-3xl border border-white/10 bg-slate-950/70 p-4">
+              <p className="mb-2 text-xs uppercase tracking-[0.2em] text-slate-500">Phone ID</p>
               <p className="font-mono break-all text-slate-100">{wabaInfo?.phoneNumberId || "Pending sync"}</p>
             </div>
+            <div className="rounded-3xl border border-white/10 bg-slate-950/70 p-4">
+              <p className="mb-2 text-xs uppercase tracking-[0.2em] text-slate-500">WABA ID</p>
+              <p className="font-mono break-all text-slate-100">{wabaInfo?.wabaId || "Pending sync"}</p>
+            </div>
           </div>
 
-          <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3">
-            <div>
-              <p className="text-sm font-medium text-white">Integration Fee</p>
-              <p className="text-xs text-slate-400">Official integration setup on your dashboard stays free.</p>
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-3xl border border-white/10 bg-slate-950/60 p-4">
+              <div className="flex items-center gap-2 text-sm font-medium text-white">
+                <MessageSquare className="h-4 w-4 text-sky-300" />
+                Chatbot Control
+              </div>
+              <p className="mt-2 text-xs text-slate-400">Reply behaviour, live bot, orders, prompts manage korun.</p>
+              <Button onClick={() => navigate("/dashboard/whatsapp/control")} className="mt-4 w-full bg-[#1877F2] hover:bg-[#166fe5]">
+                Manage Chatbot
+              </Button>
             </div>
-            <Badge className="bg-green-600 text-white hover:bg-green-600">Free</Badge>
+
+            <div className="rounded-3xl border border-white/10 bg-slate-950/60 p-4">
+              <div className="flex items-center gap-2 text-sm font-medium text-white">
+                <Settings2 className="h-4 w-4 text-emerald-300" />
+                AI Setup
+              </div>
+              <p className="mt-2 text-xs text-slate-400">Prompt, model, delay, order email, memory limit update korun.</p>
+              <Button onClick={() => navigate("/dashboard/whatsapp/settings")} variant="outline" className="mt-4 w-full border-white/10">
+                Open Settings
+              </Button>
+            </div>
+
+            <div className="rounded-3xl border border-white/10 bg-slate-950/60 p-4">
+              <div className="flex items-center gap-2 text-sm font-medium text-white">
+                <Link2 className="h-4 w-4 text-amber-300" />
+                Connection Actions
+              </div>
+              <p className="mt-2 text-xs text-slate-400">Phone app disconnect hole reconnect korun, dorkar hole clean disconnect korun.</p>
+              <div className="mt-4 flex gap-2">
+                <Button
+                  onClick={launchWhatsAppSignup}
+                  disabled={loading || !sdkReady || disconnecting}
+                  className="flex-1 rounded-xl bg-[#1877F2] text-white hover:bg-[#166fe5]"
+                >
+                  {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
+                  {loading ? "Opening..." : "Reconnect"}
+                </Button>
+                <Button
+                  onClick={handleDisconnect}
+                  disabled={disconnecting || loading}
+                  variant="destructive"
+                  className="flex-1 rounded-xl"
+                >
+                  {disconnecting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+                  {disconnecting ? "Disconnecting..." : "Disconnect"}
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-white/10 bg-slate-950/60 p-4">
+            <div className="flex items-start gap-3">
+              <ShieldCheck className="mt-0.5 h-5 w-5 text-emerald-300" />
+              <div className="space-y-1 text-sm text-slate-300">
+                <p className="font-medium text-white">Coexistence note</p>
+                <p>Meta popup-e existing WhatsApp Business App number select korlei একই number app + bot duijayga theke use korte parben.</p>
+                <p>Jodi Meta side-theke phone unlink hoy, same connect flow abar complete korlei session refresh hoye jabe.</p>
+              </div>
+            </div>
           </div>
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-3">
-            <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-3">
-              <div className="flex items-center gap-2 text-slate-200">
-                <ShieldCheck className="h-4 w-4 text-emerald-400" />
-                <span className="text-sm font-medium">Official API</span>
+          <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(135deg,rgba(24,119,242,0.24),rgba(15,23,42,0.92))] p-5 md:p-6">
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+              <div className="max-w-2xl space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge className="bg-white text-[#1877F2] hover:bg-white">
+                    <Facebook className="mr-1 h-3.5 w-3.5" />
+                    Meta Embedded Signup
+                  </Badge>
+                  <Badge variant="outline" className="border-white/20 bg-white/5 text-slate-200">
+                    {sdkReady ? "SDK Ready" : "Preparing SDK"}
+                  </Badge>
+                </div>
+                <div>
+                  <h3 className="text-2xl font-semibold text-white">Connect your WhatsApp Business number the Facebook way</h3>
+                  <p className="mt-2 text-sm text-slate-200">
+                    Existing WhatsApp Business App number die coexistence mode-e connect korun. Meta popup thekei signup, verification, webhook subscription complete hobe.
+                  </p>
+                </div>
+                <div className="grid gap-2 text-sm text-slate-200 md:grid-cols-3">
+                  <div className="rounded-2xl border border-white/10 bg-black/15 px-3 py-2">Same number on app + bot</div>
+                  <div className="rounded-2xl border border-white/10 bg-black/15 px-3 py-2">No manual token paste</div>
+                  <div className="rounded-2xl border border-white/10 bg-black/15 px-3 py-2">Reconnect anytime</div>
+                </div>
               </div>
-              <p className="mt-2 text-xs text-slate-400">Stable Meta Cloud API for a production-ready chatbot.</p>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-3">
-              <div className="flex items-center gap-2 text-slate-200">
-                <Radio className="h-4 w-4 text-sky-400" />
-                <span className="text-sm font-medium">Coexistence</span>
+
+              <div className="w-full max-w-sm rounded-[28px] border border-white/10 bg-slate-950/55 p-4">
+                <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Start Connection</p>
+                <Button
+                  onClick={launchWhatsAppSignup}
+                  disabled={loading || !sdkReady}
+                  className="mt-4 h-14 w-full rounded-2xl bg-[#1877F2] text-white font-semibold shadow-lg shadow-blue-950/30 transition-all hover:bg-[#166fe5] disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {loading ? (
+                    <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                  ) : (
+                    <Facebook className="mr-2 h-5 w-5" />
+                  )}
+                  {loading ? "Opening Meta Signup..." : sdkReady ? "Connect WhatsApp Business" : "Preparing Meta SDK..."}
+                </Button>
+                <p className="mt-3 text-xs text-slate-400">
+                  Popup-e possible hole existing WhatsApp Business App account select korun, not a fresh migrated setup.
+                </p>
               </div>
-              <p className="mt-2 text-xs text-slate-400">Connect an existing WhatsApp Business App number without QR pairing.</p>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-3">
-              <div className="flex items-center gap-2 text-slate-200">
-                <Sparkles className="h-4 w-4 text-violet-400" />
-                <span className="text-sm font-medium">Simple Manage Flow</span>
-              </div>
-              <p className="mt-2 text-xs text-slate-400">Connect once, then manage bot, settings, and orders from one integration.</p>
             </div>
           </div>
 
-          <Alert className="border-amber-500/20 bg-amber-500/5 text-amber-200 rounded-2xl">
-            <Info className="h-4 w-4 text-amber-400" />
-            <AlertTitle className="text-sm font-bold flex items-center gap-2">
-              Coexistence Flow Guide (গুরুত্বপূর্ণ)
-            </AlertTitle>
-            <AlertDescription className="mt-2 space-y-2 text-xs text-slate-300">
-              <div className="flex items-start gap-2">
-                <div className="h-4 w-4 rounded-full bg-amber-500/20 flex items-center justify-center text-[10px] mt-0.5 shrink-0">1</div>
-                <p>Meta Popup ওপেন হলে <span className="text-amber-400 font-semibold">"Create a WhatsApp Business account"</span> অপশনটি এড়িয়ে চলার চেষ্টা করুন।</p>
+          <div className="grid gap-3 md:grid-cols-3">
+            {[
+              {
+                title: "1. Login with Meta",
+                description: "Facebook account diye login kore business portfolio select korun.",
+              },
+              {
+                title: "2. Select Existing Number",
+                description: "Popup-e WhatsApp Business App number select kore coexistence enable korun.",
+              },
+              {
+                title: "3. Finish and Configure Bot",
+                description: "Connect complete hole settings e giye prompt, AI model, delay, order flow set korun.",
+              },
+            ].map((item) => (
+              <div key={item.title} className="rounded-3xl border border-white/10 bg-slate-950/65 p-4">
+                <p className="text-sm font-medium text-white">{item.title}</p>
+                <p className="mt-2 text-xs leading-5 text-slate-400">{item.description}</p>
               </div>
-              <div className="flex items-start gap-2">
-                <div className="h-4 w-4 rounded-full bg-amber-500/20 flex items-center justify-center text-[10px] mt-0.5 shrink-0">2</div>
-                <p>আপনার যদি আগে থেকেই WABA একাউন্ট থাকে, সেটি সিলেক্ট করুন।</p>
-              </div>
-              <div className="flex items-start gap-2">
-                <div className="h-4 w-4 rounded-full bg-amber-500/20 flex items-center justify-center text-[10px] mt-0.5 shrink-0">3</div>
-                <p>যদি বারবার <span className="text-rose-400 font-semibold">"Add your WhatsApp phone number"</span> স্ক্রিন আসে, তবে বুঝবেন Meta আপনাকে Coexistence ফ্লো-তে নিচ্ছে না। এক্ষেত্রে Meta Dashboard থেকে Config ID চেক করতে হবে।</p>
-              </div>
-            </AlertDescription>
-          </Alert>
+            ))}
+          </div>
 
-          <Button
-            onClick={launchWhatsAppSignup}
-            disabled={loading || !sdkReady}
-            className="h-14 w-full rounded-2xl bg-gradient-to-r from-[#1877F2] to-[#1f6fe5] text-white font-semibold shadow-lg shadow-blue-950/30 transition-all hover:scale-[1.01] hover:from-[#166fe5] hover:to-[#166fe5] disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            {loading ? (
-              <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-            ) : (
-              <img src="https://www.facebook.com/favicon.ico" className="mr-2 h-5 w-5 invert" alt="FB" />
-            )}
-            {loading ? "Opening Meta Signup..." : sdkReady ? "Connect WhatsApp Business" : "Preparing Meta SDK..."}
-          </Button>
-
-          <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4 text-xs text-slate-300 space-y-2">
-            <div className="flex items-center justify-between gap-3">
-              <p className="font-medium text-sky-300">Connection Notes</p>
-              <Badge variant="outline" className="border-sky-500/30 bg-sky-500/10 text-sky-300">
-                {sdkReady ? "Ready" : "Loading SDK"}
-              </Badge>
+          <div className="rounded-3xl border border-blue-500/20 bg-blue-500/5 p-4 text-sm text-slate-300">
+            <div className="flex items-start gap-3">
+              <CheckCircle2 className="mt-0.5 h-5 w-5 text-sky-300" />
+              <div className="space-y-1">
+                <p className="font-medium text-white">Quick Note</p>
+                <p>Existing WhatsApp Business number use kora jabe, disconnect hole same flow diye reconnect korte parben.</p>
+                <p>Connect howar por `Manage Chatbot`/`Settings` page theke full AI chatbot setup complete korun.</p>
+              </div>
             </div>
-            <p>Business owners can connect their own WhatsApp Business App number via coexistence.</p>
-            <p>No QR session, no third-party connector, no dashboard integration fee.</p>
-            <p>Meta message charges may still apply for template and bulk messaging.</p>
           </div>
         </div>
       )}

@@ -74,8 +74,8 @@ const completeEmbeddedSignup = async (req, res) => {
         const sessionName = existingConnection?.session_name || `official_${resolvedWabaId || resolvedPhoneNumberId || userId || 'wa'}`;
         const query = `
             INSERT INTO whatsapp_message_database 
-            (user_id, email, phone_number_id, waba_id, cloud_access_token, provider_type, status, session_name)
-            VALUES ($1, $2, $3, $4, $5, 'official', 'active', $6)
+            (user_id, email, phone_number_id, waba_id, cloud_access_token, provider_type, status, active, session_name)
+            VALUES ($1, $2, $3, $4, $5, 'official', 'WORKING', true, $6)
             ON CONFLICT (session_name) DO UPDATE SET
             user_id = EXCLUDED.user_id,
             email = EXCLUDED.email,
@@ -83,7 +83,8 @@ const completeEmbeddedSignup = async (req, res) => {
             waba_id = EXCLUDED.waba_id,
             cloud_access_token = EXCLUDED.cloud_access_token,
             provider_type = 'official',
-            status = 'active'
+            status = 'WORKING',
+            active = true
             RETURNING id, session_name, waba_id, phone_number_id
         `;
         

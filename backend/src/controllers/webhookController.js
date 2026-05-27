@@ -458,6 +458,113 @@ const verifyWhatsAppWebhook = (req, res) => {
     res.sendStatus(400);
 };
 
+function extractOfficialMessageText(message) {
+    if (!message || typeof message !== 'object') return '';
+
+    const parts = [];
+
+    if (message.text?.body) {
+        parts.push(String(message.text.body).trim());
+    }
+
+    if (message.button?.text) {
+        parts.push(String(message.button.text).trim());
+    } else if (message.button?.payload) {
+        parts.push(String(message.button.payload).trim());
+    }
+
+    if (message.interactive?.button_reply) {
+        const buttonReply = message.interactive.button_reply;
+        parts.push(String(buttonReply.title || buttonReply.id || '').trim());
+    }
+
+    if (message.interactive?.list_reply) {
+        const listReply = message.interactive.list_reply;
+        const listText = [
+            listReply.title,
+            listReply.description,
+            listReply.id
+        ].filter(Boolean).join(' | ').trim();
+
+        if (listText) {
+            parts.push(listText);
+        }
+    }
+
+    if (message.image?.caption) {
+        parts.push(String(message.image.caption).trim());
+    }
+
+    if (message.document?.caption) {
+        parts.push(String(message.document.caption).trim());
+    }
+
+    if (message.video?.caption) {
+        parts.push(String(message.video.caption).trim());
+    }
+
+    if (message.location) {
+        const locationBits = [
+            message.location.name,
+            message.location.address,
+            (message.location.latitude && message.location.longitude)
+                ? `${message.location.latitude}, ${message.location.longitude}`
+                : null
+        ].filter(Boolean);
+
+        if (locationBits.length > 0) {
+            parts.push(`[Location] ${locationBits.join(' | ')}`);
+        }
+    }
+
+    return parts.filter(Boolean).join('\n').trim();
+}
+
+async function collectOfficialMediaUrls(message, accessToken) {
+    const imageUrls = [];
+    const audioUrls = [];
+    const notes = [];
+
+    const mediaTargets = [
+        { type: 'image', id: message?.image?.id },
+        { type: 'audio', id: message?.audio?.id },
+        { type: 'voice', id: message?.voice?.id }
+    ].filter((item) => item.id);
+
+    for (const mediaTarget of mediaTargets) {
+        const mediaDetails = await whatsappCloudService.getMediaDetails(mediaTarget.id, accessToken);
+        const mediaUrl = mediaDetails?.url || null;
+        const mimeType = String(mediaDetails?.mime_type || '').toLowerCase();
+
+        if (!mediaUrl) {
+            notes.push(`[User sent ${mediaTarget.type}, but media download URL could not be resolved.]`);
+            continue;
+        }
+
+        if (mediaTarget.type === 'image' || mimeType.startsWith('image/')) {
+            imageUrls.push(mediaUrl);
+            continue;
+        }
+
+        if (mediaTarget.type === 'audio' || mediaTarget.type === 'voice' || mimeType.startsWith('audio/')) {
+            audioUrls.push(mediaUrl);
+            continue;
+        }
+
+        notes.push(`[User sent unsupported media type: ${mediaTarget.type}]`);
+    }
+
+    if (message?.document?.id) {
+        notes.push(`[User sent a document${message.document.filename ? `: ${message.document.filename}` : ''}]`);
+    }
+
+    if (message?.video?.id) {
+        notes.push('[User sent a video]');
+    }
+
+    return { imageUrls, audioUrls, notes };
+}
+
 // WhatsApp Webhook Event Listener (POST)
 const handleWhatsAppWebhook = async (req, res) => {
     const body = req.body;
@@ -485,11 +592,7 @@ const handleWhatsAppWebhook = async (req, res) => {
 
                                     const senderId = message.from;
                                     const senderName = value.contacts?.[0]?.profile?.name || 'Unknown';
-                                    const messageText = message.text?.body;
-
-                                    if (!messageText) continue;
-
-                                    console.log(`[WhatsApp Cloud] Message from ${senderName} (${senderId}): ${messageText}`);
+                                    console.log(`[WhatsApp Cloud] Message from ${senderName} (${senderId}). Type: ${message.type || 'unknown'}`);
 
                                     // Prefer phone_number_id because inbound delivery is tied to the connected number.
                                     const lookupKeys = [
@@ -527,49 +630,122 @@ const handleWhatsAppWebhook = async (req, res) => {
                                         config.session_name ||
                                         `official_${config.waba_id || wabaId || phoneNumberId}`;
 
+                                    const { imageUrls, audioUrls, notes } = await collectOfficialMediaUrls(message, config.cloud_access_token);
+                                    const messageText = extractOfficialMessageText(message);
+                                    const normalizedMessageText = [messageText, ...notes].filter(Boolean).join('\n').trim();
+
+                                    if (!normalizedMessageText && imageUrls.length === 0 && audioUrls.length === 0) {
+                                        console.log(`[WhatsApp Cloud] Skipping empty or unsupported message ${messageId}`);
+                                        continue;
+                                    }
+
+                                    const inboundLogText = normalizedMessageText
+                                        || (imageUrls.length > 0 ? `[User sent ${imageUrls.length} image(s)]` : '')
+                                        || (audioUrls.length > 0 ? `[User sent ${audioUrls.length} audio message(s)]` : '');
+
+                                    await dbService.saveWhatsAppChat({
+                                        session_name: effectiveSessionName,
+                                        sender_id: senderId,
+                                        recipient_id: effectiveSessionName,
+                                        message_id: messageId,
+                                        text: inboundLogText,
+                                        timestamp: Date.now(),
+                                        status: 'received',
+                                        reply_by: 'user'
+                                    });
+
                                     // 3. AI Response Generation
-                                    const history = await dbService.getLastNWhatsAppMessages(effectiveSessionName, senderId, 10);
+                                    const historyLimit = Math.max(1, Number(config.check_conversion) || 10);
+                                    const history = await dbService.getLastNWhatsAppMessages(effectiveSessionName, senderId, historyLimit);
                                     
                                     const aiResponse = await aiService.generateResponse({
                                         pageId: effectiveSessionName,
                                         userId: senderId,
-                                        userMessage: messageText,
+                                        userMessage: normalizedMessageText || inboundLogText,
                                         history: history.map(h => ({
                                             role: h.reply_by === 'bot' ? 'assistant' : 'user',
                                             content: h.text
                                         })),
+                                        imageUrls,
+                                        audioUrls,
                                         config: config,
                                         platform: 'whatsapp',
                                         senderName: senderName
                                     });
 
-                                    if (aiResponse && aiResponse.reply) {
-                                        // 4. Send Message via Cloud API
+                                    const replyText = typeof aiResponse?.reply === 'string'
+                                        ? aiResponse.reply.trim()
+                                        : '';
+                                    const outboundImages = Array.isArray(aiResponse?.images)
+                                        ? aiResponse.images
+                                            .map((image) => {
+                                                if (typeof image === 'string') {
+                                                    return { url: image, title: null };
+                                                }
+
+                                                return {
+                                                    url: image?.url || null,
+                                                    title: image?.title || null
+                                                };
+                                            })
+                                            .filter((image) => image.url)
+                                        : [];
+
+                                    if (!replyText && outboundImages.length === 0) {
+                                        console.log(`[WhatsApp Cloud] AI stayed silent for ${senderId}`);
+                                        continue;
+                                    }
+
+                                    if (replyText) {
                                         await whatsappCloudService.sendTextMessage(
                                             phoneNumberId,
                                             config.cloud_access_token,
                                             senderId,
-                                            aiResponse.reply
+                                            replyText
                                         );
+                                    }
 
-                                        // 5. Save to History
-                                        await dbService.saveWhatsAppChat({
-                                            session_name: effectiveSessionName,
-                                            sender_id: senderId,
-                                            recipient_id: effectiveSessionName,
-                                            message_id: messageId,
-                                            text: messageText,
-                                            timestamp: Date.now(),
-                                            status: 'received',
-                                            reply_by: 'user'
-                                        });
+                                    if (outboundImages.length > 0) {
+                                        for (let index = 0; index < outboundImages.length; index += 1) {
+                                            const image = outboundImages[index];
+                                            const caption = !replyText && index === 0 && image.title
+                                                ? String(image.title).slice(0, 1024)
+                                                : undefined;
 
+                                            await whatsappCloudService.sendImageMessage(
+                                                phoneNumberId,
+                                                config.cloud_access_token,
+                                                senderId,
+                                                image.url,
+                                                caption
+                                            );
+                                        }
+                                    }
+
+                                    if (replyText) {
                                         await dbService.saveWhatsAppChat({
                                             session_name: effectiveSessionName,
                                             sender_id: effectiveSessionName,
                                             recipient_id: senderId,
                                             message_id: `reply_${messageId}`,
-                                            text: aiResponse.reply,
+                                            text: replyText,
+                                            timestamp: Date.now(),
+                                            status: 'sent',
+                                            reply_by: 'bot'
+                                        });
+                                    }
+
+                                    if (outboundImages.length > 0) {
+                                        const imageSummary = outboundImages
+                                            .map((image) => image.title || image.url)
+                                            .join(', ');
+
+                                        await dbService.saveWhatsAppChat({
+                                            session_name: effectiveSessionName,
+                                            sender_id: effectiveSessionName,
+                                            recipient_id: senderId,
+                                            message_id: `reply_media_${messageId}`,
+                                            text: `[Bot sent ${outboundImages.length} image(s)] ${imageSummary}`.trim(),
                                             timestamp: Date.now(),
                                             status: 'sent',
                                             reply_by: 'bot'
