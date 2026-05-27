@@ -626,6 +626,12 @@ const handleWhatsAppWebhook = async (req, res) => {
                                         continue;
                                     }
 
+                                    const resolvedPhoneNumberId = config.phone_number_id || phoneNumberId || null;
+                                    if (!resolvedPhoneNumberId) {
+                                        console.warn(`[WhatsApp Cloud] Missing phone_number_id for ${matchedLookupKey || wabaId || 'unknown_whatsapp_account'}`);
+                                        continue;
+                                    }
+
                                     const effectiveSessionName =
                                         config.session_name ||
                                         `official_${config.waba_id || wabaId || phoneNumberId}`;
@@ -698,7 +704,7 @@ const handleWhatsAppWebhook = async (req, res) => {
 
                                     if (replyText) {
                                         await whatsappCloudService.sendTextMessage(
-                                            phoneNumberId,
+                                            resolvedPhoneNumberId,
                                             config.cloud_access_token,
                                             senderId,
                                             replyText
@@ -713,7 +719,7 @@ const handleWhatsAppWebhook = async (req, res) => {
                                                 : undefined;
 
                                             await whatsappCloudService.sendImageMessage(
-                                                phoneNumberId,
+                                                resolvedPhoneNumberId,
                                                 config.cloud_access_token,
                                                 senderId,
                                                 image.url,

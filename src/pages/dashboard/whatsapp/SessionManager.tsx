@@ -8,7 +8,6 @@ import { WorkspaceSwitcher } from "@/components/dashboard/WorkspaceSwitcher";
 import WhatsAppOfficialIntegration from "@/components/dashboard/whatsapp/WhatsAppOfficialIntegration";
 import { BACKEND_URL } from "@/config";
 import {
-  Bot,
   CheckCircle2,
   Facebook,
   Gift,
@@ -17,8 +16,6 @@ import {
   MessageSquare,
   RefreshCw,
   RotateCcw,
-  Settings2,
-  ShieldCheck,
   Smartphone,
   Trash2,
 } from "lucide-react";
@@ -39,34 +36,10 @@ type SessionWithMeta = {
 export default function SessionManager() {
   const navigate = useNavigate();
   const { sessions, currentSession, refreshSessions, loading, setCurrentSession } = useWhatsApp();
-  const webhookUrl = `${BACKEND_URL}/webhook/whatsapp`;
 
   const officialSessions = (sessions as SessionWithMeta[]).filter(
     (session) => session.provider_type === "official" || session.name.startsWith("official_")
   );
-  const setupJourney = [
-    {
-      title: "Connect Number",
-      description: "Meta Embedded Signup popup diye existing WhatsApp Business App number connect korun.",
-      icon: Facebook,
-    },
-    {
-      title: "Configure Bot",
-      description: "AI settings, prompt, reply delay, order email, memory context set korun.",
-      icon: Settings2,
-    },
-    {
-      title: "Go Live",
-      description: "Control page theke bot check korun, orders track korun, reconnect/disconnect manage korun.",
-      icon: Bot,
-    },
-  ];
-  const metaChecklist = [
-    "Meta app-e WhatsApp product add kora thakte hobe.",
-    "Webhook callback URL hisebe use korun: " + webhookUrl,
-    "Verify token backend-er `WHATSAPP_OFFICIAL_VERIFY_TOKEN` er sathe match korte hobe.",
-    "Business verification / phone verification complete thakle coexistence flow smooth hoy.",
-  ];
 
   const selectSession = (session: SessionWithMeta) => {
     setCurrentSession(session);
@@ -202,44 +175,6 @@ export default function SessionManager() {
             {officialSessions.length > 0 ? "Connect Another Number" : "Connect WhatsApp"}
           </Button>
         </div>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
-        <div className="grid gap-3 md:grid-cols-3">
-          {setupJourney.map((item) => {
-            const Icon = item.icon;
-            return (
-              <Card key={item.title} className="rounded-3xl border border-white/10 bg-[#0b1220]/75">
-                <CardContent className="space-y-3 p-5">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white/5">
-                    <Icon className="h-5 w-5 text-sky-300" />
-                  </div>
-                  <div>
-                    <p className="text-base font-semibold text-white">{item.title}</p>
-                    <p className="mt-2 text-sm leading-6 text-slate-400">{item.description}</p>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
-
-        <Card className="rounded-3xl border border-white/10 bg-[#0b1220]/75">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-white">
-              <ShieldCheck className="h-5 w-5 text-emerald-300" />
-              Meta Developer Checklist
-            </CardTitle>
-            <CardDescription>Connect er age ei 4 ta jinis ready thakle setup smooth hoy.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm text-slate-300">
-            {metaChecklist.map((item) => (
-              <div key={item} className="rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3">
-                {item}
-              </div>
-            ))}
-          </CardContent>
-        </Card>
       </div>
 
       <Card id="whatsapp-connect-card" className="rounded-3xl border border-white/10 bg-[#0b1220]/90 shadow-[0_18px_60px_rgba(2,6,23,0.28)]">

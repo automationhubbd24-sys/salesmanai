@@ -28,8 +28,8 @@ type EmbeddedSignupMeta = {
 };
 
 const APP_ID = import.meta.env.VITE_FACEBOOK_APP_ID || "3741087806186945";
-const CONFIG_ID = import.meta.env.VITE_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID || "1592300178695434";
-const GRAPH_VERSION = import.meta.env.VITE_FACEBOOK_GRAPH_VERSION || "v22.0";
+const CONFIG_ID = import.meta.env.VITE_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID || "2197274487770639";
+const GRAPH_VERSION = import.meta.env.VITE_FACEBOOK_GRAPH_VERSION || "v25.0";
 const SIGNUP_META_WAIT_MS = 15000;
 
 function isAllowedFacebookOrigin(origin: string) {
@@ -56,6 +56,9 @@ export default function WhatsAppOfficialIntegration() {
   const officialSession = (currentSession?.provider_type === "official" ? currentSession : null)
     || sessions.find((session) => session.provider_type === "official" || String(session.name || "").startsWith("official_"))
     || null;
+  const trimmedBackendUrl = BACKEND_URL.replace(/\/$/, "");
+  const officialWebhookUrl = `${trimmedBackendUrl}/webhook/whatsapp`;
+  const usesLocalBackend = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(trimmedBackendUrl);
 
   const resolvePendingMeta = (meta: EmbeddedSignupMeta | null) => {
     if (metaTimeoutRef.current) {
@@ -427,6 +430,22 @@ export default function WhatsAppOfficialIntegration() {
         </div>
       ) : (
         <div className="space-y-4">
+          <div className={`rounded-2xl border p-4 text-sm ${
+            usesLocalBackend
+              ? "border-amber-500/30 bg-amber-500/10 text-amber-100"
+              : "border-sky-500/20 bg-sky-500/10 text-sky-100"
+          }`}>
+            <p className="font-medium text-white">Webhook setup check</p>
+            <p className="mt-2 break-all">
+              Callback URL: <span className="font-mono">{officialWebhookUrl}</span>
+            </p>
+            <p className="mt-2 text-xs leading-5">
+              {usesLocalBackend
+                ? "Akhon frontend localhost backend use korche. Meta localhost-e webhook pathate parbe na, tai chatbot incoming message pabe na. Public HTTPS backend URL use korun."
+                : "Meta Developers > WhatsApp > Webhooks-e ei public callback URL ta set thaka dorkar, ebong `messages` field subscribe kora thakte hobe."}
+            </p>
+          </div>
+
           <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(135deg,rgba(24,119,242,0.24),rgba(15,23,42,0.92))] p-5 md:p-6">
             <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
               <div className="max-w-2xl space-y-3">
