@@ -3,15 +3,11 @@ import { useWhatsApp } from "@/context/WhatsAppContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { WorkspaceSwitcher } from "@/components/dashboard/WorkspaceSwitcher";
 import WhatsAppOfficialIntegration from "@/components/dashboard/whatsapp/WhatsAppOfficialIntegration";
 import { BACKEND_URL } from "@/config";
 import {
   CheckCircle2,
-  Facebook,
-  Gift,
-  Info,
   Loader2,
   MessageSquare,
   RefreshCw,
@@ -124,42 +120,6 @@ export default function SessionManager() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div className="rounded-[32px] border border-white/10 bg-[linear-gradient(135deg,rgba(24,119,242,0.18),rgba(15,23,42,0.94))] p-6 shadow-[0_24px_80px_rgba(2,6,23,0.28)]">
-        <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-          <div className="max-w-3xl">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#1877F2]">
-                <Facebook className="mr-1.5 h-3.5 w-3.5" />
-                Meta Style Integration
-              </span>
-              <span className="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-200">
-                Coexistence + Chatbot Ready
-              </span>
-            </div>
-
-            <h1 className="mt-4 flex items-center gap-3 text-3xl font-black tracking-tight text-white">
-              <Smartphone className="h-8 w-8 text-[#25D366]" />
-              WhatsApp Integration
-            </h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
-              Facebook/Meta onboarding feel maintain kore official WhatsApp Business number connect, disconnect, reconnect, chatbot configuration, and live management ek page thekei handle korun.
-            </p>
-          </div>
-
-          <div className="rounded-3xl border border-[#00ff88]/20 bg-[#00ff88]/10 px-6 py-4">
-            <div className="flex items-center gap-4">
-              <div className="rounded-full bg-[#00ff88] p-2">
-                <Gift className="h-5 w-5 text-black" />
-              </div>
-              <div>
-                <p className="text-sm font-black uppercase tracking-wider text-[#00ff88]">Official Meta Flow</p>
-                <p className="text-xs text-white/70">Existing WhatsApp Business number diye clean coexistence connect korun.</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div className="flex flex-wrap items-center gap-3">
           <WorkspaceSwitcher platform="whatsapp" />
@@ -183,7 +143,7 @@ export default function SessionManager() {
             <div>
               <CardTitle className="text-white">Connect WhatsApp</CardTitle>
               <CardDescription className="mt-1">
-                Facebook integration page-er feel maintain kore official WhatsApp flow, direct reconnect, and visible disconnect action diya optimized.
+                Facebook-style official onboarding, reconnect, disconnect, and active number management ek jaygay.
               </CardDescription>
             </div>
             <Badge className="bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/15">Official</Badge>
@@ -193,103 +153,86 @@ export default function SessionManager() {
           <div className="rounded-3xl border border-white/10 bg-slate-950/70 p-4 md:p-5">
             <WhatsAppOfficialIntegration />
           </div>
-        </CardContent>
-      </Card>
-
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-bold text-white">Connected Integrations</h2>
-            <p className="text-sm text-slate-400">Manage korun, reconnect korun, ba dorkar hole disconnect korun.</p>
-          </div>
-          <Badge variant="secondary" className="bg-slate-800 text-slate-200">
-            {officialSessions.length} Connected
-          </Badge>
-        </div>
-
-        <Alert className="border-blue-500/20 bg-blue-500/5 text-slate-200 rounded-2xl">
-          <Info className="h-4 w-4 text-blue-300" />
-          <AlertDescription className="text-sm text-slate-300">
-            Jodi phone disconnect hoy, `Reconnect` e click kore abar Meta flow complete korun.
-          </AlertDescription>
-        </Alert>
-
-        {loading ? (
-          <Card className="bg-[#0f0f0f]/80 border border-white/10 rounded-2xl">
-            <CardContent className="py-10 flex items-center justify-center text-slate-400">
-              <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-              Loading WhatsApp connections...
-            </CardContent>
-          </Card>
-        ) : officialSessions.length === 0 ? (
-          <Card className="rounded-3xl border border-dashed border-white/10 bg-[#0f0f0f]/80">
-            <CardContent className="py-14 text-center space-y-4">
+          {loading ? (
+            <div className="rounded-3xl border border-white/10 bg-[#0f0f0f]/80 px-4 py-10 text-center text-slate-400">
+              <Loader2 className="mx-auto h-5 w-5 animate-spin" />
+              <p className="mt-3">Loading official WhatsApp connection...</p>
+            </div>
+          ) : officialSessions.length === 0 ? (
+            <div className="rounded-3xl border border-dashed border-white/10 bg-[#0f0f0f]/80 px-4 py-12 text-center">
               <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-white/10 bg-slate-900/80">
                 <CheckCircle2 className="h-7 w-7 text-slate-500" />
               </div>
-              <div>
-                <p className="text-white font-semibold">No WhatsApp integration connected yet</p>
-                <p className="mx-auto mt-1 max-w-xl text-sm text-slate-400">Uporer button diye connect korun.</p>
+              <p className="mt-4 text-white font-semibold">No official WhatsApp number connected yet</p>
+              <p className="mx-auto mt-1 max-w-xl text-sm text-slate-400">Uporer button diye official Meta flow complete korun.</p>
+            </div>
+          ) : (
+            <div className="space-y-3 rounded-3xl border border-white/10 bg-[#0f0f0f]/75 p-4 md:p-5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-white">Active Official Numbers</p>
+                  <p className="text-xs text-slate-400">Ei card thekei manage, reconnect, ar disconnect korte parben.</p>
+                </div>
+                <Badge variant="secondary" className="bg-slate-800 text-slate-200">
+                  {officialSessions.length} Connected
+                </Badge>
               </div>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="space-y-3">
-            {officialSessions.map((session) => {
-              const isActive = currentSession?.name === session.name;
-              const statusMeta = getStatusMeta(session);
-              const hasPhoneId = !!session.phone_number_id;
+              {officialSessions.map((session) => {
+                const isActive = currentSession?.name === session.name;
+                const statusMeta = getStatusMeta(session);
+                const hasPhoneId = !!session.phone_number_id;
 
-              return (
-                <Card
-                  key={session.name}
-                  className="bg-[#0f0f0f]/80 border border-white/10 hover:border-green-500/30 transition-colors rounded-2xl"
-                >
-                  <CardContent className="flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between">
-                    <div className="min-w-0 space-y-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-base font-semibold text-white break-all">{session.name}</p>
-                        <Badge className={statusMeta.className}>{statusMeta.label}</Badge>
-                        {session.is_shared ? (
-                          <Badge variant="outline" className="border-white/10 text-slate-300">
-                            Shared
-                          </Badge>
-                        ) : null}
+                return (
+                  <div
+                    key={session.name}
+                    className="rounded-2xl border border-white/10 bg-slate-950/70 p-4 transition-colors hover:border-green-500/30"
+                  >
+                    <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                      <div className="min-w-0 space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-base font-semibold text-white break-all">{session.name}</p>
+                          <Badge className={statusMeta.className}>{statusMeta.label}</Badge>
+                          {session.is_shared ? (
+                            <Badge variant="outline" className="border-white/10 text-slate-300">
+                              Shared
+                            </Badge>
+                          ) : null}
+                        </div>
+                        <p className="text-sm text-slate-400">
+                          {statusMeta.label === "Reconnect Needed"
+                            ? "Number disconnected hole reconnect diye abar connect korun."
+                            : isActive
+                              ? "Ei official number-ta ekhon active workspace hisebe selected."
+                              : "Manage e click korle ei number-er control, settings, conversion, order tracking open hobe."}
+                        </p>
+                        <div className="flex flex-col gap-1 text-xs text-slate-500 md:flex-row md:flex-wrap md:gap-4">
+                          <span className="font-mono">{hasPhoneId ? `Phone ID: ${session.phone_number_id}` : "Phone ID: Pending sync"}</span>
+                          {session.waba_id ? <span className="font-mono">WABA: {session.waba_id}</span> : null}
+                        </div>
                       </div>
-                      <p className="text-sm text-slate-400">
-                        {statusMeta.label === "Reconnect Needed"
-                          ? "Number disconnected hole reconnect diye abar connect korun."
-                          : isActive
-                            ? "Ei integration ekhon bot run kortese."
-                            : "Manage diye etake active workspace hisebe use korun."}
-                      </p>
-                      <div className="flex flex-col gap-1 text-xs text-slate-500 md:flex-row md:flex-wrap md:gap-4">
-                        <span className="font-mono">{hasPhoneId ? `Phone ID: ${session.phone_number_id}` : "Phone ID: Pending sync"}</span>
-                        {session.waba_id ? <span className="font-mono">WABA: {session.waba_id}</span> : null}
+
+                      <div className="flex flex-col gap-2 sm:flex-row">
+                        <Button variant="outline" className="min-w-[140px] border-white/10" onClick={() => handleReconnectHelp(session)}>
+                          <RotateCcw className="mr-2 h-4 w-4" />
+                          Reconnect
+                        </Button>
+                        <Button className="min-w-[140px] bg-[#1877F2] hover:bg-[#166fe5]" onClick={() => handleManage(session)}>
+                          <MessageSquare className="mr-2 h-4 w-4" />
+                          Manage
+                        </Button>
+                        <Button variant="destructive" className="min-w-[140px]" onClick={() => handleDisconnect(session)}>
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Disconnect
+                        </Button>
                       </div>
                     </div>
-
-                    <div className="flex flex-col gap-2 sm:flex-row">
-                      <Button variant="outline" className="min-w-[140px] border-white/10" onClick={() => handleReconnectHelp(session)}>
-                        <RotateCcw className="mr-2 h-4 w-4" />
-                        Reconnect
-                      </Button>
-                      <Button className="min-w-[140px] bg-[#1877F2] hover:bg-[#166fe5]" onClick={() => handleManage(session)}>
-                        <MessageSquare className="mr-2 h-4 w-4" />
-                        Manage
-                      </Button>
-                      <Button variant="destructive" className="min-w-[140px]" onClick={() => handleDisconnect(session)}>
-                        <Trash2 className="mr-2 h-4 w-4" />
-                        Disconnect
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        )}
-      </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

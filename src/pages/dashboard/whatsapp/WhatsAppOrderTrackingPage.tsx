@@ -47,7 +47,9 @@ export default function WhatsAppOrderTrackingPage() {
   const [date, setDate] = useState<Date | undefined>(new Date());
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  const activeSessionName = currentSession?.name || null;
+  const activeSessionName = currentSession?.name
+    || (typeof window !== "undefined" ? localStorage.getItem("active_wa_session_id") : null)
+    || null;
   const activeDbId = (currentSession as any)?.wp_db_id || (typeof window !== "undefined" ? Number(localStorage.getItem("active_wp_db_id") || 0) : 0);
 
   const fetchOrders = useCallback(async (showLoading = true) => {
@@ -175,8 +177,8 @@ Phone: ${order.number || 'N/A'}`;
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] space-y-4">
         <AlertCircle className="h-16 w-16 text-muted-foreground" />
-        <h2 className="text-2xl font-bold">No Session Selected</h2>
-        <p className="text-muted-foreground">Please select a WhatsApp session to view orders.</p>
+        <h2 className="text-2xl font-bold">No Official WhatsApp Selected</h2>
+        <p className="text-muted-foreground">Please select or reconnect an official WhatsApp number to view orders.</p>
         <Button asChild>
             <Link to="/dashboard/whatsapp/sessions">Go to Sessions</Link>
         </Button>

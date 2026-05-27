@@ -59,7 +59,9 @@ export default function WhatsAppConversionPage() {
   const [expandedMessageIds, setExpandedMessageIds] = useState<Set<string | number>>(new Set());
   const [lockedContacts, setLockedContacts] = useState<Record<string, boolean>>({});
 
-  const activeSessionName = currentSession?.name || null;
+  const activeSessionName = currentSession?.name
+    || (typeof window !== "undefined" ? localStorage.getItem("active_wa_session_id") : null)
+    || null;
   const targetSenderId = searchParams.get("sender_id")?.trim() || "";
 
   const fetchContacts = async (sessionName: string) => {

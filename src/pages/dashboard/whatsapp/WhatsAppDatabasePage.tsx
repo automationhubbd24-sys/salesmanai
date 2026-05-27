@@ -1,10 +1,9 @@
 import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Database, Search, CheckCircle, XCircle, Loader2, LogOut } from "lucide-react";
+import { Database, CheckCircle, Loader2, Link2, MessageSquare, RefreshCw, Smartphone } from "lucide-react";
 import { toast } from "sonner";
 import { BACKEND_URL } from "@/config";
 import { useWhatsApp } from "@/context/WhatsAppContext";
@@ -14,48 +13,31 @@ interface WhatsAppDbConfig {
   session?: string;
   session_name?: string;
   verified?: boolean;
+  provider_type?: string;
+  status?: string;
+  subscription_status?: string;
+  phone_number_id?: string;
+  waba_id?: string;
 }
 
 export default function DatabasePage() {
-  const { currentSession } = useWhatsApp();
-  const [searchId, setSearchId] = useState("");
+  const { currentSession, refreshSessions } = useWhatsApp();
   const [loading, setLoading] = useState(false);
   const [connectedDb, setConnectedDb] = useState<WhatsAppDbConfig | null>(null);
+  const activeDbId = (currentSession as any)?.wp_db_id
+    || (typeof window !== "undefined" ? Number(localStorage.getItem("active_wp_db_id") || 0) : 0)
+    || 0;
+  const activeSessionName = currentSession?.name
+    || (typeof window !== "undefined" ? localStorage.getItem("active_wa_session_id") : null)
+    || "";
 
   useEffect(() => {
-    // Check if already connected
-    const checkConnection = () => {
-      const storedId = localStorage.getItem("active_wp_db_id");
-      if (storedId) {
-        setSearchId(storedId);
-        fetchDatabase(storedId);
-      } else {
-        // If no stored ID, try to auto-connect from current session
-        if (currentSession) {
-          const dbId = (currentSession as any).wp_db_id;
-          if (dbId) {
-            const dbIdStr = String(dbId);
-            setSearchId(dbIdStr);
-            fetchDatabase(dbIdStr);
-            return;
-          }
-        }
-        setConnectedDb(null);
-        setSearchId("");
-      }
-    };
-
-    checkConnection();
-
-    // Listen for storage changes (from other tabs or same tab custom event)
-    window.addEventListener("storage", checkConnection);
-    window.addEventListener("db-connection-changed", checkConnection);
-
-    return () => {
-      window.removeEventListener("storage", checkConnection);
-      window.removeEventListener("db-connection-changed", checkConnection);
-    };
-  }, [currentSession]);
+    if (activeDbId > 0) {
+      void fetchDatabase(String(activeDbId));
+      return;
+    }
+    setConnectedDb(null);
+  }, [activeDbId, currentSession]);
 
   const fetchDatabase = async (id: string) => {
     setLoading(true);
@@ -64,7 +46,6 @@ export default function DatabasePage() {
       if (!token) {
         toast.error("Please login again");
         setConnectedDb(null);
-        localStorage.removeItem("active_wp_db_id");
         return;
       }
 
@@ -84,10 +65,8 @@ export default function DatabasePage() {
 
       if (data) {
         setConnectedDb(data);
-        localStorage.setItem("active_wp_db_id", id);
       } else {
-        toast.error("Database not found");
-        localStorage.removeItem("active_wp_db_id");
+        toast.error("Official WhatsApp row not found");
         setConnectedDb(null);
       }
     } catch (error) {
@@ -95,43 +74,23 @@ export default function DatabasePage() {
       const message =
         error instanceof Error
           ? error.message
-          : "Database ID not found or connection failed";
+          : "Official WhatsApp row not found or connection failed";
       toast.error(message);
-      if (localStorage.getItem("active_wp_db_id") === id) {
-        localStorage.removeItem("active_wp_db_id");
-        setConnectedDb(null);
-      }
+      setConnectedDb(null);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleConnect = () => {
-    if (!searchId || searchId.length < 1) {
-      toast.error("Please enter a valid Database ID");
-      return;
-    }
-    fetchDatabase(searchId);
-  };
-
-  const handleDisconnect = () => {
-    localStorage.removeItem("active_wp_db_id");
-    setConnectedDb(null);
-    setSearchId("");
-    toast.info("Disconnected from database");
-  };
-
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div>
-        <h2 className="text-2xl font-bold text-foreground">Database Connect</h2>
+        <h2 className="text-2xl font-bold text-foreground">Official Connection Info</h2>
         <p className="text-muted-foreground">
-          Connect to your WhatsApp Message Database using your unique ID.
+          Official WhatsApp Cloud API row auto-create hoy. Eikhane current connection-er DB details dekhano hocche.
         </p>
       </div>
 
-      {/* Connection Status Card */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
           <CardContent className="pt-6">
@@ -142,13 +101,10 @@ export default function DatabasePage() {
                   {connectedDb ? (
                     <span className="inline-flex items-center gap-1 text-[#00ff88]">
                       <CheckCircle className="h-4 w-4" />
-                      <span>Connected</span>
+                      <span>Official Connected</span>
                     </span>
                   ) : (
-                    <span className="inline-flex items-center gap-1 text-slate-400">
-                      <XCircle className="h-4 w-4" />
-                      <span>Disconnected</span>
-                    </span>
+                    <span className="inline-flex items-center gap-1 text-slate-400">Not Selected</span>
                   )}
                 </div>
               </div>
@@ -160,77 +116,134 @@ export default function DatabasePage() {
         </Card>
         
         {connectedDb && (
-             <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10 md:col-span-2">
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Active Session</p>
-                    <p className="text-xl font-bold text-foreground truncate max-w-[200px] md:max-w-md">
-                      {connectedDb.session || connectedDb.session_name || "-"}
-                    </p>
-                    <div className="flex gap-2 mt-1">
-                        <div className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold border ${
-                          connectedDb.verified
-                            ? "bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/50"
-                            : "bg-destructive/10 text-destructive border-destructive/40"
-                        }`}>
-                          {connectedDb.verified ? (
-                            <CheckCircle className="h-3 w-3" />
-                          ) : (
-                            <XCircle className="h-3 w-3" />
-                          )}
-                          <span>{connectedDb.verified ? "Verified" : "Unverified / Expired"}</span>
-                        </div>
+          <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10 md:col-span-2">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">Active Session</p>
+                  <p className="text-xl font-bold text-foreground truncate max-w-[200px] md:max-w-md">
+                    {connectedDb.session || connectedDb.session_name || activeSessionName || "-"}
+                  </p>
+                  <div className="flex gap-2 mt-2 flex-wrap">
+                    <div className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold border ${
+                      connectedDb.verified !== false
+                        ? "bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/50"
+                        : "bg-destructive/10 text-destructive border-destructive/40"
+                    }`}>
+                      <CheckCircle className="h-3 w-3" />
+                      <span>{connectedDb.verified !== false ? "Verified / Active" : "Needs Review"}</span>
                     </div>
-                  </div>
-                  <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary/10 border border-primary/40">
-                    <Database className="h-5 w-5 text-primary" />
+                    <Badge variant="outline" className="border-white/10 text-slate-300">
+                      {connectedDb.provider_type || "official"}
+                    </Badge>
                   </div>
                 </div>
-              </CardContent>
-            </Card>
+                <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary/10 border border-primary/40">
+                  <Database className="h-5 w-5 text-primary" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         )}
       </div>
 
-      {/* Connect Form */}
       <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
         <CardHeader>
-          <CardTitle>{connectedDb ? "Database Details" : "Connect to Database"}</CardTitle>
-          <CardDescription>
-            {connectedDb 
-                ? `Connected to ID: ${connectedDb.id}` 
-                : "Enter the Database ID provided during session creation."}
-          </CardDescription>
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <CardTitle>{connectedDb ? "Connection Details" : "No Official Connection Selected"}</CardTitle>
+              <CardDescription>
+                {connectedDb
+                  ? "Official WhatsApp row-ta automatic create/update hoy signup completion-er por."
+                  : "Session page theke official WhatsApp select korle ekhane DB row details dekhabe."}
+              </CardDescription>
+            </div>
+            <Button variant="outline" onClick={() => { void refreshSessions(); if (activeDbId > 0) void fetchDatabase(String(activeDbId)); }} className="gap-2">
+              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
+          </div>
         </CardHeader>
-        <CardContent>
-          <div className="flex flex-col md:flex-row gap-4 items-end">
-            <div className="space-y-2 flex-1 w-full">
-              <Label htmlFor="db-id">Database ID</Label>
-              <div className="relative">
-                <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                <Input 
-                    id="db-id" 
-                    placeholder="e.g. 123" 
-                    className="pl-9" 
-                    value={searchId}
-                    onChange={(e) => setSearchId(e.target.value)}
-                    disabled={!!connectedDb}
-                />
+        <CardContent className="space-y-4">
+          {loading ? (
+            <div className="flex items-center justify-center py-12 text-slate-400">
+              <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+              Loading official connection info...
+            </div>
+          ) : !connectedDb ? (
+            <div className="rounded-2xl border border-dashed border-white/10 bg-slate-950/50 p-6 text-center space-y-4">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-white/5">
+                <Smartphone className="h-6 w-6 text-slate-400" />
+              </div>
+              <div>
+                <p className="font-semibold text-white">No official WhatsApp connection selected</p>
+                <p className="mt-1 text-sm text-slate-400">Sessions page theke official number select ba reconnect korun.</p>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:justify-center">
+                <Button asChild>
+                  <Link to="/dashboard/whatsapp/sessions">Go to Sessions</Link>
+                </Button>
+                <Button variant="outline" asChild>
+                  <Link to="/dashboard/whatsapp/control">Open Bot Control</Link>
+                </Button>
               </div>
             </div>
-            
-            {connectedDb ? (
-                <Button variant="destructive" onClick={handleDisconnect} className="w-full md:w-auto">
-                    <LogOut className="mr-2 h-4 w-4" />
-                    Disconnect
-                </Button>
-            ) : (
-                <Button onClick={handleConnect} disabled={loading} className="w-full md:w-auto min-w-[120px]">
-                    {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Database className="mr-2 h-4 w-4" />}
-                    Connect
-                </Button>
-            )}
-          </div>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2">
+              <Card className="border border-white/10 bg-slate-950/60">
+                <CardContent className="pt-6 space-y-3">
+                  <div className="flex items-center gap-2 text-white">
+                    <Database className="h-4 w-4 text-emerald-300" />
+                    <span className="font-medium">DB Mapping</span>
+                  </div>
+                  <div className="space-y-2 text-sm text-slate-300">
+                    <p>Row ID: <span className="font-mono">{connectedDb.id}</span></p>
+                    <p>Session: <span className="font-mono break-all">{connectedDb.session_name || connectedDb.session || activeSessionName || "-"}</span></p>
+                    <p>Status: <span className="font-mono">{connectedDb.status || "WORKING"}</span></p>
+                    <p>Plan: <span className="font-mono">{connectedDb.subscription_status || "active"}</span></p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="border border-white/10 bg-slate-950/60">
+                <CardContent className="pt-6 space-y-3">
+                  <div className="flex items-center gap-2 text-white">
+                    <Link2 className="h-4 w-4 text-sky-300" />
+                    <span className="font-medium">Official Asset IDs</span>
+                  </div>
+                  <div className="space-y-2 text-sm text-slate-300">
+                    <p>Phone ID: <span className="font-mono break-all">{connectedDb.phone_number_id || (currentSession as any)?.phone_number_id || "Pending sync"}</span></p>
+                    <p>WABA ID: <span className="font-mono break-all">{connectedDb.waba_id || (currentSession as any)?.waba_id || "Pending sync"}</span></p>
+                    <p>Provider: <span className="font-mono">{connectedDb.provider_type || "official"}</span></p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="border border-white/10 bg-slate-950/60 md:col-span-2">
+                <CardContent className="pt-6">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <p className="font-medium text-white">Official Flow Note</p>
+                      <p className="mt-1 text-sm text-slate-400">
+                        Ekhane alada database connect korar dorkar nei. Meta Embedded Signup complete hole official WhatsApp row automatic save hoy, ar control/settings/order tracking ei row-er sathei linked thake.
+                      </p>
+                    </div>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Button variant="outline" asChild>
+                        <Link to="/dashboard/whatsapp/settings">
+                          <MessageSquare className="mr-2 h-4 w-4" />
+                          Open Settings
+                        </Link>
+                      </Button>
+                      <Button asChild>
+                        <Link to="/dashboard/whatsapp/control">Open Control</Link>
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

@@ -58,8 +58,12 @@ export default function WhatsAppControlPage() {
   });
   const [recentChats, setRecentChats] = useState<any[]>([]);
   
-  const activeDbId = (currentSession as any)?.wp_db_id || null;
-  const activeSessionName = currentSession?.name || null;
+  const activeDbId = (currentSession as any)?.wp_db_id
+    || (typeof window !== "undefined" ? Number(localStorage.getItem("active_wp_db_id") || 0) : 0)
+    || null;
+  const activeSessionName = currentSession?.name
+    || (typeof window !== "undefined" ? localStorage.getItem("active_wa_session_id") : null)
+    || null;
   const showLegacyMetrics = false;
 
   useEffect(() => {
@@ -248,10 +252,10 @@ export default function WhatsAppControlPage() {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] space-y-4">
         <Bot className="h-16 w-16 text-muted-foreground" />
-        <h2 className="text-2xl font-bold">{t("No Database Connected", "কোন ডাটাবেস সংযুক্ত নেই")}</h2>
-        <p className="text-muted-foreground">{t("Please connect to a database to manage bot controls.", "বট কন্ট্রোল পরিচালনা করতে অনুগ্রহ করে একটি ডাটাবেস সংযুক্ত করুন।")}</p>
+        <h2 className="text-2xl font-bold">{t("No WhatsApp Connected", "কোন অফিসিয়াল হোয়াটসঅ্যাপ সংযুক্ত নেই")}</h2>
+        <p className="text-muted-foreground">{t("Please connect an official WhatsApp number to manage bot controls.", "বট কন্ট্রোল পরিচালনা করতে আগে অফিসিয়াল হোয়াটসঅ্যাপ নম্বর connect করুন।")}</p>
         <Button asChild>
-            <Link to="/dashboard/whatsapp/database">{t("Go to Database", "ডাটাবেসে যান")}</Link>
+            <Link to="/dashboard/whatsapp/sessions">{t("Go to WhatsApp", "হোয়াটসঅ্যাপে যান")}</Link>
         </Button>
       </div>
     );
