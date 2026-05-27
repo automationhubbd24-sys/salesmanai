@@ -616,8 +616,13 @@ const handleWhatsAppWebhook = async (req, res) => {
 
                                     const { config, prompts } = pageData;
                                     
-                                    if (!config || config.subscription_status === 'expired' || config.subscription_status === 'banned') {
-                                        console.warn(`[WhatsApp Cloud] No active config found for lookup keys: ${lookupKeys.join(', ')}`);
+                                    if (!config) {
+                                        console.warn(`[WhatsApp Cloud] No config found for lookup keys: ${lookupKeys.join(', ')}. Please ensure this number is connected in dashboard.`);
+                                        continue;
+                                    }
+
+                                    if (config.subscription_status === 'expired' || config.subscription_status === 'banned') {
+                                        console.warn(`[WhatsApp Cloud] Subscription ${config.subscription_status} for ${matchedLookupKey || wabaId}`);
                                         continue;
                                     }
 
