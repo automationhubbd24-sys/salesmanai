@@ -19,6 +19,61 @@ async function ensureOfficialWhatsAppColumns() {
     `);
 }
 
+const officialWebhookRepairCache = new Map();
+const OFFICIAL_WEBHOOK_REPAIR_TTL_MS = 10 * 60 * 1000;
+
+function getOfficialWebhookSubscriptionOptions() {
+    const baseUrl = process.env.PUBLIC_BASE_URL
+        || process.env.BACKEND_URL
+        || 'https://webhook.salesmanchatbot.online';
+    const callbackBaseUrl = String(baseUrl).replace(/\/+$/, '');
+    const verifyToken = process.env.WHATSAPP_OFFICIAL_VERIFY_TOKEN
+        || process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN
+        || process.env.FACEBOOK_VERIFY_TOKEN
+        || process.env.VERIFY_TOKEN
+        || 'salesman_monster_wa_2026_official';
+
+    const isPublicHttps = /^https:\/\//i.test(callbackBaseUrl);
+
+    return {
+        overrideCallbackUri: isPublicHttps ? `${callbackBaseUrl}/webhook/whatsapp` : null,
+        verifyToken
+    };
+}
+
+async function ensureOfficialWebhookSubscription(row, reason = 'runtime') {
+    if (!row?.waba_id || !row?.cloud_access_token) {
+        return { skipped: true, reason: 'missing_credentials' };
+    }
+
+    const cacheKey = String(row.session_name || row.waba_id || row.phone_number_id || '');
+    const lastRepairAt = officialWebhookRepairCache.get(cacheKey) || 0;
+    if (Date.now() - lastRepairAt < OFFICIAL_WEBHOOK_REPAIR_TTL_MS) {
+        return { skipped: true, reason: 'throttled' };
+    }
+
+    const subscriptionOptions = getOfficialWebhookSubscriptionOptions();
+
+    try {
+        const result = await whatsappCloudService.subscribeAppToWaba(
+            row.waba_id,
+            row.cloud_access_token,
+            subscriptionOptions
+        );
+        officialWebhookRepairCache.set(cacheKey, Date.now());
+        console.log(
+            `[WhatsApp Official] Webhook subscription ensured for ${row.session_name || row.waba_id} (${reason})`
+        );
+        return { success: true, result };
+    } catch (error) {
+        console.warn(
+            `[WhatsApp Official] Failed to ensure webhook subscription for ${row.session_name || row.waba_id} (${reason}):`,
+            error.response?.data || error.message
+        );
+        return { success: false, error };
+    }
+}
+
 async function hasSessionAccess(sessionName, userId, userEmail) {
     await ensureOfficialWhatsAppColumns();
 
@@ -69,6 +124,46 @@ function handleLegacyWhatsAppRoute(req, res) {
 
 // WhatsApp Cloud API Official Routes
 router.post('/official/signup-complete', authMiddleware, whatsappCloudController.completeEmbeddedSignup);
+router.post('/official/:sessionName/repair-webhook', authMiddleware, async (req, res) => {
+    try {
+        await ensureOfficialWhatsAppColumns();
+
+        const sessionName = String(req.params.sessionName || '').trim();
+        if (!sessionName) {
+            return res.status(400).json({ error: 'Session name is required' });
+        }
+
+        const userId = req.user?.id || null;
+        const userEmail = req.user?.email || null;
+        const allowed = await hasSessionAccess(sessionName, userId, userEmail);
+
+        if (!allowed) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
+
+        const result = await pgClient.query(
+            `SELECT session_name, waba_id, phone_number_id, cloud_access_token
+             FROM whatsapp_message_database
+             WHERE session_name = $1
+             LIMIT 1`,
+            [sessionName]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'WhatsApp connection not found' });
+        }
+
+        const repair = await ensureOfficialWebhookSubscription(result.rows[0], 'manual_repair');
+        if (!repair.success && !repair.skipped) {
+            return res.status(502).json({ error: 'Failed to repair webhook subscription' });
+        }
+
+        return res.json({ success: true, repair });
+    } catch (error) {
+        console.error('Repair official WhatsApp webhook error:', error);
+        return res.status(500).json({ error: error.message });
+    }
+});
 router.delete('/official/:sessionName', authMiddleware, async (req, res) => {
     try {
         await ensureOfficialWhatsAppColumns();
@@ -194,6 +289,14 @@ router.get('/sessions', async (req, res) => {
         const allDBSessions = [...(mySessions || []), ...sharedSessions];
         const uniqueDBSessions = Array.from(new Map(allDBSessions.map(item => [item.session_name, item])).values());
 
+        await Promise.all(
+            uniqueDBSessions
+                .filter((sessionRow) =>
+                    sessionRow.provider_type === 'official'
+                    || String(sessionRow.session_name || '').startsWith('official_'))
+                .map((sessionRow) => ensureOfficialWebhookSubscription(sessionRow, 'list_sessions'))
+        );
+
         // 5. Only expose official integrations in the current product flow.
         const finalSessions = uniqueDBSessions
             .filter((ds) => ds.provider_type === 'official' || String(ds.session_name || '').startsWith('official_'))
@@ -272,6 +375,10 @@ router.get('/config/:id', async (req, res) => {
         }
 
         const row = configResult.rows[0];
+
+        if (row.provider_type === 'official' || String(row.session_name || '').startsWith('official_')) {
+            await ensureOfficialWebhookSubscription(row, 'get_config');
+        }
 
         let allowed = false;
         if (row.user_id === userId || (row.email && userEmail && row.email.toLowerCase() === userEmail.toLowerCase())) {

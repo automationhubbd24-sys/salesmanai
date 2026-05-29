@@ -1,6 +1,24 @@
 const whatsappCloudService = require('../services/whatsappCloudService');
 const pgClient = require('../services/pgClient');
 
+function getOfficialWebhookSubscriptionOptions() {
+    const baseUrl = process.env.PUBLIC_BASE_URL
+        || process.env.BACKEND_URL
+        || 'https://webhook.salesmanchatbot.online';
+    const callbackBaseUrl = String(baseUrl).replace(/\/+$/, '');
+    const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN
+        || process.env.WHATSAPP_OFFICIAL_VERIFY_TOKEN
+        || process.env.VERIFY_TOKEN
+        || '123456';
+
+    const isPublicHttps = /^https:\/\//i.test(callbackBaseUrl);
+
+    return {
+        overrideCallbackUri: isPublicHttps ? `${callbackBaseUrl}/webhook/whatsapp` : null,
+        verifyToken
+    };
+}
+
 /**
  * Handle Embedded Signup Completion
  */
@@ -100,7 +118,11 @@ const completeEmbeddedSignup = async (req, res) => {
 
         // 4. Subscribe the App to WABA (to receive webhooks)
         if (resolvedWabaId) {
-            await whatsappCloudService.subscribeAppToWaba(resolvedWabaId, accessToken);
+            await whatsappCloudService.subscribeAppToWaba(
+                resolvedWabaId,
+                accessToken,
+                getOfficialWebhookSubscriptionOptions()
+            );
         }
 
         res.status(200).json({ 

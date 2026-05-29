@@ -761,6 +761,11 @@ async function processWhatsAppWebhook(body) {
 const handleWhatsAppWebhook = async (req, res) => {
     const body = req.body;
 
+    // --- DEBUG LOG: SEE ALL INCOMING WHATSAPP WEBHOOKS ---
+    console.log(`[WhatsApp Webhook Raw] Received at ${new Date().toISOString()}`);
+    console.log(JSON.stringify(body, null, 2));
+    // -----------------------------------------------------
+
     if (body.object !== 'whatsapp_business_account') {
         return res.sendStatus(404);
     }

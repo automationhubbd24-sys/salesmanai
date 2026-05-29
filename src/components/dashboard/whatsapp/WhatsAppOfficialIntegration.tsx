@@ -45,6 +45,7 @@ export default function WhatsAppOfficialIntegration() {
   const navigate = useNavigate();
   const { refreshSessions, sessions, currentSession, setCurrentSession } = useWhatsApp();
   const [loading, setLoading] = useState(false);
+  const [repairing, setRepairing] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [sdkReady, setSdkReady] = useState(false);
   const [connected, setConnected] = useState(false);
@@ -214,6 +215,44 @@ export default function WhatsAppOfficialIntegration() {
       toast.error(message);
     } finally {
       setDisconnecting(false);
+    }
+  };
+
+  const handleRepairWebhook = async () => {
+    if (!officialSession?.name) {
+      toast.error("Connected WhatsApp session khuje paoa jacche na.");
+      return;
+    }
+
+    try {
+      setRepairing(true);
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        throw new Error("Please login again and retry.");
+      }
+
+      const response = await fetch(
+        `${BACKEND_URL}/api/whatsapp/official/${encodeURIComponent(officialSession.name)}/repair-webhook`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || "Failed to repair WhatsApp webhook.");
+      }
+
+      await refreshSessions();
+      toast.success("Webhook repair request complete hoyeche.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to repair WhatsApp webhook.";
+      toast.error(message);
+    } finally {
+      setRepairing(false);
     }
   };
 
@@ -394,21 +433,30 @@ export default function WhatsAppOfficialIntegration() {
                 <Link2 className="h-4 w-4 text-amber-300" />
                 Connection Actions
               </div>
-              <p className="mt-2 text-xs text-slate-400">Phone app disconnect hole reconnect korun, dorkar hole clean disconnect korun.</p>
-              <div className="mt-4 flex gap-2">
+              <p className="mt-2 text-xs text-slate-400">Webhook issue hole repair din, phone app disconnect hole reconnect korun, dorkar hole clean disconnect korun.</p>
+              <div className="mt-4 grid gap-2">
+                <Button
+                  onClick={handleRepairWebhook}
+                  disabled={repairing || loading || disconnecting}
+                  variant="outline"
+                  className="w-full rounded-xl border-white/10"
+                >
+                  {repairing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4" />}
+                  {repairing ? "Repairing..." : "Repair Webhook"}
+                </Button>
                 <Button
                   onClick={launchWhatsAppSignup}
-                  disabled={loading || !sdkReady || disconnecting}
-                  className="flex-1 rounded-xl bg-[#1877F2] text-white hover:bg-[#166fe5]"
+                  disabled={loading || !sdkReady || disconnecting || repairing}
+                  className="w-full rounded-xl bg-[#1877F2] text-white hover:bg-[#166fe5]"
                 >
                   {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
                   {loading ? "Opening..." : "Reconnect"}
                 </Button>
                 <Button
                   onClick={handleDisconnect}
-                  disabled={disconnecting || loading}
+                  disabled={disconnecting || loading || repairing}
                   variant="destructive"
-                  className="flex-1 rounded-xl"
+                  className="w-full rounded-xl"
                 >
                   {disconnecting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
                   {disconnecting ? "Disconnecting..." : "Disconnect"}

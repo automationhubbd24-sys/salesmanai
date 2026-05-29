@@ -196,9 +196,16 @@ class WhatsAppCloudService {
     /**
      * Subscribe app to WABA (Required to receive webhooks)
      */
-    async subscribeAppToWaba(wabaId, accessToken) {
+    async subscribeAppToWaba(wabaId, accessToken, options = {}) {
         try {
-            return await this.graphPost(`/${wabaId}/subscribed_apps`, {}, accessToken);
+            const body = {};
+
+            if (options.overrideCallbackUri && options.verifyToken) {
+                body.override_callback_uri = options.overrideCallbackUri;
+                body.verify_token = options.verifyToken;
+            }
+
+            return await this.graphPost(`/${wabaId}/subscribed_apps`, body, accessToken);
         } catch (error) {
             const metaError = error.response?.data?.error;
             const metaMessage = String(metaError?.message || "").toLowerCase();
