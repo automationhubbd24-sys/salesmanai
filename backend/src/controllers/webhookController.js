@@ -568,39 +568,7 @@ async function collectOfficialMediaUrls(message, accessToken) {
     return { imageUrls, audioUrls, notes };
 }
 
-// --- WHATSAPP DEBOUNCE / BUFFERING ---
-async function queueWhatsAppMessage(payload, config, pagePrompts, senderName, senderId, wabaId, phoneNumberId) {
-    const sessionId = `${wabaId}_${senderId}`;
-
-    if (!waDebounceMap.has(sessionId)) {
-        waDebounceMap.set(sessionId, { messages: [], timer: null, isProcessing: false });
-    }
-
-    const sessionData = waDebounceMap.get(sessionId);
-    sessionData.messages.push(payload);
-
-    if (sessionData.timer) {
-        clearTimeout(sessionData.timer);
-    }
-
-    sessionData.timer = setTimeout(async () => {
-        if (sessionData.isProcessing) return;
-        sessionData.isProcessing = true;
-
-        try {
-            const buffered = [...sessionData.messages];
-            sessionData.messages = [];
-            waDebounceMap.delete(sessionId);
-
-            await processWhatsAppBatch(buffered, config, pagePrompts, senderName, senderId, wabaId, phoneNumberId);
-        } catch (err) {
-            console.error(`[WhatsApp Queue] Error processing batch for ${senderId}:`, err);
-        } finally {
-            sessionData.isProcessing = false;
-        }
-    }, DEBOUNCE_MS);
-}
-
+// --- WHATSAPP INLINE BATCH PROCESSING ---
 async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, senderName, senderId, wabaId, phoneNumberId) {
     const effectiveSessionName = config.session_name || `official_${wabaId || phoneNumberId}`;
     const resolvedPhoneNumberId = config.phone_number_id || phoneNumberId;
@@ -633,6 +601,8 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     const combinedText = workflow.combinedText;
     const allImages = [...imageUrls];
     const allAudios = [...audioUrls];
+
+    console.log(`[WhatsApp Batch] Processing ${bufferedMessages.length} message(s) for ${senderId}`);
 
     if (!combinedText && allImages.length === 0 && allAudios.length === 0) {
         console.log(`[WhatsApp Batch] Skipping empty batch for ${senderId}`);
@@ -731,6 +701,7 @@ async function processWhatsAppWebhook(body) {
 
             const value = change.value || {};
             const phoneNumberId = value.metadata?.phone_number_id;
+            const groupedMessages = new Map();
 
             for (const message of value.messages || []) {
                 const messageId = message.id;
@@ -762,8 +733,31 @@ async function processWhatsAppWebhook(body) {
                     continue;
                 }
 
-                // Use the queue system to handle buffering and workflow
-                await queueWhatsAppMessage(message, pageData.config, pageData.prompts, senderName, senderId, wabaId, phoneNumberId);
+                const batchKey = `${senderId}:${pageData.config.session_name || pageData.config.waba_id || wabaId || phoneNumberId}`;
+                const existingBatch = groupedMessages.get(batchKey) || {
+                    messages: [],
+                    config: pageData.config,
+                    prompts: pageData.prompts,
+                    senderName,
+                    senderId,
+                    wabaId,
+                    phoneNumberId
+                };
+
+                existingBatch.messages.push(message);
+                groupedMessages.set(batchKey, existingBatch);
+            }
+
+            for (const batch of groupedMessages.values()) {
+                await processWhatsAppBatch(
+                    batch.messages,
+                    batch.config,
+                    batch.prompts,
+                    batch.senderName,
+                    batch.senderId,
+                    batch.wabaId,
+                    batch.phoneNumberId
+                );
             }
         }
     }
