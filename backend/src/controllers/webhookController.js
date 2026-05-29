@@ -572,6 +572,8 @@ async function collectOfficialMediaUrls(message, accessToken) {
 async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, senderName, senderId, wabaId, phoneNumberId) {
     const effectiveSessionName = config.session_name || `official_${wabaId || phoneNumberId}`;
     const resolvedPhoneNumberId = config.phone_number_id || phoneNumberId;
+    let totalVisionTokens = 0;
+    let totalAudioTokens = 0;
 
     // 1. Media Collection
     const imageUrls = [];
@@ -598,18 +600,126 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
 
     // 2. Run Workflow (Normalization & Ad Context)
     const workflow = runWhatsAppWorkflow(normalizedMessages);
-    const combinedText = workflow.combinedText;
+    let combinedText = workflow.combinedText;
     const allImages = [...imageUrls];
     const allAudios = [...audioUrls];
 
     console.log(`[WhatsApp Batch] Processing ${bufferedMessages.length} message(s) for ${senderId}`);
+
+    // --- MEDIA PROCESSING (Upgraded to Messenger Style) ---
+    
+    // A. Image Analysis
+    if (allImages.length > 0) {
+        const imageDetectionEnabled = pagePrompts && pagePrompts.image_detection !== false && pagePrompts.image_detection !== 'false' && pagePrompts.image_detection !== 0 && pagePrompts.image_detection !== '0' && pagePrompts.image_detection !== null;
+
+        if (!imageDetectionEnabled) {
+            console.log(`[WhatsApp Batch] Image Detection disabled. Skipping.`);
+            combinedText += `\n[System Note: User sent ${allImages.length} images. Image detection is disabled.]`;
+        } else {
+            console.log(`[WhatsApp Batch] Analyzing ${allImages.length} images...`);
+            let combinedImageAnalysis = "";
+            let productAnalysisPrompt = `Analyze this image with 100% precision. Focus on products and text. Output in Bengali format.`;
+            if (pagePrompts && (pagePrompts.image_prompt || pagePrompts.vision_prompt)) {
+                productAnalysisPrompt = pagePrompts.image_prompt || pagePrompts.vision_prompt;
+            }
+
+            const analysisPromises = [];
+            for (const msg of normalizedMessages) {
+                if (msg.images && msg.images.length > 0) {
+                    const imagePromises = msg.images.slice(0, 2).map(url =>
+                        aiService.processImageWithVision(url, config, { prompt: productAnalysisPrompt, max_tokens: 2000 })
+                    );
+                    analysisPromises.push({ msg, promise: Promise.all(imagePromises) });
+                }
+            }
+
+            const allAnalysisResults = await Promise.all(analysisPromises.map(p => p.promise));
+            allAnalysisResults.forEach((imageResults, idx) => {
+                const msg = analysisPromises[idx].msg;
+                let lastModelUsed = 'unknown';
+                const perMsgText = imageResults.map(result => {
+                    const text = typeof result === 'object' ? (result.text || '') : String(result || '');
+                    totalVisionTokens += (result.usage || 0);
+                    lastModelUsed = result.model || 'unknown';
+                    return text;
+                }).join("\n\n").trim();
+
+                if (perMsgText) {
+                    combinedImageAnalysis += `${perMsgText}\n\n`;
+                    dbService.saveWhatsAppChat({
+                        session_name: effectiveSessionName,
+                        sender_id: effectiveSessionName,
+                        recipient_id: senderId,
+                        message_id: `img_analysis_${Date.now()}_${idx}`,
+                        text: `[Analyzed Image]:\n${perMsgText}`,
+                        timestamp: Date.now(),
+                        status: 'analyzed',
+                        reply_by: 'bot',
+                        token: totalVisionTokens,
+                        ai_model: lastModelUsed
+                    }).catch(e => console.error(`[WhatsApp] Failed to save image analysis:`, e.message));
+                }
+            });
+
+            if (combinedImageAnalysis) {
+                combinedText += `\n\n[NEW VISUAL CONTEXT]:\n${combinedImageAnalysis.trim()}\n[END VISUAL CONTEXT]`;
+            }
+        }
+    }
+
+    // B. Audio Transcription
+    if (allAudios.length > 0) {
+        const audioEnabled = pagePrompts && pagePrompts.audio_detection !== false && pagePrompts.audio_detection !== 'false' && pagePrompts.audio_detection !== 0 && pagePrompts.audio_detection !== '0' && pagePrompts.audio_detection !== null;
+
+        if (audioEnabled) {
+            console.log(`[WhatsApp Batch] Transcribing ${allAudios.length} voice messages...`);
+            const audioJobs = [];
+            for (const msg of normalizedMessages) {
+                for (const url of msg.audios) {
+                    audioJobs.push({ id: msg.id, url, rawText: msg.text });
+                }
+            }
+
+            const audioResults = await Promise.all(audioJobs.map(job => aiService.transcribeAudio(job.url, config)));
+            let combinedAudioTranscript = "";
+            let lastAudioModel = 'unknown';
+
+            audioResults.forEach((res, i) => {
+                const text = typeof res === 'object' ? (res.text || '') : String(res || '');
+                totalAudioTokens += (res.usage || 0);
+                lastAudioModel = res.model || 'unknown';
+                if (text.trim()) {
+                    combinedAudioTranscript += `${text.trim()}\n`;
+                    const job = audioJobs[i];
+                    dbService.saveWhatsAppChat({
+                        session_name: effectiveSessionName,
+                        sender_id: senderId,
+                        recipient_id: effectiveSessionName,
+                        message_id: job.id,
+                        text: job.rawText ? `${job.rawText}\n[Transcript]: ${text.trim()}` : `[Transcript]: ${text.trim()}`,
+                        timestamp: Date.now(),
+                        status: 'transcribed',
+                        reply_by: 'user',
+                        token: totalAudioTokens,
+                        ai_model: lastAudioModel
+                    }).catch(e => console.error(`[WhatsApp] Failed to save transcript:`, e.message));
+                }
+            });
+
+            if (combinedAudioTranscript) {
+                combinedText += `\n\n[Voice Message Transcript]:\n${combinedAudioTranscript.trim()}`;
+            }
+        } else {
+            combinedText += `\n[System Note: User sent ${allAudios.length} voice messages. Audio detection is disabled.]`;
+        }
+    }
 
     if (!combinedText && allImages.length === 0 && allAudios.length === 0) {
         console.log(`[WhatsApp Batch] Skipping empty batch for ${senderId}`);
         return;
     }
 
-    // 3. Save User Message to DB
+    // 3. Save User Message to DB (Main Log)
     const inboundLogText = combinedText
         || (allImages.length > 0 ? `[User sent ${allImages.length} image(s)]` : '')
         || (allAudios.length > 0 ? `[User sent ${allAudios.length} audio message(s)]` : '');
