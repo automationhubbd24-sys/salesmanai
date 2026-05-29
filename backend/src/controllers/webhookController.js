@@ -614,6 +614,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         || (allImages.length > 0 ? `[User sent ${allImages.length} image(s)]` : '')
         || (allAudios.length > 0 ? `[User sent ${allAudios.length} audio message(s)]` : '');
 
+    console.log(`[WhatsApp Webhook] Saving inbound chat for ${senderId}...`);
     await dbService.saveWhatsAppChat({
         session_name: effectiveSessionName,
         sender_id: senderId,
@@ -626,6 +627,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     });
 
     // 4. AI Response Generation
+    console.log(`[WhatsApp Webhook] Generating AI response for ${senderId}...`);
     const historyLimit = Math.max(1, Number(config.check_conversion) || 10);
     const history = await dbService.getLastNWhatsAppMessages(effectiveSessionName, senderId, historyLimit);
 
@@ -650,23 +652,28 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         : [];
 
     if (!replyText && outboundImages.length === 0) {
-        console.log(`[WhatsApp Batch] AI stayed silent for ${senderId}`);
+        console.log(`[WhatsApp Webhook] AI stayed silent for ${senderId}`);
         return;
     }
 
+    console.log(`[WhatsApp Webhook] AI generated response for ${senderId}: "${replyText.substring(0, 30)}..."`);
+
     // 5. Send Responses
     if (replyText) {
+        console.log(`[WhatsApp Webhook] Sending text reply to ${senderId}...`);
         await whatsappCloudService.sendTextMessage(resolvedPhoneNumberId, config.cloud_access_token, senderId, replyText);
     }
 
     for (let i = 0; i < outboundImages.length; i++) {
         const image = outboundImages[i];
         const caption = !replyText && i === 0 && image.title ? String(image.title).slice(0, 1024) : undefined;
+        console.log(`[WhatsApp Webhook] Sending image reply to ${senderId}...`);
         await whatsappCloudService.sendImageMessage(resolvedPhoneNumberId, config.cloud_access_token, senderId, image.url, caption);
     }
 
     // 6. Save Bot Reply to DB
     if (replyText) {
+        console.log(`[WhatsApp Webhook] Saving bot reply for ${senderId}...`);
         await dbService.saveWhatsAppChat({
             session_name: effectiveSessionName,
             sender_id: effectiveSessionName,
@@ -694,6 +701,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
 }
 
 async function processWhatsAppWebhook(body) {
+    console.log(`[WhatsApp Webhook] Processing ${body.entry?.length || 0} entries...`);
     for (const entry of body.entry || []) {
         const wabaId = entry.id;
         for (const change of entry.changes || []) {
@@ -705,12 +713,19 @@ async function processWhatsAppWebhook(body) {
 
             for (const message of value.messages || []) {
                 const messageId = message.id;
-                const isDuplicate = await dbService.checkDuplicate(messageId);
-                if (isDuplicate) continue;
+                console.log(`[WhatsApp Webhook] Evaluating message ID: ${messageId}`);
+                
+                // Use checkWhatsAppDuplicate which is the specialized version for WhatsApp
+                const isDuplicate = await dbService.checkWhatsAppDuplicate(messageId);
+                console.log(`[WhatsApp Webhook] Duplicate check for ${messageId}: ${isDuplicate}`);
+                
+                if (isDuplicate) {
+                    continue;
+                }
 
                 const senderId = message.from;
                 const senderName = value.contacts?.[0]?.profile?.name || 'Unknown';
-                console.log(`[WhatsApp Cloud] Message from ${senderName} (${senderId}). Type: ${message.type || 'unknown'}`);
+                console.log(`[WhatsApp Webhook] Inbound from ${senderName} (${senderId}). Type: ${message.type}`);
 
                 const lookupKeys = [
                     phoneNumberId,
@@ -729,7 +744,7 @@ async function processWhatsAppWebhook(body) {
                 }
 
                 if (!pageData.config) {
-                    console.warn(`[WhatsApp Cloud] No config found for lookup keys: ${lookupKeys.join(', ')}`);
+                    console.warn(`[WhatsApp Webhook] No config found for lookup keys: ${lookupKeys.join(', ')}`);
                     continue;
                 }
 
@@ -749,6 +764,7 @@ async function processWhatsAppWebhook(body) {
             }
 
             for (const batch of groupedMessages.values()) {
+                console.log(`[WhatsApp Webhook] Processing batch for ${batch.senderId} (${batch.messages.length} msgs)`);
                 await processWhatsAppBatch(
                     batch.messages,
                     batch.config,
@@ -767,24 +783,26 @@ async function processWhatsAppWebhook(body) {
 const handleWhatsAppWebhook = async (req, res) => {
     const body = req.body;
 
-    // --- DEBUG LOG: SEE ALL INCOMING WHATSAPP WEBHOOKS ---
-    console.log(`[WhatsApp Webhook Raw] Received at ${new Date().toISOString()}`);
-    console.log(JSON.stringify(body, null, 2));
-    // -----------------------------------------------------
+    // --- REALTIME OPTIMIZATION: Respond Immediately ---
+    res.status(200).send('EVENT_RECEIVED');
+
+    // --- CRITICAL DEBUG LOG ---
+    console.log(`[WhatsApp Webhook] Triggered at ${new Date().toISOString()}`);
+    // --------------------------
 
     if (body.object !== 'whatsapp_business_account') {
-        return res.sendStatus(404);
+        return;
     }
 
-    try {
-        // Some production runtimes stop executing work after the response is sent.
-        // Process the webhook inside the request lifecycle so inbound messages are not dropped.
-        await processWhatsAppWebhook(body);
-    } catch (err) {
-        console.error(`[WhatsApp Cloud Webhook] Error:`, err);
-    }
-
-    return res.status(200).send('EVENT_RECEIVED');
+    // Execute processing in background
+    (async () => {
+        try {
+            console.log(`[WhatsApp Webhook] Starting background processing...`);
+            await processWhatsAppWebhook(body);
+        } catch (err) {
+            console.error(`[WhatsApp Webhook] Background Error:`, err);
+        }
+    })();
 };
 
 // Queue Message for Debounce
