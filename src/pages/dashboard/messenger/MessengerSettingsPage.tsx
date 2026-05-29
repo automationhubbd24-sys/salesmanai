@@ -1139,7 +1139,6 @@ export default function MessengerSettingsPage() {
                                 <div>
                                     <div className="text-sm font-semibold text-emerald-100">Switch Pro Plus Mode</div>
                                     <p className="text-xs text-emerald-200/80">
-                                        On korle AI Studio endpoint ar branded Pro Plus fallback chain use hobe.
                                     </p>
                                 </div>
                                 <div className="flex items-center gap-3">
