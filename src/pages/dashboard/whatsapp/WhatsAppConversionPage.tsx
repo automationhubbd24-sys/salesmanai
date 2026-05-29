@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { MessageSquare, RefreshCw, AlertCircle, Calendar as CalendarIcon, Zap, Lock, Unlock, Download, Send } from "lucide-react";
+import { MessageSquare, RefreshCw, AlertCircle, Calendar as CalendarIcon, Zap, Lock, Unlock, Download, Send, ChevronLeft, ChevronRight } from "lucide-react";
 import { BulkCampaignModal } from "@/components/dashboard/BulkCampaignModal";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -58,6 +58,9 @@ export default function WhatsAppConversionPage() {
   const [tokenBreakdown, setTokenBreakdown] = useState<Record<string, number>>({});
   const [expandedMessageIds, setExpandedMessageIds] = useState<Set<string | number>>(new Set());
   const [lockedContacts, setLockedContacts] = useState<Record<string, boolean>>({});
+  const [currentPageNum, setCurrentPageNum] = useState(1);
+  const [totalMessages, setTotalMessages] = useState(0);
+  const LIMIT = 50;
 
   const activeSessionName = currentSession?.name
     || (typeof window !== "undefined" ? localStorage.getItem("active_wa_session_id") : null)
@@ -205,10 +208,19 @@ export default function WhatsAppConversionPage() {
   useEffect(() => {
     // Fetch messages whenever date or sessionName changes
     if (activeSessionName && date?.from && date?.to) {
-        fetchMessages(activeSessionName, date.from, date.to);
+        fetchMessages(activeSessionName, date.from, date.to, currentPageNum);
         fetchContacts(activeSessionName);
     }
-  }, [activeSessionName, date, targetSenderId]);
+  }, [activeSessionName, date, currentPageNum, targetSenderId]);
+
+  // Reset page when date changes
+  useEffect(() => {
+    setCurrentPageNum(1);
+  }, [date]);
+
+  useEffect(() => {
+    setCurrentPageNum(1);
+  }, [targetSenderId]);
 
   useEffect(() => {
     const groups: Record<string, WaChat[]> = {};
@@ -222,7 +234,7 @@ export default function WhatsAppConversionPage() {
     setGroupedMessages(groups);
   }, [messages]);
 
-  const fetchMessages = async (sessionName: string, from: Date, to: Date) => {
+  const fetchMessages = async (sessionName: string, from: Date, to: Date, page: number = 1) => {
     setLoading(true);
     try {
       const token = localStorage.getItem("auth_token");
@@ -230,6 +242,7 @@ export default function WhatsAppConversionPage() {
         setMessages([]);
         setFilteredBotReplyCount(0);
         setFilteredTokenCount(0);
+        setTotalMessages(0);
         return;
       }
 
@@ -237,6 +250,8 @@ export default function WhatsAppConversionPage() {
       params.set("session_name", sessionName);
       params.set("from", from.getTime().toString());
       params.set("to", to.getTime().toString());
+      params.set("page", String(page));
+      params.set("limit", String(LIMIT));
       if (targetSenderId) {
         params.set("sender_id", targetSenderId);
       }
@@ -252,16 +267,15 @@ export default function WhatsAppConversionPage() {
         throw new Error(errData.error || "Failed to fetch messages");
       }
 
-      const data = await res.json();
-      const rows: WaChat[] = (Array.isArray(data) ? data : []) as WaChat[];
-
-      const botReplies = rows.filter(m => m.reply_by === "bot").length || 0;
-      setFilteredBotReplyCount(botReplies);
-
-      const tokens = rows.reduce((acc, curr) => acc + (curr.token_usage || 0), 0) || 0;
-      setFilteredTokenCount(tokens);
+      const result = await res.json();
+      const rows: WaChat[] = (Array.isArray(result.data) ? result.data : []) as WaChat[];
 
       setMessages(rows);
+      setTotalMessages(result.total || 0);
+      setFilteredBotReplyCount(result.filteredBotReplyCount || 0);
+      setFilteredTokenCount(result.filteredTokenCount || 0);
+      setTokenBreakdown(result.tokenBreakdown || {});
+
     } catch (error: any) {
       console.error("Error fetching messages:", error);
       toast.error("Failed to fetch messages: " + error.message);
@@ -299,10 +313,16 @@ export default function WhatsAppConversionPage() {
   };
 
   const handleRefresh = () => {
-    if (activeSessionName && date?.from && date?.to) {
-        fetchMessages(activeSessionName, date.from, date.to);
-        fetchStats(activeSessionName);
-        toast.success("Refreshed data");
+    if (activeSessionName) {
+        if (date?.from && date?.to) {
+             fetchMessages(activeSessionName, date.from, date.to, currentPageNum);
+             fetchStats(activeSessionName);
+        } else {
+             fetchMessages(activeSessionName, startOfDay(new Date()), endOfDay(new Date()), 1);
+             fetchStats(activeSessionName);
+        }
+    } else {
+        toast.error("No active session found.");
     }
   };
 
@@ -316,12 +336,11 @@ export default function WhatsAppConversionPage() {
       const yesterday = subDays(now, 1);
       setDate({ from: startOfDay(yesterday), to: endOfDay(yesterday) });
     } else if (value === "last7") {
-      setDate({ from: startOfDay(subDays(now, 6)), to: endOfDay(now) });
+      setDate({ from: subDays(now, 7), to: endOfDay(now) });
     } else if (value === "last30") {
-      setDate({ from: startOfDay(subDays(now, 29)), to: endOfDay(now) });
-    } else if (value === "custom") {
-      // Keep current date or open calendar
+      setDate({ from: subDays(now, 30), to: endOfDay(now) });
     }
+    // custom: date picker handles it
   };
 
   const clearSenderFilter = () => {
@@ -384,7 +403,7 @@ export default function WhatsAppConversionPage() {
             <div className="flex items-center gap-2 w-full sm:w-auto">
                 <Select value={filterType} onValueChange={handleFilterChange}>
                   <SelectTrigger className="w-[180px]">
-                    <SelectValue placeholder="Select period" />
+                    <SelectValue placeholder="Select Filter" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="today">Today</SelectItem>
@@ -399,9 +418,10 @@ export default function WhatsAppConversionPage() {
                   <Popover>
                     <PopoverTrigger asChild>
                       <Button
+                        id="date"
                         variant={"outline"}
                         className={cn(
-                          "w-[240px] justify-start text-left font-normal",
+                          "w-[260px] justify-start text-left font-normal",
                           !date && "text-muted-foreground"
                         )}
                       >
@@ -420,7 +440,7 @@ export default function WhatsAppConversionPage() {
                         )}
                       </Button>
                     </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
+                    <PopoverContent className="w-auto p-0" align="end">
                       <Calendar
                         initialFocus
                         mode="range"
@@ -433,8 +453,8 @@ export default function WhatsAppConversionPage() {
                   </Popover>
                 )}
 
-                <Button variant="outline" size="icon" onClick={handleRefresh}>
-                    <RefreshCw className="h-4 w-4" />
+                <Button onClick={handleRefresh} disabled={loading} variant="outline" size="icon">
+                    <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
                 </Button>
                 <Button onClick={handleDownload} disabled={loading} variant="outline" size="icon">
                     <Download className="h-4 w-4" />
@@ -445,64 +465,87 @@ export default function WhatsAppConversionPage() {
                 )}
             </div>
         </div>
+      </div>
 
-        {/* Stats Cards */}
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">All Time Bot Replies</CardTitle>
-              <MessageSquare className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{allTimeBotReplies}</div>
-              <p className="text-xs text-muted-foreground">
-                Total lifetime bot replies
-              </p>
-            </CardContent>
-          </Card>
-          <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Bot Replies (Filtered)</CardTitle>
-              <MessageSquare className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{filteredBotReplyCount}</div>
-              <p className="text-xs text-muted-foreground">
-                Replies in selected range
-              </p>
-            </CardContent>
-          </Card>
-          <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">All Time Tokens</CardTitle>
-              <Zap className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{allTimeTokenCount.toLocaleString()}</div>
-              <p className="text-xs text-muted-foreground">
-                Total tokens consumed
-              </p>
-            </CardContent>
-          </Card>
-          <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Tokens (Filtered)</CardTitle>
-              <Zap className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{filteredTokenCount.toLocaleString()}</div>
-              <p className="text-xs text-muted-foreground">
-                Tokens in selected range
-              </p>
-            </CardContent>
-          </Card>
-        </div>
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">All Time Bot Replies</CardTitle>
+            <MessageSquare className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{allTimeBotReplies}</div>
+            <p className="text-xs text-muted-foreground">
+              Total lifetime bot replies
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Bot Replies (Filtered)</CardTitle>
+            <MessageSquare className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{filteredBotReplyCount}</div>
+            <p className="text-xs text-muted-foreground">
+              Replies in selected range
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">All Time Tokens</CardTitle>
+            <Zap className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{allTimeTokenCount.toLocaleString()}</div>
+            <p className="text-xs text-muted-foreground">
+              Total tokens consumed
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Tokens (Filtered)</CardTitle>
+            <TooltipProvider>
+                <Tooltip>
+                    <TooltipTrigger>
+                        <Zap className="h-4 w-4 text-muted-foreground cursor-help" />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                        <p className="font-semibold mb-1">Model Breakdown:</p>
+                        {Object.entries(tokenBreakdown).length > 0 ? (
+                            Object.entries(tokenBreakdown).map(([model, count]) => (
+                                <div key={model} className="text-xs flex justify-between gap-4">
+                                    <span>{model}:</span>
+                                    <span className="font-mono">{count.toLocaleString()}</span>
+                                </div>
+                            ))
+                        ) : (
+                            <span className="text-xs text-muted-foreground">No data</span>
+                        )}
+                    </TooltipContent>
+                </Tooltip>
+            </TooltipProvider>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{filteredTokenCount.toLocaleString()}</div>
+            <p className="text-xs text-muted-foreground">
+              Tokens in selected range
+            </p>
+          </CardContent>
+        </Card>
       </div>
 
       <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10 shadow-[0_18px_40px_rgba(0,0,0,0.35)]">
         <CardHeader>
           <CardTitle>Message History</CardTitle>
-          <CardDescription>Recent messages from users and bot replies.</CardDescription>
+          <CardDescription>
+            Recent messages from users and bot replies.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
@@ -511,9 +554,9 @@ export default function WhatsAppConversionPage() {
                 <TableHead>Time</TableHead>
                 <TableHead>Message</TableHead>
                 <TableHead>Reply By</TableHead>
-                <TableHead>Usage (Tokens/Model)</TableHead>
+                <TableHead>Tokens</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Actions</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -540,11 +583,6 @@ export default function WhatsAppConversionPage() {
                       onClick={() => toggleExpand(msg.id || msg.message_id || 'unknown')}
                     >
                       {msg.text}
-                      {expandedMessageIds.has(msg.id || msg.message_id || 'unknown') && msg.model_used && (
-                        <div className="text-[10px] text-muted-foreground mt-1">
-                          {msg.model_used}
-                        </div>
-                      )}
                     </TableCell>
                     <TableCell>
                       <span
@@ -558,54 +596,94 @@ export default function WhatsAppConversionPage() {
                       </span>
                     </TableCell>
                     <TableCell>
-                      <div className="flex flex-col">
-                        <span className="font-bold">{msg.token_usage || 0}</span>
-                        <span
-                          className="text-[10px] text-muted-foreground truncate max-w-[150px]"
-                          title={msg.model_used}
-                        >
-                          {msg.model_used || '-'}
-                        </span>
-                      </div>
+                      {msg.token_usage ? (
+                        <div className="flex flex-col">
+                          <span className="font-bold">{msg.token_usage}</span>
+                          {msg.model_used && (
+                            <span className="text-[10px] text-muted-foreground">
+                              {msg.model_used}
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
+                      )}
                     </TableCell>
                     <TableCell>
                       <span
                         className={`px-2 py-1 rounded-full text-xs border ${
                           msg.status === 'sent'
                             ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/40'
-                            : 'bg-yellow-500/10 text-yellow-300 border-yellow-500/40'
+                            : msg.status === 'transcribed'
+                              ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/40'
+                              : msg.status === 'analyzed'
+                                ? 'bg-violet-500/10 text-violet-300 border-violet-500/40'
+                                : 'bg-yellow-500/10 text-yellow-300 border-yellow-500/40'
                         }`}
                       >
                         {msg.status}
                       </span>
                     </TableCell>
-                    <TableCell>
-                        {(() => {
-                            const contactId = msg.reply_by === 'user' ? msg.sender_id : msg.recipient_id;
-                            if (!contactId || contactId === activeSessionName) return null;
-                            const isLocked = !!lockedContacts[contactId];
-                            
-                            return (
-                                <Button 
-                                    variant="ghost" 
-                                    size="sm" 
-                                    onClick={() => handleToggleLock(contactId)}
-                                    className="h-8 w-8 p-0"
-                                    title={isLocked ? "Unlock AI" : "Lock AI (Handover)"}
-                                >
-                                    {isLocked ? 
-                                        <Lock className="h-4 w-4 text-red-500" /> : 
-                                        <Unlock className="h-4 w-4 text-green-500" />
-                                    }
-                                </Button>
-                            );
-                        })()}
+                    <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-2">
+                            {(() => {
+                                const contactId = msg.reply_by === 'user' ? msg.sender_id : msg.recipient_id;
+                                if (!contactId || contactId === activeSessionName) return null;
+                                const isLocked = !!lockedContacts[contactId];
+                                
+                                return (
+                                    <Button 
+                                        variant="ghost" 
+                                        size="sm" 
+                                        onClick={() => handleToggleLock(contactId)}
+                                        className="h-8 w-8 p-0"
+                                        title={isLocked ? "Unlock AI" : "Lock AI (Handover)"}
+                                    >
+                                        {isLocked ? 
+                                            <Lock className="h-4 w-4 text-red-500" /> : 
+                                            <Unlock className="h-4 w-4 text-green-500" />
+                                        }
+                                    </Button>
+                                );
+                            })()}
+                        </div>
                     </TableCell>
                   </TableRow>
                 ))
               )}
             </TableBody>
           </Table>
+
+          {totalMessages > LIMIT && (
+            <div className="flex items-center justify-between mt-4 px-2">
+              <div className="text-sm text-muted-foreground">
+                Showing {((currentPageNum - 1) * LIMIT) + 1} to {Math.min(currentPageNum * LIMIT, totalMessages)} of {totalMessages} messages
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPageNum(prev => Math.max(1, prev - 1))}
+                  disabled={currentPageNum === 1 || loading}
+                >
+                  <ChevronLeft className="h-4 w-4 mr-1" />
+                  Previous
+                </Button>
+                <div className="text-sm font-medium">
+                  Page {currentPageNum} of {Math.ceil(totalMessages / LIMIT)}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPageNum(prev => prev + 1)}
+                  disabled={currentPageNum >= Math.ceil(totalMessages / LIMIT) || loading}
+                >
+                  Next
+                  <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

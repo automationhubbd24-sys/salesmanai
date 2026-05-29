@@ -515,6 +515,9 @@ router.get('/messages', authMiddleware, async (req, res) => {
         const from = req.query.from ? Number(req.query.from) : null;
         const to = req.query.to ? Number(req.query.to) : null;
         const senderId = String(req.query.sender_id || '').trim();
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 50;
+        const offset = (page - 1) * limit;
 
         if (!sessionName) {
             return res.status(400).json({ error: 'session_name is required' });
@@ -532,23 +535,94 @@ router.get('/messages', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'from and to (ms) are required' });
         }
 
+        const senderFilterSql = senderId ? `AND (sender_id = $4 OR recipient_id = $4)` : '';
+        const baseParams = senderId
+            ? [sessionName, from, to, senderId, limit, offset]
+            : [sessionName, from, to, limit, offset];
+        const aggregateParams = senderId
+            ? [sessionName, from, to, senderId]
+            : [sessionName, from, to];
+
         try {
-            const result = await pgClient.query(
+            // 1. Fetch Paginated Data
+            const dataResult = await pgClient.query(
                 `
                 SELECT id, message_id, timestamp, sender_id, recipient_id, text, reply_by, status, token_usage, model_used
                 FROM whatsapp_chats
                 WHERE session_name = $1
                   AND timestamp >= $2
                   AND timestamp <= $3
-                  ${senderId ? `AND (sender_id = $4 OR recipient_id = $4)` : ''}
+                  ${senderFilterSql}
                 ORDER BY timestamp DESC
+                LIMIT ${senderId ? '$5 OFFSET $6' : '$4 OFFSET $5'}
                 `,
-                senderId ? [sessionName, from, to, senderId] : [sessionName, from, to]
+                baseParams
             );
 
-            res.json(result.rows);
+            // 2. Fetch Total Count for Pagination
+            const countResult = await pgClient.query(
+                `
+                SELECT COUNT(*) AS total
+                FROM whatsapp_chats
+                WHERE session_name = $1
+                  AND timestamp >= $2
+                  AND timestamp <= $3
+                  ${senderFilterSql}
+                `,
+                aggregateParams
+            );
+
+            // 3. Fetch Filtered Stats
+            const statsResult = await pgClient.query(
+                `
+                SELECT 
+                    COUNT(*) AS total_count,
+                    SUM(CASE WHEN reply_by = 'bot' THEN 1 ELSE 0 END) AS bot_replies,
+                    COALESCE(SUM(token_usage), 0)::int AS total_tokens
+                FROM whatsapp_chats
+                WHERE session_name = $1
+                  AND timestamp >= $2
+                  AND timestamp <= $3
+                  ${senderFilterSql}
+                `,
+                aggregateParams
+            );
+
+            // 4. Fetch Token Breakdown
+            const breakdownResult = await pgClient.query(
+                `
+                SELECT model_used, SUM(token_usage)::int AS total_tokens
+                FROM whatsapp_chats
+                WHERE session_name = $1
+                  AND timestamp >= $2
+                  AND timestamp <= $3
+                  ${senderFilterSql}
+                  AND reply_by = 'bot'
+                  AND token_usage > 0
+                GROUP BY model_used
+                `,
+                aggregateParams
+            );
+
+            const tokenBreakdown = {};
+            breakdownResult.rows.forEach(row => {
+                tokenBreakdown[row.model_used || 'Unknown'] = row.total_tokens;
+            });
+
+            const finalTotal = parseInt(countResult.rows[0].total || 0);
+            const finalBotReplies = parseInt(statsResult.rows[0].bot_replies || 0);
+            const finalTokens = parseInt(statsResult.rows[0].total_tokens || 0);
+
+            res.json({
+                data: dataResult.rows,
+                total: finalTotal,
+                filteredBotReplyCount: finalBotReplies,
+                filteredTokenCount: finalTokens,
+                tokenBreakdown: tokenBreakdown
+            });
         } catch (err) {
             if (err && err.code === '42703') {
+                // Fallback for missing columns
                 const fallbackResult = await pgClient.query(
                     `
                     SELECT id, message_id, timestamp, sender_id, recipient_id, text, reply_by, status
@@ -556,17 +630,29 @@ router.get('/messages', authMiddleware, async (req, res) => {
                     WHERE session_name = $1
                       AND timestamp >= $2
                       AND timestamp <= $3
-                      ${senderId ? `AND (sender_id = $4 OR recipient_id = $4)` : ''}
+                      ${senderFilterSql}
                     ORDER BY timestamp DESC
+                    LIMIT ${senderId ? '$5 OFFSET $6' : '$4 OFFSET $5'}
                     `,
-                    senderId ? [sessionName, from, to, senderId] : [sessionName, from, to]
+                    baseParams
                 );
-                const rows = (fallbackResult.rows || []).map(row => ({
-                    ...row,
-                    token_usage: 0,
-                    model_used: null
-                }));
-                res.json(rows);
+                
+                const fallbackCount = await pgClient.query(
+                    `SELECT COUNT(*) AS total FROM whatsapp_chats WHERE session_name = $1 AND timestamp >= $2 AND timestamp <= $3 ${senderFilterSql}`,
+                    aggregateParams
+                );
+
+                res.json({
+                    data: (fallbackResult.rows || []).map(row => ({
+                        ...row,
+                        token_usage: 0,
+                        model_used: null
+                    })),
+                    total: parseInt(fallbackCount.rows[0].total || 0),
+                    filteredBotReplyCount: 0,
+                    filteredTokenCount: 0,
+                    tokenBreakdown: {}
+                });
                 return;
             }
             throw err;
