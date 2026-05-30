@@ -2791,7 +2791,7 @@ async function processImageWithVision(imageUrl, pageConfig = {}, customOptions =
                 const headers = { 'User-Agent': 'Mozilla/5.0' };
                 if (imageUrl.includes(WAHA_BASE_URL) || imageUrl.includes('wahubbd.salesmanchatbot.online')) {
                     headers['X-Api-Key'] = WAHA_API_KEY;
-                } else if (imageUrl.includes('graph.facebook.com') && (pageConfig.page_access_token || pageConfig.cloud_access_token)) {
+                } else if ((imageUrl.includes('graph.facebook.com') || imageUrl.includes('lookaside.fbsbx.com')) && (pageConfig.page_access_token || pageConfig.cloud_access_token)) {
                     headers['Authorization'] = `Bearer ${pageConfig.page_access_token || pageConfig.cloud_access_token}`;
                 }
 
@@ -3214,7 +3214,7 @@ async function transcribeAudio(audioUrl, config) {
             const activeWahaKey = config.waha_api_key || process.env.WAHA_API_KEY || WAHA_API_KEY;
             headers['X-Api-Key'] = activeWahaKey;
             console.log(`[Audio] Using WAHA Auth for URL: ${audioUrl.substring(0, 50)}...`);
-        } else if (audioUrl.includes('graph.facebook.com') && (config.page_access_token || config.cloud_access_token)) {
+        } else if ((audioUrl.includes('graph.facebook.com') || audioUrl.includes('lookaside.fbsbx.com')) && (config.page_access_token || config.cloud_access_token)) {
             headers['Authorization'] = `Bearer ${config.page_access_token || config.cloud_access_token}`;
         }
 
