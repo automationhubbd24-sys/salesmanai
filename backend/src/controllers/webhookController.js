@@ -572,6 +572,11 @@ async function collectOfficialMediaUrls(message, accessToken) {
 async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, senderName, senderId, wabaId, phoneNumberId) {
     const effectiveSessionName = config.session_name || `official_${wabaId || phoneNumberId}`;
     const resolvedPhoneNumberId = config.phone_number_id || phoneNumberId;
+    const controlConfig = {
+        ...(config || {}),
+        ...((config && config.page_prompts) || {}),
+        ...(pagePrompts || {})
+    };
     let totalVisionTokens = 0;
     let totalAudioTokens = 0;
 
@@ -606,8 +611,8 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
 
     // --- FEATURE FLAGS CHECK (WhatsApp Cloud API) ---
     const hasReplyTo = bufferedMessages.some(m => m.context?.message_id);
-    const isSwipeEnabled = pagePrompts && pagePrompts.swipe_reply !== false && pagePrompts.swipe_reply !== 'false' && pagePrompts.swipe_reply !== 0 && pagePrompts.swipe_reply !== '0';
-    const isReplyEnabled = pagePrompts && pagePrompts.reply_message !== false && pagePrompts.reply_message !== 'false' && pagePrompts.reply_message !== 0 && pagePrompts.reply_message !== '0';
+    const isSwipeEnabled = controlConfig.swipe_reply !== false && controlConfig.swipe_reply !== 'false' && controlConfig.swipe_reply !== 0 && controlConfig.swipe_reply !== '0';
+    const isReplyEnabled = controlConfig.reply_message !== false && controlConfig.reply_message !== 'false' && controlConfig.reply_message !== 0 && controlConfig.reply_message !== '0';
 
     if (hasReplyTo && !isSwipeEnabled) {
         console.log(`[WhatsApp Webhook] Swipe Reply disabled for ${senderId}. Ignoring.`);
@@ -624,7 +629,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     
     // A. Image Analysis
     if (allImages.length > 0) {
-        const imageDetectionEnabled = pagePrompts && pagePrompts.image_detection !== false && pagePrompts.image_detection !== 'false' && pagePrompts.image_detection !== 0 && pagePrompts.image_detection !== '0' && pagePrompts.image_detection !== null;
+        const imageDetectionEnabled = controlConfig.image_detection !== false && controlConfig.image_detection !== 'false' && controlConfig.image_detection !== 0 && controlConfig.image_detection !== '0' && controlConfig.image_detection !== null;
 
         if (!imageDetectionEnabled) {
             console.log(`[WhatsApp Batch] Image Detection disabled. Skipping.`);
@@ -633,8 +638,8 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
             console.log(`[WhatsApp Batch] Analyzing ${allImages.length} images...`);
             let combinedImageAnalysis = "";
             let productAnalysisPrompt = `Analyze this image with 100% precision. Focus on products and text. Output in Bengali format.`;
-            if (pagePrompts && (pagePrompts.image_prompt || pagePrompts.vision_prompt)) {
-                productAnalysisPrompt = pagePrompts.image_prompt || pagePrompts.vision_prompt;
+            if (controlConfig.image_prompt || controlConfig.vision_prompt) {
+                productAnalysisPrompt = controlConfig.image_prompt || controlConfig.vision_prompt;
             }
 
             const analysisPromises = [];
@@ -683,7 +688,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
 
     // B. Audio Transcription
     if (allAudios.length > 0) {
-        const audioEnabled = pagePrompts && pagePrompts.audio_detection !== false && pagePrompts.audio_detection !== 'false' && pagePrompts.audio_detection !== 0 && pagePrompts.audio_detection !== '0' && pagePrompts.audio_detection !== null;
+        const audioEnabled = controlConfig.audio_detection !== false && controlConfig.audio_detection !== 'false' && controlConfig.audio_detection !== 0 && controlConfig.audio_detection !== '0' && controlConfig.audio_detection !== null;
 
         if (audioEnabled) {
             console.log(`[WhatsApp Batch] Transcribing ${allAudios.length} voice messages...`);
@@ -752,58 +757,217 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
 
     // 4. AI Response Generation
     console.log(`[WhatsApp Webhook] Generating AI response for ${senderId}...`);
-    const historyLimit = Math.max(1, Number(config.check_conversion) || 10);
+    const historyLimit = Math.max(1, Number(controlConfig.check_conversion) || 10);
     const history = await dbService.getLastNWhatsAppMessages(effectiveSessionName, senderId, historyLimit);
+
+    let finalUserMessage = combinedText || inboundLogText;
+    const replyToId = bufferedMessages
+        .map(m => m?.context?.id || m?.context?.message_id)
+        .find(Boolean) || null;
+
+    if (replyToId) {
+        try {
+            const quotedText = await dbService.getMessageById(replyToId);
+            if (quotedText && quotedText.trim()) {
+                finalUserMessage = `[Replying to: "${quotedText.trim()}"]\n${finalUserMessage}`;
+            }
+        } catch (replyErr) {
+            console.warn(`[WhatsApp Webhook] Failed to resolve quoted message ${replyToId}: ${replyErr.message}`);
+        }
+    }
+
+    const professionalRules = `\n\n[PROFESSIONAL OUTPUT RULES]\n`
+        + `1) IDENTITY: You are a professional human sales representative. Talk naturally.\n`
+        + `2) TOOL-FIRST: If the user asks about product price/details, you MUST call tools. Do NOT invent prices or descriptions.\n`
+        + `3) IMAGE DECISION: If you decide to send a product's image (based on user request or appropriateness), you MUST append [PRODUCT_ID:id] to your reply. Example: "Yes, it is available. [PRODUCT_ID:82]".\n`
+        + `4) SYSTEM PROMPT PRIORITY: If your custom instructions say NOT to send images proactively, obey that and only use [PRODUCT_ID:id] when the user explicitly asks for a photo.\n`
+        + `5) LISTING PRODUCTS: If asked what products are available, mention a short natural list and ask which one they want.\n`
+        + `6) NO HALLUCINATIONS: Never guess or invent prices. Always use tool data only.\n`;
+
+    const aiConfig = { ...controlConfig };
+    aiConfig.text_prompt = aiConfig.text_prompt
+        ? `${aiConfig.text_prompt}${professionalRules}`
+        : professionalRules;
 
     const aiResponse = await aiService.generateResponse({
         pageId: effectiveSessionName,
         userId: senderId,
-        userMessage: combinedText || inboundLogText,
+        userMessage: finalUserMessage,
         history: history.map(h => ({
             role: h.reply_by === 'bot' ? 'assistant' : 'user',
             content: h.text
         })),
         imageUrls: allImages,
         audioUrls: allAudios,
-        config: config,
+        config: aiConfig,
         platform: 'whatsapp',
         senderName: senderName
     });
 
-    const replyText = typeof aiResponse?.reply === 'string' ? aiResponse.reply.trim() : '';
-    const outboundImages = Array.isArray(aiResponse?.images)
+    let finalReplyText = aiResponse?.reply || aiResponse?.text || '';
+
+    if (finalReplyText && (finalReplyText.trim().startsWith('{') || finalReplyText.trim().startsWith('['))) {
+        try {
+            const cleanJson = finalReplyText.replace(/```json|```/g, '').trim();
+            const parsed = JSON.parse(cleanJson);
+            if (parsed.reply_text) finalReplyText = parsed.reply_text;
+            else if (parsed.reply) finalReplyText = parsed.reply;
+            else if (parsed.message) finalReplyText = parsed.message;
+            else if (parsed.text) finalReplyText = parsed.text;
+        } catch (jsonErr) {
+            console.warn(`[WhatsApp Webhook] JSON rescue failed: ${jsonErr.message}`);
+        }
+    }
+
+    if (aiResponse?.action && aiResponse.action !== 'NONE' && aiResponse.product_id) {
+        try {
+            const product = await dbService.getProductById(aiResponse.product_id);
+            if (product) {
+                if ((aiResponse.action === 'SEND_DETAILS' || aiResponse.action === 'SEND_BOTH') && (!finalReplyText || finalReplyText.length < 50)) {
+                    const numericPrice = parsePrice(product.price);
+                    const priceDisplay = numericPrice > 0 ? `${numericPrice} ${product.currency || 'BDT'}` : 'দাম জানতে ইনবক্স করুন';
+                    finalReplyText = `${finalReplyText || ''}\n\n🛍️ *${product.name}*\n💰 Price: ${priceDisplay}\n📝 Info: ${product.description || 'No details available.'}`.trim();
+                }
+
+                if ((aiResponse.action === 'SEND_PHOTO' || aiResponse.action === 'SEND_BOTH') && product.image_url) {
+                    if (!aiResponse.images) aiResponse.images = [];
+                    if (!aiResponse.images.some(img => (typeof img === 'string' ? img : img?.url) === product.image_url)) {
+                        aiResponse.images.push({
+                            url: product.image_url,
+                            title: product.name,
+                            description: product.description || ''
+                        });
+                    }
+                }
+            }
+        } catch (agenticErr) {
+            console.warn(`[WhatsApp Webhook] Agentic delivery failed: ${agenticErr.message}`);
+        }
+    }
+
+    if (Array.isArray(aiResponse?.image_urls)) {
+        if (!aiResponse.images) aiResponse.images = [];
+        aiResponse.image_urls.forEach(url => {
+            if (url && typeof url === 'string' && url.startsWith('http')) {
+                if (!aiResponse.images.some(img => (typeof img === 'string' ? img : img?.url) === url)) {
+                    aiResponse.images.push({ url, title: 'Product Image' });
+                }
+            }
+        });
+    }
+
+    if (finalReplyText && typeof finalReplyText === 'string') {
+        const extracted = extractImageUrlsFromText(finalReplyText);
+        finalReplyText = sanitizeReplyText(extracted.cleanText);
+        if (extracted.urls.length > 0) {
+            if (!aiResponse.images) aiResponse.images = [];
+            extracted.urls.forEach(url => {
+                if (!aiResponse.images.some(img => (typeof img === 'string' ? img : img?.url) === url)) {
+                    aiResponse.images.push({ url, title: 'Product Image' });
+                }
+            });
+        }
+    }
+
+    if (hasPhotoIntent(history)) {
+        let targetProductId = null;
+        const state = await dbService.getConversationState(effectiveSessionName, senderId);
+        if (state && state.last_product_id) targetProductId = state.last_product_id;
+        if (!targetProductId && aiResponse?.product_id) targetProductId = aiResponse.product_id;
+        if (targetProductId) {
+            const product = await dbService.getProductById(targetProductId);
+            if (product && product.image_url) {
+                const primaryUrl = normalizeImageUrl(product.image_url);
+                const additional = Array.isArray(product.additional_images)
+                    ? product.additional_images.map(normalizeImageUrl).filter(Boolean)
+                    : [];
+                const urls = [primaryUrl, ...additional].filter(Boolean);
+                aiResponse.images = urls.map((url, idx) => ({
+                    url,
+                    title: product.name || (idx === 0 ? 'Product Image' : `Product Image ${idx + 1}`),
+                    description: product.description || ''
+                }));
+            }
+        }
+    }
+
+    let decisionMode = null;
+    if (finalReplyText && typeof finalReplyText === 'string') {
+        const decision = extractDecisionMode(finalReplyText);
+        decisionMode = decision.mode;
+        finalReplyText = decision.cleaned;
+    }
+
+    let promptMode = decisionMode || detectImageMode(aiConfig.text_prompt);
+    const sendModeMatch = finalReplyText && typeof finalReplyText === 'string'
+        ? finalReplyText.match(/\[SEND_MODE:\s*(image_only|text_and_image|text_only)\]/i)
+        : null;
+
+    if (sendModeMatch) {
+        promptMode = sendModeMatch[1].toLowerCase();
+        finalReplyText = finalReplyText.replace(/\[SEND_MODE:\s*(image_only|text_and_image|text_only)\]/i, '').trim();
+    }
+
+    if (promptMode === 'image_only' && Array.isArray(aiResponse?.images) && aiResponse.images.length > 0) {
+        finalReplyText = '';
+    }
+
+    if (finalReplyText && shouldBlockOutgoingReply(finalReplyText)) {
+        await dbService.saveWhatsAppChat({
+            session_name: effectiveSessionName,
+            sender_id: effectiveSessionName,
+            recipient_id: senderId,
+            message_id: `fail_${Date.now()}`,
+            text: `[AI Error - Silent] JSON reply blocked`,
+            timestamp: Date.now(),
+            status: 'ai_ignored',
+            reply_by: 'bot'
+        });
+        return;
+    }
+
+    if (aiResponse?.product_id) {
+        try {
+            await dbService.updateConversationState(effectiveSessionName, senderId, { last_product_id: aiResponse.product_id });
+        } catch (stateErr) {
+            console.warn(`[WhatsApp Webhook] Failed to update conversation state: ${stateErr.message}`);
+        }
+    }
+
+    const allowImageSend = controlConfig.image_send !== false && controlConfig.image_send !== 'false' && controlConfig.image_send !== 0 && controlConfig.image_send !== '0';
+    const outboundImages = allowImageSend && Array.isArray(aiResponse?.images)
         ? aiResponse.images.map(img => (typeof img === 'string' ? { url: img, title: null } : { url: img?.url || null, title: img?.title || null })).filter(img => img.url)
         : [];
 
-    if (!replyText && outboundImages.length === 0) {
+    if (!finalReplyText && outboundImages.length === 0) {
         console.log(`[WhatsApp Webhook] AI stayed silent for ${senderId}`);
         return;
     }
 
-    console.log(`[WhatsApp Webhook] AI generated response for ${senderId}: "${replyText.substring(0, 30)}..."`);
+    console.log(`[WhatsApp Webhook] AI generated response for ${senderId}: "${String(finalReplyText || '').substring(0, 30)}..."`);
 
     // 5. Send Responses
-    if (replyText) {
+    if (finalReplyText) {
         console.log(`[WhatsApp Webhook] Sending text reply to ${senderId}...`);
-        await whatsappCloudService.sendTextMessage(resolvedPhoneNumberId, config.cloud_access_token, senderId, replyText);
+        await whatsappCloudService.sendTextMessage(resolvedPhoneNumberId, config.cloud_access_token, senderId, finalReplyText);
     }
 
     for (let i = 0; i < outboundImages.length; i++) {
         const image = outboundImages[i];
-        const caption = !replyText && i === 0 && image.title ? String(image.title).slice(0, 1024) : undefined;
+        const caption = !finalReplyText && i === 0 && image.title ? String(image.title).slice(0, 1024) : undefined;
         console.log(`[WhatsApp Webhook] Sending image reply to ${senderId}...`);
         await whatsappCloudService.sendImageMessage(resolvedPhoneNumberId, config.cloud_access_token, senderId, image.url, caption);
     }
 
     // 6. Save Bot Reply to DB
-    if (replyText) {
+    if (finalReplyText) {
         console.log(`[WhatsApp Webhook] Saving bot reply for ${senderId}...`);
         await dbService.saveWhatsAppChat({
             session_name: effectiveSessionName,
             sender_id: effectiveSessionName,
             recipient_id: senderId,
             message_id: `reply_${bufferedMessages[0].id}`,
-            text: replyText,
+            text: finalReplyText,
             timestamp: Date.now(),
             status: 'sent',
             reply_by: 'bot'

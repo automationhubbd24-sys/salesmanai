@@ -946,7 +946,17 @@ router.put('/config/:id', async (req, res) => {
         );
 
         if (updateResult.rowCount > 0) {
-            whatsappController.clearPageCache(updateResult.rows[0].session_name);
+            const updatedRow = updateResult.rows[0];
+            const cacheKeys = [
+                updatedRow.session_name,
+                updatedRow.waba_id,
+                updatedRow.phone_number_id
+            ].filter(Boolean);
+
+            for (const cacheKey of cacheKeys) {
+                whatsappController.clearPageCache(cacheKey);
+                webhookController.clearPageCache(cacheKey);
+            }
         }
 
         res.json(updateResult.rows[0]);
