@@ -1475,14 +1475,64 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
         return;
     }
 
-    // --- PRE-PROCESS COMBINED TEXT FOR CACHE ---
+    // --- PRE-PROCESS METADATA & FEATURE FLAGS ---
     let combinedText = "";
     let allImages = [];
     let allAudios = [];
+    let hasReplyTo = false;
+    let hasText = false;
+    let hasImages = false;
+    let hasAudios = false;
+
     for (const msg of messages) {
-        if (msg.text) combinedText += msg.text + "\n";
-        if (msg.images) allImages.push(...msg.images);
-        if (msg.audios) allAudios.push(...msg.audios);
+        if (msg.text) {
+            combinedText += msg.text + "\n";
+            if (String(msg.text).trim()) hasText = true;
+        }
+        if (msg.images && msg.images.length > 0) {
+            allImages.push(...msg.images);
+            hasImages = true;
+        }
+        if (msg.audios && msg.audios.length > 0) {
+            allAudios.push(...msg.audios);
+            hasAudios = true;
+        }
+        if (msg.reply_to || msg.quoted_text) hasReplyTo = true;
+    }
+
+    // --- FEATURE FLAGS CHECK (Respect Bot Control settings) ---
+    if (pageConfig) {
+        const isSwipeEnabled = pageConfig.swipe_reply !== false && pageConfig.swipe_reply !== 'false' && pageConfig.swipe_reply !== 0 && pageConfig.swipe_reply !== '0';
+        if (hasReplyTo && !isSwipeEnabled) {
+            console.log(`[WA] Swipe Reply disabled (swipe_reply=false) for session ${sessionName}. Ignoring.`);
+            await dbService.saveWhatsAppChat({
+                session_name: sessionName,
+                sender_id: sessionName,
+                recipient_id: senderId,
+                message_id: `sys_${Date.now()}`,
+                text: `[SYSTEM] Swipe Reply Disabled in Settings.`,
+                timestamp: Date.now(),
+                status: 'system_info',
+                reply_by: 'system'
+            });
+            return;
+        }
+
+        const isReplyEnabled = pageConfig.reply_message !== false && pageConfig.reply_message !== 'false' && pageConfig.reply_message !== 0 && pageConfig.reply_message !== '0';
+        if (!hasReplyTo && !isReplyEnabled) {
+            console.log(`[WA] Reply Message disabled (reply_message=false) for session ${sessionName}. Ignoring.`);
+            await dbService.saveWhatsAppChat({
+                session_name: sessionName,
+                sender_id: sessionName,
+                recipient_id: senderId,
+                message_id: `sys_${Date.now()}`,
+                text: `[SYSTEM] Reply Message Disabled in Settings.`,
+                timestamp: Date.now(),
+                status: 'system_info',
+                reply_by: 'system'
+            });
+            return;
+        }
     }
 
     // --- QUICK SEMANTIC CACHE CHECK (ULTRA-FAST PATH) ---
@@ -1621,67 +1671,15 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
         console.warn(`[WA] Failed to check DB lock: ${err.message}`);
     }
 
-    let hasReplyTo = false;
-    let hasText = false;
-    let hasImages = false;
-    let hasAudios = false;
-
+    // Metadata already extracted at the top of processBufferedMessages
     for (const msg of messages) {
-        if (msg.text) {
-            combinedText += msg.text + "\n";
-            if (String(msg.text).trim()) hasText = true;
-        }
         if (msg.reply_to) {
             replyToId = msg.reply_to; 
-            hasReplyTo = true;
             if (msg.quoted_text) replyToTextFallback = msg.quoted_text;
         } else if (msg.quoted_text) {
             replyToTextFallback = msg.quoted_text;
-            hasReplyTo = true;
-        }
-        if (msg.images && msg.images.length > 0) {
-            hasImages = true;
-        }
-        if (msg.audios && msg.audios.length > 0) {
-            hasAudios = true;
         }
         if (msg.sender_name && msg.sender_name !== 'Unknown') senderName = msg.sender_name;
-    }
-
-    if (pageConfig) {
-        const isSwipeEnabled = pageConfig.swipe_reply !== false && pageConfig.swipe_reply !== 'false' && pageConfig.swipe_reply !== 0 && pageConfig.swipe_reply !== '0';
-        if (hasReplyTo && !isSwipeEnabled) {
-            const logMsg = `[WA] Swipe Reply disabled (swipe_reply=false) for session ${sessionName}. Ignoring.`;
-            console.log(logMsg);
-            await dbService.saveWhatsAppChat({
-                session_name: sessionName,
-                sender_id: sessionName,
-                recipient_id: senderId,
-                message_id: `sys_${Date.now()}`,
-                text: `[SYSTEM] Swipe Reply Disabled in Settings.`,
-                timestamp: Date.now(),
-                status: 'system_info',
-                reply_by: 'system'
-            });
-            return;
-        }
-
-        const isReplyEnabled = pageConfig.reply_message !== false && pageConfig.reply_message !== 'false' && pageConfig.reply_message !== 0 && pageConfig.reply_message !== '0';
-        if (!hasReplyTo && !isReplyEnabled) {
-            const logMsg = `[WA] Reply Message disabled (reply_message=false) for session ${sessionName}. Ignoring.`;
-            console.log(logMsg);
-            await dbService.saveWhatsAppChat({
-                session_name: sessionName,
-                sender_id: sessionName,
-                recipient_id: senderId,
-                message_id: `sys_${Date.now()}`,
-                text: `[SYSTEM] Reply Message Disabled in Settings.`,
-                timestamp: Date.now(),
-                status: 'system_info',
-                reply_by: 'system'
-            });
-            return;
-        }
     }
     // --- MERGE LOGIC (Messenger Style) ---
     // User Update: Use simple concatenation like Messenger to fix "merge message not working"

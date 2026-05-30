@@ -604,6 +604,20 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     const allImages = [...imageUrls];
     const allAudios = [...audioUrls];
 
+    // --- FEATURE FLAGS CHECK (WhatsApp Cloud API) ---
+    const hasReplyTo = bufferedMessages.some(m => m.context?.message_id);
+    const isSwipeEnabled = pagePrompts && pagePrompts.swipe_reply !== false && pagePrompts.swipe_reply !== 'false' && pagePrompts.swipe_reply !== 0 && pagePrompts.swipe_reply !== '0';
+    const isReplyEnabled = pagePrompts && pagePrompts.reply_message !== false && pagePrompts.reply_message !== 'false' && pagePrompts.reply_message !== 0 && pagePrompts.reply_message !== '0';
+
+    if (hasReplyTo && !isSwipeEnabled) {
+        console.log(`[WhatsApp Webhook] Swipe Reply disabled for ${senderId}. Ignoring.`);
+        return;
+    }
+    if (!hasReplyTo && !isReplyEnabled) {
+        console.log(`[WhatsApp Webhook] Reply Message disabled for ${senderId}. Ignoring.`);
+        return;
+    }
+
     console.log(`[WhatsApp Batch] Processing ${bufferedMessages.length} message(s) for ${senderId}`);
 
     // --- MEDIA PROCESSING (Upgraded to Messenger Style) ---
