@@ -153,13 +153,8 @@ function isTruthyFlag(value) {
 }
 
 function isProPlusMode(config = {}) {
-    return config && config.cheap_engine !== false && isTruthyFlag(config.pro_plus_mode);
-}
-
-function isSalesmanchatbotServiceKey(apiKey) {
-    if (typeof apiKey !== 'string') return false;
-    const normalized = apiKey.trim();
-    return normalized.startsWith('salesmanchatbot-') || normalized.startsWith('salesman_');
+    const isProPlusModel = config.chat_model === 'salesmanchatbot-pro-plus' || config.chatmodel === 'salesmanchatbot-pro-plus';
+    return config && config.cheap_engine !== false && (isTruthyFlag(config.pro_plus_mode) || isProPlusModel);
 }
 
 function getProPlusBaseUrl() {
@@ -2377,20 +2372,9 @@ ${productContext || "No specific product context provided yet."}
 
     // --- UNIFIED AI REQUEST LOGIC ---
     const isOurOwnProvider = defaultProvider === 'salesmanchatbot' || defaultProvider === 'system';
-    const hasCustomBaseUrl = Boolean(String(pageConfig.custom_base_url || pageConfig.base_url || '').trim());
-    const isSalesmanServiceKey = isSalesmanchatbotServiceKey(pageConfig.api_key);
-    let ownApiResolved = null;
-
-    if (BRANDED_MODELS.includes(defaultModel)) {
-        try {
-            ownApiResolved = await resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, false, false);
-        } catch (resolveErr) {
-            console.warn(`[AI] Failed to resolve branded own-api model ${defaultModel}:`, resolveErr.message);
-        }
-    }
 
     // SPECIAL PATH: Use Own SalesmanChatbot API when selected
-    if (!useCheapEngine && defaultProvider === 'salesmanchatbot' && pageConfig.api_key && isSalesmanServiceKey && !hasCustomBaseUrl) {
+    if (!useCheapEngine && defaultProvider === 'salesmanchatbot' && pageConfig.api_key) {
         try {
             // FIX: Use absolute URL for Production to avoid 'localhost' issues in external API calls
             // Standardizing URL to match n8n and external integration expectations
@@ -2467,9 +2451,9 @@ ${productContext || "No specific product context provided yet."}
     // we use it regardless of cheap_engine setting to give them full control.
     const hasOwnKey = pageConfig.api_key && 
                       pageConfig.api_key !== 'MANAGED_SECRET_KEY' && 
-                      !isSalesmanServiceKey;
+                      !pageConfig.api_key.startsWith('salesman_');
     
-    if (hasOwnKey) {
+    if (hasOwnKey && !isOurOwnProvider) {
         console.log(`[AI] Phase 1: Using User's OWN API Key (${pageConfig.ai_provider})`);
         userKeyAttempted = true;
         const userKeys = pageConfig.api_key.split(',').map(k => k.trim()).filter(k => k);
@@ -2483,14 +2467,10 @@ ${productContext || "No specific product context provided yet."}
         let lastPhase1Error = null;
         for (const currentKey of userKeys) {
             let currentProvider = defaultProvider;
-            const modelToUse = ownApiResolved?.finalModel || pageConfig.chat_model;
-            const brandedModelName = ownApiResolved?.targetEngineName || pageConfig.chat_model;
             
             // Priority: If user explicitly selected 'custom' provider in UI, force it regardless of key format
-            if (defaultProvider === 'custom' || hasCustomBaseUrl) {
+            if (defaultProvider === 'custom') {
                 currentProvider = 'custom';
-            } else if (defaultProvider === 'salesmanchatbot' && ownApiResolved?.finalProvider) {
-                currentProvider = ownApiResolved.finalProvider;
             } else {
                 // Auto-detect based on key format only if not custom
                 if (currentKey.startsWith('sk-or-v1')) currentProvider = 'openrouter';
@@ -2505,29 +2485,30 @@ ${productContext || "No specific product context provided yet."}
             else if (currentProvider.includes('groq')) baseURL = 'https://api.groq.com/openai/v1';
             else if (currentProvider.includes('xai')) baseURL = 'https://api.x.ai/v1';
             else if (currentProvider.includes('mistral')) baseURL = 'https://api.mistral.ai/v1';
-            else if (currentProvider === 'custom' && hasCustomBaseUrl) {
-                 baseURL = String(pageConfig.custom_base_url || pageConfig.base_url).trim();
+            else if (currentProvider === 'custom' && pageConfig.custom_base_url) {
+                 baseURL = pageConfig.custom_base_url;
                  console.log(`[AI] Using Custom Base URL: ${baseURL}`);
             }
 
             try {
+                const modelToUse = pageConfig.chat_model;
                 if (!modelToUse) {
                      throw new Error("No model selected for Own API. Please select a model in your settings.");
                 }
 
                 // Determine if proxy should be used
                 // User Request: Proxy ONLY for branded models to save costs and avoid 429/400 errors for direct keys.
-                const isBranded = BRANDED_MODELS.includes(brandedModelName);
-                const useProxy = isBranded && currentProvider !== 'custom'; 
+                const isBranded = BRANDED_MODELS.includes(modelToUse);
+                const useProxy = isBranded; 
                 
                 let proxyAgent = null;
                 if (useProxy) {
                     if (currentProvider.includes('google') || currentProvider.includes('gemini')) {
-                        proxyAgent = getGeminiProxyAgent(baseURL, true, isBranded ? brandedModelName : 'gemini-tester');
+                        proxyAgent = getGeminiProxyAgent(baseURL, true, isBranded ? modelToUse : 'gemini-tester');
                     } else if (currentProvider.includes('groq')) {
-                        proxyAgent = getGroqProxyAgent(true, isBranded ? brandedModelName : 'groq-tester');
+                        proxyAgent = getGroqProxyAgent(true, isBranded ? modelToUse : 'groq-tester');
                     } else {
-                        const proxy = getProxyUrl(isBranded ? brandedModelName : 'custom-tester');
+                        const proxy = getProxyUrl(isBranded ? modelToUse : 'custom-tester');
                         proxyAgent = createProxyAgent(proxy);
                     }
                 }
@@ -2543,7 +2524,7 @@ ${productContext || "No specific product context provided yet."}
                         headers: { 'User-Agent': 'Mozilla/5.0' }
                     })
                     .then(res => {
-                        console.log(`[AI Engine] 🌐 Proxy Active | IP: ${res.data.ip} | Country: ${res.data.country} | Model: ${brandedModelName}`);
+                        console.log(`[AI Engine] 🌐 Proxy Active | IP: ${res.data.ip} | Country: ${res.data.country} | Model: ${modelToUse}`);
                     })
                     .catch(() => {});
                 }
@@ -2987,12 +2968,7 @@ Rules:
         if (pageConfig.cheap_engine === false) {
              // Paid User: STRICTLY use configured model.
              // User Request: Use specific models for specific tasks if available.
-            const selectedVisionModel = pageConfig.vision_model || pageConfig.chat_model || pageConfig.chatmodel;
-            const customVisionBaseUrl = String(pageConfig.custom_base_url || pageConfig.base_url || '').trim();
-            const isCustomVisionProvider = providerHint === 'custom' || Boolean(customVisionBaseUrl);
-            const userModel = (resolved && BRANDED_MODELS.includes(selectedVisionModel))
-                ? resolved.finalModel
-                : selectedVisionModel;
+             const userModel = pageConfig.vision_model || pageConfig.chat_model || pageConfig.chatmodel;
              
              if (userModel) {
                  model = userModel;
@@ -3005,20 +2981,17 @@ Rules:
                 if (userKeys.length > 0) apiKey = userKeys[0];
             }
 
-            const isSalesmanVisionServiceKey = isSalesmanchatbotServiceKey(apiKey);
-            if (providerHint === 'salesmanchatbot' && isSalesmanVisionServiceKey && !isCustomVisionProvider) {
+            if (providerHint === 'salesmanchatbot') {
                 apiKey = null;
             }
             
-            if (apiKey && isSalesmanchatbotServiceKey(apiKey) && !isCustomVisionProvider) {
+            if (apiKey && apiKey.startsWith('salesmanchatbot-')) {
                 apiKey = null;
             }
 
              // Detect Provider from Key or Config
              if (apiKey) {
-                 if (isCustomVisionProvider) provider = 'custom';
-                 else if (providerHint === 'salesmanchatbot' && resolved?.finalProvider) provider = resolved.finalProvider;
-                 else if (apiKey.startsWith('sk-or-v1')) provider = 'openrouter';
+                 if (apiKey.startsWith('sk-or-v1')) provider = 'openrouter';
                  else if (apiKey.startsWith('AIza')) provider = 'google';
                  else if (apiKey.startsWith('gsk_')) provider = 'groq';
                  else if (pageConfig.ai === 'custom') provider = 'custom';
@@ -3036,14 +3009,14 @@ Rules:
     let lastError = null;
 
     // Resolve models and provider once
-    if (!resolved || (pageConfig.cheap_engine === false && model && provider)) {
+    if (!resolved) {
         if (pageConfig.cheap_engine === false && model && provider) {
             resolved = {
                 finalModel: model,
                 fallbackModel: null,
                 finalProvider: provider,
                 modality: 'vision',
-                targetEngineName: resolved?.targetEngineName || modelHint || model
+                targetEngineName: model
             };
         } else {
             resolved = await resolveSalesmanchatbotEngine(pageConfig, providerHint, modelHint, true, false);
@@ -3100,7 +3073,7 @@ Rules:
                 // 2. Setup Proxy
                 const isBranded = BRANDED_MODELS.includes(resolved.targetEngineName || modelHint);
                 let proxyAgent = null;
-                if (isBranded && currentProvider !== 'custom') {
+                if (isBranded) {
                     if (currentProvider === 'google' || currentProvider === 'gemini') {
                         proxyAgent = getGeminiProxyAgent('google', true, resolved.targetEngineName || modelHint);
                     } else if (currentProvider === 'groq') {
@@ -3356,7 +3329,7 @@ async function transcribeAudio(audioUrl, config) {
     }
 
     let resolved = null;
-    if (providerHint === 'salesmanchatbot' || BRANDED_MODELS.includes(modelHint)) {
+    if ((providerHint === 'salesmanchatbot' || BRANDED_MODELS.includes(modelHint)) && !safeConfig.api_key) {
         resolved = await resolveSalesmanchatbotEngine(safeConfig, providerHint, modelHint, false, true);
     }
 
@@ -3375,28 +3348,18 @@ async function transcribeAudio(audioUrl, config) {
             const userProvider = safeConfig.ai || safeConfig.operator || safeConfig.ai_provider;
             console.log(`[Audio Debug] User Key Found: ${userKey.substring(0, 8)}... Provider: ${userProvider}`);
             
-            const customAudioBase = String(safeConfig.custom_base_url || safeConfig.base_url || '').trim();
-            const isCustomAudioProvider = userProvider === 'custom' || Boolean(customAudioBase);
-            const resolvedUserModel = resolved?.finalModel || userModel;
-
-            if (userProvider === 'salesmanchatbot' && isSalesmanchatbotServiceKey(userKey) && !isCustomAudioProvider) {
+            if (userProvider === 'salesmanchatbot') {
                 console.log(`[Audio] User Key is a SalesmanChatbot Key. Skipping User Key logic to use System Routing.`);
                 userKey = null; // Force Phase 2 (System Keys / Smart Routing)
-            } else if (isCustomAudioProvider) {
+            } else if (userProvider === 'custom') {
                 // Support Custom OpenAI-compatible Provider
+                const customBase = safeConfig.custom_base_url || safeConfig.base_url;
                 priorityChain.push({ 
                     provider: 'custom', 
-                    model: resolvedUserModel || 'whisper-1', 
+                    model: userModel || 'whisper-1', 
                     name: `Custom (${userProvider})`, 
                     key: userKey,
-                    baseURL: customAudioBase
-                });
-            } else if (userProvider === 'salesmanchatbot' && resolved?.finalProvider && resolvedUserModel) {
-                priorityChain.push({
-                    provider: resolved.finalProvider,
-                    model: resolvedUserModel,
-                    name: `Resolved (${resolved.targetEngineName})`,
-                    key: userKey
+                    baseURL: customBase
                 });
             } else {
                 if (userKey.startsWith('sk-') && !userKey.startsWith('sk-or')) {
@@ -3411,7 +3374,7 @@ async function transcribeAudio(audioUrl, config) {
                         console.log(`[Audio Debug] Missing user model for Gemini key. Skipping user key for audio.`);
                         if (!isOwnAPI) userKey = null;
                     } else {
-                        priorityChain.push({ provider: 'google', model: resolvedUserModel, name: `Gemini (${resolvedUserModel}) (User Key)`, key: userKey });
+                        priorityChain.push({ provider: 'google', model: userModel, name: `Gemini (${userModel}) (User Key)`, key: userKey });
                     }
                 } else {
                     console.log(`[Audio Debug] Unknown Key Prefix.`);
@@ -3534,7 +3497,7 @@ async function transcribeAudio(audioUrl, config) {
                 const useProxy = isBrandedEngine;
                 
                 let proxyAgent = null;
-                if (useProxy && option.provider !== 'custom') {
+                if (useProxy) {
                     if (option.provider === 'google') {
                         proxyAgent = getGeminiProxyAgent('google', true, isBrandedEngine ? (resolved?.targetEngineName || modelHint || config.chat_model) : 'managed');
                     } else if (option.provider === 'groq') {
