@@ -608,6 +608,22 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     let combinedText = workflow.combinedText;
     const allImages = [...imageUrls];
     const allAudios = [...audioUrls];
+    const inboundLogText = combinedText
+        || (allImages.length > 0 ? `[User sent ${allImages.length} image(s)]` : '')
+        || (allAudios.length > 0 ? `[User sent ${allAudios.length} audio message(s)]` : '');
+
+    if (inboundLogText) {
+        await dbService.saveWhatsAppChat({
+            session_name: effectiveSessionName,
+            sender_id: senderId,
+            recipient_id: effectiveSessionName,
+            message_id: bufferedMessages[0].id,
+            text: inboundLogText,
+            timestamp: Date.now(),
+            status: 'received',
+            reply_by: 'user'
+        });
+    }
 
     // --- FEATURE FLAGS CHECK (WhatsApp Cloud API) ---
     const hasReplyTo = bufferedMessages.some(m => m.context?.message_id);
@@ -739,10 +755,6 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     }
 
     // 3. Save User Message to DB (Main Log)
-    const inboundLogText = combinedText
-        || (allImages.length > 0 ? `[User sent ${allImages.length} image(s)]` : '')
-        || (allAudios.length > 0 ? `[User sent ${allAudios.length} audio message(s)]` : '');
-
     console.log(`[WhatsApp Webhook] Saving inbound chat for ${senderId}...`);
     await dbService.saveWhatsAppChat({
         session_name: effectiveSessionName,

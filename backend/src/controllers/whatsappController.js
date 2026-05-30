@@ -1500,6 +1500,24 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
         if (msg.reply_to || msg.quoted_text) hasReplyTo = true;
     }
 
+    const primaryMsgId = messages.length > 0 ? messages[0].id : `usr_${Date.now()}`;
+    const inboundLogText = combinedText.trim()
+        || (allImages.length > 0 ? `[User sent ${allImages.length} image(s)]` : '')
+        || (allAudios.length > 0 ? `[User sent ${allAudios.length} audio message(s)]` : '');
+
+    if (inboundLogText) {
+        await dbService.saveWhatsAppChat({
+            session_name: sessionName,
+            sender_id: senderId,
+            recipient_id: sessionName,
+            message_id: primaryMsgId,
+            text: inboundLogText,
+            timestamp: Date.now(),
+            status: 'received',
+            reply_by: 'user'
+        });
+    }
+
     // --- FEATURE FLAGS CHECK (Respect Bot Control settings) ---
     if (pageConfig) {
         const isSwipeEnabled = pageConfig.swipe_reply !== false && pageConfig.swipe_reply !== 'false' && pageConfig.swipe_reply !== 0 && pageConfig.swipe_reply !== '0';
@@ -1957,9 +1975,6 @@ STRICT RULES:
         // User Requirement: Save message to Supabase even if locked (Handover).
         if (finalOutput && finalOutput.trim() !== "") {
              try {
-                 // Use the ID of the first message in the batch for consistency
-                 const primaryMsgId = messages.length > 0 ? messages[0].id : `usr_${Date.now()}`;
-                 
                  await dbService.saveWhatsAppChat({
                     session_name: sessionName,
                     sender_id: senderId,
