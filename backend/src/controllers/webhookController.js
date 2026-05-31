@@ -114,6 +114,50 @@ function trackBotReply(senderId, text) {
     recentBotReplies.set(senderId, history);
 }
 
+async function hasRecentOutgoingFbMatch(pageId, recipientId, text, allowedReplyBy = ['bot', 'system'], windowMs = 120000) {
+    const normalized = normalizeText(text);
+    if (!pageId || !recipientId || !normalized) return false;
+
+    try {
+        const history = await dbService.getFbChatHistory(pageId, recipientId, 20);
+        const now = Date.now();
+        return history.some(msg => {
+            if (!allowedReplyBy.includes(msg.reply_by)) return false;
+            if (Math.abs(now - Number(msg.timestamp || 0)) > windowMs) return false;
+            return normalizeText(msg.text || '') === normalized;
+        });
+    } catch (err) {
+        console.warn(`[Echo Guard] Failed DB recent-outgoing check for ${pageId}_${recipientId}: ${err.message}`);
+        return false;
+    }
+}
+
+async function saveFbOutgoingLog({
+    pageId,
+    recipientId,
+    messageId,
+    text,
+    status = 'sending',
+    replyBy = 'bot',
+    token = 0,
+    aiModel = null
+}) {
+    if (!messageId || !text) return;
+
+    await dbService.saveFbChat({
+        page_id: pageId,
+        sender_id: pageId,
+        recipient_id: recipientId,
+        message_id: messageId,
+        text,
+        timestamp: Date.now(),
+        status,
+        reply_by: replyBy,
+        token,
+        ai_model: aiModel
+    });
+}
+
 // Helper to log to file (Async)
 function logToFile(message) {
     const logPath = path.join(__dirname, '../../debug.log');
@@ -959,9 +1003,30 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     console.log(`[WhatsApp Webhook] AI generated response for ${senderId}: "${String(finalReplyText || '').substring(0, 30)}..."`);
 
     // 5. Send Responses
+    const pendingTextMessageId = `reply_${bufferedMessages[0].id}`;
     if (finalReplyText) {
+        await dbService.saveWhatsAppChat({
+            session_name: effectiveSessionName,
+            sender_id: effectiveSessionName,
+            recipient_id: senderId,
+            message_id: pendingTextMessageId,
+            text: finalReplyText,
+            timestamp: Date.now(),
+            status: 'sending',
+            reply_by: 'bot'
+        });
         console.log(`[WhatsApp Webhook] Sending text reply to ${senderId}...`);
         await whatsappCloudService.sendTextMessage(resolvedPhoneNumberId, config.cloud_access_token, senderId, finalReplyText);
+        await dbService.saveWhatsAppChat({
+            session_name: effectiveSessionName,
+            sender_id: effectiveSessionName,
+            recipient_id: senderId,
+            message_id: pendingTextMessageId,
+            text: finalReplyText,
+            timestamp: Date.now(),
+            status: 'sent',
+            reply_by: 'bot'
+        });
     }
 
     for (let i = 0; i < outboundImages.length; i++) {
@@ -969,21 +1034,6 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         const caption = !finalReplyText && i === 0 && image.title ? String(image.title).slice(0, 1024) : undefined;
         console.log(`[WhatsApp Webhook] Sending image reply to ${senderId}...`);
         await whatsappCloudService.sendImageMessage(resolvedPhoneNumberId, config.cloud_access_token, senderId, image.url, caption);
-    }
-
-    // 6. Save Bot Reply to DB
-    if (finalReplyText) {
-        console.log(`[WhatsApp Webhook] Saving bot reply for ${senderId}...`);
-        await dbService.saveWhatsAppChat({
-            session_name: effectiveSessionName,
-            sender_id: effectiveSessionName,
-            recipient_id: senderId,
-            message_id: `reply_${bufferedMessages[0].id}`,
-            text: finalReplyText,
-            timestamp: Date.now(),
-            status: 'sent',
-            reply_by: 'bot'
-        });
     }
 
     if (outboundImages.length > 0) {
@@ -1115,6 +1165,7 @@ async function queueMessage(event, entryPageId = null) {
     // --- ECHO HANDLING (Admin Replies & Bot Confirmations) ---
     const senderIdRaw = event.sender?.id;
     const recipientIdRaw = event.recipient?.id;
+    const isAppEcho = Boolean(event.message?.is_echo && event.message?.app_id);
     
     // Robust Admin Detection:
     // 1. Explicit Echo flag
@@ -1166,9 +1217,23 @@ async function queueMessage(event, entryPageId = null) {
 
         // 2. Check DB (Fallback)
         try {
+            const recentOutgoingDbMatch = text
+                ? await hasRecentOutgoingFbMatch(pageId, messageRecipientId, text, ['bot', 'system'])
+                : false;
+
+            if (isAppEcho && recentOutgoingDbMatch) {
+                console.log(`[Echo] Blocked app echo by recent DB outgoing match: ${text.substring(0, 20)}...`);
+                return;
+            }
+
             const existingChat = await dbService.getFbChatById(messageId);
             if (existingChat && (existingChat.reply_by === 'bot' || existingChat.reply_by === 'system')) {
                 return; 
+            }
+
+            if (recentOutgoingDbMatch) {
+                console.log(`[Echo] Blocked by DB text match: ${text.substring(0, 20)}...`);
+                return;
             }
 
             console.log(`[Echo] ADMIN ACTION DETECTED: Page ${pageId} -> User ${messageRecipientId}. Text: ${text.substring(0, 20)}...`);
@@ -1356,20 +1421,27 @@ async function queueMessage(event, entryPageId = null) {
 
                 if (cached) {
                     console.log(`[FB] ⚡ ULTRA-FAST CACHE HIT! (Context: ${contextId || 'None'})`);
+                    const pendingMessageId = `cache_${Date.now()}`;
+                    await saveFbOutgoingLog({
+                        pageId,
+                        recipientId: senderId,
+                        messageId: pendingMessageId,
+                        text: cached,
+                        status: 'sending',
+                        replyBy: 'bot',
+                        aiModel: 'semantic-cache'
+                    });
                     trackBotReply(senderId, cached);
                     await facebookService.sendMessage(pageId, senderId, cached, pageConfig.page_access_token);
-                    
-                    dbService.saveFbChat({
-                        page_id: pageId,
-                        sender_id: pageId,
-                        recipient_id: senderId,
-                        message_id: `cache_${Date.now()}`,
+                    await saveFbOutgoingLog({
+                        pageId,
+                        recipientId: senderId,
+                        messageId: pendingMessageId,
                         text: cached,
-                        timestamp: Date.now(),
                         status: 'sent',
-                        reply_by: 'bot',
-                        ai_model: 'semantic-cache'
-                    }).catch(() => {});
+                        replyBy: 'bot',
+                        aiModel: 'semantic-cache'
+                    });
                     
                     return; // EXIT EARLY
                 }
@@ -1540,6 +1612,16 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
 
                 if (cached) {
                     console.log(`[FB] ⚡ INSTANT CACHE HIT!`);
+                    const pendingMessageId = `cache_${Date.now()}`;
+                    await saveFbOutgoingLog({
+                        pageId,
+                        recipientId: senderId,
+                        messageId: pendingMessageId,
+                        text: cached,
+                        status: 'sending',
+                        replyBy: 'bot',
+                        aiModel: 'semantic-cache'
+                    });
                     
                     // Register bot reply in memory BEFORE sending to block the echo
                     trackBotReply(senderId, cached);
@@ -1547,18 +1629,15 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                     // Instant FB Send
                     await facebookService.sendMessage(pageId, senderId, cached, pageConfig.page_access_token);
                     
-                    // Background logging
-                    dbService.saveFbChat({
-                        page_id: pageId,
-                        sender_id: pageId,
-                        recipient_id: senderId,
-                        message_id: `cache_${Date.now()}`,
+                    await saveFbOutgoingLog({
+                        pageId,
+                        recipientId: senderId,
+                        messageId: pendingMessageId,
                         text: cached,
-                        timestamp: Date.now(),
                         status: 'sent',
-                        reply_by: 'bot',
-                        ai_model: 'semantic-cache'
-                    }).catch(() => {});
+                        replyBy: 'bot',
+                        aiModel: 'semantic-cache'
+                    });
                     
                     return; 
                 }
@@ -2929,22 +3008,6 @@ STRICT RULES:
         if (replyText && replyText.length > 0) {
             // FIX: If AI says "no reply", we skip sending it to Facebook but still save it to our DB for history/tracking.
             const isNoReply = replyText.toLowerCase().trim() === 'no reply';
-            
-            if (!isNoReply) {
-                // Track bot reply in memory BEFORE sending to block the echo
-                trackBotReply(senderId, replyText);
-                
-                try {
-                    const sendResult = await facebookService.sendMessage(pageId, senderId, replyText, pageConfig.page_access_token);
-                    botMessageId = sendResult?.message_id || botMessageId;
-                } catch (sendErr) {
-                    console.error(`[FB Send Error] Failed to send message to ${senderId}:`, sendErr.message);
-                    if (typeof logToFile === 'function') logToFile(`[FB Send Error] ${sendErr.message}`);
-                }
-            } else {
-                console.log(`[AI Silence] Detected "no reply". Saving to DB but skipping Facebook send.`);
-            }
-
             let aiModelLabel = aiResponse.model || null;
             const isCheapEngineForLog = pageConfig.cheap_engine !== false;
             if (isCheapEngineForLog && (!pageConfig.api_key || pageConfig.api_key === 'MANAGED_SECRET_KEY')) {
@@ -2953,19 +3016,50 @@ STRICT RULES:
                 }
             }
 
-            // --- SAVE BOT REPLY TO fb_chats ---
-            await dbService.saveFbChat({
-                page_id: pageId,
-                sender_id: pageId, // Bot is sender
-                recipient_id: senderId,
-                message_id: botMessageId,
+            await saveFbOutgoingLog({
+                pageId,
+                recipientId: senderId,
+                messageId: botMessageId,
                 text: replyText,
-                timestamp: Date.now(),
-                status: 'sent', // Set status to 'sent'
-                reply_by: 'bot',
+                status: isNoReply ? 'sent' : 'sending',
+                replyBy: 'bot',
                 token: aiResponse.token_usage || 0,
-                ai_model: aiModelLabel
-            }).catch(err => console.error("[FB Save Error]", err));
+                aiModel: aiModelLabel
+            });
+            
+            if (!isNoReply) {
+                // Track bot reply in memory BEFORE sending to block the echo
+                trackBotReply(senderId, replyText);
+                
+                try {
+                    await facebookService.sendMessage(pageId, senderId, replyText, pageConfig.page_access_token);
+                    await saveFbOutgoingLog({
+                        pageId,
+                        recipientId: senderId,
+                        messageId: botMessageId,
+                        text: replyText,
+                        status: 'sent',
+                        replyBy: 'bot',
+                        token: aiResponse.token_usage || 0,
+                        aiModel: aiModelLabel
+                    });
+                } catch (sendErr) {
+                    console.error(`[FB Send Error] Failed to send message to ${senderId}:`, sendErr.message);
+                    if (typeof logToFile === 'function') logToFile(`[FB Send Error] ${sendErr.message}`);
+                    await saveFbOutgoingLog({
+                        pageId,
+                        recipientId: senderId,
+                        messageId: botMessageId,
+                        text: replyText,
+                        status: 'api_failure',
+                        replyBy: 'bot',
+                        token: aiResponse.token_usage || 0,
+                        aiModel: aiModelLabel
+                    });
+                }
+            } else {
+                console.log(`[AI Silence] Detected "no reply". Saving to DB but skipping Facebook send.`);
+            }
 
             // --- PERSISTENCE: Save Last Resolved Product ID to Context ---
             if (aiResponse.foundProducts && aiResponse.foundProducts.length > 0) {

@@ -107,6 +107,32 @@ function trackBotReply(senderId, text) {
     recentBotReplies.set(senderId, history);
 }
 
+async function saveWhatsAppOutgoingLog({
+    sessionName,
+    recipientId,
+    messageId,
+    text,
+    status = 'sending',
+    replyBy = 'bot',
+    tokenUsage = 0,
+    modelUsed = null
+}) {
+    if (!messageId || !text) return;
+
+    await dbService.saveWhatsAppChat({
+        session_name: sessionName,
+        sender_id: sessionName,
+        recipient_id: recipientId,
+        message_id: messageId,
+        text,
+        timestamp: Date.now(),
+        status,
+        reply_by: replyBy,
+        token_usage: tokenUsage,
+        model_used: modelUsed
+    });
+}
+
 // Helper to get cached page data (Fast Path)
 async function getCachedPageData(sessionName) {
     const now = Date.now();
@@ -1253,23 +1279,31 @@ async function queueMessage(session, messagePayload) {
                 const pageConfig = pageData?.config;
                 if (pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1)) {
                     console.log(`[WA] ⚡ ULTRA-FAST CACHE HIT! (Context: ${contextId || 'None'})`);
+                    const pendingMessageId = `cache_${Date.now()}`;
+                    await saveWhatsAppOutgoingLog({
+                        sessionName,
+                        recipientId: senderId,
+                        messageId: pendingMessageId,
+                        text: cached,
+                        status: 'sending',
+                        replyBy: 'bot',
+                        modelUsed: 'semantic-cache'
+                    });
                     if (typeof trackBotReply === 'function') trackBotReply(senderId, cached);
                     
                     await whatsappService.sendSeen(sessionName, senderId);
                     await whatsappService.sendTyping(sessionName, senderId);
                     await whatsappService.sendMessage(sessionName, senderId, cached);
                     
-                    dbService.saveWhatsAppChat({
-                        session_name: sessionName,
-                        sender_id: sessionName,
-                        recipient_id: senderId,
-                        message_id: `cache_${Date.now()}`,
+                    await saveWhatsAppOutgoingLog({
+                        sessionName,
+                        recipientId: senderId,
+                        messageId: pendingMessageId,
                         text: cached,
-                        timestamp: Date.now(),
                         status: 'sent',
-                        reply_by: 'bot',
-                        model_used: 'semantic-cache'
-                    }).catch(() => {});
+                        replyBy: 'bot',
+                        modelUsed: 'semantic-cache'
+                    });
                 }
             }
         }).catch(e => console.warn(`[WA] Ultra-fast cache check failed:`, e.message));
@@ -2720,6 +2754,16 @@ STRICT RULES:
         await whatsappService.sendTyping(sessionName, senderId);
         await new Promise(resolve => setTimeout(resolve, 600));
 
+        let modelLabel = aiResponse.model;
+        if (!hasOwnKey) {
+            const branded = (pageConfig && (pageConfig.chat_model || pageConfig.display_model)) || null;
+            if (branded && ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(branded)) {
+                modelLabel = branded;
+            } else if (/^gemini/i.test(modelLabel) || /google\/gemini/i.test(modelLabel)) {
+                modelLabel = 'salesmanchatbot-pro';
+            }
+        }
+
         // Send Text First
         let sentMessageId = `bot_${Date.now()}`;
         
@@ -2733,37 +2777,72 @@ STRICT RULES:
              existing.push({ text: normalizeText(finalReplyText), timestamp: Date.now() });
              recentBotReplies.set(senderId, existing);
 
+             await saveWhatsAppOutgoingLog({
+                 sessionName,
+                 recipientId: senderId,
+                 messageId: sentMessageId,
+                 text: finalReplyText,
+                 status: isNoReply ? 'sent' : 'sending',
+                 replyBy: 'bot',
+                 tokenUsage: aiResponse.token_usage || 0,
+                 modelUsed: modelLabel
+             });
+
              if (!isNoReply) {
-                 const sentData = await whatsappService.sendMessage(sessionName, senderId, finalReplyText);
-                 
-                 // [FIX] ID Normalization & Tracking for Echo Guard
-                 if (sentData) {
-                     let sid = sentData.id;
-                     if (typeof sid === 'object' && sid !== null) {
-                         sid = sid._serialized || sid.id;
-                     }
-                     // Ensure it's a string (WAHA can have deep nesting)
-                     if (typeof sid === 'object' && sid !== null) {
-                         sid = sid._serialized || sid.id || JSON.stringify(sid);
+                 try {
+                     const sentData = await whatsappService.sendMessage(sessionName, senderId, finalReplyText);
+                     
+                     // [FIX] ID Normalization & Tracking for Echo Guard
+                     if (sentData) {
+                         let sid = sentData.id;
+                         if (typeof sid === 'object' && sid !== null) {
+                             sid = sid._serialized || sid.id;
+                         }
+                         // Ensure it's a string (WAHA can have deep nesting)
+                         if (typeof sid === 'object' && sid !== null) {
+                             sid = sid._serialized || sid.id || JSON.stringify(sid);
+                         }
+
+                         if (sid) {
+                             console.log(`[WA AI] Tracking Bot Message ID: ${sid}`);
+                             botMessageIds.add(sid);
+                             
+                             // Auto-clear after 2 minutes to save memory
+                             setTimeout(() => {
+                                 botMessageIds.delete(sid);
+                                 // Clean up recentBotReplies window too
+                                 const history = recentBotReplies.get(senderId);
+                                 if (history) {
+                                     const filtered = history.filter(r => Date.now() - r.timestamp < 30000);
+                                     if (filtered.length === 0) recentBotReplies.delete(senderId);
+                                     else recentBotReplies.set(senderId, filtered);
+                                 }
+                             }, 2 * 60 * 1000);
+                         }
                      }
 
-                     if (sid) {
-                         sentMessageId = sid;
-                         console.log(`[WA AI] Tracking Bot Message ID: ${sentMessageId}`);
-                         botMessageIds.add(sentMessageId);
-                         
-                         // Auto-clear after 2 minutes to save memory
-                         setTimeout(() => {
-                             botMessageIds.delete(sid);
-                             // Clean up recentBotReplies window too
-                             const history = recentBotReplies.get(senderId);
-                             if (history) {
-                                 const filtered = history.filter(r => Date.now() - r.timestamp < 30000);
-                                 if (filtered.length === 0) recentBotReplies.delete(senderId);
-                                 else recentBotReplies.set(senderId, filtered);
-                             }
-                         }, 2 * 60 * 1000);
-                     }
+                     await saveWhatsAppOutgoingLog({
+                         sessionName,
+                         recipientId: senderId,
+                         messageId: sentMessageId,
+                         text: finalReplyText,
+                         status: 'sent',
+                         replyBy: 'bot',
+                         tokenUsage: aiResponse.token_usage || 0,
+                         modelUsed: modelLabel
+                     });
+                 } catch (sendErr) {
+                     await saveWhatsAppOutgoingLog({
+                         sessionName,
+                         recipientId: senderId,
+                         messageId: sentMessageId,
+                         text: finalReplyText,
+                         status: 'api_failure',
+                         replyBy: 'bot',
+                         tokenUsage: aiResponse.token_usage || 0,
+                         modelUsed: modelLabel
+                     });
+                     throw sendErr;
                  }
              } else {
                  console.log(`[WA Silence] Detected "no reply". Saving to DB but skipping WhatsApp send.`);
@@ -2861,41 +2940,7 @@ STRICT RULES:
             }
         }
 
-        let modelLabel = aiResponse.model;
-        if (!hasOwnKey) {
-            const branded = (pageConfig && (pageConfig.chat_model || pageConfig.display_model)) || null;
-            if (branded && ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(branded)) {
-                modelLabel = branded;
-            } else if (/^gemini/i.test(modelLabel) || /google\/gemini/i.test(modelLabel)) {
-                modelLabel = 'salesmanchatbot-pro';
-            }
-        }
-
-        if (finalReplyText && finalReplyText.trim().length > 0) {
-            // Track the product mentioned in this response for State Memory
-            if (aiResponse.product_id) {
-                try {
-                    await dbService.updateConversationState(sessionName, senderId, { last_product_id: aiResponse.product_id });
-                    console.log(`[WA State Memory] Saved last_product_id: ${aiResponse.product_id} for user: ${senderId}`);
-                } catch (stateErr) {
-                    console.error(`[WA State Memory] Error saving state: ${stateErr.message}`);
-                }
-            }
-
-            console.log(`[WA AI] Saving Bot Reply to DB with ID: ${sentMessageId}`);
-            await dbService.saveWhatsAppChat({
-                session_name: sessionName,
-                sender_id: sessionName, // Match webhook session name
-                recipient_id: senderId, 
-                message_id: sentMessageId,
-                text: finalReplyText, 
-                timestamp: Date.now(),
-                status: 'sent',
-                reply_by: 'bot',
-                model_used: modelLabel, 
-                token_usage: aiResponse.token_usage 
-            });
-        } else {
+        if (!finalReplyText || finalReplyText.trim().length === 0) {
              console.log(`[WA] Skipping save for empty/null bot reply.`);
         }
 
