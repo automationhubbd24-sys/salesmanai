@@ -21,6 +21,21 @@ const upload = multer({
 
 exports.uploadMiddleware = upload.fields([{ name: 'image', maxCount: 1 }, { name: 'images', maxCount: 10 }]);
 
+function normalizeUniqueImageList(images, primaryImage = null) {
+    const primary = primaryImage ? String(primaryImage).trim() : null;
+    const seen = new Set();
+
+    return (Array.isArray(images) ? images : [])
+        .map((image) => String(image || '').trim())
+        .filter((image) => {
+            if (!image) return false;
+            if (primary && image === primary) return false;
+            if (seen.has(image)) return false;
+            seen.add(image);
+            return true;
+        });
+}
+
 async function getEffectiveUserIdFromRequest(req, baseUserId) {
     let userId = baseUserId || null;
     let viewerEmail = null;
@@ -421,6 +436,7 @@ exports.createProduct = async (req, res) => {
             );
             try {
                 additionalImages = await Promise.all(uploadPromises);
+                additionalImages = normalizeUniqueImageList(additionalImages, imageUrl);
             } catch (imgError) {
                 console.error("[ProductCreate] Additional images upload failed:", imgError);
             }
@@ -429,9 +445,9 @@ exports.createProduct = async (req, res) => {
         // 2. Parse Data (Resilient)
         const name = body.name;
         const description = body.description || '';
-        const price = body.price ? parseFloat(body.price) : 0;
+        const price = body.price !== undefined && body.price !== null && body.price !== '' ? parseFloat(body.price) : 0;
         const currency = body.currency || 'USD';
-        const stock = body.stock ? parseInt(body.stock) : 0;
+        const stock = body.stock !== undefined && body.stock !== null && body.stock !== '' ? parseInt(body.stock) : 0;
         const keywords = body.keywords || '';
 
         let variants = [];
@@ -507,7 +523,7 @@ exports.createProduct = async (req, res) => {
             allowed_messenger_ids: allowedMessengerIds,
             allowed_wa_sessions: allowedWASessions,
             platform,
-            keywords,
+            keywords: typeof keywords === 'string' ? keywords.trim() : String(keywords || '').trim(),
             is_combo: body.is_combo === 'true' || body.is_combo === true,
             combo_items: Array.isArray(body.combo_items) ? body.combo_items : (body.combo_items ? JSON.parse(body.combo_items) : []),
             allow_description: body.allow_description === 'true' || body.allow_description === true
@@ -794,19 +810,34 @@ exports.updateProduct = async (req, res) => {
             }
         }
 
+        const existing = await dbService.getProductById(id);
+
         // 2. Parse Body
         const updates = {};
         if (req.body.name) updates.name = req.body.name;
         if (req.body.description !== undefined) updates.description = req.body.description;
-        if (req.body.price) updates.price = parseFloat(req.body.price);
+        if (req.body.price !== undefined) updates.price = req.body.price === '' ? 0 : parseFloat(req.body.price);
         if (req.body.currency) updates.currency = req.body.currency;
-        if (req.body.stock) updates.stock = parseInt(req.body.stock);
-        if (req.body.keywords !== undefined) updates.keywords = req.body.keywords;
-        if (req.body.is_active) updates.is_active = req.body.is_active === 'true' || req.body.is_active === true;
+        if (req.body.stock !== undefined) updates.stock = req.body.stock === '' ? 0 : parseInt(req.body.stock);
+        if (req.body.keywords !== undefined) updates.keywords = typeof req.body.keywords === 'string' ? req.body.keywords.trim() : String(req.body.keywords || '').trim();
+        if (req.body.is_active !== undefined) updates.is_active = req.body.is_active === 'true' || req.body.is_active === true;
         if (imageUrl) updates.image_url = imageUrl;
+        else if (req.body.image_url !== undefined) updates.image_url = req.body.image_url ? String(req.body.image_url).trim() : null;
         if (req.body.is_combo !== undefined) updates.is_combo = req.body.is_combo === 'true' || req.body.is_combo === true;
         if (req.body.allow_description !== undefined) updates.allow_description = req.body.allow_description === 'true' || req.body.allow_description === true;
-        if (req.body.combo_items !== undefined) updates.combo_items = req.body.combo_items;
+        if (req.body.combo_items !== undefined) {
+            if (Array.isArray(req.body.combo_items)) {
+                updates.combo_items = req.body.combo_items;
+            } else if (typeof req.body.combo_items === 'string' && req.body.combo_items.trim()) {
+                try {
+                    updates.combo_items = JSON.parse(req.body.combo_items);
+                } catch (e) {
+                    updates.combo_items = [req.body.combo_items.trim()];
+                }
+            } else {
+                updates.combo_items = [];
+            }
+        }
 
         // Handle Additional Images Sync (Combine existing with new)
         if (additionalImages !== undefined || req.body.existing_additional_images !== undefined) {
@@ -828,7 +859,7 @@ exports.updateProduct = async (req, res) => {
                 finalAdditional = [...finalAdditional, ...additionalImages];
             }
 
-            updates.additional_images = finalAdditional;
+            updates.additional_images = normalizeUniqueImageList(finalAdditional, updates.image_url !== undefined ? updates.image_url : existing?.image_url);
             console.log(`[ProductUpdate] Final Additional Images Count: ${finalAdditional.length}`);
         }
 
@@ -896,7 +927,6 @@ exports.updateProduct = async (req, res) => {
         }
         updates.platform = platform;
 
-        const existing = await dbService.getProductById(id);
         if (existing && updates.allowed_messenger_ids === undefined && updates.allowed_wa_sessions === undefined && updates.platform === 'global') {
             updates.platform = existing.platform || 'restricted';
         }

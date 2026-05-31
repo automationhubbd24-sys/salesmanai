@@ -112,6 +112,14 @@ export default function ProductsPage() {
         }
     };
 
+    const getAdditionalBlobPreviews = (
+        previews: string[] = imagePreviews,
+        primaryPreview: string | null = imagePreview,
+        hasPrimaryFile: boolean = !!productImage
+    ) => {
+        return previews.filter((src) => src.startsWith("blob:") && !(hasPrimaryFile && primaryPreview === src));
+    };
+
     // WC Form
     const [wcUrl, setWcUrl] = useState("");
     const [wcKey, setWcKey] = useState("");
@@ -448,9 +456,6 @@ export default function ProductsPage() {
             if (maxNew <= 0) return;
             const limited = incoming.slice(0, maxNew);
             
-            const newProductImages = [...productImages, ...limited];
-            setProductImages(newProductImages);
-            
             const newFilePreviews = limited.map(f => URL.createObjectURL(f));
             setImagePreviews(prev => [...prev, ...newFilePreviews]);
             
@@ -458,37 +463,67 @@ export default function ProductsPage() {
             if (!imagePreview && newFilePreviews.length > 0) {
                 setImagePreview(newFilePreviews[0]);
                 setProductImage(limited[0]);
+                if (limited.length > 1) {
+                    setProductImages(prev => [...prev, ...limited.slice(1)]);
+                }
+            } else {
+                setProductImages(prev => [...prev, ...limited]);
             }
         }
     };
 
     const removeImageAt = (index: number) => {
         const previewToRemove = imagePreviews[index];
+        const isPrimaryPreview = previewToRemove === imagePreview;
+        const isBlobPreview = previewToRemove?.startsWith('blob:');
+        const additionalBlobPreviews = getAdditionalBlobPreviews();
         
         // 1. Update Previews
         const newPreviews = imagePreviews.filter((_, i) => i !== index);
-        setImagePreviews(newPreviews);
-        
-        // 2. If it was a new file, remove from productImages
-        if (previewToRemove?.startsWith('blob:')) {
-            const existingCount = imagePreviews.length - productImages.length;
-            const fileIndex = index - existingCount;
-            if (fileIndex >= 0) {
-                const newFiles = productImages.filter((_, i) => i !== fileIndex);
-                setProductImages(newFiles);
-                if (previewToRemove === imagePreview) {
-                    setImagePreview(newPreviews[0] || null);
-                    setProductImage(newFiles[0] || null);
+        let newFiles = [...productImages];
+        let newExisting = existingAdditionalImages.filter(url => url !== previewToRemove);
+
+        // 2. Remove uploaded additional file if applicable
+        if (isBlobPreview) {
+            if (!isPrimaryPreview) {
+                const fileIndex = additionalBlobPreviews.indexOf(previewToRemove);
+                if (fileIndex >= 0) {
+                    newFiles = newFiles.filter((_, i) => i !== fileIndex);
                 }
             }
-        } else {
-            // 3. If it was an existing URL
-            if (previewToRemove === imagePreview) {
-                setImagePreview(newPreviews[0] || null);
-            }
-            const newExisting = existingAdditionalImages.filter(url => url !== previewToRemove);
-            setExistingAdditionalImages(newExisting);
         }
+
+        // 3. Recalculate primary image if the current one was removed
+        if (isPrimaryPreview) {
+            const nextPrimaryPreview = newPreviews[0] || null;
+
+            if (isBlobPreview && productImage) {
+                setProductImage(null);
+            }
+
+            if (nextPrimaryPreview?.startsWith('blob:')) {
+                const remainingBlobPreviews = getAdditionalBlobPreviews(newPreviews, null, false);
+                const promoteIndex = remainingBlobPreviews.indexOf(nextPrimaryPreview);
+                if (promoteIndex >= 0 && newFiles[promoteIndex]) {
+                    const promotedFile = newFiles[promoteIndex];
+                    newFiles = newFiles.filter((_, i) => i !== promoteIndex);
+                    setProductImage(promotedFile);
+                } else {
+                    setProductImage(null);
+                }
+            } else {
+                setProductImage(null);
+                if (nextPrimaryPreview && newExisting.includes(nextPrimaryPreview)) {
+                    newExisting = newExisting.filter(url => url !== nextPrimaryPreview);
+                }
+            }
+
+            setImagePreview(nextPrimaryPreview);
+        }
+
+        setImagePreviews(newPreviews);
+        setProductImages(newFiles);
+        setExistingAdditionalImages(newExisting);
     };
 
     const normalizeKeywords = (value: string) => {
@@ -747,11 +782,22 @@ export default function ProductsPage() {
             formData.append("user_id", metadata.user_id);
             formData.append("name", metadata.name);
             formData.append("description", metadata.description);
+            formData.append("keywords", metadata.keywords);
+            formData.append("price", String(metadata.price));
+            formData.append("currency", metadata.currency);
+            formData.append("stock", String(metadata.stock));
+            formData.append("is_active", String(metadata.is_active));
             formData.append("allowed_messenger_ids", JSON.stringify(finalMessengerIds));
             formData.append("allowed_wa_sessions", JSON.stringify(finalWASessions));
+            formData.append("is_combo", String(metadata.is_combo));
+            formData.append("combo_items", JSON.stringify(metadata.combo_items));
+            formData.append("allow_description", String(metadata.allow_description));
             formData.append("variants", JSON.stringify(metadata.variants));
             formData.append("page_id", String(metadata.page_id || ""));
             formData.append("existing_additional_images", JSON.stringify(existingAdditionalImages));
+            if (!productImage) {
+                formData.append("image_url", imagePreview && !imagePreview.startsWith("blob:") ? imagePreview : "");
+            }
 
             // --- FILES LAST (Best practice for Multer) ---
             if (productImage) {

@@ -797,11 +797,11 @@ export default function MessengerSettingsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="max-w-6xl mx-auto space-y-8">
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
            <h2 className="text-3xl font-bold tracking-tight">Messenger AI Intelligence</h2>
-           <p className="text-muted-foreground">
+           <p className="text-muted-foreground mt-1">
              Connect your preferred AI brain for your Facebook Page.
            </p>
         </div>
@@ -809,7 +809,6 @@ export default function MessengerSettingsPage() {
             <Button 
                 onClick={() => handleOpenPrompt("text")} 
                 variant="outline"
-                className="border-[#00ff88]/40 text-[#00ff88] hover:bg-[#00ff88]/10"
             >
                 <Bot className="mr-2 h-4 w-4" />
                 Edit System Prompt
@@ -817,7 +816,6 @@ export default function MessengerSettingsPage() {
             <Button 
                 onClick={() => handleOpenPrompt("image")} 
                 variant="outline"
-                className="border-[#00ff88]/40 text-[#00ff88] hover:bg-[#00ff88]/10"
             >
                 <Image className="mr-2 h-4 w-4" />
                 Edit Image Prompt
@@ -852,10 +850,10 @@ export default function MessengerSettingsPage() {
                                 placeholder="Search product..."
                                 value={productSearch}
                                 onChange={(e) => setProductSearch(e.target.value)}
-                                className="h-7 max-w-[180px] text-xs bg-black/40 border-white/10"
+                                className="h-7 max-w-[180px] text-xs"
                               />
                             </div>
-                            <div className="flex flex-wrap gap-2 max-h-24 overflow-y-auto border border-white/10 rounded-md bg-black/20 p-2">
+                            <div className="flex flex-wrap gap-2 max-h-24 overflow-y-auto border border-border rounded-md bg-secondary p-2">
                               {productLoading && (
                                 <span className="text-xs text-muted-foreground">
                                   Loading products...
@@ -884,7 +882,7 @@ export default function MessengerSettingsPage() {
                                       key={p.id}
                                       type="button"
                                       onClick={() => handleInsertProductIntoPrompt(p)}
-                                      className="text-xs px-2 py-1 rounded-full border border-[#00ff88]/30 bg-[#00ff88]/5 hover:bg-[#00ff88]/15 hover:border-[#00ff88] transition-colors"
+                                      className="text-xs px-2 py-1 rounded-full border border-primary/30 bg-primary/5 hover:bg-primary/15 hover:border-primary transition-colors"
                                     >
                                       {p.name || "Untitled"}
                                     </button>
@@ -925,7 +923,6 @@ export default function MessengerSettingsPage() {
                         variant="secondary" 
                         onClick={handleOptimizePrompt} 
                         disabled={optimizing || promptSaving}
-                        className="bg-[#00ff88]/10 hover:bg-[#00ff88]/20 text-[#00ff88]"
                     >
                         {optimizing ? (
                             <div className="animate-spin rounded-full h-4 w-4 border-2 border-current border-t-transparent mr-2" />
@@ -948,8 +945,8 @@ export default function MessengerSettingsPage() {
         </DialogContent>
       </Dialog>
 
-      <div className="grid gap-6">
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
+      <div className="space-y-6">
+        <Card className="bg-background border-border">
           <CardHeader>
             <CardTitle className="flex justify-between items-center">
                 AI Provider Configuration
@@ -958,8 +955,8 @@ export default function MessengerSettingsPage() {
                       variant="outline"
                       className={
                         activeMode === 'managed'
-                          ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/60'
-                          : 'border-white/30 text-white/70'
+                          ? 'bg-primary/10 text-primary border-primary/60'
+                          : 'border-border text-muted-foreground'
                       }
                     >
                         Status: {activeMode === 'managed' ? (activeProPlusMode ? PRO_PLUS_MANAGED_MODEL : "User Cloud API") : "Own API"}
@@ -973,12 +970,12 @@ export default function MessengerSettingsPage() {
           <CardContent>
             {loading ? (
                 <div className="flex flex-col items-center justify-center py-10 space-y-4">
-                    <div className="animate-spin rounded-full h-8 w-8 border-2 border-[#00ff88] border-t-transparent" />
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
                     <p className="text-sm text-muted-foreground animate-pulse">Detecting AI Configuration...</p>
                 </div>
             ) : (
                 <>
-                    <div className="mb-4 rounded-xl border border-white/10 bg-black/30 p-3">
+                    <div className="mb-4 rounded-xl border border-border bg-secondary/40 p-3">
                         <RadioGroup 
                             value={mode || ""} 
                             onValueChange={(v) => {
@@ -990,11 +987,11 @@ export default function MessengerSettingsPage() {
                     <RadioGroupItem value="own" id="own" className="peer sr-only" />
                     <Label
                       htmlFor="own"
-                      className="flex h-full min-h-[80px] flex-col items-start justify-center gap-1 rounded-lg border border-white/10 bg-black/40 p-3 text-sm transition-all hover:border-[#00ff88]/50 hover:bg-[#00ff88]/5 peer-data-[state=checked]:border-[#00ff88] peer-data-[state=checked]:bg-[#00ff88]/10 peer-data-[state=checked]:text-[#00ff88] cursor-pointer"
+                      className="flex h-full min-h-[80px] flex-col items-start justify-center gap-1 rounded-lg border border-border bg-secondary/60 p-3 text-sm transition-all hover:border-primary/50 hover:bg-primary/5 peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary/10 peer-data-[state=checked]:text-primary cursor-pointer"
                     >
-                      <Key className="mb-1 h-5 w-5 transition-colors peer-data-[state=checked]:text-[#00ff88]" />
+                      <Key className="mb-1 h-5 w-5 transition-colors peer-data-[state=checked]:text-primary" />
                       <span className="font-semibold">Use Own API</span>
-                      <span className="text-[11px] text-muted-foreground peer-data-[state=checked]:text-[#00ff88]">
+                      <span className="text-[11px] text-muted-foreground peer-data-[state=checked]:text-primary">
                         Use your own API Key (Gemini, GPT)
                       </span>
                     </Label>
@@ -1003,11 +1000,11 @@ export default function MessengerSettingsPage() {
                     <RadioGroupItem value="managed" id="managed" className="peer sr-only" />
                     <Label
                       htmlFor="managed"
-                      className="flex h-full min-h-[80px] flex-col items-start justify-center gap-1 rounded-lg border border-white/10 bg-black/40 p-3 text-sm transition-all hover:border-[#00ff88]/50 hover:bg-[#00ff88]/5 peer-data-[state=checked]:border-[#00ff88] peer-data-[state=checked]:bg-[#00ff88]/10 peer-data-[state=checked]:text-[#00ff88] cursor-pointer"
+                      className="flex h-full min-h-[80px] flex-col items-start justify-center gap-1 rounded-lg border border-border bg-secondary/60 p-3 text-sm transition-all hover:border-primary/50 hover:bg-primary/5 peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary/10 peer-data-[state=checked]:text-primary cursor-pointer"
                     >
-                      <Sparkles className="mb-1 h-5 w-5 transition-colors peer-data-[state=checked]:text-[#00ff88]" />
+                      <Sparkles className="mb-1 h-5 w-5 transition-colors peer-data-[state=checked]:text-primary" />
                       <span className="font-semibold">User Cloud API</span>
-                      <span className="text-[11px] text-muted-foreground peer-data-[state=checked]:text-[#00ff88]">
+                      <span className="text-[11px] text-muted-foreground peer-data-[state=checked]:text-primary">
                         Hassle-free, High Speed Engine
                       </span>
                     </Label>
@@ -1135,16 +1132,16 @@ export default function MessengerSettingsPage() {
                     <div className="space-y-6">
                         {/* Compact Managed Mode Banner */}
                         <div className="rounded-lg border border-emerald-200 bg-emerald-50/30 p-4 dark:border-emerald-800/30 dark:bg-emerald-900/10 shadow-sm transition-all hover:shadow-md">
-                            <div className="mb-4 flex items-center justify-between gap-4 rounded-xl border border-emerald-500/20 bg-black/20 p-3">
+                            <div className="mb-4 flex items-center justify-between gap-4 rounded-xl border border-emerald-500/20 bg-secondary/40 p-3">
                                 <div>
-                                    <div className="text-sm font-semibold text-emerald-100">Switch Pro Plus Mode</div>
-                                    <p className="text-xs text-emerald-200/80">
+                                    <div className="text-sm font-semibold">Switch Pro Plus Mode</div>
+                                    <p className="text-xs text-muted-foreground">
                                     </p>
                                 </div>
                                 <div className="flex items-center gap-3">
                                     <Badge
                                         variant="outline"
-                                        className={proPlusMode ? "border-[#00ff88]/60 text-[#00ff88]" : "border-white/20 text-white/60"}
+                                        className={proPlusMode ? "border-primary/60 text-primary" : "border-border text-muted-foreground"}
                                     >
                                         {proPlusMode ? PRO_PLUS_MANAGED_MODEL : "Standard Cloud"}
                                     </Badge>
@@ -1499,7 +1496,7 @@ export default function MessengerSettingsPage() {
         </Card>
         */}
 
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
+        <Card className="bg-background border-border">
             <CardHeader>
                 <CardTitle>Response Behavior</CardTitle>
                 <CardDescription>Control how and when the AI replies.</CardDescription>
@@ -1604,7 +1601,7 @@ export default function MessengerSettingsPage() {
                         </p>
                     </div>
 
-                    <div className="border-t border-white/5 pt-6 space-y-4">
+                    <div className="border-t border-border pt-6 space-y-4">
                         <div className="flex items-center justify-between">
                             <div className="space-y-1">
                                 <Label className="text-base">Smart Order Reminder</Label>
@@ -1664,7 +1661,7 @@ export default function MessengerSettingsPage() {
                         <Button onClick={handleSaveBehavior} disabled={behaviorSaving} variant="secondary">
                             {behaviorSaving ? (
                                 <>
-                                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-current border-t-transparent mr-2" />
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                     Saving...
                                 </>
                             ) : (

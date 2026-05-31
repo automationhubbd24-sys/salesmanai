@@ -625,11 +625,11 @@ export default function WhatsAppSettingsPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="max-w-6xl mx-auto space-y-8">
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
            <h2 className="text-3xl font-bold tracking-tight">WhatsApp AI Settings</h2>
-           <p className="text-muted-foreground">
+           <p className="text-muted-foreground mt-1">
              Configure your AI Assistant for WhatsApp
            </p>
         </div>
@@ -637,7 +637,7 @@ export default function WhatsAppSettingsPage() {
             <Button 
                 onClick={() => handleOpenPrompt("text")} 
                 variant="outline"
-                className="flex-1 md:flex-none border-[#00ff88]/40 text-[#00ff88] hover:bg-[#00ff88]/10 h-9 text-xs"
+                className="flex-1 md:flex-none h-9 text-xs"
             >
                 <Bot className="mr-2 h-4 w-4" />
                 Edit System Prompt
@@ -645,7 +645,7 @@ export default function WhatsAppSettingsPage() {
             <Button 
                 onClick={() => handleOpenPrompt("image")} 
                 variant="outline"
-                className="flex-1 md:flex-none border-[#00ff88]/40 text-[#00ff88] hover:bg-[#00ff88]/10 h-9 text-xs"
+                className="flex-1 md:flex-none h-9 text-xs"
             >
                 <Image className="mr-2 h-4 w-4" />
                 Edit Image Prompt
@@ -653,18 +653,18 @@ export default function WhatsAppSettingsPage() {
         </div>
       </div>
 
-      <div className="grid gap-6">
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
+      <div className="space-y-6">
+        <Card className="bg-background border-border">
           <CardHeader>
-            <CardTitle className="flex justify-between items-center">
+            <CardTitle className="flex justify-between items-center flex-wrap gap-2">
                 AI Provider Configuration
                 {activeMode && (
                     <Badge
                       variant="outline"
                       className={
                         activeMode === 'managed'
-                          ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/60'
-                          : 'border-white/30 text-white/70'
+                          ? 'bg-primary/10 text-primary border-primary/60'
+                          : 'border-border text-muted-foreground'
                       }
                     >
                         Status: {activeMode === 'managed' ? (activeProPlusMode ? PRO_PLUS_MANAGED_MODEL : "User Cloud API") : "Own API"}
@@ -678,12 +678,12 @@ export default function WhatsAppSettingsPage() {
           <CardContent>
             {loading ? (
                 <div className="flex flex-col items-center justify-center py-10 space-y-4">
-                    <div className="animate-spin rounded-full h-8 w-8 border-2 border-[#00ff88] border-t-transparent" />
+                    <div className="animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent" />
                     <p className="text-sm text-muted-foreground animate-pulse">Detecting AI Configuration...</p>
                 </div>
             ) : (
                 <>
-                    <div className="mb-4 rounded-xl border border-white/10 bg-black/30 p-3">
+                    <div className="mb-4 rounded-xl border border-border bg-secondary/30 p-3">
                         <RadioGroup 
                             value={mode || ""} 
                             onValueChange={(v) => {
@@ -695,11 +695,11 @@ export default function WhatsAppSettingsPage() {
                     <RadioGroupItem value="own" id="own" className="peer sr-only" />
                     <Label
                       htmlFor="own"
-                      className="flex h-full min-h-[80px] flex-col items-start justify-center gap-1 rounded-lg border border-white/10 bg-black/40 p-3 text-sm transition-all hover:border-[#00ff88]/50 hover:bg-[#00ff88]/5 peer-data-[state=checked]:border-[#00ff88] peer-data-[state=checked]:bg-[#00ff88]/10 peer-data-[state=checked]:text-[#00ff88] cursor-pointer"
+                      className="flex h-full min-h-[80px] flex-col items-start justify-center gap-1 rounded-lg border border-border bg-secondary/40 p-3 text-sm transition-all hover:border-primary/50 hover:bg-primary/5 peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary/10 peer-data-[state=checked]:text-primary cursor-pointer"
                     >
-                      <Key className="mb-1 h-5 w-5 transition-colors peer-data-[state=checked]:text-[#00ff88]" />
+                      <Key className="mb-1 h-5 w-5 transition-colors peer-data-[state=checked]:text-primary" />
                       <span className="font-semibold">Use Own API</span>
-                      <span className="text-[11px] text-muted-foreground peer-data-[state=checked]:text-[#00ff88]">
+                      <span className="text-[11px] text-muted-foreground peer-data-[state=checked]:text-primary">
                         Use your own API Key (Gemini, GPT)
                       </span>
                     </Label>
@@ -708,11 +708,11 @@ export default function WhatsAppSettingsPage() {
                     <RadioGroupItem value="managed" id="managed" className="peer sr-only" />
                     <Label
                       htmlFor="managed"
-                      className="flex h-full min-h-[80px] flex-col items-start justify-center gap-1 rounded-lg border border-white/10 bg-black/40 p-3 text-sm transition-all hover:border-[#00ff88]/50 hover:bg-[#00ff88]/5 peer-data-[state=checked]:border-[#00ff88] peer-data-[state=checked]:bg-[#00ff88]/10 peer-data-[state=checked]:text-[#00ff88] cursor-pointer"
+                      className="flex h-full min-h-[80px] flex-col items-start justify-center gap-1 rounded-lg border border-border bg-secondary/40 p-3 text-sm transition-all hover:border-primary/50 hover:bg-primary/5 peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary/10 peer-data-[state=checked]:text-primary cursor-pointer"
                     >
-                      <Sparkles className="mb-1 h-5 w-5 transition-colors peer-data-[state=checked]:text-[#00ff88]" />
+                      <Sparkles className="mb-1 h-5 w-5 transition-colors peer-data-[state=checked]:text-primary" />
                       <span className="font-semibold">User Cloud API</span>
-                      <span className="text-[11px] text-muted-foreground peer-data-[state=checked]:text-[#00ff88]">
+                      <span className="text-[11px] text-muted-foreground peer-data-[state=checked]:text-primary">
                         Hassle-free, High Speed Engine
                       </span>
                     </Label>
@@ -1119,7 +1119,7 @@ export default function WhatsAppSettingsPage() {
           </CardContent>
         </Card>
 
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
+        <Card className="bg-background border-border">
             <CardHeader>
                 <CardTitle>Response Behavior</CardTitle>
                 <CardDescription>Control how and when the AI replies.</CardDescription>
@@ -1216,11 +1216,57 @@ export default function WhatsAppSettingsPage() {
                         </p>
                     </div>
 
-                    <div className="border-t border-white/5 pt-6 space-y-4">
+                    <div className="space-y-4 border-t border-border pt-6">
                         <div className="flex items-center justify-between">
-                            <div className="space-y-1">
-                                <Label className="text-base">Order Email Notifications</Label>
-                                <p className="text-sm text-muted-foreground">
+                            <div className="flex flex-col gap-1">
+                                <Label>Semantic Cache</Label>
+                                <p className="text-xs text-muted-foreground">
+                                    Cache similar messages for faster responses.
+                                </p>
+                            </div>
+                            <Switch checked={semanticCacheEnabled} onCheckedChange={setSemanticCacheEnabled} />
+                        </div>
+
+                        {semanticCacheEnabled && (
+                            <div className="flex flex-col space-y-2 pl-4 border-l border-border">
+                                <Label>Similarity Threshold</Label>
+                                <div className="flex items-center space-x-4">
+                                    <Input 
+                                        type="text" 
+                                        value={semanticThreshold} 
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            if (val === "" || val === "." || /^[0-9]*\.?[0-9]*$/.test(val)) {
+                                                setSemanticThreshold(val as any);
+                                            }
+                                        }}
+                                        onBlur={(e) => {
+                                            const raw = parseFloat(e.target.value) || 0.96;
+                                            const clamped = Math.max(0.5, Math.min(1.0, raw));
+                                            setSemanticThreshold(clamped);
+                                        }}
+                                        className="w-24 font-mono"
+                                        placeholder="0.96"
+                                    />
+                                    <span className="text-sm text-muted-foreground">level</span>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="flex items-center justify-between">
+                            <div className="flex flex-col gap-1">
+                                <Label>Embedding Enabled</Label>
+                                <p className="text-xs text-muted-foreground">
+                                    Enable message embeddings for better context.
+                                </p>
+                            </div>
+                            <Switch checked={embedEnabled} onCheckedChange={setEmbedEnabled} />
+                        </div>
+
+                        <div className="flex items-center justify-between pt-4 border-t border-border">
+                            <div className="flex flex-col gap-1">
+                                <Label>Order Email Notifications</Label>
+                                <p className="text-xs text-muted-foreground">
                                     Send order confirmation emails to customers and notifications to you.
                                 </p>
                             </div>
@@ -1231,7 +1277,7 @@ export default function WhatsAppSettingsPage() {
                         </div>
 
                         {orderEmailEnabled && (
-                            <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                            <div className="space-y-3 pl-4 border-l border-border animate-in fade-in slide-in-from-top-2 duration-300">
                                 <div className="space-y-1.5">
                                     <Label htmlFor="admin-email">Your Notification Email</Label>
                                     <Input 
@@ -1249,53 +1295,16 @@ export default function WhatsAppSettingsPage() {
                         )}
                     </div>
 
-                    <Button 
-                        onClick={handleSaveBehavior} 
-                        disabled={behaviorSaving}
-                        className="w-full md:w-auto"
-                        variant="secondary"
-                    >
-                        {behaviorSaving ? "Saving..." : "Update Behavior"}
-                    </Button>
-                    
-                    {/* Semantic Cache Controls - Removed from User View (Admin Only) */}
-                    {/*
-                    <div className="pt-4 border-t border-white/10 grid gap-4">
-                      <h3 className="text-lg font-semibold">Semantic Caching</h3>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm">Enable Semantic Cache</p>
-                          <p className="text-xs text-muted-foreground">Fast reply for repeated questions</p>
-                        </div>
-                        <input
-                          type="checkbox"
-                          checked={semanticCacheEnabled}
-                          onChange={(e) => setSemanticCacheEnabled(e.target.checked)}
-                        />
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm">Use Embedding (Advanced)</p>
-                          <p className="text-xs text-muted-foreground">Turn off to use fuzzy matching</p>
-                        </div>
-                        <input
-                          type="checkbox"
-                          checked={embedEnabled}
-                          onChange={(e) => setEmbedEnabled(e.target.checked)}
-                        />
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm">Threshold</span>
-                        <Input 
-                          type="number" 
-                          value={semanticThreshold} 
-                          onChange={(e) => setSemanticThreshold(Math.max(0.5, Math.min(0.99, Number(e.target.value) || 0.96)))} 
-                          className="w-24 font-mono"
-                        />
-                        <span className="text-sm text-muted-foreground">0.50 - 0.99 (Default: 0.96)</span>
-                      </div>
+                    <div className="pt-4">
+                        <Button 
+                            onClick={handleSaveBehavior} 
+                            disabled={behaviorSaving}
+                            className="w-full md:w-auto"
+                            variant="secondary"
+                        >
+                            {behaviorSaving ? "Saving..." : "Update Behavior"}
+                        </Button>
                     </div>
-                    */}
                 </div>
             </CardContent>
         </Card>
