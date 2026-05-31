@@ -359,7 +359,7 @@ export default function WhatsAppConversionPage() {
 
   if (!activeSessionName) {
       return (
-          <div className="space-y-6">
+          <div className="space-y-6 max-w-6xl mx-auto">
               <div>
                 <h1 className="text-3xl font-bold tracking-tight">Conversion</h1>
                 <p className="text-muted-foreground">
@@ -378,7 +378,7 @@ export default function WhatsAppConversionPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-6xl mx-auto">
       <div className="flex flex-col gap-4">
         {targetSenderId && (
           <Alert>
@@ -468,7 +468,7 @@ export default function WhatsAppConversionPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
+        <Card className="bg-background border-border">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">All Time Bot Replies</CardTitle>
             <MessageSquare className="h-4 w-4 text-muted-foreground" />
@@ -481,7 +481,7 @@ export default function WhatsAppConversionPage() {
           </CardContent>
         </Card>
 
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
+        <Card className="bg-background border-border">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Bot Replies (Filtered)</CardTitle>
             <MessageSquare className="h-4 w-4 text-muted-foreground" />
@@ -494,7 +494,7 @@ export default function WhatsAppConversionPage() {
           </CardContent>
         </Card>
 
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
+        <Card className="bg-background border-border">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">All Time Tokens</CardTitle>
             <Zap className="h-4 w-4 text-muted-foreground" />
@@ -507,7 +507,7 @@ export default function WhatsAppConversionPage() {
           </CardContent>
         </Card>
 
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
+        <Card className="bg-background border-border">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Tokens (Filtered)</CardTitle>
             <TooltipProvider>
@@ -540,7 +540,7 @@ export default function WhatsAppConversionPage() {
         </Card>
       </div>
 
-      <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10 shadow-[0_18px_40px_rgba(0,0,0,0.35)]">
+      <Card className="bg-background border-border">
         <CardHeader>
           <CardTitle>Message History</CardTitle>
           <CardDescription>
@@ -588,8 +588,8 @@ export default function WhatsAppConversionPage() {
                       <span
                         className={`px-2 py-1 rounded-full text-xs border ${
                           msg.reply_by === 'bot'
-                            ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/40'
-                            : 'bg-white/5 text-white/80 border-white/20'
+                            ? 'bg-primary/10 text-primary border-primary/40'
+                            : 'bg-muted/10 text-muted-foreground border-border'
                         }`}
                       >
                         {msg.reply_by || 'Unknown'}
@@ -613,12 +613,12 @@ export default function WhatsAppConversionPage() {
                       <span
                         className={`px-2 py-1 rounded-full text-xs border ${
                           msg.status === 'sent'
-                            ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/40'
+                            ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/40'
                             : msg.status === 'transcribed'
-                              ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/40'
+                              ? 'bg-cyan-500/10 text-cyan-500 border-cyan-500/40'
                               : msg.status === 'analyzed'
-                                ? 'bg-violet-500/10 text-violet-300 border-violet-500/40'
-                                : 'bg-yellow-500/10 text-yellow-300 border-yellow-500/40'
+                                ? 'bg-violet-500/10 text-violet-500 border-violet-500/40'
+                                : 'bg-yellow-500/10 text-yellow-500 border-yellow-500/40'
                         }`}
                       >
                         {msg.status}
@@ -641,7 +641,7 @@ export default function WhatsAppConversionPage() {
                                     >
                                         {isLocked ? 
                                             <Lock className="h-4 w-4 text-red-500" /> : 
-                                            <Unlock className="h-4 w-4 text-green-500" />
+                                            <Unlock className="h-4 w-4 text-emerald-500" />
                                         }
                                     </Button>
                                 );
