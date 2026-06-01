@@ -264,6 +264,21 @@ const normalizeImageUrl = (url) => {
     return `${baseUrl.replace(/\/$/, '')}${cleanPath}`;
 };
 
+const pushUniqueMedia = (target, media) => {
+    if (!Array.isArray(target) || !media || !media.url) return;
+    const mediaUrl = String(media.url).trim();
+    if (!mediaUrl) return;
+    if (!target.some(item => (typeof item === 'string' ? item : item?.url) === mediaUrl)) {
+        target.push({ ...media, url: mediaUrl });
+    }
+};
+
+const hasQueuedMedia = (aiResponse) => {
+    const imageCount = Array.isArray(aiResponse?.images) ? aiResponse.images.length : 0;
+    const videoCount = Array.isArray(aiResponse?.videos) ? aiResponse.videos.length : 0;
+    return imageCount > 0 || videoCount > 0;
+};
+
 const hasPhotoIntent = (historyList) => {
     if (!Array.isArray(historyList)) return false;
     return historyList.some(item => {
@@ -2312,11 +2327,21 @@ STRICT RULES:
                         }
                     }
 
-                    if ((aiResponse.action === "SEND_PHOTO" || aiResponse.action === "SEND_BOTH") && product.image_url) {
+                    if (aiResponse.action === "SEND_PHOTO" || aiResponse.action === "SEND_BOTH") {
                         if (!aiResponse.images) aiResponse.images = [];
-                        if (!aiResponse.images.some(img => img.url === product.image_url)) {
-                            aiResponse.images.push({
+                        if (!aiResponse.videos) aiResponse.videos = [];
+
+                        if (product.image_url) {
+                            pushUniqueMedia(aiResponse.images, {
                                 url: product.image_url,
+                                title: product.name,
+                                description: product.description || ''
+                            });
+                        }
+
+                        if (product.video_url) {
+                            pushUniqueMedia(aiResponse.videos, {
+                                url: normalizeImageUrl(product.video_url),
                                 title: product.name,
                                 description: product.description || ''
                             });
@@ -2345,9 +2370,16 @@ STRICT RULES:
             if (!aiResponse.images) aiResponse.images = [];
             aiResponse.image_urls.forEach(url => {
                 if (url && typeof url === 'string' && url.startsWith('http')) {
-                    if (!aiResponse.images.some(img => (typeof img === 'string' ? img : img.url) === url)) {
-                        aiResponse.images.push({ url: url, title: 'Product Image' });
-                    }
+                    pushUniqueMedia(aiResponse.images, { url: url, title: 'Product Image' });
+                }
+            });
+        }
+
+        if (Array.isArray(aiResponse.video_urls)) {
+            if (!aiResponse.videos) aiResponse.videos = [];
+            aiResponse.video_urls.forEach(url => {
+                if (url && typeof url === 'string' && url.startsWith('http')) {
+                    pushUniqueMedia(aiResponse.videos, { url: url, title: 'Product Video' });
                 }
             });
         }
@@ -2358,9 +2390,7 @@ STRICT RULES:
             if (extracted.urls.length > 0) {
                 if (!aiResponse.images) aiResponse.images = [];
                 extracted.urls.forEach(url => {
-                    if (!aiResponse.images.some(img => (typeof img === 'string' ? img : img.url) === url)) {
-                        aiResponse.images.push({ url: url, title: 'Product Image' });
-                    }
+                    pushUniqueMedia(aiResponse.images, { url: url, title: 'Product Image' });
                 });
             }
         }
@@ -2373,8 +2403,8 @@ STRICT RULES:
             if (!targetProductId && aiResponse.product_id) targetProductId = aiResponse.product_id;
             if (targetProductId) {
                 const product = await dbService.getProductById(targetProductId);
-                if (product && product.image_url) {
-                    const primaryUrl = normalizeImageUrl(product.image_url);
+                if (product) {
+                    const primaryUrl = product.image_url ? normalizeImageUrl(product.image_url) : null;
                     const additional = Array.isArray(product.additional_images)
                         ? product.additional_images.map(normalizeImageUrl).filter(Boolean)
                         : [];
@@ -2384,6 +2414,11 @@ STRICT RULES:
                         title: product.name || (idx === 0 ? 'Product Image' : `Product Image ${idx + 1}`),
                         description: product.description || ''
                     }));
+                    aiResponse.videos = product.video_url ? [{
+                        url: normalizeImageUrl(product.video_url),
+                        title: product.name || 'Product Video',
+                        description: product.description || ''
+                    }] : [];
                 }
             }
         }
@@ -2409,7 +2444,7 @@ STRICT RULES:
         }
 
         // REFINED: Strictly follow image_only if explicitly tagged or detected.
-        if (promptMode === 'image_only' && Array.isArray(aiResponse.images) && aiResponse.images.length > 0) {
+        if (promptMode === 'image_only' && hasQueuedMedia(aiResponse)) {
             finalReplyText = '';
         } else if (promptMode === 'image_title' && Array.isArray(aiResponse.images) && aiResponse.images.length > 0) {
             const titles = aiResponse.images.map(img => img.title).filter(Boolean);
@@ -2563,6 +2598,7 @@ STRICT RULES:
 
         // Handle Strict Image Sending (High Level: JSON + Regex Fallback)
         let extractedImages = [];
+        let extractedVideos = [];
         
         // 1. Structured Images from AI (Priority)
         if (aiResponse.images && Array.isArray(aiResponse.images)) {
@@ -2591,6 +2627,15 @@ STRICT RULES:
                             }
                         }
                     } catch (e) {}
+                }
+            }
+        }
+
+        if (aiResponse.videos && Array.isArray(aiResponse.videos)) {
+            for (const video of aiResponse.videos) {
+                const url = typeof video === 'string' ? video : video.url;
+                if (url && !extractedVideos.some(item => item.url === url)) {
+                    extractedVideos.push(typeof video === 'string' ? { url, title: 'Product Video' } : video);
                 }
             }
         }
@@ -2868,6 +2913,12 @@ STRICT RULES:
                             const pUrl = normalizeImageUrl(product.image_url);
                             if (pUrl) urls.push(pUrl);
                         }
+                        if (product.video_url) {
+                            const videoUrl = normalizeImageUrl(product.video_url);
+                            if (videoUrl && !extractedVideos.some(video => video.url === videoUrl)) {
+                                extractedVideos.push({ url: videoUrl, title: product.name, description: product.description || '' });
+                            }
+                        }
                         
                         let additional = [];
                         if (Array.isArray(product.additional_images)) {
@@ -2912,6 +2963,27 @@ STRICT RULES:
                         recipient_id: senderId,
                         message_id: `imgerr_${Date.now()}`,
                         text: `[SYSTEM ERROR] Failed to send image: ${img.title || 'Product'}. Error: ${sendErr.message}. URL: ${img.url}`,
+                        timestamp: Date.now(),
+                        status: 'system_error',
+                        reply_by: 'system'
+                    });
+                }
+            }
+
+            for (const video of extractedVideos) {
+                console.log(`[WA] Sending Extracted Video: ${video.title} -> ${video.url}`);
+
+                try {
+                    const sendRes = await whatsappService.sendVideo(sessionName, senderId, video.url, video.title);
+                    if (!sendRes) throw new Error("WAHA returned empty response or error");
+                } catch (sendErr) {
+                    console.error(`[WA] Video Send Failed: ${video.url}`, sendErr.message);
+                    await dbService.saveWhatsAppChat({
+                        session_name: sessionName,
+                        sender_id: sessionName,
+                        recipient_id: senderId,
+                        message_id: `viderr_${Date.now()}`,
+                        text: `[SYSTEM ERROR] Failed to send video: ${video.title || 'Product'}. Error: ${sendErr.message}. URL: ${video.url}`,
                         timestamp: Date.now(),
                         status: 'system_error',
                         reply_by: 'system'

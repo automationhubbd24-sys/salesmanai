@@ -139,7 +139,7 @@ export default function MessengerDatabasePage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 -m-4 md:-m-6 lg:-m-6 p-4 md:p-6 lg:p-6">
       {/* Header */}
       <div>
         <h2 className="text-2xl font-bold text-foreground">Facebook Database Connect</h2>

@@ -266,7 +266,7 @@ export default function MessengerConversionPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 -m-4 md:-m-6 lg:-m-6 p-4 md:p-6 lg:p-6">
       <div className="flex flex-col gap-4">
         {targetSenderId && (
           <Alert>

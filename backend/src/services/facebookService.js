@@ -265,6 +265,75 @@ async function sendImageMessage(pageId, recipientId, imageUrl, accessToken) {
     }
 }
 
+async function sendVideoUpload(pageId, recipientId, videoUrl, accessToken) {
+    try {
+        console.log(`Downloading video for upload: ${videoUrl}`);
+
+        const videoResponse = await axios.get(videoUrl, {
+            responseType: 'stream'
+        });
+
+        const form = new FormData();
+        form.append('recipient', JSON.stringify({ id: recipientId }));
+        form.append('message', JSON.stringify({
+            attachment: {
+                type: 'video',
+                payload: {
+                    is_reusable: true
+                }
+            }
+        }));
+        form.append('filedata', videoResponse.data, {
+            filename: 'video.mp4',
+            contentType: videoResponse.headers['content-type'] || 'video/mp4'
+        });
+
+        const url = `https://graph.facebook.com/v19.0/me/messages?access_token=${accessToken}`;
+
+        console.log(`Uploading video to ${recipientId} from ${pageId}`);
+        const response = await axios.post(url, form, {
+            headers: {
+                ...form.getHeaders()
+            }
+        });
+
+        return response.data;
+    } catch (error) {
+        const errData = error.response ? (error.response.data || 'No data') : error.message;
+        console.error(`Error uploading video for page ${pageId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
+
+        console.log('Falling back to URL send method for video...');
+        return sendVideoMessage(pageId, recipientId, videoUrl, accessToken);
+    }
+}
+
+async function sendVideoMessage(pageId, recipientId, videoUrl, accessToken) {
+    try {
+        const url = `https://graph.facebook.com/v19.0/me/messages?access_token=${accessToken}`;
+
+        const payload = {
+            recipient: { id: recipientId },
+            message: {
+                attachment: {
+                    type: "video",
+                    payload: {
+                        url: videoUrl,
+                        is_reusable: true
+                    }
+                }
+            }
+        };
+
+        console.log(`Sending Video to ${recipientId} from ${pageId}`);
+        const response = await axios.post(url, payload);
+        return response.data;
+    } catch (error) {
+        const errData = error.response ? (error.response.data || 'No data') : error.message;
+        console.error(`Error sending video for page ${pageId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
+        throw error;
+    }
+}
+
 // Send Generic Template (Carousel) for multiple images
 async function sendCarouselMessage(pageId, recipientId, elements, accessToken) {
     try {
@@ -352,6 +421,8 @@ module.exports = {
     sendMessage,
     sendImageMessage,
     sendImageUpload,
+    sendVideoMessage,
+    sendVideoUpload,
     sendCarouselMessage,
     sendTypingAction,
     getConversationMessages,

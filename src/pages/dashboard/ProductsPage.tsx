@@ -11,7 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Lock, Plus, Trash2, Package, Search, Image as ImageIcon, Loader2, ShoppingBag, Download, Edit, X } from "lucide-react";
+import { Lock, Plus, Trash2, Package, Search, Image as ImageIcon, Loader2, ShoppingBag, Download, Edit, X, Video } from "lucide-react";
 import { BACKEND_URL } from "@/config";
 import { cn } from "@/lib/utils";
 
@@ -29,6 +29,7 @@ interface Product {
     description: string;
     keywords?: string;
     image_url: string | null;
+    video_url?: string | null;
     additional_images?: string[] | null;
     variants: Variant[];
     is_active: boolean;
@@ -101,14 +102,23 @@ export default function ProductsPage() {
     const [keywordInput, setKeywordInput] = useState("");
     const [productImage, setProductImage] = useState<File | null>(null);
     const [imagePreview, setImagePreview] = useState<string | null>(null);
+    const [productVideo, setProductVideo] = useState<File | null>(null);
+    const [videoPreview, setVideoPreview] = useState<string | null>(null);
     const [productImages, setProductImages] = useState<File[]>([]);
     const [imagePreviews, setImagePreviews] = useState<string[]>([]);
     const [existingAdditionalImages, setExistingAdditionalImages] = useState<string[]>([]);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const videoInputRef = useRef<HTMLInputElement>(null);
     const openImagePicker = () => {
         if (fileInputRef.current) {
             try { (fileInputRef.current as any).value = null; } catch {}
             fileInputRef.current.click();
+        }
+    };
+    const openVideoPicker = () => {
+        if (videoInputRef.current) {
+            try { (videoInputRef.current as any).value = null; } catch {}
+            videoInputRef.current.click();
         }
     };
 
@@ -472,6 +482,43 @@ export default function ProductsPage() {
         }
     };
 
+    const handleVideoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files && e.target.files[0] ? e.target.files[0] : null;
+        if (!file) return;
+
+        if (!file.type.startsWith("video/")) {
+            toast.error("Please select a valid video file.");
+            return;
+        }
+
+        if (file.size > 16 * 1024 * 1024) {
+            toast.error("Video size 16 MB er besi hote parbe na.");
+            if (videoInputRef.current) {
+                try { (videoInputRef.current as any).value = null; } catch {}
+            }
+            return;
+        }
+
+        if (videoPreview?.startsWith("blob:")) {
+            URL.revokeObjectURL(videoPreview);
+        }
+
+        const preview = URL.createObjectURL(file);
+        setProductVideo(file);
+        setVideoPreview(preview);
+    };
+
+    const removeVideo = () => {
+        if (videoPreview?.startsWith("blob:")) {
+            URL.revokeObjectURL(videoPreview);
+        }
+        setProductVideo(null);
+        setVideoPreview(null);
+        if (videoInputRef.current) {
+            try { (videoInputRef.current as any).value = null; } catch {}
+        }
+    };
+
     const removeImageAt = (index: number) => {
         const previewToRemove = imagePreviews[index];
         const isPrimaryPreview = previewToRemove === imagePreview;
@@ -643,6 +690,8 @@ export default function ProductsPage() {
 
         setProductStock(product.stock?.toString() || "0");
         setImagePreview(product.image_url || null);
+        setVideoPreview(product.video_url || null);
+        setProductVideo(null);
         const additional = Array.isArray(product.additional_images) ? product.additional_images : [];
         setExistingAdditionalImages(additional);
         setImagePreviews(product.image_url ? [product.image_url, ...additional] : additional);
@@ -798,10 +847,17 @@ export default function ProductsPage() {
             if (!productImage) {
                 formData.append("image_url", imagePreview && !imagePreview.startsWith("blob:") ? imagePreview : "");
             }
+            if (!productVideo) {
+                formData.append("video_url", videoPreview && !videoPreview.startsWith("blob:") ? videoPreview : "");
+            }
 
             // --- FILES LAST (Best practice for Multer) ---
             if (productImage) {
                 formData.append("image", productImage);
+            }
+
+            if (productVideo) {
+                formData.append("video", productVideo);
             }
 
             if (productImages && productImages.length > 0) {
@@ -1041,6 +1097,8 @@ export default function ProductsPage() {
         setKeywordInput("");
         setProductImage(null);
         setImagePreview(null);
+        setProductVideo(null);
+        setVideoPreview(null);
         setProductImages([]);
         setImagePreviews([]);
         setExistingAdditionalImages([]);
@@ -1077,7 +1135,7 @@ export default function ProductsPage() {
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight">Products</h1>
                     <p className="text-muted-foreground">
-                        Manage products for your agents. Images are auto-optimized.
+                        Manage products for your agents. Images are auto-optimized and videos up to 16 MB are supported.
                     </p>
                 </div>
                 <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
@@ -1166,8 +1224,8 @@ export default function ProductsPage() {
                         </DialogHeader>
                         
                         <div className="grid grid-cols-1 md:grid-cols-[140px_1fr] gap-6 py-4">
-                            {/* Left: Image Upload */}
-                            <div className="flex flex-col gap-2 items-center">
+                            {/* Left: Media Upload */}
+                            <div className="flex flex-col gap-3 items-center">
                                 <div 
                                     className="w-[140px] h-[140px] border-2 border-dashed border-white/20 rounded-lg flex items-center justify-center cursor-pointer hover:border-[#00ff88] hover:bg-[#00ff88]/5 transition-colors bg-muted/10 relative overflow-hidden group"
                                     onClick={openImagePicker}
@@ -1207,6 +1265,44 @@ export default function ProductsPage() {
                                         <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 fill-current" viewBox="0 0 24 24"><path d="M12 4l1.41 1.41L8.83 10H20v2H8.83l4.58 4.59L12 18l-8-8 8-8z"/></svg>
                                     </span>
                                 </Button>
+                                <div 
+                                    className="w-[140px] h-[140px] border-2 border-dashed border-white/20 rounded-lg flex items-center justify-center cursor-pointer hover:border-[#00ff88] hover:bg-[#00ff88]/5 transition-colors bg-muted/10 relative overflow-hidden group"
+                                    onClick={openVideoPicker}
+                                >
+                                    {videoPreview ? (
+                                        <>
+                                            <video src={videoPreview} className="w-full h-full object-cover" muted playsInline />
+                                            <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <Video className="text-white w-6 h-6" />
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <div className="text-center p-2 text-muted-foreground">
+                                            <Video className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                                            <span className="text-xs">Upload Video</span>
+                                        </div>
+                                    )}
+                                </div>
+                                <input
+                                    type="file"
+                                    accept="video/*"
+                                    name="video"
+                                    className="hidden"
+                                    ref={videoInputRef}
+                                    onChange={handleVideoChange}
+                                />
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="w-full border-white/20 rounded-md"
+                                    onClick={openVideoPicker}
+                                >
+                                    Add Video
+                                </Button>
+                                <p className="text-[10px] text-center text-muted-foreground">
+                                    One video allowed, max 16 MB.
+                                </p>
                             </div>
 
                             {/* Right: Fields */}
@@ -1423,6 +1519,22 @@ export default function ProductsPage() {
                                                     </button>
                                                 </div>
                                             ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {videoPreview && (
+                                    <div className="space-y-2">
+                                        <Label>Selected Video</Label>
+                                        <div className="relative w-full max-w-[220px] overflow-hidden rounded border border-white/10 bg-black/40">
+                                            <video src={videoPreview} controls className="w-full h-auto max-h-[180px] bg-black" />
+                                            <button
+                                                type="button"
+                                                className="absolute top-2 right-2 bg-black/70 text-white text-[10px] px-2 py-1 rounded"
+                                                onClick={removeVideo}
+                                            >
+                                                Remove
+                                            </button>
                                         </div>
                                     </div>
                                 )}
@@ -1720,6 +1832,13 @@ export default function ProductsPage() {
                                                         (e.target as HTMLImageElement).onerror = null; // Prevent infinite loop
                                                     }}
                                                 />
+                                            ) : product.video_url ? (
+                                                <video
+                                                    src={product.video_url}
+                                                    className="w-full h-full object-cover"
+                                                    muted
+                                                    playsInline
+                                                />
                                             ) : (
                                                 <Package className="h-6 w-6 opacity-20" />
                                             )}
@@ -1729,6 +1848,11 @@ export default function ProductsPage() {
                                         <div className="flex flex-col gap-1">
                                             <span>{product.name}</span>
                                             <div className="flex flex-wrap gap-1">
+                                                {product.video_url ? (
+                                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300">
+                                                        Video
+                                                    </span>
+                                                ) : null}
                                                 {(() => {
                                                     const messengerIds = parseAssignment(product.allowed_messenger_ids);
                                                     if (messengerIds.length > 0) {

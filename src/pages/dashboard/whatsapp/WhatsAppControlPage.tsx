@@ -16,8 +16,6 @@ import {
   ReplyAll,
   Mic,
   Upload,
-  Users,
-  MessageSquareText,
   Hand,
   StopCircle,
   RefreshCcw,
@@ -26,7 +24,6 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Link, useNavigate } from "react-router-dom";
-import { useLanguage } from "@/contexts/LanguageContext";
 import { BACKEND_URL } from "@/config";
 import { useWhatsApp } from "@/context/WhatsAppContext";
 
@@ -46,7 +43,6 @@ interface WhatsAppConfig {
 }
 
 export default function WhatsAppControlPage() {
-  const { t } = useLanguage();
   const navigate = useNavigate();
   const { currentSession, loading: contextLoading } = useWhatsApp();
   const [loading, setLoading] = useState(true);
@@ -71,10 +67,6 @@ export default function WhatsAppControlPage() {
     (currentSession as any)?.wp_db_id ||
     (typeof window !== "undefined" ? Number(localStorage.getItem("active_wp_db_id") || 0) : 0) ||
     null;
-  const activeSessionName =
-    currentSession?.name ||
-    (typeof window !== "undefined" ? localStorage.getItem("active_wp_session_id") : null) ||
-    null;
 
   useEffect(() => {
     if (activeDbId) {
@@ -89,7 +81,7 @@ export default function WhatsAppControlPage() {
     try {
       const token = localStorage.getItem("auth_token");
       if (!token) {
-        toast.error(t("Please login again", "অনুগ্রহ করে আবার লগইন করুন"));
+        toast.error("Please login again");
         setLoading(false);
         return;
       }
@@ -99,7 +91,7 @@ export default function WhatsAppControlPage() {
       });
 
       if (!res.ok) {
-        throw new Error(`Failed to load config (${res.status})`);
+        throw new Error(`Failed to load configuration (${res.status})`);
       }
 
       const row: any = await res.json();
@@ -128,7 +120,7 @@ export default function WhatsAppControlPage() {
       });
     } catch (error) {
       console.error("Error fetching config:", error);
-      toast.error(t("Failed to load configuration", "কনফিগারেশন লোড করতে ব্যর্থ হয়েছে"));
+      toast.error("Failed to load configuration");
     } finally {
       setLoading(false);
     }
@@ -157,7 +149,7 @@ export default function WhatsAppControlPage() {
 
       const token = localStorage.getItem("auth_token");
       if (!token) {
-        throw new Error(t("Please login again", "অনুগ্রহ করে আবার লগইন করুন"));
+        throw new Error("Please login again");
       }
 
       const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${activeDbId}`, {
@@ -174,12 +166,12 @@ export default function WhatsAppControlPage() {
         throw new Error(errBody.error || `Failed with status ${res.status}`);
       }
 
-      toast.success(t("Settings saved successfully", "সেটিংস সফলভাবে সংরক্ষিত হয়েছে"));
+      toast.success("Settings saved successfully");
       await fetchConfig(activeDbId.toString());
     } catch (error: any) {
       const message =
         error.message || (typeof error === "string" ? error : "Unknown error");
-      toast.error(t("Failed to save settings: ", "সেটিংস সংরক্ষণ করতে ব্যর্থ হয়েছে: ") + message);
+      toast.error("Failed to save settings: " + message);
       console.error(error);
     } finally {
       setSaving(false);
@@ -198,10 +190,10 @@ export default function WhatsAppControlPage() {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] space-y-4">
         <Bot className="h-16 w-16 text-muted-foreground" />
-        <h2 className="text-2xl font-bold">{t("No WhatsApp Connected", "কোন অফিসিয়াল হোয়াটসঅ্যাপ সংযুক্ত নেই")}</h2>
-        <p className="text-muted-foreground">{t("Please connect an official WhatsApp number to manage bot controls.", "বট কন্ট্রোল পরিচালনা করতে আগে অফিসিয়াল হোয়াটসঅ্যাপ নম্বর connect করুন।")}</p>
+        <h2 className="text-2xl font-bold">No WhatsApp Connected</h2>
+        <p className="text-muted-foreground">Please connect an official WhatsApp number to manage bot controls.</p>
         <Button asChild>
-          <Link to="/dashboard/whatsapp/sessions">{t("Go to WhatsApp", "হোয়াটসঅ্যাপে যান")}</Link>
+          <Link to="/dashboard/whatsapp/sessions">Go to WhatsApp</Link>
         </Button>
       </div>
     );
@@ -215,9 +207,9 @@ export default function WhatsAppControlPage() {
             <Lock className="w-8 h-8 text-destructive" />
           </div>
           <div className="space-y-2">
-            <h2 className="text-2xl font-bold text-destructive">{t("Account Locked", "অ্যাকাউন্ট লক করা")}</h2>
+            <h2 className="text-2xl font-bold text-destructive">Account Locked</h2>
             <p className="text-muted-foreground">
-              {t("Your session has expired or is unverified. Please reactivate your account to access bot controls.", "আপনার সেশন শেষ হয়ে গেছে বা এটি যাচাই করা হয়নি। বট কন্ট্রোল অ্যাক্সেস করতে অনুগ্রহ করে আপনার অ্যাকাউন্ট পুনরায় সক্রিয় করুন।")}
+              Your session has expired or is unverified. Please reactivate your account to access bot controls.
             </p>
           </div>
         </div>
@@ -258,9 +250,9 @@ export default function WhatsAppControlPage() {
     <div className="max-w-6xl mx-auto space-y-8">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h2 className="text-3xl font-bold text-foreground tracking-tight">{t("Bot Control", "বট কন্ট্রোল")}</h2>
+          <h2 className="text-3xl font-bold text-foreground tracking-tight">Bot Control</h2>
           <p className="text-muted-foreground mt-1">
-            {t("Manage your automation features.", "আপনার অটোমেশন ফিচারগুলো পরিচালনা করুন।")}
+            Manage your automation features.
           </p>
         </div>
         <div className="flex items-center gap-3 w-full sm:w-auto">
@@ -270,7 +262,7 @@ export default function WhatsAppControlPage() {
             className="gap-2"
           >
             <ChevronLeft size={16} />
-            {t("Back", "পিছনে")}
+            Back
           </Button>
           <Button
             onClick={handleSave}
@@ -283,7 +275,7 @@ export default function WhatsAppControlPage() {
             ) : (
               <Save className="mr-2 h-4 w-4" />
             )}
-            {t("Save Changes", "পরিবর্তন সংরক্ষণ করুন")}
+            Save Changes
           </Button>
         </div>
       </div>
@@ -298,14 +290,14 @@ export default function WhatsAppControlPage() {
                   <Activity size={24} />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-lg font-semibold">{t("Session Status", "সেশনের স্থিতি")}</Label>
+                  <Label className="text-lg font-semibold">Session Status</Label>
                   <p className="text-sm text-muted-foreground">
-                    {t("{days} days remaining in your active plan.", "{days} দিন আপনার সক্রিয় প্ল্যানে বাকি আছে।").replace("{days}", expiryDays.toString())}
+                    {expiryDays} days remaining in your active plan.
                   </p>
                 </div>
               </div>
               <div className="text-sm font-semibold px-3 py-1.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                {t("{days} Days Left", "{days} দিন বাকি").replace("{days}", expiryDays.toString())}
+                {expiryDays} Days Left
               </div>
             </CardContent>
           </Card>
@@ -315,57 +307,57 @@ export default function WhatsAppControlPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <ControlCard
             icon={MessageCircle}
-            title={t("Reply Message", "রিপ্লাই মেসেজ")}
-            description={t("Auto-reply to incoming texts.", "আগত টেক্সটগুলোতে অটো-রিপ্লাই দিন।")}
+            title="Reply Message"
+            description="Auto-reply to incoming texts."
             checked={config.reply_message}
             onCheckedChange={(c) => setConfig({ ...config, reply_message: c })}
           />
           <ControlCard
             icon={ReplyAll}
-            title={t("Swipe Reply", "সোয়াইপ রিপ্লাই")}
-            description={t("Enable swipe-to-reply context.", "সোয়াইপ-টু-রিপ্লাই কনটেক্সট সক্রিয় করুন।")}
+            title="Swipe Reply"
+            description="Enable swipe-to-reply context."
             checked={config.swipe_reply}
             onCheckedChange={(c) => setConfig({ ...config, swipe_reply: c })}
           />
           <ControlCard
             icon={Image}
-            title={t("Image Detection", "ছবি শনাক্তকরণ")}
-            description={t("Analyze received images.", "প্রাপ্ত ছবিগুলো বিশ্লেষণ করুন।")}
+            title="Image Detection"
+            description="Analyze received images."
             checked={config.image_detection}
             onCheckedChange={(c) => setConfig({ ...config, image_detection: c })}
           />
           <ControlCard
             icon={Image}
-            title={t("Image Send", "ছবি পাঠানো")}
-            description={t("Allow bot to send images.", "বটকে ছবি পাঠানোর অনুমতি দিন।")}
+            title="Image Send"
+            description="Allow bot to send images."
             checked={config.image_send}
             onCheckedChange={(c) => setConfig({ ...config, image_send: c })}
           />
           <ControlCard
             icon={PackageSearch}
-            title={t("Order Tracking", "অর্ডার ট্র্যাকিং")}
-            description={t("Automated order status checks.", "অটোমেটেড অর্ডার স্ট্যাটাস চেক।")}
+            title="Order Tracking"
+            description="Automated order status checks."
             checked={config.order_tracking}
             onCheckedChange={(c) => setConfig({ ...config, order_tracking: c })}
           />
           <ControlCard
             icon={MessageSquare}
-            title={t("Group Reply", "গ্রুপ রিপ্লাই")}
-            description={t("Reply to WhatsApp group chats", "হোয়াটসঅ্যাপ গ্রুপ চ্যাটে রিপ্লাই দিন")}
+            title="Group Reply"
+            description="Reply to WhatsApp group chats."
             checked={config.group_reply}
             onCheckedChange={(c) => setConfig({ ...config, group_reply: c })}
           />
           <ControlCard
             icon={Mic}
-            title={t("Audio Detection", "অডিও শনাক্তকরণ")}
-            description={t("Transcribe and process audio messages.", "অডিও মেসেজগুলো ট্রান্সক্রাইব এবং প্রসেস করুন।")}
+            title="Audio Detection"
+            description="Transcribe and process audio messages."
             checked={config.audio_detection}
             onCheckedChange={(c) => setConfig({ ...config, audio_detection: c })}
           />
           <ControlCard
             icon={Upload}
-            title={t("Direct File Upload", "সরাসরি ফাইল আপলোড")}
-            description={t("Allow users to upload files directly.", "ব্যবহারকারীদের সরাসরি ফাইল আপলোড করতে দিন।")}
+            title="Direct File Upload"
+            description="Allow users to upload files directly."
             checked={config.file_upload}
             onCheckedChange={(c) => setConfig({ ...config, file_upload: c })}
           />
@@ -379,8 +371,8 @@ export default function WhatsAppControlPage() {
                 <Hand size={24} />
               </div>
               <div>
-                <CardTitle>{t("Human Handover Settings", "হিউম্যান হ্যান্ডওভার সেটিংস")}</CardTitle>
-                <CardDescription>{t("Configure how and when the AI should pause for a human agent.", "এআই কখন এবং কীভাবে একজন হিউম্যান এজেন্টের জন্য থামবে তা কনফিগার করুন।")}</CardDescription>
+                <CardTitle>Human Handover Settings</CardTitle>
+                <CardDescription>Configure how and when the AI should pause for a human agent.</CardDescription>
               </div>
             </div>
           </CardHeader>
@@ -388,7 +380,7 @@ export default function WhatsAppControlPage() {
             <div className="space-y-2">
               <Label className="flex items-center gap-2 text-sm">
                 <StopCircle className="w-4 h-4 text-red-500" />
-                {t("Lock Emoji", "লক ইমোজি")}
+                Lock Emoji
               </Label>
               <Input
                 placeholder="e.g. 🛑,🔒,⛔"
@@ -396,13 +388,13 @@ export default function WhatsAppControlPage() {
                 onChange={(e) => setConfig({ ...config, lock_emojis: e.target.value })}
               />
               <p className="text-xs text-muted-foreground">
-                {t("AI stops if this emoji is found in recent messages.", "সাম্প্রতিক মেসেজগুলোতে এই ইমোজি পাওয়া গেলে এআই থেমে যাবে।")}
+                AI stops if this emoji is found in recent messages.
               </p>
             </div>
             <div className="space-y-2">
               <Label className="flex items-center gap-2 text-sm">
                 <RefreshCcw className="w-4 h-4 text-green-500" />
-                {t("Unlock Emoji", "আনলক ইমোজি")}
+                Unlock Emoji
               </Label>
               <Input
                 placeholder="e.g. 🟢,🔓,✅"
@@ -410,7 +402,7 @@ export default function WhatsAppControlPage() {
                 onChange={(e) => setConfig({ ...config, unlock_emojis: e.target.value })}
               />
               <p className="text-xs text-muted-foreground">
-                {t("AI resumes if this emoji is sent after a block.", "ব্লক হওয়ার পর এই ইমোজি পাঠানো হলে এআই পুনরায় শুরু হবে।")}
+                AI resumes if this emoji is sent after a block.
               </p>
             </div>
           </CardContent>

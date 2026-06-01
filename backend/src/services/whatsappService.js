@@ -114,6 +114,71 @@ async function sendImage(session, chatId, imageUrl, caption) {
 }
 
 /**
+ * Send Video via WAHA
+ * @param {string} session
+ * @param {string} chatId
+ * @param {string} videoUrl
+ * @param {string} caption
+ */
+async function sendVideo(session, chatId, videoUrl, caption) {
+    try {
+        const videoResponse = await axios.get(videoUrl, {
+            responseType: 'arraybuffer',
+            timeout: 15000
+        });
+
+        const buffer = Buffer.from(videoResponse.data, 'binary');
+        const contentType = videoResponse.headers['content-type'] || 'video/mp4';
+        let extension = contentType.split('/')[1] || 'mp4';
+        if (extension === 'quicktime') extension = 'mov';
+
+        const filename = `video_${Date.now()}.${extension}`;
+
+        const form = new FormData();
+        form.append('session', session);
+        form.append('chatId', chatId);
+        form.append('file', buffer, { filename, contentType });
+        if (caption) form.append('caption', caption);
+
+        const response = await axios.post(`${WAHA_BASE_URL}/api/sendVideo`, form, {
+            headers: {
+                ...form.getHeaders(),
+                'X-Api-Key': WAHA_API_KEY
+            }
+        });
+
+        return response.data;
+    } catch (error) {
+        console.warn(`[WhatsApp] Binary Video Upload Failed. Falling back to URL method: ${error.message}`);
+
+        try {
+            let mimetype = 'video/mp4';
+            if (videoUrl.endsWith('.webm')) mimetype = 'video/webm';
+            else if (videoUrl.endsWith('.mov')) mimetype = 'video/quicktime';
+            else if (videoUrl.endsWith('.avi')) mimetype = 'video/x-msvideo';
+            else if (videoUrl.endsWith('.mkv')) mimetype = 'video/x-matroska';
+
+            const payload = {
+                chatId: chatId,
+                file: {
+                    mimetype,
+                    url: videoUrl,
+                    filename: "video." + (videoUrl.split('.').pop() || "mp4")
+                },
+                caption: caption,
+                session: session
+            };
+
+            const response = await apiClient.post('/api/sendVideo', payload);
+            return response.data;
+        } catch (fallbackError) {
+            console.error(`[WhatsApp] Send Video Error (Final):`, fallbackError.message);
+            return null;
+        }
+    }
+}
+
+/**
  * Send Typing Indicator (Presence)
  * @param {string} session 
  * @param {string} chatId 
@@ -534,6 +599,7 @@ async function addLabel(session, chatId, labelName) {
 module.exports = {
     sendMessage,
     sendImage,
+    sendVideo,
     sendTyping,
     stopTyping,
     sendSeen,

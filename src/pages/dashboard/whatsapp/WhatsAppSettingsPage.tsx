@@ -113,7 +113,7 @@ export default function WhatsAppSettingsPage() {
   // Credits (Shared)
   const [messageCredit, setMessageCredit] = useState(0);
   const [planActive, setPlanActive] = useState(false);
-  const [isOwner, setIsOwner] = useState(true); // Assuming true for now as we don't have shared/team logic fully exposed in frontend yet for this page
+  const [isOwner, setIsOwner] = useState(true);
 
   const textPromptRef = useRef<HTMLTextAreaElement | null>(null);
   const imagePromptRef = useRef<HTMLTextAreaElement | null>(null);
@@ -130,7 +130,6 @@ export default function WhatsAppSettingsPage() {
   });
 
   const handleApplyCoupon = () => {
-    // Simple validation for demo - in production this would verify with backend
     if (couponCode.toUpperCase() === "FREE500" || couponCode.toUpperCase() === "START500") {
         setAppliedCoupon(couponCode.toUpperCase());
         setSelectedPlan("500_free");
@@ -179,7 +178,6 @@ export default function WhatsAppSettingsPage() {
         setMessageCredit(data.message_credit || 0);
         setPlanActive(plan !== 'none');
         
-        // Sync selectedPlan with active plan for UI consistency
         if (plan === 'starter') setSelectedPlan('m1000');
         else if (plan === 'pro') setSelectedPlan('m3000');
         else if (plan === 'enterprise') setSelectedPlan('m7500');
@@ -193,9 +191,9 @@ export default function WhatsAppSettingsPage() {
   const handlePurchaseCredits = async () => {
     const monthlyPlans = new Set(['m1000', 'm3000', 'm7500']);
     const creditPacks: Record<string, { price: number, credits: number }> = {
-      'p150': { price: 150, credits: 1000 },
-      'p700': { price: 700, credits: 5000 },
-      'p1350': { price: 1350, credits: 10000 },
+      'p150': { price: 300, credits: 1000 },
+      'p700': { price: 1200, credits: 5000 },
+      'p1350': { price: 2000, credits: 10000 },
       '500_free': { price: 0, credits: 500 }
     };
 
@@ -288,7 +286,6 @@ export default function WhatsAppSettingsPage() {
       setInitialTextPrompt(dbRow.text_prompt || "");
       setInitialImagePrompt(dbRow.image_prompt || "");
       
-      // Determine Mode
       const dbApiKey = dbRow.api_key || "";
       let isManaged = false;
       const cheapEngine = dbRow.cheap_engine !== undefined ? dbRow.cheap_engine : null;
@@ -310,7 +307,6 @@ export default function WhatsAppSettingsPage() {
       const rawModel = dbRow.chat_model || dbRow.chatmodel || "openrouter/auto";
       const displayModel = rawModel.replace(":free", "");
 
-      // AI Settings
       form.reset({
         provider: dbRow.ai || dbRow.ai_provider || "openrouter",
         api_key: isManaged ? "" : dbApiKey,
@@ -319,7 +315,6 @@ export default function WhatsAppSettingsPage() {
         base_url: dbRow.custom_base_url || "",
       });
 
-      // Behavior
       setWait(dbRow.wait !== undefined && dbRow.wait !== null ? Number(dbRow.wait) : 8);
       setHistoryLimit(dbRow.check_conversion ?? 10);
       setSemanticCacheEnabled(Boolean(dbRow.semantic_cache_enabled));
@@ -331,10 +326,7 @@ export default function WhatsAppSettingsPage() {
       setOrderEmailEnabled(Boolean(dbRow.order_email_confirmation_enabled));
       setAdminNotificationEmail(dbRow.admin_notification_email || "");
 
-      // Credits (Joined from user_configs) - Integrated with fetchUserBalance for real-time consistency
       await fetchUserBalance();
-
-      // Check ownership/permissions if needed (simplified for now)
       setIsOwner(true); 
 
     } catch (error) {
@@ -358,15 +350,7 @@ export default function WhatsAppSettingsPage() {
     }
   }, [id, fetchConfig, currentSession]);
 
-  // fetchUserBalance is now called inside fetchConfig or the connection effect
-  /*
-  useEffect(() => {
-    fetchUserBalance();
-  }, []);
-  */
-
   const fetchProductsForPrompt = async () => {
-    // FIX: currentSession has 'name', not 'session_name'
     const sessionName = String(currentSession?.name || localStorage.getItem("active_wa_session_id") || "");
     if (!sessionName) {
       toast.error("Active session missing. Please select a session.");
@@ -397,7 +381,6 @@ export default function WhatsAppSettingsPage() {
         headers: { Authorization: `Bearer ${localStorage.getItem("auth_token")}` },
       });
 
-      // Handle non-ok but also empty/null gracefully
       let items: PromptProduct[] = [];
       if (res.ok) {
           const data = await res.json();
@@ -412,7 +395,6 @@ export default function WhatsAppSettingsPage() {
       setProductList(items);
     } catch (error) {
       console.error("Failed to load products for prompt (Non-fatal):", error);
-      // Don't show toast error to user, just log and show empty list
       setProductList([]);
     } finally {
       setProductLoading(false);
@@ -422,7 +404,6 @@ export default function WhatsAppSettingsPage() {
   const handleOpenPrompt = (tab: "text" | "image") => {
     setActiveTab(tab);
     setIsPromptOpen(true);
-    // Always fetch products fresh to ensure latest list
     fetchProductsForPrompt();
   };
 
@@ -678,7 +659,7 @@ export default function WhatsAppSettingsPage() {
           <CardContent>
             {loading ? (
                 <div className="flex flex-col items-center justify-center py-10 space-y-4">
-                    <div className="animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent" />
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
                     <p className="text-sm text-muted-foreground animate-pulse">Detecting AI Configuration...</p>
                 </div>
             ) : (
@@ -836,19 +817,18 @@ export default function WhatsAppSettingsPage() {
                     </>
                 ) : (
                     <div className="space-y-6">
-                        {/* Compact Managed Mode Banner */}
                         <div className="rounded-lg border border-emerald-200 bg-emerald-50/30 p-4 dark:border-emerald-800/30 dark:bg-emerald-900/10 shadow-sm transition-all hover:shadow-md">
-                            <div className="mb-4 flex items-center justify-between gap-4 rounded-xl border border-emerald-500/20 bg-black/20 p-3">
+                            <div className="mb-4 flex items-center justify-between gap-4 rounded-xl border border-emerald-500/20 bg-secondary/40 p-3">
                                 <div>
-                                    <div className="text-sm font-semibold text-emerald-100">Switch Pro Plus Mode</div>
-                                    <p className="text-xs text-emerald-200/80">
-                                        On korle AI Studio endpoint diye text, audio, image smart fallback-e cholbe.
+                                    <div className="text-sm font-semibold">Switch Pro Plus Mode</div>
+                                    <p className="text-xs text-muted-foreground">
+                                        Enabling this uses AI Studio endpoints for smart text, audio, and image fallbacks.
                                     </p>
                                 </div>
                                 <div className="flex items-center gap-3">
                                     <Badge
                                         variant="outline"
-                                        className={proPlusMode ? "border-[#00ff88]/60 text-[#00ff88]" : "border-white/20 text-white/60"}
+                                        className={proPlusMode ? "border-primary/60 text-primary" : "border-border text-muted-foreground"}
                                     >
                                         {proPlusMode ? PRO_PLUS_MANAGED_MODEL : "Standard Cloud"}
                                     </Badge>
@@ -869,7 +849,7 @@ export default function WhatsAppSettingsPage() {
                                 </div>
 
                                 {(detailedCredits?.subscription_plan !== 'none' || detailedCredits?.permanent_credit > 0 || messageCredit > 0) ? (
-                                    <div className="flex items-center gap-4 rounded-xl bg-gradient-to-br from-secondary to-purple-500/5 p-4 shadow-sm border border-border dark:from-purple-900/20 dark:to-purple-950/20 dark:border-purple-800/30">
+                                    <div className="flex items-center gap-4 rounded-xl bg-secondary/40 p-4 border border-border">
                                         <div className="text-right flex-1">
                                             <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground mb-1">Current Plan</p>
                                             <div className="text-sm font-black text-foreground leading-none">
@@ -901,26 +881,6 @@ export default function WhatsAppSettingsPage() {
                                                         {messageCredit.toLocaleString()} Credits
                                                     </span>
                                                 </div>
-                                                
-                                                {detailedCredits && (
-                                                    <div className="flex flex-wrap justify-end gap-1.5">
-                                                        {detailedCredits.daily_limit > 0 && (
-                                                            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-blue-500/5 border border-blue-500/10 text-[9px] text-blue-600 dark:text-blue-400 font-bold">
-                                                                D: {detailedCredits.daily_used}/{detailedCredits.daily_limit}
-                                                            </div>
-                                                        )}
-                                                        {detailedCredits.bonus_credit > 0 && (
-                                                            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-500/5 border border-amber-500/10 text-[9px] text-amber-600 dark:text-amber-400 font-bold">
-                                                                B: {detailedCredits.bonus_credit.toLocaleString()}
-                                                            </div>
-                                                        )}
-                                                        {detailedCredits.permanent_credit > 0 && (
-                                                            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-500/5 border border-emerald-500/10 text-[9px] text-emerald-600 dark:text-emerald-400 font-bold">
-                                                                P: {detailedCredits.permanent_credit.toLocaleString()}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                )}
                                             </div>
                                         </div>
                                         {!isTeamView && (
@@ -936,13 +896,13 @@ export default function WhatsAppSettingsPage() {
                                         )}
                                     </div>
                                 ) : (
-                                    <div className="flex items-center justify-between p-3 rounded-xl border border-dashed border-purple-200 bg-purple-50/20 dark:border-purple-800/30 dark:bg-purple-900/10">
+                                    <div className="flex items-center justify-between p-3 rounded-xl border border-dashed border-border bg-secondary/20">
                                             <div className="flex items-center gap-3">
-                                                <div className="bg-purple-100 dark:bg-purple-900/50 p-1.5 rounded-lg">
-                                                    <Sparkles className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+                                                <div className="bg-primary/10 p-1.5 rounded-lg">
+                                                    <Sparkles className="h-4 w-4 text-primary" />
                                                 </div>
                                                 <div>
-                                                    <h3 className="text-xs font-bold text-purple-900 dark:text-purple-100">
+                                                    <h3 className="text-xs font-bold">
                                                       {isTeamView ? "Managed by Owner" : "No Active Plan"}
                                                     </h3>
                                                     <p className="text-[10px] text-muted-foreground">
@@ -955,7 +915,7 @@ export default function WhatsAppSettingsPage() {
                                                   type="button" 
                                                   size="sm"
                                                   onClick={() => setIsPricingOpen(true)} 
-                                                  className="bg-purple-600 hover:bg-purple-700 text-white font-bold h-8 text-[11px] px-4 rounded-lg shadow-sm"
+                                                  className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold h-8 text-[11px] px-4 rounded-lg shadow-sm"
                                               >
                                                   View Plans
                                               </Button>
@@ -965,7 +925,6 @@ export default function WhatsAppSettingsPage() {
                             </div>
                         </div>
 
-                        {/* Pricing Modal */}
                         <Dialog open={isPricingOpen} onOpenChange={setIsPricingOpen}>
                             <DialogContent className="max-w-4xl bg-card border-border text-foreground">
                                 <DialogHeader>
@@ -976,7 +935,6 @@ export default function WhatsAppSettingsPage() {
                                 </DialogHeader>
 
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8 py-6">
-                                    {/* Monthly Packages */}
                                     <div className="space-y-4">
                                         <h4 className="text-primary font-black uppercase tracking-widest text-xs flex items-center gap-2">
                                             <Clock className="h-4 w-4" />
@@ -1012,7 +970,6 @@ export default function WhatsAppSettingsPage() {
                                         </div>
                                     </div>
 
-                                    {/* Permanent Packages */}
                                     <div className="space-y-4">
                                         <h4 className="text-emerald-500 font-black uppercase tracking-widest text-xs flex items-center gap-2">
                                             <InfinityIcon className="h-4 w-4" />
@@ -1049,7 +1006,6 @@ export default function WhatsAppSettingsPage() {
                                     </div>
                                 </div>
 
-                                {/* Coupon Section in Modal */}
                                 <div className="space-y-4 pt-6 border-t border-dashed border-border">
                                      <div className="flex items-end gap-3">
                                          <div className="grid gap-2 flex-1 max-w-xs">
@@ -1075,23 +1031,23 @@ export default function WhatsAppSettingsPage() {
  
                                      {appliedCoupon && (
                                          <div 
-                                             className={`cursor-pointer relative rounded-xl border-2 p-4 shadow-sm transition-all border-[#00ff88] bg-[#00ff88]/10 animate-in fade-in zoom-in duration-300`}
+                                             className={`cursor-pointer relative rounded-xl border-2 p-4 shadow-sm transition-all border-primary bg-primary/10 animate-in fade-in zoom-in duration-300`}
                                              onClick={() => setSelectedPlan('500_free')}
                                          >
                                              <div className="flex flex-col items-center justify-center space-y-2">
-                                                 <Badge className="bg-[#00ff88] text-black font-black mb-2">Coupon Applied</Badge>
-                                                 <h3 className="font-bold text-xl text-[#00ff88]">Trial Pack</h3>
-                                                 <div className="text-4xl font-black text-white">FREE</div>
-                                                 <p className="text-sm text-gray-400 font-medium">500 Messages Credit</p>
-                                                 {selectedPlan === '500_free' && <div className="absolute top-3 right-3 text-[#00ff88]"><Check className="h-7 w-7" /></div>}
+                                                 <Badge className="bg-primary text-primary-foreground font-black mb-2">Coupon Applied</Badge>
+                                                 <h3 className="font-bold text-xl text-primary">Trial Pack</h3>
+                                                 <div className="text-4xl font-black text-foreground">FREE</div>
+                                                 <p className="text-sm text-muted-foreground font-medium">500 Messages Credit</p>
+                                                 {selectedPlan === '500_free' && <div className="absolute top-3 right-3 text-primary"><Check className="h-7 w-7" /></div>}
                                              </div>
                                          </div>
                                      )}
                                 </div>
 
                                 <DialogFooter className="mt-6">
-                                    <Button variant="ghost" onClick={() => setIsPricingOpen(false)} className="text-gray-400 hover:text-white" disabled={purchasing}>Cancel</Button>
-                                    <Button onClick={handlePurchaseCredits} disabled={purchasing} className="bg-[#00ff88] text-black font-black px-8 hover:bg-[#00e67a] shadow-[0_10px_30px_rgba(0,255,136,0.25)]">
+                                    <Button variant="ghost" onClick={() => setIsPricingOpen(false)} className="text-muted-foreground hover:text-foreground" disabled={purchasing}>Cancel</Button>
+                                    <Button onClick={handlePurchaseCredits} disabled={purchasing} className="bg-primary text-primary-foreground font-black px-8 hover:bg-primary/90">
                                         {purchasing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                                         Confirm & Pay
                                     </Button>
@@ -1310,18 +1266,17 @@ export default function WhatsAppSettingsPage() {
         </Card>
       </div>
 
-      {/* System Prompt Full Screen Dialog */}
       <Dialog open={isPromptOpen} onOpenChange={setIsPromptOpen}>
-        <DialogContent className="max-w-5xl h-[90vh] flex flex-col">
+        <DialogContent className="max-w-5xl h-[90vh] flex flex-col bg-card border-border text-foreground">
             <DialogHeader>
                 <DialogTitle>Edit AI Instructions</DialogTitle>
-                <DialogDescription>
+                <DialogDescription className="text-muted-foreground">
                     Define your AI's persona and how it handles images.
                 </DialogDescription>
             </DialogHeader>
             <div className="flex-1 py-4 overflow-hidden">
                 <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
-                    <TabsList>
+                    <TabsList className="bg-secondary border-border">
                         <TabsTrigger value="text">System Prompt (Text)</TabsTrigger>
                         <TabsTrigger value="image">Image Detection Prompt</TabsTrigger>
                     </TabsList>
@@ -1337,10 +1292,10 @@ export default function WhatsAppSettingsPage() {
                                 placeholder="Search product..."
                                 value={productSearch}
                                 onChange={(e) => setProductSearch(e.target.value)}
-                                className="h-7 max-w-[180px] text-xs bg-black/40 border-white/10"
+                                className="h-7 max-w-[180px] text-xs bg-secondary/60 border-border"
                               />
                             </div>
-                            <div className="flex flex-wrap gap-2 max-h-24 overflow-y-auto border border-white/10 rounded-md bg-black/20 p-2">
+                            <div className="flex flex-wrap gap-2 max-h-24 overflow-y-auto border border-border rounded-md bg-secondary/40 p-2">
                               {productLoading && (
                                 <span className="text-xs text-muted-foreground">
                                   Loading products...
@@ -1366,7 +1321,7 @@ export default function WhatsAppSettingsPage() {
                                       key={p.id}
                                       type="button"
                                       onClick={() => handleInsertProductIntoPrompt(p)}
-                                      className="text-xs px-2 py-1 rounded-full border border-[#00ff88]/30 bg-[#00ff88]/5 hover:bg-[#00ff88]/15 hover:border-[#00ff88] transition-colors"
+                                      className="text-xs px-2 py-1 rounded-full border border-primary/30 bg-primary/5 hover:bg-primary/15 hover:border-primary transition-colors text-foreground"
                                     >
                                       {p.name || "Untitled"}
                                     </button>
@@ -1377,7 +1332,7 @@ export default function WhatsAppSettingsPage() {
                             <Textarea 
                               ref={textPromptRef}
                               defaultValue={initialTextPrompt}
-                              className="w-full flex-1 h-full font-mono text-sm leading-relaxed p-4 resize-none"
+                              className="w-full flex-1 h-full font-mono text-sm leading-relaxed p-4 resize-none bg-background border-border"
                               placeholder="You are a helpful assistant..."
                             />
                           </div>
@@ -1386,15 +1341,15 @@ export default function WhatsAppSettingsPage() {
                     
                     <TabsContent value="image" className="flex-1 mt-4 h-full">
                          <div className="space-y-2 h-full flex flex-col">
-                            <div className="bg-muted/50 p-4 rounded-lg text-sm text-muted-foreground">
-                                <p className="font-semibold mb-1">How Image Detection Works:</p>
+                            <div className="bg-secondary/40 p-4 rounded-lg text-sm text-muted-foreground border border-border">
+                                <p className="font-semibold mb-1 text-foreground">How Image Detection Works:</p>
                                 <p>When a user sends an image, the AI will first "see" it using this prompt. The result is then passed to the main chat AI.</p>
                                 <p className="mt-2 italic">Example: "Analyze this image. If it's a product, identify the name, price, and color. If it's a payment screenshot, extract the transaction ID."</p>
                             </div>
                             <Textarea 
                                 ref={imagePromptRef}
                                 defaultValue={initialImagePrompt}
-                                className="w-full flex-1 font-mono text-sm leading-relaxed p-4 resize-none"
+                                className="w-full flex-1 font-mono text-sm leading-relaxed p-4 resize-none bg-background border-border"
                                 placeholder="Describe how the AI should analyze images..."
                             />
                         </div>
@@ -1407,14 +1362,13 @@ export default function WhatsAppSettingsPage() {
                         variant="secondary" 
                         onClick={handleOptimizePrompt} 
                         disabled={optimizing || promptSaving}
-                        className="bg-[#00ff88]/10 hover:bg-[#00ff88]/20 text-[#00ff88]"
                     >
                         {optimizing ? (
-                            <div className="animate-spin rounded-full h-4 w-4 border-2 border-current border-t-transparent mr-2" />
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                         ) : (
                             <Sparkles className="mr-2 h-4 w-4" />
                         )}
-                        Auto-Format for Zero Cost
+                        Auto-Format Prompt
                     </Button>
                 </div>
                 <div className="flex gap-2">
@@ -1422,7 +1376,7 @@ export default function WhatsAppSettingsPage() {
                       Cancel
                     </Button>
                     <Button onClick={handleSavePrompt} disabled={promptSaving || optimizing}>
-                        {promptSaving ? <div className="animate-spin rounded-full h-4 w-4 border-2 border-current border-t-transparent mr-2" /> : <Save className="mr-2 h-4 w-4" />}
+                        {promptSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                         Save Prompts
                     </Button>
                 </div>

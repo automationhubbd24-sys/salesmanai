@@ -823,6 +823,16 @@ async function initTables() {
         await query(`
             DO $$ 
             BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='video_url') THEN
+                    ALTER TABLE products ADD COLUMN video_url TEXT;
+                END IF;
+            END $$;
+        `);
+        console.log("[DB] 'products.video_url' column checked.");
+
+        await query(`
+            DO $$ 
+            BEGIN 
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='allowed_wa_sessions') THEN
                     ALTER TABLE products ADD COLUMN allowed_wa_sessions JSONB DEFAULT '[]'::jsonb;
                 END IF;
@@ -3693,6 +3703,7 @@ async function createProduct(productData) {
         'name',
         'description',
         'image_url',
+        'video_url',
         'additional_images',
         'variants',
         'is_active',

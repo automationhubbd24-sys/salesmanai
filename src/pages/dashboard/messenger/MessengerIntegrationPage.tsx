@@ -7,9 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { 
-    AlertCircle, 
     Facebook, 
     Check, 
     Copy, 
@@ -17,16 +15,12 @@ import {
     Database, 
     Settings, 
     Trash2, 
-    CreditCard, 
     Gift,
-    Sparkles,
-    Users,
     FileText
 } from "lucide-react";
 import { BACKEND_URL } from "@/config";
 import { useMessenger } from "@/context/MessengerContext";
 import { logFrontendError } from "../../../lib/logger";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 // --- Types & Interfaces ---
 
@@ -68,8 +62,7 @@ export default function MessengerIntegrationPage() {
         pages: contextPages, 
         isTeamMember, 
         activeTeam, 
-        viewMode, 
-        switchViewMode 
+        viewMode
     } = useMessenger();
     
     // --- State ---
@@ -77,7 +70,6 @@ export default function MessengerIntegrationPage() {
     const [userId, setUserId] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [connecting, setConnecting] = useState(false);
-    const [copySuccess, setCopySuccess] = useState(false);
 
     // Direct Connect State
     const [directPageName, setDirectPageName] = useState("");
@@ -146,9 +138,7 @@ export default function MessengerIntegrationPage() {
     const copyWebhook = () => {
         const webhookUrl = `${BACKEND_URL}/webhook`;
         navigator.clipboard.writeText(webhookUrl);
-        setCopySuccess(true);
         toast.success("Webhook URL copied!");
-        setTimeout(() => setCopySuccess(false), 2000);
     };
 
     const fetchPages = async () => {
@@ -639,13 +629,6 @@ export default function MessengerIntegrationPage() {
         }
     };
 
-    const openSubscriptionModal = (page: PageData) => {
-        // setSelectedPageForSub(page);
-        // setCouponCode("");
-        // setSelectedPlan("3_months");
-        // setIsSubscriptionOpen(true);
-    };
-
     const handleManage = async (page: PageData) => {
         console.log("handleManage page object:", page); // Debug log
         // ALWAYS ALLOW MANAGE (Free Integration)
@@ -670,12 +653,8 @@ export default function MessengerIntegrationPage() {
         }
     };
 
-    const handleSubscribe = async () => {
-        // FUNCTION REMOVED - FREE INTEGRATION
-    };
-
     return (
-        <div className="space-y-6">
+    <div className="space-y-6 -m-4 md:-m-6 lg:-m-6 p-4 md:p-6 lg:p-6">
             {/* Header Section */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8">
                 <div>

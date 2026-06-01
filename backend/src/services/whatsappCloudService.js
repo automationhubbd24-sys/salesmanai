@@ -193,6 +193,27 @@ class WhatsAppCloudService {
         }
     }
 
+    async sendVideoMessage(phoneNumberId, accessToken, recipientNumber, videoUrl, caption) {
+        try {
+            const video = { link: videoUrl };
+            if (caption) {
+                video.caption = caption;
+            }
+
+            const response = await this.graphPost(`/${phoneNumberId}/messages`, {
+                messaging_product: "whatsapp",
+                recipient_type: "individual",
+                to: recipientNumber,
+                type: "video",
+                video
+            }, accessToken);
+            return response;
+        } catch (error) {
+            console.error('[WhatsApp Cloud] Send Video Error:', error.response?.data || error.message);
+            throw error;
+        }
+    }
+
     /**
      * Subscribe app to WABA (Required to receive webhooks)
      */

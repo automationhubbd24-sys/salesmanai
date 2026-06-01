@@ -237,7 +237,7 @@ Phone: ${order.number || 'N/A'}`;
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 -m-4 md:-m-6 lg:-m-6 p-4 md:p-6 lg:p-6">
       <div className="flex items-center justify-between">
         <div>
            <h2 className="text-3xl font-bold tracking-tight">Messenger Order Tracking</h2>

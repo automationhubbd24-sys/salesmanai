@@ -59,7 +59,7 @@ while (true) {
   ];
 
   return (
-    <div className="space-y-6 p-4 md:p-8 animate-in fade-in duration-700">
+    <div className="space-y-6 animate-in fade-in duration-700 -m-4 md:-m-6 lg:-m-6 p-4 md:p-6 lg:p-6">
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">

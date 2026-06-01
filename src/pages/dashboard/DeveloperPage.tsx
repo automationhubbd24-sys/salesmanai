@@ -411,7 +411,7 @@ export default function DeveloperPage() {
     };
 
     return (
-        <div className="relative min-h-screen space-y-4 md:space-y-6 p-4 md:p-8 animate-in fade-in duration-500 overflow-x-hidden bg-[#0a0a0a]">
+        <div className="relative min-h-screen space-y-4 md:space-y-6 animate-in fade-in duration-500 overflow-x-hidden bg-[#0a0a0a] -m-4 md:-m-6 lg:-m-6 p-4 md:p-6 lg:p-6">
             <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none z-0">
                 <div className="absolute -top-[10%] -left-[10%] w-[40%] h-[40%] bg-primary/5 rounded-full blur-[120px]"></div>
             </div>

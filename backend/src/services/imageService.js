@@ -43,7 +43,87 @@ if ((!s3Client || PREFER_SUPABASE) && process.env.SUPABASE_URL && process.env.SU
 }
 
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
-const UPLOAD_ROOT = process.env.IMAGE_UPLOAD_DIR || path.join(__dirname, '..', '..', 'uploads', 'product-images');
+const IMAGE_UPLOAD_ROOT = process.env.IMAGE_UPLOAD_DIR || path.join(__dirname, '..', '..', 'uploads', 'product-images');
+const VIDEO_UPLOAD_ROOT = process.env.VIDEO_UPLOAD_DIR || path.join(__dirname, '..', '..', 'uploads', 'product-videos');
+
+function getExtensionFromMimeType(mimeType, fallback = 'bin') {
+    const map = {
+        'image/jpeg': 'jpg',
+        'image/jpg': 'jpg',
+        'image/png': 'png',
+        'image/webp': 'webp',
+        'image/gif': 'gif',
+        'video/mp4': 'mp4',
+        'video/webm': 'webm',
+        'video/quicktime': 'mov',
+        'video/x-msvideo': 'avi',
+        'video/x-matroska': 'mkv'
+    };
+    return map[mimeType] || fallback;
+}
+
+async function uploadProductAsset(finalBuffer, contentType, userId, baseUrl, options = {}) {
+    const {
+        folder = 'product-images',
+        uploadRoot = IMAGE_UPLOAD_ROOT,
+        extension = getExtensionFromMimeType(contentType)
+    } = options;
+
+    const timestamp = Date.now();
+    const userFolder = String(userId || 'anonymous');
+    const fileName = `${timestamp}.${extension}`;
+
+    if (s3Client && process.env.S3_BUCKET && !process.env.SUPABASE_BUCKET) {
+        const key = `${folder}/${userFolder}/${fileName}`;
+        const command = new PutObjectCommand({
+            Bucket: process.env.S3_BUCKET,
+            Key: key,
+            Body: finalBuffer,
+            ContentType: contentType
+        });
+
+        await s3Client.send(command);
+
+        if (process.env.S3_PUBLIC_URL) {
+            return `${process.env.S3_PUBLIC_URL}/${key}`;
+        }
+
+        const endpoint = process.env.S3_ENDPOINT.replace(/\/$/, '');
+        return `${endpoint}/${process.env.S3_BUCKET}/${key}`;
+    }
+
+    if (supabase && process.env.SUPABASE_BUCKET) {
+        const key = `${folder}/${userFolder}/${fileName}`;
+        const { error } = await supabase.storage
+            .from(process.env.SUPABASE_BUCKET)
+            .upload(key, finalBuffer, {
+                contentType,
+                upsert: true
+            });
+
+        if (error) {
+            console.error("[ImageService] Supabase Upload Error:", error);
+            throw error;
+        }
+
+        const { data: publicUrlData } = supabase.storage
+            .from(process.env.SUPABASE_BUCKET)
+            .getPublicUrl(key);
+
+        return publicUrlData.publicUrl;
+    }
+
+    const dirPath = path.join(uploadRoot, userFolder);
+    const filePath = path.join(dirPath, fileName);
+
+    await fs.promises.mkdir(dirPath, { recursive: true });
+    await fs.promises.writeFile(filePath, finalBuffer);
+
+    const base = baseUrl ? baseUrl.replace(/\/$/, '') : PUBLIC_BASE_URL.replace(/\/$/, '');
+    const relativeUrl = `/uploads/${folder}/${encodeURIComponent(userFolder)}/${encodeURIComponent(fileName)}`;
+
+    return `${base}${relativeUrl}`;
+}
 
 /**
  * Uploads and optimizes an image for product entry.
@@ -77,68 +157,11 @@ async function uploadProductImage(fileBuffer, mimeType, userId, baseUrl) {
             contentType = 'image/jpeg';
         }
 
-        // 2. Generate Unique Filename
-        const timestamp = Date.now();
-        const userFolder = String(userId || 'anonymous');
-        const fileName = `${timestamp}.${extension}`;
-
-        // 3. Upload to S3 (if configured and NOT preferring Supabase)
-        if (s3Client && process.env.S3_BUCKET && !process.env.SUPABASE_BUCKET) {
-            const key = `product-images/${userFolder}/${fileName}`;
-            const command = new PutObjectCommand({
-                Bucket: process.env.S3_BUCKET,
-                Key: key,
-                Body: finalBuffer,
-                ContentType: contentType
-            });
-
-            await s3Client.send(command);
-
-            // Construct S3 URL
-            if (process.env.S3_PUBLIC_URL) {
-                return `${process.env.S3_PUBLIC_URL}/${key}`;
-            } else {
-                const endpoint = process.env.S3_ENDPOINT.replace(/\/$/, '');
-                return `${endpoint}/${process.env.S3_BUCKET}/${key}`;
-            }
-
-        } else if (supabase && process.env.SUPABASE_BUCKET) {
-            // 4. Upload to Supabase Storage (Directly)
-            console.log("[ImageService] Uploading to Supabase Storage...");
-            const key = `${userFolder}/${fileName}`;
-            const { data, error } = await supabase.storage
-                .from(process.env.SUPABASE_BUCKET)
-                .upload(key, finalBuffer, {
-                    contentType: contentType,
-                    upsert: true
-                });
-
-            if (error) {
-                console.error("[ImageService] Supabase Upload Error:", error);
-                throw error;
-            }
-
-            const { data: publicUrlData } = supabase.storage
-                .from(process.env.SUPABASE_BUCKET)
-                .getPublicUrl(key);
-
-            console.log("[ImageService] Supabase Public URL:", publicUrlData.publicUrl);
-            return publicUrlData.publicUrl;
-
-        } else {
-            // 5. Local Disk Fallback
-            const dirPath = path.join(UPLOAD_ROOT, userFolder);
-            const filePath = path.join(dirPath, fileName);
-
-            await fs.promises.mkdir(dirPath, { recursive: true });
-            await fs.promises.writeFile(filePath, finalBuffer);
-
-            // Construct URL
-            const base = baseUrl ? baseUrl.replace(/\/$/, '') : PUBLIC_BASE_URL.replace(/\/$/, '');
-            const relativeUrl = `/uploads/product-images/${encodeURIComponent(userFolder)}/${encodeURIComponent(fileName)}`;
-
-            return `${base}${relativeUrl}`;
-        }
+        return await uploadProductAsset(finalBuffer, contentType, userId, baseUrl, {
+            folder: 'product-images',
+            uploadRoot: IMAGE_UPLOAD_ROOT,
+            extension
+        });
 
     } catch (error) {
         console.error("[ImageService] Upload Failed:", error);
@@ -146,6 +169,20 @@ async function uploadProductImage(fileBuffer, mimeType, userId, baseUrl) {
     }
 }
 
+async function uploadProductVideo(fileBuffer, mimeType, userId, baseUrl) {
+    try {
+        return await uploadProductAsset(fileBuffer, mimeType, userId, baseUrl, {
+            folder: 'product-videos',
+            uploadRoot: VIDEO_UPLOAD_ROOT,
+            extension: getExtensionFromMimeType(mimeType, 'mp4')
+        });
+    } catch (error) {
+        console.error("[ImageService] Video Upload Failed:", error);
+        throw error;
+    }
+}
+
 module.exports = {
-    uploadProductImage
+    uploadProductImage,
+    uploadProductVideo
 };

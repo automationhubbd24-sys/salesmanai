@@ -243,6 +243,21 @@ function normalizeImageUrl(url) {
     return `${baseUrl.replace(/\/$/, '')}${cleanPath}`;
 }
 
+function pushUniqueMedia(target, media) {
+    if (!Array.isArray(target) || !media || !media.url) return;
+    const mediaUrl = String(media.url).trim();
+    if (!mediaUrl) return;
+    if (!target.some(item => (typeof item === 'string' ? item : item?.url) === mediaUrl)) {
+        target.push({ ...media, url: mediaUrl });
+    }
+}
+
+function hasQueuedMedia(aiResponse) {
+    const imageCount = Array.isArray(aiResponse?.images) ? aiResponse.images.length : 0;
+    const videoCount = Array.isArray(aiResponse?.videos) ? aiResponse.videos.length : 0;
+    return imageCount > 0 || videoCount > 0;
+}
+
 function hasPhotoIntent(historyList) {
     if (!Array.isArray(historyList)) return false;
     return historyList.some(item => {
@@ -885,11 +900,21 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
                     finalReplyText = `${finalReplyText || ''}\n\n🛍️ *${product.name}*\n💰 Price: ${priceDisplay}\n📝 Info: ${product.description || 'No details available.'}`.trim();
                 }
 
-                if ((aiResponse.action === 'SEND_PHOTO' || aiResponse.action === 'SEND_BOTH') && product.image_url) {
+                if (aiResponse.action === 'SEND_PHOTO' || aiResponse.action === 'SEND_BOTH') {
                     if (!aiResponse.images) aiResponse.images = [];
-                    if (!aiResponse.images.some(img => (typeof img === 'string' ? img : img?.url) === product.image_url)) {
-                        aiResponse.images.push({
+                    if (!aiResponse.videos) aiResponse.videos = [];
+
+                    if (product.image_url) {
+                        pushUniqueMedia(aiResponse.images, {
                             url: product.image_url,
+                            title: product.name,
+                            description: product.description || ''
+                        });
+                    }
+
+                    if (product.video_url) {
+                        pushUniqueMedia(aiResponse.videos, {
+                            url: normalizeImageUrl(product.video_url),
                             title: product.name,
                             description: product.description || ''
                         });
@@ -905,9 +930,16 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         if (!aiResponse.images) aiResponse.images = [];
         aiResponse.image_urls.forEach(url => {
             if (url && typeof url === 'string' && url.startsWith('http')) {
-                if (!aiResponse.images.some(img => (typeof img === 'string' ? img : img?.url) === url)) {
-                    aiResponse.images.push({ url, title: 'Product Image' });
-                }
+                pushUniqueMedia(aiResponse.images, { url, title: 'Product Image' });
+            }
+        });
+    }
+
+    if (Array.isArray(aiResponse?.video_urls)) {
+        if (!aiResponse.videos) aiResponse.videos = [];
+        aiResponse.video_urls.forEach(url => {
+            if (url && typeof url === 'string' && url.startsWith('http')) {
+                pushUniqueMedia(aiResponse.videos, { url, title: 'Product Video' });
             }
         });
     }
@@ -918,9 +950,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         if (extracted.urls.length > 0) {
             if (!aiResponse.images) aiResponse.images = [];
             extracted.urls.forEach(url => {
-                if (!aiResponse.images.some(img => (typeof img === 'string' ? img : img?.url) === url)) {
-                    aiResponse.images.push({ url, title: 'Product Image' });
-                }
+                pushUniqueMedia(aiResponse.images, { url, title: 'Product Image' });
             });
         }
     }
@@ -932,17 +962,26 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         if (!targetProductId && aiResponse?.product_id) targetProductId = aiResponse.product_id;
         if (targetProductId) {
             const product = await dbService.getProductById(targetProductId);
-            if (product && product.image_url) {
-                const primaryUrl = normalizeImageUrl(product.image_url);
+            if (product) {
+                const primaryUrl = product.image_url ? normalizeImageUrl(product.image_url) : null;
                 const additional = Array.isArray(product.additional_images)
                     ? product.additional_images.map(normalizeImageUrl).filter(Boolean)
                     : [];
                 const urls = [primaryUrl, ...additional].filter(Boolean);
+
                 aiResponse.images = urls.map((url, idx) => ({
                     url,
                     title: product.name || (idx === 0 ? 'Product Image' : `Product Image ${idx + 1}`),
                     description: product.description || ''
                 }));
+
+                if (product.video_url) {
+                    aiResponse.videos = [{
+                        url: normalizeImageUrl(product.video_url),
+                        title: product.name || 'Product Video',
+                        description: product.description || ''
+                    }];
+                }
             }
         }
     }
@@ -964,7 +1003,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         finalReplyText = finalReplyText.replace(/\[SEND_MODE:\s*(image_only|text_and_image|text_only)\]/i, '').trim();
     }
 
-    if (promptMode === 'image_only' && Array.isArray(aiResponse?.images) && aiResponse.images.length > 0) {
+    if (promptMode === 'image_only' && hasQueuedMedia(aiResponse)) {
         finalReplyText = '';
     }
 
@@ -994,8 +1033,11 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     const outboundImages = allowImageSend && Array.isArray(aiResponse?.images)
         ? aiResponse.images.map(img => (typeof img === 'string' ? { url: img, title: null } : { url: img?.url || null, title: img?.title || null })).filter(img => img.url)
         : [];
+    const outboundVideos = allowImageSend && Array.isArray(aiResponse?.videos)
+        ? aiResponse.videos.map(video => (typeof video === 'string' ? { url: video, title: null } : { url: video?.url || null, title: video?.title || null })).filter(video => video.url)
+        : [];
 
-    if (!finalReplyText && outboundImages.length === 0) {
+    if (!finalReplyText && outboundImages.length === 0 && outboundVideos.length === 0) {
         console.log(`[WhatsApp Webhook] AI stayed silent for ${senderId}`);
         return;
     }
@@ -1036,13 +1078,20 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         await whatsappCloudService.sendImageMessage(resolvedPhoneNumberId, config.cloud_access_token, senderId, image.url, caption);
     }
 
-    if (outboundImages.length > 0) {
+    for (let i = 0; i < outboundVideos.length; i++) {
+        const video = outboundVideos[i];
+        const caption = !finalReplyText && outboundImages.length === 0 && i === 0 && video.title ? String(video.title).slice(0, 1024) : undefined;
+        console.log(`[WhatsApp Webhook] Sending video reply to ${senderId}...`);
+        await whatsappCloudService.sendVideoMessage(resolvedPhoneNumberId, config.cloud_access_token, senderId, video.url, caption);
+    }
+
+    if (outboundImages.length > 0 || outboundVideos.length > 0) {
         await dbService.saveWhatsAppChat({
             session_name: effectiveSessionName,
             sender_id: effectiveSessionName,
             recipient_id: senderId,
             message_id: `reply_media_${bufferedMessages[0].id}`,
-            text: `[Bot sent ${outboundImages.length} image(s)]`.trim(),
+            text: `[Bot sent ${outboundImages.length} image(s) and ${outboundVideos.length} video(s)]`.trim(),
             timestamp: Date.now(),
             status: 'sent',
             reply_by: 'bot'
@@ -2660,7 +2709,7 @@ STRICT RULES:
             replyText = ''; // Ensure it's empty string
             
             // If we also have no images, this is a SILENT event.
-            if (!aiResponse.images || aiResponse.images.length === 0) {
+            if (!hasQueuedMedia(aiResponse)) {
                  const silentMsg = `[AI Silence] No text and no images. Staying silent for Sender: ${senderId}.`;
                  console.log(silentMsg);
                  if (typeof logToFile === 'function') logToFile(silentMsg);
@@ -2747,8 +2796,10 @@ STRICT RULES:
 
         // --- SMART IMAGE EXTRACTION & CLEANING (TIERED SELECTION) ---
         if (!aiResponse.images) aiResponse.images = [];
+        if (!aiResponse.videos) aiResponse.videos = [];
         
-        let extractedImages = []; 
+        let extractedImages = [];
+        let extractedVideos = [];
         const tagRegex = /##PRODUCT\s*["'](.+?)["']/gi;
         const strictImageRegex = /IMAGE:\s*(.+?)\s*\|\s*(https?:\/\/[^\s,]+)/gi;
         const brokenTagRegex = /IMAGE:\s*([^|]+?)\s*\|\s*(?!\s*https?:\/\/)(.*)/gi;
@@ -2781,6 +2832,12 @@ STRICT RULES:
                                 const fullUrl = normalizeImageUrl(product.image_url);
                                 if (fullUrl && !extractedImages.some(img => img.url === fullUrl)) {
                                     extractedImages.push({ url: fullUrl, title: product.name || name, description: product.description || '' });
+                                }
+                            }
+                            if (product.video_url) {
+                                const fullVideoUrl = normalizeImageUrl(product.video_url);
+                                if (fullVideoUrl && !extractedVideos.some(video => video.url === fullVideoUrl)) {
+                                    extractedVideos.push({ url: fullVideoUrl, title: product.name || name, description: product.description || '' });
                                 }
                             }
                             // Also add additional images for Tier 1 tags
@@ -2881,6 +2938,12 @@ STRICT RULES:
                                     const fullUrl = normalizeImageUrl(product.image_url);
                                     if (fullUrl) urls.push(fullUrl);
                                 }
+                                if (product.video_url) {
+                                    const fullVideoUrl = normalizeImageUrl(product.video_url);
+                                    if (fullVideoUrl && !extractedVideos.some(video => video.url === fullVideoUrl)) {
+                                        extractedVideos.push({ url: fullVideoUrl, title: product.name, description: product.description || '' });
+                                    }
+                                }
                                 
                                 let additional = [];
                                 if (Array.isArray(product.additional_images)) additional = product.additional_images;
@@ -2948,11 +3011,32 @@ STRICT RULES:
             });
         }
 
+        if (Array.isArray(aiResponse.video_urls)) {
+            for (const url of aiResponse.video_urls) {
+                if (url && typeof url === 'string' && url.startsWith('http') && !extractedVideos.some(video => video.url === url)) {
+                    extractedVideos.push({ url, title: 'Product Video' });
+                }
+            }
+        }
+
+        aiResponse.videos.forEach(video => {
+            const url = typeof video === 'string' ? video : video.url;
+            if (url && !extractedVideos.some(item => item.url === url)) {
+                extractedVideos.push(typeof video === 'string' ? { url: url, title: 'Product Video' } : video);
+            }
+        });
+
         // --- FINAL DEDUPLICATION ---
         const uniqueUrls = new Set();
         aiResponse.images = extractedImages.filter(img => {
             if (!img.url || uniqueUrls.has(img.url)) return false;
             uniqueUrls.add(img.url);
+            return true;
+        });
+        const uniqueVideoUrls = new Set();
+        aiResponse.videos = extractedVideos.filter(video => {
+            if (!video.url || uniqueVideoUrls.has(video.url)) return false;
+            uniqueVideoUrls.add(video.url);
             return true;
         });
 
@@ -2970,7 +3054,7 @@ STRICT RULES:
         }
 
         // REFINED: Strictly follow image_only if explicitly tagged or detected.
-        if (promptMode === 'image_only' && aiResponse.images.length > 0) {
+        if (promptMode === 'image_only' && (aiResponse.images.length > 0 || aiResponse.videos.length > 0)) {
             replyText = '';
         } else if (promptMode === 'image_title' && aiResponse.images.length > 0 && (!replyText || replyText.length < 5)) {
             const titles = aiResponse.images.map(img => img.title).filter(Boolean);
@@ -3183,6 +3267,51 @@ STRICT RULES:
                     await Promise.all(uploadPromises);
                     console.log(`[Image Group] All images processed.`);
                 }
+            }
+        }
+
+        if (aiResponse.videos && Array.isArray(aiResponse.videos) && aiResponse.videos.length > 0) {
+            const videos = aiResponse.videos;
+            console.log(`[AI] Found ${videos.length} videos to send.`);
+
+            const allowImageSend = !pagePrompts || (pagePrompts.image_send !== false && pagePrompts.image_send !== 'false' && pagePrompts.image_send !== 0 && pagePrompts.image_send !== '0');
+
+            if (!allowImageSend) {
+                console.log(`[Video Send] Disabled by Config (image_send=false). STRICT MODE: Sending nothing.`);
+            } else {
+                const uploadPromises = videos.map(async (videoObj) => {
+                    try {
+                        console.log(`[Video Upload] Uploading video for: ${videoObj.url}`);
+                        const uploadResult = await facebookService.sendVideoUpload(pageId, senderId, videoObj.url, pageConfig.page_access_token);
+
+                        if (uploadResult && uploadResult.message_id) {
+                            await dbService.saveFbChat({
+                                page_id: pageId,
+                                sender_id: pageId,
+                                recipient_id: senderId,
+                                message_id: uploadResult.message_id,
+                                text: `[System Memory: User is viewing Video of ${videoObj.title || 'Product'}: ${videoObj.url}]`,
+                                timestamp: Date.now(),
+                                status: 'bot_video',
+                                reply_by: 'system'
+                            });
+                        }
+                    } catch (videoError) {
+                        console.error(`[Video Upload] Failed to upload video ${videoObj.url}: ${videoError.message}`);
+
+                        try {
+                            console.log(`[Video Fallback] Attempting direct URL send for: ${videoObj.url}`);
+                            await facebookService.sendVideoMessage(pageId, senderId, videoObj.url, pageConfig.page_access_token);
+                        } catch (urlError) {
+                            console.error(`[Video Fallback] Direct URL send also failed: ${urlError.message}`);
+                            const fallbackText = `Video Link: ${videoObj.url}`;
+                            await facebookService.sendMessage(pageId, senderId, fallbackText, pageConfig.page_access_token);
+                        }
+                    }
+                });
+
+                await Promise.all(uploadPromises);
+                console.log(`[Video Group] All videos processed.`);
             }
         }
 

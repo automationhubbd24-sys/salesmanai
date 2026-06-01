@@ -7,19 +7,74 @@ const imageService = require('../services/imageService');
 const teamUserCache = new Map();
 const CACHE_TTL = 5 * 60 * 1000; 
 
+const MAX_PRODUCT_FILE_SIZE = 16 * 1024 * 1024;
+const MAX_PRODUCT_VIDEO_SIZE = 16 * 1024 * 1024;
+
 const upload = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: 5 * 1024 * 1024 },
+    limits: { fileSize: MAX_PRODUCT_FILE_SIZE },
     fileFilter: (req, file, cb) => {
-        if (file.mimetype.startsWith('image/')) {
-            cb(null, true);
-        } else {
-            cb(new Error('Only images are allowed'));
+        const mimeType = String(file.mimetype || '');
+
+        if (file.fieldname === 'image' || file.fieldname === 'images') {
+            if (mimeType.startsWith('image/')) {
+                return cb(null, true);
+            }
+            return cb(new Error('Only image files are allowed for product images.'));
         }
+
+        if (file.fieldname === 'video') {
+            if (mimeType.startsWith('video/')) {
+                return cb(null, true);
+            }
+            return cb(new Error('Only video files are allowed for the product video.'));
+        }
+
+        return cb(new Error('Unexpected upload field.'));
     }
 });
 
-exports.uploadMiddleware = upload.fields([{ name: 'image', maxCount: 1 }, { name: 'images', maxCount: 10 }]);
+const uploadFieldsMiddleware = upload.fields([
+    { name: 'image', maxCount: 1 },
+    { name: 'images', maxCount: 10 },
+    { name: 'video', maxCount: 1 }
+]);
+
+exports.uploadMiddleware = (req, res, next) => {
+    uploadFieldsMiddleware(req, res, (error) => {
+        if (!error) {
+            return next();
+        }
+
+        if (error instanceof multer.MulterError) {
+            if (error.code === 'LIMIT_FILE_SIZE') {
+                return res.status(400).json({ error: 'Product image or video must be 16 MB or smaller.' });
+            }
+            return res.status(400).json({ error: error.message || 'Product file upload failed.' });
+        }
+
+        return res.status(400).json({ error: error.message || 'Product file upload failed.' });
+    });
+};
+
+function getUploadedVideo(req) {
+    return req?.files?.video?.[0] || null;
+}
+
+function validateUploadedVideo(req) {
+    const video = getUploadedVideo(req);
+    if (!video) return null;
+
+    if (!video.mimetype || !video.mimetype.startsWith('video/')) {
+        return 'Only valid video files are allowed for product video.';
+    }
+
+    if (video.size > MAX_PRODUCT_VIDEO_SIZE) {
+        return 'Product video must be 16 MB or smaller.';
+    }
+
+    return null;
+}
 
 function normalizeUniqueImageList(images, primaryImage = null) {
     const primary = primaryImage ? String(primaryImage).trim() : null;
@@ -412,8 +467,14 @@ exports.createProduct = async (req, res) => {
             });
         }
 
-        // 1. Handle Image Upload
+        const videoValidationError = validateUploadedVideo(req);
+        if (videoValidationError) {
+            return res.status(400).json({ error: videoValidationError });
+        }
+
+        // 1. Handle Media Upload
         let imageUrl = null;
+        let videoUrl = body.video_url ? String(body.video_url).trim() : null;
         let additionalImages = [];
         
         const envBaseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL;
@@ -439,6 +500,16 @@ exports.createProduct = async (req, res) => {
                 additionalImages = normalizeUniqueImageList(additionalImages, imageUrl);
             } catch (imgError) {
                 console.error("[ProductCreate] Additional images upload failed:", imgError);
+            }
+        }
+
+        const uploadedVideo = getUploadedVideo(req);
+        if (uploadedVideo) {
+            try {
+                videoUrl = await imageService.uploadProductVideo(uploadedVideo.buffer, uploadedVideo.mimetype, userId, baseUrl);
+            } catch (videoError) {
+                console.error("[ProductCreate] Video upload failed:", videoError);
+                return res.status(500).json({ error: "Product video upload failed" });
             }
         }
 
@@ -514,6 +585,7 @@ exports.createProduct = async (req, res) => {
             name,
             description,
             image_url: imageUrl,
+            video_url: videoUrl,
             additional_images: additionalImages,
             variants: variants,
             is_active: isActive,
@@ -770,8 +842,14 @@ exports.updateProduct = async (req, res) => {
         if (!userId) return res.status(400).json({ error: "user_id is required for verification" });
         console.log(`[ProductUpdate] ID: ${id}, Owner: ${userId}, Page: ${pageId}`);
 
-        // 1. Handle Image Upload if present
+        const videoValidationError = validateUploadedVideo(req);
+        if (videoValidationError) {
+            return res.status(400).json({ error: videoValidationError });
+        }
+
+        // 1. Handle Media Upload if present
         let imageUrl = undefined; // undefined means no change
+        let videoUrl = undefined; // undefined means no change
         let additionalImages = undefined;
 
         const envBaseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL;
@@ -810,6 +888,16 @@ exports.updateProduct = async (req, res) => {
             }
         }
 
+        const uploadedVideo = getUploadedVideo(req);
+        if (uploadedVideo) {
+            try {
+                console.log(`[ProductUpdate] Uploading Product Video for Owner: ${userId}`);
+                videoUrl = await imageService.uploadProductVideo(uploadedVideo.buffer, uploadedVideo.mimetype, userId, baseUrl);
+            } catch (videoError) {
+                return res.status(500).json({ error: "Product video upload failed: " + videoError.message });
+            }
+        }
+
         const existing = await dbService.getProductById(id);
 
         // 2. Parse Body
@@ -823,6 +911,8 @@ exports.updateProduct = async (req, res) => {
         if (req.body.is_active !== undefined) updates.is_active = req.body.is_active === 'true' || req.body.is_active === true;
         if (imageUrl) updates.image_url = imageUrl;
         else if (req.body.image_url !== undefined) updates.image_url = req.body.image_url ? String(req.body.image_url).trim() : null;
+        if (videoUrl) updates.video_url = videoUrl;
+        else if (req.body.video_url !== undefined) updates.video_url = req.body.video_url ? String(req.body.video_url).trim() : null;
         if (req.body.is_combo !== undefined) updates.is_combo = req.body.is_combo === 'true' || req.body.is_combo === true;
         if (req.body.allow_description !== undefined) updates.allow_description = req.body.allow_description === 'true' || req.body.allow_description === true;
         if (req.body.combo_items !== undefined) {

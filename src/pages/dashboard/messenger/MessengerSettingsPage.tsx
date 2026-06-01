@@ -797,7 +797,7 @@ export default function MessengerSettingsPage() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8">
+    <div className="space-y-8 -m-4 md:-m-6 lg:-m-6 p-4 md:p-6 lg:p-6">
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
            <h2 className="text-3xl font-bold tracking-tight">Messenger AI Intelligence</h2>
