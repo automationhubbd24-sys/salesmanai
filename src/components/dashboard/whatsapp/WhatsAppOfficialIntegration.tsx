@@ -311,10 +311,18 @@ export default function WhatsAppOfficialIntegration() {
     }
   };
 
-  const launchWhatsAppSignup = () => {
+  const launchWhatsAppSignup = (forceNew: boolean = false) => {
     if (!sdkReady || !window.FB) {
       toast.error("Facebook SDK is still loading. Please try again.");
       return;
+    }
+
+    if (forceNew) {
+      embeddedSignupMetaRef.current = {};
+      // Reset localStorage to ensure a new session is created instead of updating current
+      localStorage.removeItem("active_wa_session_id");
+      localStorage.removeItem("active_wp_db_id");
+      setCurrentSession(null);
     }
 
     // Coexistence Warning
@@ -326,7 +334,7 @@ export default function WhatsAppOfficialIntegration() {
     setLoading(true);
 
     window.FB.login(
-      (response) => {
+      (response: any) => {
         const code = response?.authResponse?.code;
         if (!code) {
           setLoading(false);
@@ -376,9 +384,20 @@ export default function WhatsAppOfficialIntegration() {
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-white/10 bg-[#0a0a0a] px-4 py-3 text-sm text-white">
-                <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Active Session</p>
-                <p className="mt-1 break-all font-medium">{officialSession?.name || "official_session"}</p>
+              <div className="flex flex-col gap-3">
+                <div className="rounded-2xl border border-white/10 bg-[#0a0a0a] px-4 py-3 text-sm text-white min-w-[200px]">
+                  <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Active Session</p>
+                  <p className="mt-1 break-all font-medium">{officialSession?.name || "official_session"}</p>
+                </div>
+                <Button 
+                  onClick={() => launchWhatsAppSignup(true)}
+                  disabled={loading || !sdkReady}
+                  variant="outline" 
+                  className="w-full border-primary/20 bg-primary/5 text-primary hover:bg-primary/10 hover:border-primary/40 rounded-xl"
+                >
+                  <Link2 className="mr-2 h-4 w-4" />
+                  Connect Another Number
+                </Button>
               </div>
             </div>
           </div>
