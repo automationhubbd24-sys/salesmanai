@@ -151,6 +151,12 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` }
       });
+
+      if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || `Server returned ${res.status}`);
+      }
+
       const wahaSessions = await res.json();
       const allSessions: WahaSession[] = Array.isArray(wahaSessions) ? wahaSessions : [];
       let officialSessions = allSessions.filter((session) =>
@@ -158,8 +164,10 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
       );
 
       // CROSS-DEVICE SYNC FIX: If personal mode has no sessions, check if user has any team sessions
+      // We do this if viewMode is personal and we found nothing, OR if we just logged in (no current session)
       if (viewMode === 'personal' && officialSessions.length === 0 && Array.isArray(teams) && teams.length > 0) {
           console.log("Personal mode empty, checking team sessions for cross-device sync...");
+          let foundInTeam = false;
           for (const team of teams) {
               const teamUrl = `${BACKEND_URL}/api/whatsapp/sessions?team_owner=${encodeURIComponent(team.owner_email)}`;
               const teamRes = await fetch(teamUrl, { headers: { Authorization: `Bearer ${token}` } });
@@ -172,11 +180,16 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
                       console.log(`Found connected session in team: ${team.owner_email}, auto-switching...`);
                       setActiveTeam(team);
                       switchViewMode('team');
-                      setSessions(teamOfficial);
                       officialSessions = teamOfficial;
+                      foundInTeam = true;
                       break; 
                   }
               }
+          }
+          if (!foundInTeam) {
+              setSessions([]);
+          } else {
+              setSessions(officialSessions);
           }
       } else {
           setSessions(officialSessions);

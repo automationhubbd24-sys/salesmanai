@@ -253,9 +253,14 @@ router.get('/sessions', async (req, res) => {
         // 2. Fetch Personal Sessions
         let mySessions = [];
         if (!requestedOwner || requestedOwner === userEmail) {
+            // Safer query that handles potential null userIds and type mismatches
             const { rows } = await pgClient.query(
-                'SELECT id, session_name, expires_at, plan_days, status, subscription_status, user_id, email, engine_override, provider_type, waba_id, phone_number_id, cloud_access_token FROM whatsapp_message_database WHERE user_id::uuid = $1::uuid OR email = $2',
-                [userId, userEmail]
+                `SELECT id, session_name, expires_at, plan_days, status, subscription_status, user_id, email, engine_override, provider_type, waba_id, phone_number_id, cloud_access_token 
+                 FROM whatsapp_message_database 
+                 WHERE 
+                    (user_id IS NOT NULL AND user_id::text = $1::text) 
+                    OR (email IS NOT NULL AND email = $2)`,
+                [userId ? String(userId) : null, userEmail]
             );
             mySessions = rows;
         }
