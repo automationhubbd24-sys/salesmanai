@@ -47,6 +47,9 @@ export default function WhatsAppOfficialIntegration() {
   const embeddedSignupMetaRef = useRef<EmbeddedSignupMeta>({});
   const metaResolverRef = useRef<((meta: EmbeddedSignupMeta | null) => void) | null>(null);
   const metaTimeoutRef = useRef<number | null>(null);
+  const pollIntervalRef = useRef<number | null>(null);
+  const loadingRef = useRef(false);
+  const sessionsRef = useRef(sessions);
 
   const officialSession = (currentSession?.provider_type === "official" ? currentSession : null)
     || sessions.find((session) => session.provider_type === "official" || String(session.name || "").startsWith("official_"))
@@ -54,6 +57,44 @@ export default function WhatsAppOfficialIntegration() {
   const trimmedBackendUrl = BACKEND_URL.replace(/\/$/, "");
   const officialWebhookUrl = `${trimmedBackendUrl}/webhook/whatsapp`;
   const usesLocalBackend = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(trimmedBackendUrl);
+
+  useEffect(() => {
+    loadingRef.current = loading;
+  }, [loading]);
+
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
+
+  const clearSignupPoll = () => {
+    if (pollIntervalRef.current) {
+      window.clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  };
+
+  const finishConnectedFlow = (sessionData?: {
+    sessionName?: string;
+    wabaId?: string;
+    phoneNumberId?: string;
+  }) => {
+    const sessionName = sessionData?.sessionName;
+
+    if (sessionName) {
+      localStorage.setItem("active_wa_session_id", sessionName);
+      setCurrentSession({
+        name: sessionName,
+        provider_type: "official",
+        waba_id: sessionData?.wabaId,
+        phone_number_id: sessionData?.phoneNumberId,
+      });
+    }
+
+    setConnected(true);
+    setLoading(false);
+    window.dispatchEvent(new Event("db-connection-changed"));
+    navigate("/dashboard/whatsapp/control");
+  };
 
   const resolvePendingMeta = (meta: EmbeddedSignupMeta | null) => {
     if (metaTimeoutRef.current) {
@@ -127,6 +168,7 @@ export default function WhatsAppOfficialIntegration() {
         if (payload.event === "ERROR") {
           const message = payload.data?.error_message || "WhatsApp setup failed.";
           resolvePendingMeta(null);
+          clearSignupPoll();
           toast.error(message);
           setLoading(false);
           return;
@@ -134,6 +176,7 @@ export default function WhatsAppOfficialIntegration() {
 
         if (payload.event === "CANCEL") {
           resolvePendingMeta(null);
+          clearSignupPoll();
           setLoading(false);
         }
       } catch {
@@ -143,6 +186,7 @@ export default function WhatsAppOfficialIntegration() {
 
     window.addEventListener("message", sessionInfoListener);
     return () => {
+      clearSignupPoll();
       if (metaTimeoutRef.current) {
         window.clearTimeout(metaTimeoutRef.current);
       }
@@ -163,7 +207,7 @@ export default function WhatsAppOfficialIntegration() {
       wabaId: officialSession.waba_id,
       phoneNumberId: officialSession.phone_number_id,
     });
-  }, [currentSession, sessions]);
+  }, [officialSession]);
 
   const handleDisconnect = async () => {
     if (!officialSession?.name) {
@@ -292,7 +336,6 @@ export default function WhatsAppOfficialIntegration() {
         throw new Error(data.error || "Failed to complete official WhatsApp connection.");
       }
 
-      setConnected(true);
       setWabaInfo(data.data || meta);
       if (data.data?.sessionName) {
         localStorage.setItem("active_wa_session_id", data.data.sessionName);
@@ -302,7 +345,11 @@ export default function WhatsAppOfficialIntegration() {
       }
       await refreshSessions();
       toast.success("Official WhatsApp connected successfully.");
-      window.dispatchEvent(new Event("db-connection-changed"));
+      finishConnectedFlow({
+        sessionName: data.data?.sessionName,
+        wabaId: data.data?.wabaId,
+        phoneNumberId: data.data?.phoneNumberId,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to connect official WhatsApp.";
       toast.error(message);
@@ -330,13 +377,21 @@ export default function WhatsAppOfficialIntegration() {
 
     embeddedSignupMetaRef.current = {};
     setLoading(true);
+    clearSignupPoll();
 
     // MOBILE FIX: Start polling for session completion in case postMessage fails
     const startTime = Date.now();
-    const pollInterval = setInterval(async () => {
+    const existingOfficialNames = new Set(
+      sessionsRef.current
+        .filter((session) => session.provider_type === "official" || String(session.name || "").startsWith("official_"))
+        .map((session) => session.name)
+    );
+
+    pollIntervalRef.current = window.setInterval(async () => {
       // Stop polling after 5 minutes
       if (Date.now() - startTime > 5 * 60 * 1000) {
-        clearInterval(pollInterval);
+        clearSignupPoll();
+        setLoading(false);
         return;
       }
 
@@ -351,18 +406,21 @@ export default function WhatsAppOfficialIntegration() {
         if (res.ok) {
           const sessionsData = await res.json();
           if (Array.isArray(sessionsData) && sessionsData.length > 0) {
-            const hasNewOfficial = sessionsData.some(s => 
-              (s.provider_type === "official" || String(s.name || "").startsWith("official_")) &&
-              !sessions.some(existing => existing.name === s.name)
+            const detectedOfficial = sessionsData.find((session) =>
+              (session.provider_type === "official" || String(session.name || "").startsWith("official_")) &&
+              !existingOfficialNames.has(session.name)
             );
 
-            if (hasNewOfficial) {
+            if (detectedOfficial) {
               console.log("New session detected via polling!");
-              clearInterval(pollInterval);
               await refreshSessions();
-              setConnected(true);
-              setLoading(false);
+              clearSignupPoll();
               toast.success("WhatsApp connected successfully (detected via sync).");
+              finishConnectedFlow({
+                sessionName: detectedOfficial.name,
+                wabaId: detectedOfficial.waba_id,
+                phoneNumberId: detectedOfficial.phone_number_id,
+              });
             }
           }
         }
@@ -377,9 +435,9 @@ export default function WhatsAppOfficialIntegration() {
         if (!code) {
           // MOBILE RECOVERY: If stuck in loading but no code, show reset option after timeout
           setTimeout(() => {
-            if (loading) {
+            if (loadingRef.current) {
                setLoading(false);
-               clearInterval(pollInterval);
+               clearSignupPoll();
                toast.error("Facebook connection timed out or was blocked by the app. Try using 'Desktop Site' mode if this persists.");
             }
           }, 8000);
@@ -389,7 +447,7 @@ export default function WhatsAppOfficialIntegration() {
         void (async () => {
           const signupMeta = await waitForEmbeddedSignupMeta();
           await handleSignupCompletion(code, signupMeta);
-          clearInterval(pollInterval);
+          clearSignupPoll();
         })();
       },
       {

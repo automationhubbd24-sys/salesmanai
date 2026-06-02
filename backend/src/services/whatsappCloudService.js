@@ -43,6 +43,13 @@ class WhatsAppCloudService {
         return response.data;
     }
 
+    async sendStatusMessage(phoneNumberId, accessToken, body) {
+        return await this.graphPost(`/${phoneNumberId}/messages`, {
+            messaging_product: "whatsapp",
+            ...body
+        }, accessToken);
+    }
+
     /**
      * Exchange code from Embedded Signup for an Access Token
      * @param {string} code - The code received from frontend
@@ -168,6 +175,35 @@ class WhatsAppCloudService {
             return response;
         } catch (error) {
             console.error('[WhatsApp Cloud] Send Message Error:', error.response?.data || error.message);
+            throw error;
+        }
+    }
+
+    async sendSeen(phoneNumberId, accessToken, messageId) {
+        try {
+            if (!phoneNumberId || !accessToken || !messageId) return null;
+            return await this.sendStatusMessage(phoneNumberId, accessToken, {
+                status: "read",
+                message_id: messageId
+            });
+        } catch (error) {
+            console.error('[WhatsApp Cloud] Mark Read Error:', error.response?.data || error.message);
+            throw error;
+        }
+    }
+
+    async sendTyping(phoneNumberId, accessToken, messageId) {
+        try {
+            if (!phoneNumberId || !accessToken || !messageId) return null;
+            return await this.sendStatusMessage(phoneNumberId, accessToken, {
+                status: "read",
+                message_id: messageId,
+                typing_indicator: {
+                    type: "text"
+                }
+            });
+        } catch (error) {
+            console.error('[WhatsApp Cloud] Typing Indicator Error:', error.response?.data || error.message);
             throw error;
         }
     }

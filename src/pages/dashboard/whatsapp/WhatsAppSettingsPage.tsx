@@ -143,6 +143,13 @@ export default function WhatsAppSettingsPage() {
   const [purchasing, setPurchasing] = useState(false);
   const [detailedCredits, setDetailedCredits] = useState<any>(null);
   const [isTeamView, setIsTeamView] = useState(false);
+  const dailyRemaining = Math.max(
+    0,
+    Number(detailedCredits?.daily_limit || 0) - Number(detailedCredits?.daily_used || 0)
+  );
+  const bonusCredit = Number(detailedCredits?.bonus_credit || 0);
+  const permanentCredit = Number(detailedCredits?.permanent_credit || 0);
+  const totalRemainingCredits = Math.max(0, messageCredit) + dailyRemaining + bonusCredit + permanentCredit;
 
   const fetchUserBalance = async () => {
     try {
@@ -878,9 +885,12 @@ export default function WhatsAppSettingsPage() {
                                                 <div className="flex items-center justify-end gap-1.5">
                                                     <div className="h-1 w-1 rounded-full bg-green-500 animate-pulse" />
                                                     <span className="text-[11px] font-bold text-green-600 dark:text-green-400">
-                                                        {messageCredit.toLocaleString()} Credits
+                                                        {totalRemainingCredits.toLocaleString()} Credits Left
                                                     </span>
                                                 </div>
+                                                <p className="text-[10px] text-muted-foreground text-right">
+                                                    Daily {dailyRemaining.toLocaleString()} · Bonus {bonusCredit.toLocaleString()} · Free {messageCredit.toLocaleString()} · Permanent {permanentCredit.toLocaleString()}
+                                                </p>
                                             </div>
                                         </div>
                                         {!isTeamView && (

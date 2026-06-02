@@ -631,6 +631,7 @@ async function collectOfficialMediaUrls(message, accessToken) {
 async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, senderName, senderId, wabaId, phoneNumberId) {
     const effectiveSessionName = config.session_name || `official_${wabaId || phoneNumberId}`;
     const resolvedPhoneNumberId = config.phone_number_id || phoneNumberId;
+    const latestIncomingMessageId = [...bufferedMessages].reverse().map(msg => msg?.id).find(Boolean) || null;
     const controlConfig = {
         ...(config || {}),
         ...((config && config.page_prompts) || {}),
@@ -682,6 +683,11 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
             status: 'received',
             reply_by: 'user'
         });
+    }
+
+    if (latestIncomingMessageId && resolvedPhoneNumberId && config.cloud_access_token) {
+        whatsappCloudService.sendSeen(resolvedPhoneNumberId, config.cloud_access_token, latestIncomingMessageId)
+            .catch((err) => console.warn(`[WhatsApp Webhook] Failed to mark seen: ${err.message}`));
     }
 
     // --- FEATURE FLAGS CHECK (WhatsApp Cloud API) ---
@@ -829,7 +835,8 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     // 4. AI Response Generation
     console.log(`[WhatsApp Webhook] Generating AI response for ${senderId}...`);
     const historyLimit = Math.max(1, Number(controlConfig.check_conversion) || 10);
-    const history = await dbService.getLastNWhatsAppMessages(effectiveSessionName, senderId, historyLimit);
+    const history = await dbService.getWhatsAppChatHistory(effectiveSessionName, senderId, historyLimit);
+    const recentRawHistory = await dbService.getLastNWhatsAppMessages(effectiveSessionName, senderId, historyLimit);
 
     let finalUserMessage = combinedText || inboundLogText;
     const replyToId = bufferedMessages
@@ -864,10 +871,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         pageId: effectiveSessionName,
         userId: senderId,
         userMessage: finalUserMessage,
-        history: history.map(h => ({
-            role: h.reply_by === 'bot' ? 'assistant' : 'user',
-            content: h.text
-        })),
+        history,
         imageUrls: allImages,
         audioUrls: allAudios,
         config: aiConfig,
@@ -955,7 +959,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         }
     }
 
-    if (hasPhotoIntent(history)) {
+    if (hasPhotoIntent(recentRawHistory)) {
         let targetProductId = null;
         const state = await dbService.getConversationState(effectiveSessionName, senderId);
         if (state && state.last_product_id) targetProductId = state.last_product_id;
@@ -1044,6 +1048,15 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
 
     console.log(`[WhatsApp Webhook] AI generated response for ${senderId}: "${String(finalReplyText || '').substring(0, 30)}..."`);
 
+    if (latestIncomingMessageId && resolvedPhoneNumberId && config.cloud_access_token) {
+        try {
+            await whatsappCloudService.sendTyping(resolvedPhoneNumberId, config.cloud_access_token, latestIncomingMessageId);
+            await new Promise(resolve => setTimeout(resolve, 600));
+        } catch (typingErr) {
+            console.warn(`[WhatsApp Webhook] Typing indicator failed: ${typingErr.message}`);
+        }
+    }
+
     // 5. Send Responses
     const pendingTextMessageId = `reply_${bufferedMessages[0].id}`;
     if (finalReplyText) {
@@ -1083,6 +1096,17 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         const caption = !finalReplyText && outboundImages.length === 0 && i === 0 && video.title ? String(video.title).slice(0, 1024) : undefined;
         console.log(`[WhatsApp Webhook] Sending video reply to ${senderId}...`);
         await whatsappCloudService.sendVideoMessage(resolvedPhoneNumberId, config.cloud_access_token, senderId, video.url, caption);
+    }
+
+    // 6. Deduct Credit (If not Own API)
+    const hasOwnKey = (config.api_key && config.api_key !== 'MANAGED_SECRET_KEY' && !config.api_key.startsWith('salesman_') && config.cheap_engine === false);
+    if (!hasOwnKey) {
+        const deducted = await dbService.deductWhatsAppCredit(effectiveSessionName);
+        if (!deducted) {
+            console.warn(`[WhatsApp Webhook] Credit deduction failed for ${effectiveSessionName}.`);
+        } else {
+             console.log(`[WhatsApp Webhook] Credit deducted successfully for ${effectiveSessionName}.`);
+        }
     }
 
     if (outboundImages.length > 0 || outboundVideos.length > 0) {
