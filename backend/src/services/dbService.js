@@ -179,6 +179,11 @@ async function setConversationState(pageId, senderId, data) {
     }
 }
 
+// Backward-compatible alias used by legacy WhatsApp paths.
+async function updateConversationState(pageId, senderId, data) {
+    return setConversationState(pageId, senderId, data);
+}
+
 // 4. Debounce / Duplicate Check
 async function checkDuplicate(messageId) {
     if (!messageId) return false;
@@ -3572,6 +3577,7 @@ module.exports = {
     saveLead,
     getConversationState,
     setConversationState,
+    updateConversationState,
     checkDuplicate,
     deductCredit,
     getChatHistory,

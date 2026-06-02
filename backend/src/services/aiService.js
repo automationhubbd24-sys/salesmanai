@@ -2127,16 +2127,21 @@ ${productContext}`;
     // Solution: REMOVE ALL FALLBACKS.
     // If frontend config is missing, THROW ERROR.
 
-    const userProvider = pageConfig.ai || pageConfig.operator || pageConfig.ai_provider; 
+    const userProvider = pageConfig.ai || pageConfig.operator || pageConfig.ai_provider || pageConfig.provider; 
     let userModel = (pageConfig.chat_model && pageConfig.chat_model !== 'default') ? pageConfig.chat_model.trim() : null;
 
+    if (!userModel) {
+        // Fallback for Messenger payload which might use 'chatmodel'
+        userModel = (pageConfig.chatmodel && pageConfig.chatmodel !== 'default') ? pageConfig.chatmodel.trim() : null;
+    }
+
     if (!userProvider) {
-         console.error("[AI] Fatal: No AI Provider selected in pageConfig.");
+         console.error("[AI] Fatal: No AI Provider selected in pageConfig.", pageConfig);
          throw new Error("AI Provider not configured. Please select a provider in settings.");
     }
 
     if (!userModel) {
-         console.error("[AI] Fatal: No Chat Model selected in pageConfig.");
+         console.error("[AI] Fatal: No Chat Model selected in pageConfig.", pageConfig);
          throw new Error("Chat Model not configured. Please select a model in settings.");
     }
 

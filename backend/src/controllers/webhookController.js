@@ -755,8 +755,8 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
                         timestamp: Date.now(),
                         status: 'analyzed',
                         reply_by: 'bot',
-                        token: totalVisionTokens,
-                        ai_model: lastModelUsed
+                        token_usage: totalVisionTokens,
+                        model_used: lastModelUsed
                     }).catch(e => console.error(`[WhatsApp] Failed to save image analysis:`, e.message));
                 }
             });
@@ -800,8 +800,8 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
                         timestamp: Date.now(),
                         status: 'transcribed',
                         reply_by: 'user',
-                        token: totalAudioTokens,
-                        ai_model: lastAudioModel
+                        token_usage: totalAudioTokens,
+                        model_used: lastAudioModel
                     }).catch(e => console.error(`[WhatsApp] Failed to save transcript:`, e.message));
                 }
             });
@@ -819,6 +819,64 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         return;
     }
 
+    const semEnabled = controlConfig.semantic_cache_enabled === true || controlConfig.semantic_cache_enabled === 1 || controlConfig.semantic_cache_enabled === 'true';
+    const threshold = controlConfig.semantic_cache_threshold ? Math.max(0.5, Math.min(0.99, Number(controlConfig.semantic_cache_threshold))) : 0.96;
+    const isMediaTurn = allImages.length > 0 || allAudios.length > 0;
+
+    if (semEnabled && !isMediaTurn && combinedText.trim()) {
+        try {
+            const cacheQuery = combinedText.trim().replace(/\s+/g, ' ');
+            const state = await dbService.getConversationState(effectiveSessionName, senderId);
+            const contextId = state?.last_product_id || null;
+            const cached = await dbService.findSemanticCache({
+                page_id: effectiveSessionName,
+                session_name: effectiveSessionName,
+                context_id: contextId,
+                question: cacheQuery,
+                threshold
+            });
+
+            if (cached) {
+                const cacheMessageId = `cache_${Date.now()}`;
+                await dbService.saveWhatsAppChat({
+                    session_name: effectiveSessionName,
+                    sender_id: effectiveSessionName,
+                    recipient_id: senderId,
+                    message_id: cacheMessageId,
+                    text: cached,
+                    timestamp: Date.now(),
+                    status: 'sending',
+                    reply_by: 'bot',
+                    model_used: 'semantic-cache'
+                });
+
+                if (latestIncomingMessageId && resolvedPhoneNumberId && config.cloud_access_token) {
+                    try {
+                        await whatsappCloudService.sendTyping(resolvedPhoneNumberId, config.cloud_access_token, latestIncomingMessageId);
+                    } catch (typingErr) {
+                        console.warn(`[WhatsApp Webhook] Cache typing indicator failed: ${typingErr.message}`);
+                    }
+                }
+
+                await whatsappCloudService.sendTextMessage(resolvedPhoneNumberId, config.cloud_access_token, senderId, cached);
+                await dbService.saveWhatsAppChat({
+                    session_name: effectiveSessionName,
+                    sender_id: effectiveSessionName,
+                    recipient_id: senderId,
+                    message_id: cacheMessageId,
+                    text: cached,
+                    timestamp: Date.now(),
+                    status: 'sent',
+                    reply_by: 'bot',
+                    model_used: 'semantic-cache'
+                });
+                return;
+            }
+        } catch (cacheErr) {
+            console.warn(`[WhatsApp Webhook] Early cache check failed: ${cacheErr.message}`);
+        }
+    }
+
     // 3. Save User Message to DB (Main Log)
     console.log(`[WhatsApp Webhook] Saving inbound chat for ${senderId}...`);
     await dbService.saveWhatsAppChat({
@@ -826,11 +884,56 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         sender_id: senderId,
         recipient_id: effectiveSessionName,
         message_id: bufferedMessages[0].id,
-        text: inboundLogText,
+        text: combinedText || inboundLogText,
         timestamp: Date.now(),
         status: 'received',
         reply_by: 'user'
     });
+
+    const isLocked = await dbService.checkWhatsAppLockStatus(effectiveSessionName, senderId);
+    if (isLocked) {
+        console.log(`[WhatsApp Webhook] Conversation locked for ${senderId}. Skipping AI reply.`);
+        await dbService.saveWhatsAppChat({
+            session_name: effectiveSessionName,
+            sender_id: effectiveSessionName,
+            recipient_id: senderId,
+            message_id: `sys_${Date.now()}`,
+            text: `[SYSTEM ERROR] Conversation Locked (Too many failures).`,
+            timestamp: Date.now(),
+            status: 'system_error',
+            reply_by: 'system'
+        });
+        return;
+    }
+
+    const hasDaily = Number(controlConfig.daily_limit || 0) > Number(controlConfig.daily_used || 0);
+    const hasMonthly = Number(controlConfig.monthly_limit || 0) > Number(controlConfig.monthly_used || 0);
+    const hasBonus = Number(controlConfig.bonus_credit || 0) > 0;
+    const hasLegacy = Number(controlConfig.message_credit || 0) > 0;
+    const hasPermanent = Number(controlConfig.permanent_credit || 0) > 0;
+    const hasAnyCredit = hasDaily || hasMonthly || hasBonus || hasLegacy || hasPermanent;
+    const hasOwnKey = Boolean(
+        controlConfig.api_key
+        && controlConfig.api_key !== 'MANAGED_SECRET_KEY'
+        && !String(controlConfig.api_key).startsWith('salesman_')
+        && controlConfig.cheap_engine === false
+    );
+    const isBanned = String(controlConfig.subscription_status || '').toLowerCase() === 'banned';
+
+    if (isBanned || (!hasAnyCredit && !hasOwnKey)) {
+        console.log(`[WhatsApp Webhook] Session ${effectiveSessionName} blocked. Banned=${isBanned} Credits=${hasAnyCredit} OwnKey=${hasOwnKey}`);
+        await dbService.saveWhatsAppChat({
+            session_name: effectiveSessionName,
+            sender_id: effectiveSessionName,
+            recipient_id: senderId,
+            message_id: `sys_${Date.now()}`,
+            text: `[SYSTEM ERROR] Out of Credits. Please recharge to continue using AI.`,
+            timestamp: Date.now(),
+            status: 'system_error',
+            reply_by: 'system'
+        });
+        return;
+    }
 
     // 4. AI Response Generation
     console.log(`[WhatsApp Webhook] Generating AI response for ${senderId}...`);
@@ -854,6 +957,75 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         }
     }
 
+    let smartAdContext = "";
+    if (workflow.adId && workflow.adId !== 'N/A') {
+        try {
+            const adData = await dbService.getAdContext(workflow.adId, effectiveSessionName);
+            if (adData) {
+                smartAdContext = `\n[AD REFERRAL DATA: ${adData.description || 'N/A'}`;
+                if (Array.isArray(adData.linked_product_ids) && adData.linked_product_ids.length > 0) {
+                    const productDetails = [];
+                    for (const productId of adData.linked_product_ids) {
+                        const product = await dbService.getProductById(productId);
+                        if (product) {
+                            productDetails.push(`${product.name} (Price: ${product.price} ${product.currency || 'BDT'})`);
+                        }
+                    }
+                    if (productDetails.length > 0) {
+                        smartAdContext += ` | LINKED PRODUCTS: ${productDetails.join('; ')}`;
+                    }
+                }
+                smartAdContext += `]\n`;
+            }
+        } catch (adErr) {
+            console.warn(`[WhatsApp Webhook] Failed to load smart ad context for ${workflow.adId}: ${adErr.message}`);
+        }
+    }
+
+    let promptProductContext = "";
+    let productNamesFromPrompt = extractProductNamesFromPrompt(controlConfig.text_prompt || "");
+    if (productNamesFromPrompt.length > 0 && controlConfig.user_id) {
+        const lowerCombined = String(combinedText || '').toLowerCase();
+        const isGreeting = /\b(hi+|hello|hey)\b/.test(lowerCombined);
+        productNamesFromPrompt = productNamesFromPrompt.filter(name => {
+            if (name.toLowerCase() === 'logo' && !isGreeting) return false;
+            return true;
+        });
+
+        const promptProductMap = {};
+        for (const rawName of Array.from(new Set(productNamesFromPrompt))) {
+            const key = rawName.toLowerCase();
+            if (promptProductMap[key]) continue;
+            try {
+                const productsForPrompt = await dbService.searchProducts(controlConfig.user_id, rawName, effectiveSessionName, 'whatsapp');
+                if (productsForPrompt && productsForPrompt.length > 0) {
+                    promptProductMap[key] = productsForPrompt[0];
+                }
+            } catch (promptErr) {
+                console.warn(`[WhatsApp Webhook] Prompt product lookup failed for "${rawName}": ${promptErr.message}`);
+            }
+        }
+
+        const promptProducts = Object.values(promptProductMap);
+        if (promptProducts.length > 0) {
+            promptProductContext = "\n[Instruction Products]\n";
+            promptProducts.forEach((product, index) => {
+                const priceDisplay = product.price ? `${product.price} ${product.currency || 'BDT'}` : 'N/A';
+                const imgDisplay = product.image_url || 'N/A';
+                const descDisplay = product.description ? product.description.replace(/\n/g, ' ').substring(0, 200) : '';
+                if (!product.allow_description) {
+                    promptProductContext += `Item ${index + 1}: Image URL: ${imgDisplay}\n`;
+                    return;
+                }
+                const descPart = descDisplay ? ` | Desc: ${descDisplay}` : '';
+                promptProductContext += `Item ${index + 1}: ${product.name} | Price: ${priceDisplay} | Image URL: ${imgDisplay}${descPart}\n`;
+            });
+            promptProductContext += "[End of Instruction Products]\n";
+        }
+    }
+
+    finalUserMessage = `${smartAdContext}${finalUserMessage}${promptProductContext}`;
+
     const professionalRules = `\n\n[PROFESSIONAL OUTPUT RULES]\n`
         + `1) IDENTITY: You are a professional human sales representative. Talk naturally.\n`
         + `2) TOOL-FIRST: If the user asks about product price/details, you MUST call tools. Do NOT invent prices or descriptions.\n`
@@ -866,20 +1038,56 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     aiConfig.text_prompt = aiConfig.text_prompt
         ? `${aiConfig.text_prompt}${professionalRules}`
         : professionalRules;
+    const ownerName = aiConfig.push_name || aiConfig.name || effectiveSessionName;
 
-    const aiResponse = await aiService.generateResponse({
-        pageId: effectiveSessionName,
-        userId: senderId,
-        userMessage: finalUserMessage,
-        history,
-        imageUrls: allImages,
-        audioUrls: allAudios,
-        config: aiConfig,
-        platform: 'whatsapp',
-        senderName: senderName
-    });
+    let aiResponse;
+    try {
+        aiResponse = await aiService.generateResponse({
+            pageId: effectiveSessionName,
+            userId: senderId,
+            userMessage: finalUserMessage,
+            history,
+            imageUrls: allImages,
+            audioUrls: allAudios,
+            config: aiConfig,
+            platform: 'whatsapp',
+            senderName: senderName,
+            ownerName,
+            extraTokenUsage: totalVisionTokens + totalAudioTokens
+        });
+    } catch (genErr) {
+        console.error(`[WhatsApp Webhook] AI Generation CRITICAL Error:`, genErr.message);
+        if (genErr.message.includes('PRODUCT_SEARCH_API_FAILURE')) {
+            await dbService.saveWhatsAppChat({
+                session_name: effectiveSessionName,
+                sender_id: effectiveSessionName,
+                recipient_id: senderId,
+                message_id: `err_search_${Date.now()}`,
+                text: `[CRITICAL ERROR] Product search failed due to API problem. (Code: 503_VECTOR_DB_FAIL). Details: ${genErr.message}`,
+                timestamp: Date.now(),
+                status: 'api_failure',
+                reply_by: 'system'
+            });
+            return;
+        }
+        aiResponse = null;
+    }
 
-    let finalReplyText = aiResponse?.reply || aiResponse?.text || '';
+    if (!aiResponse) {
+        await dbService.saveWhatsAppChat({
+            session_name: effectiveSessionName,
+            sender_id: effectiveSessionName,
+            recipient_id: senderId,
+            message_id: `fail_${Date.now()}`,
+            text: `[AI Error] Response was NULL/Empty. Silently ignored to prevent bad UX.`,
+            timestamp: Date.now(),
+            status: 'ai_ignored',
+            reply_by: 'bot'
+        });
+        return;
+    }
+
+    let finalReplyText = aiResponse.reply || aiResponse.text || '';
 
     if (finalReplyText && (finalReplyText.trim().startsWith('{') || finalReplyText.trim().startsWith('['))) {
         try {
@@ -1027,10 +1235,40 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
 
     if (aiResponse?.product_id) {
         try {
-            await dbService.updateConversationState(effectiveSessionName, senderId, { last_product_id: aiResponse.product_id });
+            await dbService.setConversationState(effectiveSessionName, senderId, { last_product_id: aiResponse.product_id });
         } catch (stateErr) {
             console.warn(`[WhatsApp Webhook] Failed to update conversation state: ${stateErr.message}`);
         }
+    }
+
+    try {
+        const orderDataFromAI = aiResponse.order_details?.fields || aiResponse.order_details;
+        const orderIntent = aiResponse.order_details?.intent || 'upsert';
+        await orderService.orchestrateOrder({
+            pageId: effectiveSessionName,
+            senderId,
+            platform: 'whatsapp',
+            intent: orderIntent,
+            data: orderDataFromAI || {},
+            rawText: `${finalUserMessage}\n${finalReplyText || aiResponse.reply || ''}`.trim()
+        });
+
+        const orderMatch = typeof finalReplyText === 'string'
+            ? finalReplyText.match(/\[SAVE_ORDER:\s*({.*?})\]/s)
+            : null;
+        if (orderMatch && orderMatch[1]) {
+            const orderJson = JSON.parse(orderMatch[1]);
+            await orderService.orchestrateOrder({
+                pageId: effectiveSessionName,
+                senderId,
+                platform: 'whatsapp',
+                intent: 'upsert',
+                data: orderJson
+            });
+            finalReplyText = finalReplyText.replace(orderMatch[0], '').trim();
+        }
+    } catch (orderErr) {
+        console.warn(`[WhatsApp Webhook] Order orchestration failed: ${orderErr.message}`);
     }
 
     const allowImageSend = controlConfig.image_send !== false && controlConfig.image_send !== 'false' && controlConfig.image_send !== 0 && controlConfig.image_send !== '0';
@@ -1099,7 +1337,6 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     }
 
     // 6. Deduct Credit (If not Own API)
-    const hasOwnKey = (config.api_key && config.api_key !== 'MANAGED_SECRET_KEY' && !config.api_key.startsWith('salesman_') && config.cheap_engine === false);
     if (!hasOwnKey) {
         const deducted = await dbService.deductWhatsAppCredit(effectiveSessionName);
         if (!deducted) {

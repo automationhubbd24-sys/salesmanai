@@ -942,6 +942,9 @@ router.put('/config/:id', async (req, res) => {
         if (req.body.provider !== undefined) updates.ai_provider = req.body.provider;
         if (req.body.chatmodel !== undefined) updates.chat_model = req.body.chatmodel;
         if (req.body.base_url !== undefined) updates.custom_base_url = req.body.base_url;
+        if (req.body.ai !== undefined) updates.ai_provider = req.body.ai; // Support Messenger legacy payload name
+        if (req.body.chat_model !== undefined) updates.chat_model = req.body.chat_model; // Support Messenger legacy payload name
+        if (req.body.voice_model !== undefined) updates.voice_model = req.body.voice_model; // Support Messenger legacy payload name
 
         const keys = Object.keys(updates);
         if (keys.length === 0) {

@@ -551,32 +551,47 @@ export default function WhatsAppSettingsPage() {
       const token = localStorage.getItem("auth_token");
       if (!token) throw new Error("Please login again");
 
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${dbId}`, {
+      const teamOwner = localStorage.getItem("active_team_owner");
+      const headers: Record<string, string> = { 
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}` 
+      };
+      
+      if (teamOwner) {
+        headers['x-team-owner'] = teamOwner;
+      }
+
+      const payload: any = {
+        text_prompt: values.text_prompt,
+        ai: values.provider,
+        api_key: values.api_key,
+        chat_model: values.chatmodel,
+        vision_model: null,
+        voice_model: values.chatmodel,
+        custom_base_url: values.provider === 'custom' ? values.base_url : null,
+        cheap_engine: mode === "managed",
+        pro_plus_mode: mode === "managed" ? proPlusMode : false
+      };
+
+      console.log("Saving AI settings:", payload);
+
+      const resUpdate = await fetch(`${BACKEND_URL}/api/whatsapp/config/${dbId}`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          ai_provider: values.provider,
-          api_key: values.api_key,
-          chat_model: values.chatmodel,
-          vision_model: null,
-          voice_model: null,
-          text_prompt: values.text_prompt,
-          base_url: values.base_url,
-          cheap_engine: mode === "managed",
-          pro_plus_mode: mode === "managed" ? proPlusMode : false
-        }),
+        headers: headers,
+        body: JSON.stringify(payload)
       });
 
-      if (!res.ok) throw new Error("Failed to save AI settings");
+      if (!resUpdate.ok) {
+        const body = await resUpdate.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to save settings");
+      }
 
       setActiveMode(mode);
       setActiveProPlusMode(mode === "managed" ? proPlusMode : false);
-      toast.success("AI Settings updated successfully");
+      toast.success("AI settings saved successfully");
     } catch (error: any) {
-      toast.error(error.message);
+      console.error("Save settings error:", error);
+      toast.error("Failed to save settings: " + error.message);
     } finally {
       setLoading(false);
     }
@@ -613,19 +628,18 @@ export default function WhatsAppSettingsPage() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8">
+    <div className="space-y-8 -m-4 md:-m-6 lg:-m-6 p-4 md:p-6 lg:p-6">
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
-           <h2 className="text-3xl font-bold tracking-tight">WhatsApp AI Settings</h2>
+           <h2 className="text-3xl font-bold tracking-tight">WhatsApp AI Intelligence</h2>
            <p className="text-muted-foreground mt-1">
-             Configure your AI Assistant for WhatsApp
+             Connect your preferred AI brain for WhatsApp.
            </p>
         </div>
-        <div className="flex flex-wrap gap-2 w-full md:w-auto">
+        <div className="flex gap-2">
             <Button 
                 onClick={() => handleOpenPrompt("text")} 
                 variant="outline"
-                className="flex-1 md:flex-none h-9 text-xs"
             >
                 <Bot className="mr-2 h-4 w-4" />
                 Edit System Prompt
@@ -633,7 +647,6 @@ export default function WhatsAppSettingsPage() {
             <Button 
                 onClick={() => handleOpenPrompt("image")} 
                 variant="outline"
-                className="flex-1 md:flex-none h-9 text-xs"
             >
                 <Image className="mr-2 h-4 w-4" />
                 Edit Image Prompt
@@ -804,9 +817,9 @@ export default function WhatsAppSettingsPage() {
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
-                                <SelectItem value="salesmanchatbot-pro">SalesmanChatbot 2.0 Pro</SelectItem>
-                                <SelectItem value="salesmanchatbot-flash">SalesmanChatbot 2.0 Flash</SelectItem>
-                                <SelectItem value="salesmanchatbot-lite">SalesmanChatbot 2.0 Lite</SelectItem>
+                                <SelectItem value="salesmanchatbot-pro">SalesmanChatbot 2.0 Pro (Fast & Accurate)</SelectItem>
+                                <SelectItem value="salesmanchatbot-flash">SalesmanChatbot 2.0 Flash (Ultra Fast)</SelectItem>
+                                <SelectItem value="salesmanchatbot-lite">SalesmanChatbot 2.0 Lite (Simple Tasks)</SelectItem>
                               </SelectContent>
                             </Select>
                           ) : (
@@ -856,10 +869,11 @@ export default function WhatsAppSettingsPage() {
                                 </div>
 
                                 {(detailedCredits?.subscription_plan !== 'none' || detailedCredits?.permanent_credit > 0 || messageCredit > 0) ? (
-                                    <div className="flex items-center gap-4 rounded-xl bg-secondary/40 p-4 border border-border">
+                                    <div className="flex items-center gap-4 rounded-xl bg-gradient-to-br from-secondary/80 to-purple-500/5 p-4 shadow-lg border border-border dark:from-purple-900/20 dark:to-purple-950/20 dark:border-purple-800/30">
                                         <div className="text-right flex-1">
-                                            <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground mb-1">Current Plan</p>
-                                            <div className="text-sm font-black text-foreground leading-none">
+                                            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground mb-2">Current Status</p>
+                                            <div className="text-base font-black text-foreground leading-none tracking-tight flex items-center justify-end gap-2">
+                                                <Sparkles className="h-4 w-4 text-[#00ff88]" />
                                                 {isTeamView ? (
                                                   <span className="text-amber-500 font-bold">Managed by Owner</span>
                                                 ) : (
@@ -881,16 +895,45 @@ export default function WhatsAppSettingsPage() {
                                                 )}
                                             </div>
                                             
-                                            <div className="mt-1.5 space-y-1.5">
-                                                <div className="flex items-center justify-end gap-1.5">
-                                                    <div className="h-1 w-1 rounded-full bg-green-500 animate-pulse" />
-                                                    <span className="text-[11px] font-bold text-green-600 dark:text-green-400">
-                                                        {totalRemainingCredits.toLocaleString()} Credits Left
+                                            <div className="mt-3 space-y-2">
+                                                <div className="flex items-center justify-end gap-2">
+                                                    <div className="h-1.5 w-1.5 rounded-full bg-[#00ff88] shadow-[0_0_8px_rgba(0,255,136,0.5)] animate-pulse" />
+                                                    <span className="text-sm font-black text-[#00ff88]">
+                                                        {totalRemainingCredits.toLocaleString()} <span className="text-[10px] uppercase opacity-60">Credits</span>
                                                     </span>
                                                 </div>
-                                                <p className="text-[10px] text-muted-foreground text-right">
-                                                    Daily {dailyRemaining.toLocaleString()} · Bonus {bonusCredit.toLocaleString()} · Free {messageCredit.toLocaleString()} · Permanent {permanentCredit.toLocaleString()}
-                                                </p>
+                                                
+                                                {detailedCredits && detailedCredits.daily_limit > 0 && (
+                                                    <div className="flex flex-col items-end gap-1">
+                                                        <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-blue-500/10 border border-blue-500/20 text-[11px] text-blue-600 dark:text-blue-400 font-bold">
+                                                            Daily: {detailedCredits.daily_used.toLocaleString()} / {detailedCredits.daily_limit.toLocaleString()}
+                                                        </div>
+                                                        <div className="w-24 h-1 bg-secondary rounded-full overflow-hidden">
+                                                            <div 
+                                                                className="h-full bg-blue-500 transition-all duration-500" 
+                                                                style={{ width: `${Math.min(100, (detailedCredits.daily_used / detailedCredits.daily_limit) * 100)}%` }}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                <div className="flex flex-wrap justify-end gap-2 mt-2">
+                                                    {detailedCredits?.bonus_credit > 0 && (
+                                                        <div className="px-3 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[12px] text-amber-600 dark:text-amber-500 font-black shadow-sm">
+                                                            BONUS: {detailedCredits.bonus_credit.toLocaleString()}
+                                                        </div>
+                                                    )}
+                                                    {detailedCredits?.permanent_credit > 0 && (
+                                                        <div className="px-3 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-[12px] text-emerald-600 dark:text-emerald-500 font-black shadow-sm">
+                                                            PERMANENT: {detailedCredits.permanent_credit.toLocaleString()}
+                                                        </div>
+                                                    )}
+                                                    {messageCredit > 0 && (
+                                                        <div className="px-3 py-1 rounded-lg bg-blue-500/10 border border-blue-500/30 text-[12px] text-blue-600 dark:text-blue-500 font-black shadow-sm">
+                                                            FREE: {messageCredit.toLocaleString()}
+                                                        </div>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
                                         {!isTeamView && (
@@ -899,20 +942,20 @@ export default function WhatsAppSettingsPage() {
                                               variant="outline"  
                                               size="sm"
                                               onClick={() => setIsPricingOpen(true)} 
-                                              className="border-border hover:bg-secondary text-foreground font-bold h-8 text-[11px] shadow-sm px-3"
+                                              className="border-border hover:bg-secondary text-foreground font-black h-10 text-[11px] shadow-sm px-4 rounded-xl ml-2"
                                           >
                                               Upgrade
                                           </Button>
                                         )}
                                     </div>
                                 ) : (
-                                    <div className="flex items-center justify-between p-3 rounded-xl border border-dashed border-border bg-secondary/20">
+                                    <div className="flex items-center justify-between p-3 rounded-xl border border-dashed border-purple-200 bg-purple-50/20 dark:border-purple-800/30 dark:bg-purple-900/10">
                                             <div className="flex items-center gap-3">
-                                                <div className="bg-primary/10 p-1.5 rounded-lg">
-                                                    <Sparkles className="h-4 w-4 text-primary" />
+                                                <div className="bg-purple-100 dark:bg-purple-900/50 p-1.5 rounded-lg">
+                                                    <Sparkles className="h-4 w-4 text-purple-600 dark:text-purple-400" />
                                                 </div>
                                                 <div>
-                                                    <h3 className="text-xs font-bold">
+                                                    <h3 className="text-xs font-bold text-purple-900 dark:text-purple-100">
                                                       {isTeamView ? "Managed by Owner" : "No Active Plan"}
                                                     </h3>
                                                     <p className="text-[10px] text-muted-foreground">
@@ -925,7 +968,7 @@ export default function WhatsAppSettingsPage() {
                                                   type="button" 
                                                   size="sm"
                                                   onClick={() => setIsPricingOpen(true)} 
-                                                  className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold h-8 text-[11px] px-4 rounded-lg shadow-sm"
+                                                  className="bg-purple-600 hover:bg-purple-700 text-white font-bold h-8 text-[11px] px-4 rounded-lg shadow-sm"
                                               >
                                                   View Plans
                                               </Button>
