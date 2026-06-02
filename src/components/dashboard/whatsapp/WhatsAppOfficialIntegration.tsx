@@ -506,7 +506,7 @@ export default function WhatsAppOfficialIntegration() {
                   {repairing ? "Repairing..." : "Repair Webhook"}
                 </Button>
                 <Button
-                  onClick={launchWhatsAppSignup}
+                  onClick={() => launchWhatsAppSignup()}
                   disabled={loading || !sdkReady || disconnecting || repairing}
                   className="w-full rounded-xl bg-primary text-black hover:bg-primary/90"
                 >
