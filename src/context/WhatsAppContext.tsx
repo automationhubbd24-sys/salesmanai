@@ -153,11 +153,34 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
       });
       const wahaSessions = await res.json();
       const allSessions: WahaSession[] = Array.isArray(wahaSessions) ? wahaSessions : [];
-      const officialSessions = allSessions.filter((session) =>
+      let officialSessions = allSessions.filter((session) =>
         session.provider_type === "official" || String(session.name || "").startsWith("official_")
       );
 
-      setSessions(officialSessions);
+      // CROSS-DEVICE SYNC FIX: If personal mode has no sessions, check if user has any team sessions
+      if (viewMode === 'personal' && officialSessions.length === 0 && Array.isArray(teams) && teams.length > 0) {
+          console.log("Personal mode empty, checking team sessions for cross-device sync...");
+          for (const team of teams) {
+              const teamUrl = `${BACKEND_URL}/api/whatsapp/sessions?team_owner=${encodeURIComponent(team.owner_email)}`;
+              const teamRes = await fetch(teamUrl, { headers: { Authorization: `Bearer ${token}` } });
+              if (teamRes.ok) {
+                  const teamWahaSessions = await teamRes.json();
+                  const teamOfficial = (Array.isArray(teamWahaSessions) ? teamWahaSessions : []).filter((s: any) => 
+                      s.provider_type === "official" || String(s.name || "").startsWith("official_")
+                  );
+                  if (teamOfficial.length > 0) {
+                      console.log(`Found connected session in team: ${team.owner_email}, auto-switching...`);
+                      setActiveTeam(team);
+                      switchViewMode('team');
+                      setSessions(teamOfficial);
+                      officialSessions = teamOfficial;
+                      break; 
+                  }
+              }
+          }
+      } else {
+          setSessions(officialSessions);
+      }
       
       // Auto-select logic (Prioritize localStorage)
       const storedSessionId = localStorage.getItem("active_wa_session_id");
