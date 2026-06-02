@@ -190,10 +190,10 @@ export default function DatabasePage() {
             </div>
           ) : (
             <div className="grid gap-4 md:grid-cols-2">
-              <Card className="border border-white/10 bg-slate-950/60">
+              <Card className="border border-white/10 bg-[#121212]">
                 <CardContent className="pt-6 space-y-3">
                   <div className="flex items-center gap-2 text-white">
-                    <Database className="h-4 w-4 text-emerald-300" />
+                    <Database className="h-4 w-4 text-primary" />
                     <span className="font-medium">DB Mapping</span>
                   </div>
                   <div className="space-y-2 text-sm text-slate-300">
@@ -205,10 +205,10 @@ export default function DatabasePage() {
                 </CardContent>
               </Card>
 
-              <Card className="border border-white/10 bg-slate-950/60">
+              <Card className="border border-white/10 bg-[#121212]">
                 <CardContent className="pt-6 space-y-3">
                   <div className="flex items-center gap-2 text-white">
-                    <Link2 className="h-4 w-4 text-sky-300" />
+                    <Link2 className="h-4 w-4 text-primary" />
                     <span className="font-medium">Official Asset IDs</span>
                   </div>
                   <div className="space-y-2 text-sm text-slate-300">
@@ -219,23 +219,26 @@ export default function DatabasePage() {
                 </CardContent>
               </Card>
 
-              <Card className="border border-white/10 bg-slate-950/60 md:col-span-2">
+              <Card className="border border-primary/20 bg-primary/5 md:col-span-2">
                 <CardContent className="pt-6">
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div>
-                      <p className="font-medium text-white">Official Flow Note</p>
+                      <p className="font-medium text-white flex items-center gap-2">
+                        <CheckCircle className="h-4 w-4 text-primary" />
+                        Official Flow Note
+                      </p>
                       <p className="mt-1 text-sm text-slate-400">
                         Ekhane alada database connect korar dorkar nei. Meta Embedded Signup complete hole official WhatsApp row automatic save hoy, ar control/settings/order tracking ei row-er sathei linked thake.
                       </p>
                     </div>
                     <div className="flex flex-col gap-2 sm:flex-row">
-                      <Button variant="outline" asChild>
+                      <Button variant="outline" asChild className="border-white/10 hover:bg-white/5">
                         <Link to="/dashboard/whatsapp/settings">
                           <MessageSquare className="mr-2 h-4 w-4" />
                           Open Settings
                         </Link>
                       </Button>
-                      <Button asChild>
+                      <Button asChild className="bg-primary text-black hover:bg-primary/90">
                         <Link to="/dashboard/whatsapp/control">Open Control</Link>
                       </Button>
                     </div>
