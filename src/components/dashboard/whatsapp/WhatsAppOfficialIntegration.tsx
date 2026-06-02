@@ -319,13 +319,11 @@ export default function WhatsAppOfficialIntegration() {
 
     if (forceNew) {
       embeddedSignupMetaRef.current = {};
-      // Reset localStorage to ensure a new session is created instead of updating current
       localStorage.removeItem("active_wa_session_id");
       localStorage.removeItem("active_wp_db_id");
       setCurrentSession(null);
     }
 
-    // Coexistence Warning
     toast.info("When the Meta Popup opens, please try to select an existing WhatsApp Business account if available.", {
       duration: 6000,
     });
@@ -333,18 +331,64 @@ export default function WhatsAppOfficialIntegration() {
     embeddedSignupMetaRef.current = {};
     setLoading(true);
 
+    // MOBILE FIX: Start polling for session completion in case postMessage fails
+    const startTime = Date.now();
+    const pollInterval = setInterval(async () => {
+      // Stop polling after 5 minutes
+      if (Date.now() - startTime > 5 * 60 * 1000) {
+        clearInterval(pollInterval);
+        return;
+      }
+
+      try {
+        const token = localStorage.getItem("auth_token");
+        if (!token) return;
+
+        const res = await fetch(`${BACKEND_URL}/api/whatsapp/sessions`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        
+        if (res.ok) {
+          const sessionsData = await res.json();
+          if (Array.isArray(sessionsData) && sessionsData.length > 0) {
+            const hasNewOfficial = sessionsData.some(s => 
+              (s.provider_type === "official" || String(s.name || "").startsWith("official_")) &&
+              !sessions.some(existing => existing.name === s.name)
+            );
+
+            if (hasNewOfficial) {
+              console.log("New session detected via polling!");
+              clearInterval(pollInterval);
+              await refreshSessions();
+              setConnected(true);
+              setLoading(false);
+              toast.success("WhatsApp connected successfully (detected via sync).");
+            }
+          }
+        }
+      } catch (e) {
+        // Silent poll error
+      }
+    }, 5000);
+
     window.FB.login(
       (response: any) => {
         const code = response?.authResponse?.code;
         if (!code) {
-          setLoading(false);
-          toast.error("Facebook authorization was cancelled or failed.");
+          // Don't clear interval immediately as code might still be processing on server
+          setTimeout(() => {
+            if (loading) {
+               setLoading(false);
+               clearInterval(pollInterval);
+            }
+          }, 10000);
           return;
         }
 
         void (async () => {
           const signupMeta = await waitForEmbeddedSignupMeta();
           await handleSignupCompletion(code, signupMeta);
+          clearInterval(pollInterval);
         })();
       },
       {
