@@ -375,13 +375,14 @@ export default function WhatsAppOfficialIntegration() {
       (response: any) => {
         const code = response?.authResponse?.code;
         if (!code) {
-          // Don't clear interval immediately as code might still be processing on server
+          // MOBILE RECOVERY: If stuck in loading but no code, show reset option after timeout
           setTimeout(() => {
             if (loading) {
                setLoading(false);
                clearInterval(pollInterval);
+               toast.error("Facebook connection timed out or was blocked by the app. Try using 'Desktop Site' mode if this persists.");
             }
-          }, 10000);
+          }, 8000);
           return;
         }
 
@@ -395,6 +396,9 @@ export default function WhatsAppOfficialIntegration() {
         config_id: CONFIG_ID,
         response_type: "code",
         override_default_response_type: true,
+        // MOBILE OPTIMIZATION: Use 'rerequest' and 'popup' to force browser behavior
+        auth_type: 'rerequest',
+        display: 'popup',
         extras: {
           setup: {},
           featureType: "whatsapp_business_app_onboarding",
@@ -565,13 +569,21 @@ export default function WhatsAppOfficialIntegration() {
               </div>
               <Button 
                 size="lg" 
-                onClick={launchWhatsAppSignup} 
+                onClick={() => launchWhatsAppSignup()} 
                 disabled={loading || !sdkReady}
                 className="h-14 px-8 rounded-2xl text-lg font-semibold shadow-lg shadow-primary/20 bg-primary text-black hover:bg-primary/90"
               >
                 {loading ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Facebook className="mr-2 h-5 w-5" />}
                 {loading ? "Connecting..." : "Connect with Facebook"}
               </Button>
+              {loading && (
+                <button 
+                  onClick={() => { setLoading(false); window.location.reload(); }}
+                  className="mt-2 text-xs text-slate-500 underline hover:text-slate-300"
+                >
+                  Stuck? Click to reset and try again
+                </button>
+              )}
             </div>
           </div>
         </div>
