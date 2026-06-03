@@ -180,14 +180,90 @@ function createTransport() {
     return transport;
 }
 
+function extractEmailAddress(value) {
+    const input = String(value || '').trim();
+    if (!input) return '';
+    const match = input.match(/<([^>]+)>/);
+    return (match ? match[1] : input).trim().toLowerCase();
+}
+
+function getEmailDomain(value) {
+    const email = extractEmailAddress(value);
+    const atIndex = email.lastIndexOf('@');
+    return atIndex === -1 ? '' : email.slice(atIndex + 1);
+}
+
+function formatSender(name, email) {
+    const cleanEmail = extractEmailAddress(email);
+    if (!cleanEmail) return '';
+    const cleanName = String(name || '').trim();
+    return cleanName ? `${cleanName} <${cleanEmail}>` : cleanEmail;
+}
+
+function resolveMailSender() {
+    const smtpUser = process.env.SMTP_USER || '';
+    const smtpFrom = process.env.SMTP_FROM || '';
+    const smtpFromName = process.env.SMTP_FROM_NAME || 'SalesmanAI';
+
+    const authAddress = extractEmailAddress(smtpUser);
+    const fromAddress = extractEmailAddress(smtpFrom);
+    const authDomain = getEmailDomain(smtpUser);
+    const fromDomain = getEmailDomain(smtpFrom);
+
+    if (!fromAddress) {
+        return {
+            from: formatSender(smtpFromName, authAddress),
+            replyTo: undefined
+        };
+    }
+
+    const isSameAddress = authAddress && fromAddress === authAddress;
+    const isSameDomain = authDomain && fromDomain && authDomain === fromDomain;
+
+    if (!isSameAddress && !isSameDomain) {
+        console.warn(
+            `[AuthMail] SMTP_FROM (${fromAddress}) does not align with SMTP_USER (${authAddress}). Using authenticated sender for better inbox placement.`
+        );
+        return {
+            from: formatSender(smtpFromName, authAddress),
+            replyTo: smtpFrom
+        };
+    }
+
+    return {
+        from: formatSender(smtpFromName, smtpFrom),
+        replyTo: authAddress && fromAddress !== authAddress ? authAddress : undefined
+    };
+}
+
 async function sendOtpEmail(email, code) {
     const transporter = createTransport();
-    const from = process.env.SMTP_FROM || process.env.SMTP_USER;
-    const subject = 'Your login code';
-    const text = `Your login code is ${code}. It will expire in 5 minutes.`;
-    const html = `<p>Your login code is <strong>${code}</strong>.</p><p>This code will expire in 5 minutes.</p>`;
+    const { from, replyTo } = resolveMailSender();
+    const subject = 'SalesmanAI verification code';
+    const text = [
+        `Your SalesmanAI verification code is ${code}.`,
+        'It will expire in 5 minutes.',
+        'If you do not find this email in your inbox, please check your Spam or Junk folder.'
+    ].join(' ');
+    const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; color: #111827;">
+            <div style="border: 1px solid #e5e7eb; border-radius: 16px; padding: 24px;">
+                <p style="margin: 0 0 8px; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #6b7280;">SalesmanAI Security</p>
+                <h2 style="margin: 0 0 16px; font-size: 24px; color: #111827;">Your verification code</h2>
+                <p style="margin: 0 0 16px; font-size: 15px; line-height: 1.6;">Use the code below to continue your verification. This code expires in <strong>5 minutes</strong>.</p>
+                <div style="margin: 20px 0; padding: 18px; border-radius: 12px; background: #f3f4f6; text-align: center; font-size: 32px; font-weight: 700; letter-spacing: 0.35em; color: #111827;">
+                    ${code}
+                </div>
+                <p style="margin: 0 0 10px; font-size: 14px; color: #374151;">For your security, do not share this code with anyone.</p>
+                <p style="margin: 0; padding: 12px 14px; border-radius: 10px; background: #fff7ed; font-size: 13px; line-height: 1.6; color: #9a3412;">
+                    নোট: ইনবক্সে ইমেইল না পেলে Spam/Junk ফোল্ডারও চেক করুন।
+                </p>
+            </div>
+        </div>
+    `;
     await transporter.sendMail({
         from,
+        replyTo,
         to: email,
         subject,
         text,

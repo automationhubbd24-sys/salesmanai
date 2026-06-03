@@ -91,8 +91,8 @@ const Register = () => {
       }
       toast.success(
         t(
-          "Account created. We sent a verification code to your email.",
-          "অ্যাকাউন্ট তৈরি হয়েছে। আপনার ইমেইলে একটি ভেরিফিকেশন কোড পাঠানো হয়েছে।"
+          "Account created. We sent a verification code to your email. If needed, check Spam/Junk too.",
+          "অ্যাকাউন্ট তৈরি হয়েছে। আপনার ইমেইলে একটি ভেরিফিকেশন কোড পাঠানো হয়েছে। প্রয়োজনে Spam/Junk ফোল্ডারও চেক করুন।"
         )
       );
       setOtpStep(true);
@@ -362,6 +362,9 @@ const Register = () => {
                 </DialogDescription>
               </DialogHeader>
               <form onSubmit={handleVerifyOtp} className="space-y-4 mt-2">
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm leading-6 text-amber-100">
+                  নোট: ইনবক্সে কোড না পেলে Spam/Junk ফোল্ডারও চেক করুন।
+                </div>
                 <div className="space-y-2">
                   <Label htmlFor="otp" className="text-sm font-medium">
                     {t("Verification Code", "ভেরিফিকেশন কোড")}

@@ -3,6 +3,54 @@ const dbService = require('../services/dbService');
 const authService = require('../services/authService');
 const pgClient = require('../services/pgClient');
 
+const otpRequestTracker = new Map();
+const OTP_COOLDOWN_MS = 60 * 1000;
+const OTP_WINDOW_MS = 15 * 60 * 1000;
+const OTP_MAX_PER_WINDOW = 5;
+
+function getClientIp(req) {
+    const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    return forwarded || req.ip || req.socket?.remoteAddress || 'unknown';
+}
+
+function consumeOtpQuota(scope, email, ip) {
+    const now = Date.now();
+    const key = `${scope}:${String(email || '').toLowerCase()}:${ip}`;
+    const current = otpRequestTracker.get(key);
+
+    if (current && now - current.windowStartedAt < OTP_WINDOW_MS) {
+        if (now - current.lastSentAt < OTP_COOLDOWN_MS) {
+            return {
+                allowed: false,
+                retryAfterMs: OTP_COOLDOWN_MS - (now - current.lastSentAt)
+            };
+        }
+        if (current.count >= OTP_MAX_PER_WINDOW) {
+            return {
+                allowed: false,
+                retryAfterMs: OTP_WINDOW_MS - (now - current.windowStartedAt)
+            };
+        }
+
+        current.count += 1;
+        current.lastSentAt = now;
+        otpRequestTracker.set(key, current);
+        return { allowed: true };
+    }
+
+    otpRequestTracker.set(key, {
+        count: 1,
+        lastSentAt: now,
+        windowStartedAt: now
+    });
+    return { allowed: true };
+}
+
+function formatRetryAfterMessage(retryAfterMs) {
+    const seconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
+    return `Please wait ${seconds} seconds before requesting another code.`;
+}
+
 exports.exchangeToken = async (req, res) => {
     try {
         const { shortLivedToken } = req.body;
@@ -233,6 +281,12 @@ exports.requestOtp = async (req, res) => {
         const email = String(req.body.email || '').trim().toLowerCase();
         if (!email) {
             return res.status(400).json({ error: 'Email is required' });
+        }
+
+        const ip = getClientIp(req);
+        const quota = consumeOtpQuota('register_otp', email, ip);
+        if (!quota.allowed) {
+            return res.status(429).json({ error: formatRetryAfterMessage(quota.retryAfterMs) });
         }
 
         const user = await authService.findOrCreateUserByEmail(email);
@@ -553,6 +607,12 @@ exports.requestPasswordReset = async (req, res) => {
         const email = String(req.body.email || '').trim().toLowerCase();
         if (!email) {
             return res.status(400).json({ error: 'Email is required' });
+        }
+
+        const ip = getClientIp(req);
+        const quota = consumeOtpQuota('password_reset_otp', email, ip);
+        if (!quota.allowed) {
+            return res.status(429).json({ error: formatRetryAfterMessage(quota.retryAfterMs) });
         }
 
         const existing = await pgClient.query(
