@@ -68,6 +68,7 @@ export function beginMessengerMobileOAuth() {
     scope: "pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_read_user_content",
     response_type: "code",
     auth_type: "rerequest",
+    display: "page", // Forces a full-page browser flow instead of app switch
   });
 
   window.location.assign(url);
@@ -91,6 +92,7 @@ export function beginWhatsAppMobileOAuth() {
     response_type: "code",
     config_id: WHATSAPP_CONFIG_ID,
     override_default_response_type: "true",
+    display: "page", // Forces a full-page browser flow instead of app switch
     extras: JSON.stringify({
       setup: {},
       feature: "whatsapp_embedded_signup",
