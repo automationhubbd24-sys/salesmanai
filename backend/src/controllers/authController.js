@@ -238,10 +238,10 @@ exports.startFacebookAuth = async (req, res) => {
         }
 
         if (type === 'whatsapp') {
-            // WHATSAPP BROWSER-FORCE FIX:
-            // Using 'display=page' instead of 'touch' to avoid triggering the Facebook App.
-            // Messenger worked with 'page', so we apply the same here.
-            oauthUrl = new URL('https://m.facebook.com/v25.0/dialog/oauth');
+            // WHATSAPP WEB-FORCE FIX:
+            // Using 'web.facebook.com' instead of 'm.facebook.com' to force desktop-like web view.
+            // This is a known trick to bypass mobile app hijacking.
+            oauthUrl = new URL('https://web.facebook.com/v25.0/dialog/oauth');
             redirectUri = `${redirectBase}/auth/facebook/whatsapp/callback`;
             extras = JSON.stringify({
                 setup: {},
@@ -251,20 +251,20 @@ exports.startFacebookAuth = async (req, res) => {
             oauthUrl.searchParams.set('config_id', configId);
             oauthUrl.searchParams.set('override_default_response_type', 'true');
             oauthUrl.searchParams.set('extras', extras);
-            oauthUrl.searchParams.set('display', 'page'); // CHANGED FROM 'touch' TO 'page'
+            oauthUrl.searchParams.set('display', 'page'); 
         } else {
             oauthUrl = new URL('https://m.facebook.com/v25.0/dialog/oauth');
             redirectUri = `${redirectBase}/auth/facebook/messenger/callback`;
             scope = 'pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_read_user_content';
             oauthUrl.searchParams.set('scope', scope);
             oauthUrl.searchParams.set('display', 'page');
+            oauthUrl.searchParams.set('sdk', 'joey'); // Keep for messenger as it's working
         }
 
         oauthUrl.searchParams.set('client_id', appId);
         oauthUrl.searchParams.set('redirect_uri', redirectUri);
         oauthUrl.searchParams.set('state', state);
         oauthUrl.searchParams.set('response_type', 'code');
-        oauthUrl.searchParams.set('sdk', 'joey');
         oauthUrl.searchParams.set('app_id', appId);
         
         // Prevent App Hijacking by using a small delay/meta refresh if 302 is intercepted
