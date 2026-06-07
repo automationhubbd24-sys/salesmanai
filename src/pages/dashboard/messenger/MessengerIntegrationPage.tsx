@@ -491,6 +491,23 @@ export default function MessengerIntegrationPage() {
             return;
         }
 
+        const handleMobileMessage = (event: MessageEvent) => {
+            if (event.origin !== window.location.origin) return;
+            if (event.data?.type === "MESSENGER_MOBILE_CALLBACK_COMPLETE") {
+                const callbackPayload = consumeCallbackPayload(MESSENGER_MOBILE_CALLBACK_KEY);
+                if (callbackPayload) {
+                    if (callbackPayload.error || !callbackPayload.code) {
+                        toast.error(callbackPayload.errorDescription || "Facebook login was cancelled.");
+                        setConnecting(false);
+                    } else {
+                        void handleMessengerMobileCallback(callbackPayload.code);
+                    }
+                }
+            }
+        };
+
+        window.addEventListener("message", handleMobileMessage);
+
         const callbackPayload = consumeCallbackPayload(MESSENGER_MOBILE_CALLBACK_KEY);
         if (!callbackPayload) {
             return;
@@ -505,6 +522,8 @@ export default function MessengerIntegrationPage() {
         }
 
         void handleMessengerMobileCallback(callbackPayload.code);
+
+        return () => window.removeEventListener("message", handleMobileMessage);
     }, [userEmail, userId]);
 
     // --- Action Handlers ---

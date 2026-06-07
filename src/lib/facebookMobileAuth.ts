@@ -46,7 +46,7 @@ export function getMessengerMobileRedirectUri(): string {
 }
 
 /**
- * Begin the WhatsApp Mobile OAuth flow by redirecting to Facebook
+ * Begin the WhatsApp Mobile OAuth flow by trying a popup first, then falling back to redirect
  */
 export function beginWhatsAppMobileOAuth(): void {
   const appId = import.meta.env.VITE_FACEBOOK_APP_ID || "3741087806186945";
@@ -54,15 +54,7 @@ export function beginWhatsAppMobileOAuth(): void {
   const state = generateState();
   const redirectUri = getWhatsAppMobileRedirectUri();
 
-  // Store state for validation on return
-  const flowState: FlowState = {
-    state,
-    returnPath: window.location.pathname,
-    timestamp: Date.now(),
-  };
-  localStorage.setItem(WHATSAPP_MOBILE_FLOW_STATE_KEY, JSON.stringify(flowState));
-
-  // Build the Facebook OAuth URL for Embedded Signup
+  // Build the Facebook OAuth URL
   const oauthUrl = new URL("https://www.facebook.com/v25.0/dialog/oauth");
   oauthUrl.searchParams.set("client_id", appId);
   oauthUrl.searchParams.set("redirect_uri", redirectUri);
@@ -70,8 +62,8 @@ export function beginWhatsAppMobileOAuth(): void {
   oauthUrl.searchParams.set("config_id", configId);
   oauthUrl.searchParams.set("response_type", "code");
   oauthUrl.searchParams.set("override_default_response_type", "true");
-  
-  // Extra parameters for WhatsApp Embedded Signup
+  oauthUrl.searchParams.set("display", "popup"); // Forces a browser-friendly UI
+
   const extras = {
     setup: {},
     featureType: "whatsapp_business_app_onboarding",
@@ -79,12 +71,32 @@ export function beginWhatsAppMobileOAuth(): void {
   };
   oauthUrl.searchParams.set("extras", JSON.stringify(extras));
 
-  // Redirect the user
-  window.location.href = oauthUrl.toString();
+  // Try to open a popup first (Stay in Browser)
+  const width = 500;
+  const height = 700;
+  const left = window.screenX + (window.outerWidth - width) / 2;
+  const top = window.screenY + (window.outerHeight - height) / 2;
+  
+  const popup = window.open(
+    oauthUrl.toString(),
+    "FacebookWhatsApp",
+    `width=${width},height=${height},left=${left},top=${top},scrollbars=yes,resizable=yes`
+  );
+
+  // If popup is blocked or fails, fallback to redirect
+  if (!popup || popup.closed || typeof popup.closed === "undefined") {
+    const flowState: FlowState = {
+      state,
+      returnPath: window.location.pathname,
+      timestamp: Date.now(),
+    };
+    localStorage.setItem(WHATSAPP_MOBILE_FLOW_STATE_KEY, JSON.stringify(flowState));
+    window.location.href = oauthUrl.toString();
+  }
 }
 
 /**
- * Begin the Messenger Mobile OAuth flow by redirecting to Facebook
+ * Begin the Messenger Mobile OAuth flow by trying a popup first, then falling back to redirect
  */
 export function beginMessengerMobileOAuth(): void {
   const appId = import.meta.env.VITE_FACEBOOK_APP_ID;
@@ -96,24 +108,37 @@ export function beginMessengerMobileOAuth(): void {
     return;
   }
 
-  // Store state for validation on return
-  const flowState: FlowState = {
-    state,
-    returnPath: window.location.pathname,
-    timestamp: Date.now(),
-  };
-  localStorage.setItem(MESSENGER_MOBILE_FLOW_STATE_KEY, JSON.stringify(flowState));
-
-  // Build the Facebook OAuth URL for Messenger
+  // Build the Facebook OAuth URL
   const oauthUrl = new URL("https://www.facebook.com/v25.0/dialog/oauth");
   oauthUrl.searchParams.set("client_id", appId);
   oauthUrl.searchParams.set("redirect_uri", redirectUri);
   oauthUrl.searchParams.set("state", state);
   oauthUrl.searchParams.set("response_type", "code");
+  oauthUrl.searchParams.set("display", "popup"); // Forces a browser-friendly UI
   oauthUrl.searchParams.set("scope", "pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_read_user_content");
 
-  // Redirect the user
-  window.location.href = oauthUrl.toString();
+  // Try to open a popup first (Stay in Browser)
+  const width = 500;
+  const height = 700;
+  const left = window.screenX + (window.outerWidth - width) / 2;
+  const top = window.screenY + (window.outerHeight - height) / 2;
+
+  const popup = window.open(
+    oauthUrl.toString(),
+    "FacebookMessenger",
+    `width=${width},height=${height},left=${left},top=${top},scrollbars=yes,resizable=yes`
+  );
+
+  // If popup is blocked or fails, fallback to redirect
+  if (!popup || popup.closed || typeof popup.closed === "undefined") {
+    const flowState: FlowState = {
+      state,
+      returnPath: window.location.pathname,
+      timestamp: Date.now(),
+    };
+    localStorage.setItem(MESSENGER_MOBILE_FLOW_STATE_KEY, JSON.stringify(flowState));
+    window.location.href = oauthUrl.toString();
+  }
 }
 
 /**

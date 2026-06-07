@@ -25,6 +25,19 @@ export default function FacebookMessengerCallbackPage() {
     });
 
     clearFlowState(MESSENGER_MOBILE_FLOW_STATE_KEY);
+
+    // PC/Smart Mobile Flow: Close popup if possible
+    if (window.opener) {
+      try {
+        window.opener.postMessage({ type: "MESSENGER_MOBILE_CALLBACK_COMPLETE" }, window.location.origin);
+        window.close();
+        return;
+      } catch (e) {
+        console.error("Failed to notify opener:", e);
+      }
+    }
+
+    // Fallback: Redirect main window
     window.location.replace(storedState?.returnPath || "/dashboard/messenger/integration");
   }, []);
 

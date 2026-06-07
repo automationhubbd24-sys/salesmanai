@@ -194,6 +194,27 @@ export default function WhatsAppOfficialIntegration() {
     };
 
     window.addEventListener("message", sessionInfoListener);
+
+    // Smart Mobile Flow Listener: Detect when popup closes
+    const mobileCallbackListener = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type === "WA_MOBILE_CALLBACK_COMPLETE") {
+        console.log("Mobile callback complete detected via postMessage");
+        // Trigger the same logic as direct redirect return
+        const callbackPayload = consumeCallbackPayload(WHATSAPP_MOBILE_CALLBACK_KEY);
+        if (callbackPayload) {
+          if (callbackPayload.error || !callbackPayload.code) {
+            toast.error(callbackPayload.errorDescription || "WhatsApp connection was cancelled.");
+            setLoading(false);
+          } else {
+            setLoading(true);
+            void handleSignupCompletion(callbackPayload.code, null, getWhatsAppMobileRedirectUri());
+          }
+        }
+      }
+    };
+    window.addEventListener("message", mobileCallbackListener);
+
     return () => {
       clearSignupPoll();
       if (metaTimeoutRef.current) {
@@ -201,6 +222,7 @@ export default function WhatsAppOfficialIntegration() {
       }
       metaResolverRef.current = null;
       window.removeEventListener("message", sessionInfoListener);
+      window.removeEventListener("message", mobileCallbackListener);
     };
   }, []);
 
