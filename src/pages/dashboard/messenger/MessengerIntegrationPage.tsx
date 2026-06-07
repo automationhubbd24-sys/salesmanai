@@ -500,6 +500,7 @@ export default function MessengerIntegrationPage() {
 
         if (callbackPayload.error || !callbackPayload.code) {
             toast.error(callbackPayload.errorDescription || "Facebook login was cancelled or blocked.");
+            setConnecting(false); // Ensure loading is reset
             return;
         }
 

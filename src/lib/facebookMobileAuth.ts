@@ -1,141 +1,162 @@
-const FACEBOOK_DIALOG_VERSION = import.meta.env.VITE_FACEBOOK_GRAPH_VERSION || "v25.0";
-const FACEBOOK_APP_ID = import.meta.env.VITE_FACEBOOK_APP_ID || "3741087806186945";
-const WHATSAPP_CONFIG_ID = import.meta.env.VITE_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID || "2197274487770639";
+/**
+ * Facebook Mobile Auth Utility
+ * 
+ * Provides robust OAuth redirect flows for mobile browsers where popups are often blocked
+ * or cause issues when the Facebook App hijacks the intent.
+ */
 
-export const MESSENGER_MOBILE_FLOW_STATE_KEY = "messenger_mobile_oauth_state";
-export const MESSENGER_MOBILE_CALLBACK_KEY = "messenger_mobile_oauth_callback";
-export const WHATSAPP_MOBILE_FLOW_STATE_KEY = "whatsapp_mobile_oauth_state";
-export const WHATSAPP_MOBILE_CALLBACK_KEY = "whatsapp_mobile_oauth_callback";
+export const WHATSAPP_MOBILE_CALLBACK_KEY = "wa_mobile_callback_payload";
+export const MESSENGER_MOBILE_CALLBACK_KEY = "messenger_mobile_callback_payload";
+export const WHATSAPP_MOBILE_FLOW_STATE_KEY = "wa_mobile_flow_state";
+export const MESSENGER_MOBILE_FLOW_STATE_KEY = "messenger_mobile_flow_state";
 
-type MobileFlowState = {
+interface FlowState {
   state: string;
-  createdAt: number;
   returnPath: string;
-  callbackPath: string;
-};
+  timestamp: number;
+}
 
-type MobileCallbackPayload = {
+interface CallbackPayload {
   code: string | null;
   error: string | null;
   errorReason: string | null;
   errorDescription: string | null;
   state: string | null;
-};
-
-function getAppOrigin() {
-  return window.location.origin.replace(/\/+$/, "");
 }
 
-function buildFacebookDialogUrl(params: Record<string, string>) {
-  const url = new URL(`https://www.facebook.com/${FACEBOOK_DIALOG_VERSION}/dialog/oauth`);
-  Object.entries(params).forEach(([key, value]) => {
-    url.searchParams.set(key, value);
-  });
-  return url.toString();
+/**
+ * Generate a random state string for OAuth security
+ */
+function generateState(): string {
+  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 }
 
-function createState() {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-
-  return `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+/**
+ * Get the redirect URI for WhatsApp mobile flow
+ */
+export function getWhatsAppMobileRedirectUri(): string {
+  return `${window.location.origin}/auth/facebook/whatsapp/callback`;
 }
 
-export function getMessengerMobileRedirectUri() {
-  return `${getAppOrigin()}/auth/facebook/messenger/callback`;
+/**
+ * Get the redirect URI for Messenger mobile flow
+ */
+export function getMessengerMobileRedirectUri(): string {
+  return `${window.location.origin}/auth/facebook/messenger/callback`;
 }
 
-export function getWhatsAppMobileRedirectUri() {
-  return `${getAppOrigin()}/auth/facebook/whatsapp/callback`;
-}
+/**
+ * Begin the WhatsApp Mobile OAuth flow by redirecting to Facebook
+ */
+export function beginWhatsAppMobileOAuth(): void {
+  const appId = import.meta.env.VITE_FACEBOOK_APP_ID || "3741087806186945";
+  const configId = import.meta.env.VITE_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID || "2197274487770639";
+  const state = generateState();
+  const redirectUri = getWhatsAppMobileRedirectUri();
 
-export function beginMessengerMobileOAuth() {
-  const state = createState();
-  const flowState: MobileFlowState = {
+  // Store state for validation on return
+  const flowState: FlowState = {
     state,
-    createdAt: Date.now(),
-    returnPath: "/dashboard/messenger/integration",
-    callbackPath: "/auth/facebook/messenger/callback",
+    returnPath: window.location.pathname,
+    timestamp: Date.now(),
   };
+  localStorage.setItem(WHATSAPP_MOBILE_FLOW_STATE_KEY, JSON.stringify(flowState));
 
-  sessionStorage.setItem(MESSENGER_MOBILE_FLOW_STATE_KEY, JSON.stringify(flowState));
-
-  const url = buildFacebookDialogUrl({
-    client_id: FACEBOOK_APP_ID,
-    redirect_uri: getMessengerMobileRedirectUri(),
-    state,
-    scope: "pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_read_user_content",
-    response_type: "code",
-    auth_type: "rerequest",
-    display: "page", // Forces a full-page browser flow instead of app switch
-  });
-
-  window.location.assign(url);
-}
-
-export function beginWhatsAppMobileOAuth() {
-  const state = createState();
-  const flowState: MobileFlowState = {
-    state,
-    createdAt: Date.now(),
-    returnPath: "/dashboard/whatsapp/sessions",
-    callbackPath: "/auth/facebook/whatsapp/callback",
+  // Build the Facebook OAuth URL for Embedded Signup
+  const oauthUrl = new URL("https://www.facebook.com/v25.0/dialog/oauth");
+  oauthUrl.searchParams.set("client_id", appId);
+  oauthUrl.searchParams.set("redirect_uri", redirectUri);
+  oauthUrl.searchParams.set("state", state);
+  oauthUrl.searchParams.set("config_id", configId);
+  oauthUrl.searchParams.set("response_type", "code");
+  oauthUrl.searchParams.set("override_default_response_type", "true");
+  
+  // Extra parameters for WhatsApp Embedded Signup
+  const extras = {
+    setup: {},
+    featureType: "whatsapp_business_app_onboarding",
+    sessionInfoVersion: "3",
   };
+  oauthUrl.searchParams.set("extras", JSON.stringify(extras));
 
-  sessionStorage.setItem(WHATSAPP_MOBILE_FLOW_STATE_KEY, JSON.stringify(flowState));
+  // Redirect the user
+  window.location.href = oauthUrl.toString();
+}
 
-  const url = buildFacebookDialogUrl({
-    client_id: FACEBOOK_APP_ID,
-    redirect_uri: getWhatsAppMobileRedirectUri(),
+/**
+ * Begin the Messenger Mobile OAuth flow by redirecting to Facebook
+ */
+export function beginMessengerMobileOAuth(): void {
+  const appId = import.meta.env.VITE_FACEBOOK_APP_ID;
+  const state = generateState();
+  const redirectUri = getMessengerMobileRedirectUri();
+
+  if (!appId) {
+    console.error("VITE_FACEBOOK_APP_ID is not configured");
+    return;
+  }
+
+  // Store state for validation on return
+  const flowState: FlowState = {
     state,
-    response_type: "code",
-    config_id: WHATSAPP_CONFIG_ID,
-    override_default_response_type: "true",
-    display: "page", // Forces a full-page browser flow instead of app switch
-    extras: JSON.stringify({
-      setup: {},
-      feature: "whatsapp_embedded_signup",
-      sessionInfoVersion: "3",
-    }),
-  });
+    returnPath: window.location.pathname,
+    timestamp: Date.now(),
+  };
+  localStorage.setItem(MESSENGER_MOBILE_FLOW_STATE_KEY, JSON.stringify(flowState));
 
-  window.location.assign(url);
+  // Build the Facebook OAuth URL for Messenger
+  const oauthUrl = new URL("https://www.facebook.com/v25.0/dialog/oauth");
+  oauthUrl.searchParams.set("client_id", appId);
+  oauthUrl.searchParams.set("redirect_uri", redirectUri);
+  oauthUrl.searchParams.set("state", state);
+  oauthUrl.searchParams.set("response_type", "code");
+  oauthUrl.searchParams.set("scope", "pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_read_user_content");
+
+  // Redirect the user
+  window.location.href = oauthUrl.toString();
 }
 
-export function readFlowState(storageKey: string): MobileFlowState | null {
-  const raw = sessionStorage.getItem(storageKey);
-  if (!raw) {
-    return null;
-  }
+/**
+ * Store the callback payload received from Facebook
+ */
+export function storeCallbackPayload(key: string, payload: CallbackPayload): void {
+  localStorage.setItem(key, JSON.stringify(payload));
+}
 
+/**
+ * Consume (read and then delete) the callback payload
+ */
+export function consumeCallbackPayload(key: string): CallbackPayload | null {
+  const raw = localStorage.getItem(key);
+  if (!raw) return null;
+  
   try {
-    return JSON.parse(raw) as MobileFlowState;
+    const payload = JSON.parse(raw) as CallbackPayload;
+    localStorage.removeItem(key);
+    return payload;
   } catch {
-    sessionStorage.removeItem(storageKey);
+    localStorage.removeItem(key);
     return null;
   }
 }
 
-export function clearFlowState(storageKey: string) {
-  sessionStorage.removeItem(storageKey);
-}
-
-export function storeCallbackPayload(storageKey: string, payload: MobileCallbackPayload) {
-  sessionStorage.setItem(storageKey, JSON.stringify(payload));
-}
-
-export function consumeCallbackPayload(storageKey: string): MobileCallbackPayload | null {
-  const raw = sessionStorage.getItem(storageKey);
-  if (!raw) {
-    return null;
-  }
-
-  sessionStorage.removeItem(storageKey);
-
+/**
+ * Read the flow state for validation
+ */
+export function readFlowState(key: string): FlowState | null {
+  const raw = localStorage.getItem(key);
+  if (!raw) return null;
+  
   try {
-    return JSON.parse(raw) as MobileCallbackPayload;
+    return JSON.parse(raw) as FlowState;
   } catch {
     return null;
   }
+}
+
+/**
+ * Clear the flow state
+ */
+export function clearFlowState(key: string): void {
+  localStorage.removeItem(key);
 }

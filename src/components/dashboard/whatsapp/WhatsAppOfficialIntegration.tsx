@@ -386,12 +386,13 @@ export default function WhatsAppOfficialIntegration() {
 
     if (callbackPayload.error || !callbackPayload.code) {
       toast.error(callbackPayload.errorDescription || "WhatsApp connection was cancelled or blocked.");
+      setLoading(false); // Reset loading on error
       return;
     }
 
     setLoading(true);
     void handleSignupCompletion(callbackPayload.code, null, getWhatsAppMobileRedirectUri());
-  }, []);
+  }, []); // Run once on mount
 
   const launchWhatsAppSignup = (forceNew: boolean = false) => {
     if (forceNew) {
