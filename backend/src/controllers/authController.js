@@ -208,12 +208,13 @@ exports.startFacebookAuth = async (req, res) => {
             )
         `);
 
-        // Clean up old pending auths (older than 30 mins)
-        await pgClient.query(`DELETE FROM facebook_pending_auths WHERE created_at < NOW() - INTERVAL '30 minutes'`);
+        // Clean up old pending auths (older than 1 hour)
+        await pgClient.query(`DELETE FROM facebook_pending_auths WHERE created_at < NOW() - INTERVAL '1 hour'`);
 
-        // Insert new pending auth
+        // Insert or Update the pending auth record
         await pgClient.query(
-            `INSERT INTO facebook_pending_auths (state, type) VALUES ($1, $2) ON CONFLICT (state) DO UPDATE SET type = $2, created_at = NOW(), completed = FALSE, code = NULL, error = NULL`,
+            `INSERT INTO facebook_pending_auths (state, type) VALUES ($1, $2) 
+             ON CONFLICT (state) DO UPDATE SET type = $2, created_at = NOW(), completed = FALSE, code = NULL, error = NULL`,
             [state, type]
         );
 
@@ -225,7 +226,6 @@ exports.startFacebookAuth = async (req, res) => {
         let extras = '';
 
         if (type === 'whatsapp') {
-            oauthUrl = new URL('https://m.facebook.com/v25.0/dialog/oauth'); // Use mobile domain to force browser
             redirectUri = `${redirectBase}/auth/facebook/whatsapp/callback`;
             extras = JSON.stringify({
                 setup: {},
@@ -233,16 +233,19 @@ exports.startFacebookAuth = async (req, res) => {
                 sessionInfoVersion: "3"
             });
         } else {
-            oauthUrl = new URL('https://m.facebook.com/v25.0/dialog/oauth'); // Use mobile domain to force browser
             redirectUri = `${redirectBase}/auth/facebook/messenger/callback`;
             scope = 'pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_read_user_content';
         }
 
+        // FORCE BROWSER-ONLY BEHAVIOR: 
+        // We use m.facebook.com and display=touch/popup which is less likely to trigger the App.
+        const oauthUrl = new URL('https://m.facebook.com/v25.0/dialog/oauth');
         oauthUrl.searchParams.set('client_id', appId);
         oauthUrl.searchParams.set('redirect_uri', redirectUri);
         oauthUrl.searchParams.set('state', state);
         oauthUrl.searchParams.set('response_type', 'code');
-        oauthUrl.searchParams.set('display', 'touch'); // Specific for mobile touch browsers
+        oauthUrl.searchParams.set('display', 'touch');
+        oauthUrl.searchParams.set('auth_type', 'rerequest'); // Helps bypass some app-hijacking behaviors
 
         if (type === 'whatsapp') {
             oauthUrl.searchParams.set('config_id', configId);
@@ -252,6 +255,8 @@ exports.startFacebookAuth = async (req, res) => {
             oauthUrl.searchParams.set('scope', scope);
         }
 
+        // Use a 302 redirect. On most mobile browsers, a redirect from the same domain 
+        // where the user just clicked a button is more likely to stay in the browser tab.
         return res.redirect(oauthUrl.toString());
     } catch (error) {
         console.error('Start Facebook Auth Error:', error);
@@ -290,12 +295,25 @@ exports.pollFacebookAuth = async (req, res) => {
 exports.persistFacebookCallback = async (req, res) => {
     try {
         const { state, code, error, errorDescription } = req.body;
+        console.log(`Persisting callback for state: ${state}, hasCode: ${!!code}, error: ${error}`);
+        
         if (!state) return res.status(400).json({ error: 'Missing state' });
 
-        await pgClient.query(
-            `UPDATE facebook_pending_auths SET code = $1, error = $2, error_description = $3, completed = TRUE WHERE state = $4`,
+        const result = await pgClient.query(
+            `UPDATE facebook_pending_auths 
+             SET code = $1, error = $2, error_description = $3, completed = TRUE 
+             WHERE state = $4`,
             [code, error, errorDescription, state]
         );
+
+        if (result.rowCount === 0) {
+            console.warn(`No pending auth found for state ${state} during persistence. Creating one.`);
+            await pgClient.query(
+                `INSERT INTO facebook_pending_auths (state, code, error, error_description, completed) 
+                 VALUES ($1, $2, $3, $4, TRUE)`,
+                [state, code, error, errorDescription]
+            );
+        }
 
         return res.json({ success: true });
     } catch (error) {

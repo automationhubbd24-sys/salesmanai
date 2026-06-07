@@ -220,32 +220,57 @@ export default function WhatsAppOfficialIntegration() {
 
     // POLLING FOR MOBILE OAUTH COMPLETION (Failsafe for App Hijacking)
     let pollInterval: number | null = null;
-    if (isMobile) {
-        pollInterval = window.setInterval(async () => {
-            const flowState = readFlowState(WHATSAPP_MOBILE_FLOW_STATE_KEY);
-            if (!flowState?.state) return;
+    
+    const runPoll = async () => {
+        const flowState = readFlowState(WHATSAPP_MOBILE_FLOW_STATE_KEY);
+        if (!flowState?.state) return;
 
-            try {
-                const res = await fetch(`${BACKEND_URL}/api/auth/facebook/poll?state=${flowState.state}`);
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data.completed) {
-                        console.log("Mobile OAuth completed via polling!");
-                        if (data.error) {
-                            toast.error(data.errorDescription || "WhatsApp connection failed.");
-                            setLoading(false);
-                        } else if (data.code) {
-                            setLoading(true);
-                            void handleSignupCompletion(data.code, null, getWhatsAppMobileRedirectUri());
-                        }
-                        if (pollInterval) window.clearInterval(pollInterval);
-                        clearFlowState(WHATSAPP_MOBILE_FLOW_STATE_KEY); // Clear only after success
+        try {
+            const res = await fetch(`${BACKEND_URL}/api/auth/facebook/poll?state=${flowState.state}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.completed) {
+                    console.log("Mobile OAuth completed via polling!");
+                    if (data.error) {
+                        toast.error(data.errorDescription || "WhatsApp connection failed.");
+                        setLoading(false);
+                    } else if (data.code) {
+                        setLoading(true);
+                        void handleSignupCompletion(data.code, null, getWhatsAppMobileRedirectUri());
                     }
+                    if (pollInterval) window.clearInterval(pollInterval);
+                    pollInterval = null;
+                    clearFlowState(WHATSAPP_MOBILE_FLOW_STATE_KEY); 
                 }
-            } catch (e) {
-                // Silent poll error
             }
-        }, 3000);
+        } catch (e) {
+            // Silent poll error
+        }
+    };
+
+    if (isMobile) {
+        pollInterval = window.setInterval(runPoll, 3000);
+        
+        // ACCELERATE POLLING ON FOCUS: When user returns from Facebook App to Chrome
+        const handleFocus = () => {
+            console.log("Window focused, accelerating poll...");
+            void runPoll();
+        };
+        window.addEventListener("focus", handleFocus);
+        window.addEventListener("visibilitychange", handleFocus);
+        
+        return () => {
+            clearSignupPoll();
+            if (pollInterval) window.clearInterval(pollInterval);
+            window.removeEventListener("focus", handleFocus);
+            window.removeEventListener("visibilitychange", handleFocus);
+            if (metaTimeoutRef.current) {
+                window.clearTimeout(metaTimeoutRef.current);
+            }
+            metaResolverRef.current = null;
+            window.removeEventListener("message", sessionInfoListener);
+            window.removeEventListener("message", mobileCallbackListener);
+        };
     }
 
     return () => {

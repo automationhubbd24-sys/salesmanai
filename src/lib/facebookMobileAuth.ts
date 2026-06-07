@@ -48,7 +48,7 @@ export function getMessengerMobileRedirectUri(): string {
 }
 
 /**
- * Begin the WhatsApp Mobile OAuth flow by using a backend redirector to bypass App Hijacking
+ * Begin the WhatsApp Mobile OAuth flow by using a browser-friendly popup/redirect combination
  */
 export function beginWhatsAppMobileOAuth(): void {
   const state = generateState();
@@ -62,16 +62,31 @@ export function beginWhatsAppMobileOAuth(): void {
   localStorage.setItem(WHATSAPP_MOBILE_FLOW_STATE_KEY, JSON.stringify(flowState));
 
   // Build the Backend Redirector URL
-  // Using our own domain for the initial click prevents the OS from hijacking the link to the Facebook App.
+  // We use a "window.open" with specific features to try and keep it in the browser
   const startUrl = new URL(`${BACKEND_URL}/api/auth/facebook/start`);
   startUrl.searchParams.set("type", "whatsapp");
   startUrl.searchParams.set("state", state);
 
-  window.location.href = startUrl.toString();
+  // TRY POPUP FIRST: Popups are less likely to trigger the Facebook App than a direct window.location change
+  const width = 500;
+  const height = 750;
+  const left = window.screenX + (window.outerWidth - width) / 2;
+  const top = window.screenY + (window.outerHeight - height) / 2;
+  
+  const popup = window.open(
+    startUrl.toString(),
+    "FacebookWhatsApp",
+    `width=${width},height=${height},left=${left},top=${top},scrollbars=yes,resizable=yes`
+  );
+
+  // FALLBACK: If popup is blocked, use a direct redirect but with a small delay to allow the user to see what's happening
+  if (!popup || popup.closed || typeof popup.closed === "undefined") {
+    window.location.href = startUrl.toString();
+  }
 }
 
 /**
- * Begin the Messenger Mobile OAuth flow by using a backend redirector to bypass App Hijacking
+ * Begin the Messenger Mobile OAuth flow by using a browser-friendly popup/redirect combination
  */
 export function beginMessengerMobileOAuth(): void {
   const state = generateState();
@@ -89,7 +104,22 @@ export function beginMessengerMobileOAuth(): void {
   startUrl.searchParams.set("type", "messenger");
   startUrl.searchParams.set("state", state);
 
-  window.location.href = startUrl.toString();
+  // TRY POPUP FIRST
+  const width = 500;
+  const height = 750;
+  const left = window.screenX + (window.outerWidth - width) / 2;
+  const top = window.screenY + (window.outerHeight - height) / 2;
+
+  const popup = window.open(
+    startUrl.toString(),
+    "FacebookMessenger",
+    `width=${width},height=${height},left=${left},top=${top},scrollbars=yes,resizable=yes`
+  );
+
+  // FALLBACK
+  if (!popup || popup.closed || typeof popup.closed === "undefined") {
+    window.location.href = startUrl.toString();
+  }
 }
 
 /**

@@ -513,31 +513,50 @@ export default function MessengerIntegrationPage() {
 
         // POLLING FOR MOBILE OAUTH COMPLETION (Failsafe for App Hijacking)
         let pollInterval: number | null = null;
-        if (isMobile) {
-            pollInterval = window.setInterval(async () => {
-                const flowState = readFlowState(MESSENGER_MOBILE_FLOW_STATE_KEY);
-                if (!flowState?.state) return;
 
-                try {
-                    const res = await fetch(`${BACKEND_URL}/api/auth/facebook/poll?state=${flowState.state}`);
-                    if (res.ok) {
-                        const data = await res.json();
-                        if (data.completed) {
-                            console.log("Mobile Messenger OAuth completed via polling!");
-                            if (data.error) {
-                                toast.error(data.errorDescription || "Messenger connection failed.");
-                                setConnecting(false);
-                            } else if (data.code) {
-                                void handleMessengerMobileCallback(data.code);
-                            }
-                            if (pollInterval) window.clearInterval(pollInterval);
-                            clearFlowState(MESSENGER_MOBILE_FLOW_STATE_KEY); // Clear only after success
+        const runPoll = async () => {
+            const flowState = readFlowState(MESSENGER_MOBILE_FLOW_STATE_KEY);
+            if (!flowState?.state) return;
+
+            try {
+                const res = await fetch(`${BACKEND_URL}/api/auth/facebook/poll?state=${flowState.state}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.completed) {
+                        console.log("Mobile Messenger OAuth completed via polling!");
+                        if (data.error) {
+                            toast.error(data.errorDescription || "Messenger connection failed.");
+                            setConnecting(false);
+                        } else if (data.code) {
+                            void handleMessengerMobileCallback(data.code);
                         }
+                        if (pollInterval) window.clearInterval(pollInterval);
+                        pollInterval = null;
+                        clearFlowState(MESSENGER_MOBILE_FLOW_STATE_KEY); 
                     }
-                } catch (e) {
-                    // Silent poll error
                 }
-            }, 3000);
+            } catch (e) {
+                // Silent poll error
+            }
+        };
+
+        if (isMobile) {
+            pollInterval = window.setInterval(runPoll, 3000);
+
+            // ACCELERATE POLLING ON FOCUS
+            const handleFocus = () => {
+                console.log("Messenger window focused, accelerating poll...");
+                void runPoll();
+            };
+            window.addEventListener("focus", handleFocus);
+            window.addEventListener("visibilitychange", handleFocus);
+
+            return () => {
+                window.removeEventListener("message", handleMobileMessage);
+                if (pollInterval) window.clearInterval(pollInterval);
+                window.removeEventListener("focus", handleFocus);
+                window.removeEventListener("visibilitychange", handleFocus);
+            };
         }
 
         const callbackPayload = consumeCallbackPayload(MESSENGER_MOBILE_CALLBACK_KEY);
