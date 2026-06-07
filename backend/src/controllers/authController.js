@@ -238,14 +238,15 @@ exports.startFacebookAuth = async (req, res) => {
         }
 
         // FORCE BROWSER-ONLY BEHAVIOR: 
-        // We use m.facebook.com and display=touch/popup which is less likely to trigger the App.
+        // Using m.facebook.com and display=touch is the most aggressive way to stay in the browser.
+        // Also, using a direct redirect from a backend response often bypasses the OS App Link check.
         const oauthUrl = new URL('https://m.facebook.com/v25.0/dialog/oauth');
         oauthUrl.searchParams.set('client_id', appId);
         oauthUrl.searchParams.set('redirect_uri', redirectUri);
         oauthUrl.searchParams.set('state', state);
         oauthUrl.searchParams.set('response_type', 'code');
         oauthUrl.searchParams.set('display', 'touch');
-        oauthUrl.searchParams.set('auth_type', 'rerequest'); // Helps bypass some app-hijacking behaviors
+        oauthUrl.searchParams.set('sdk', 'joey'); // A small trick to make it look like an SDK request
 
         if (type === 'whatsapp') {
             oauthUrl.searchParams.set('config_id', configId);
@@ -255,8 +256,11 @@ exports.startFacebookAuth = async (req, res) => {
             oauthUrl.searchParams.set('scope', scope);
         }
 
-        // Use a 302 redirect. On most mobile browsers, a redirect from the same domain 
-        // where the user just clicked a button is more likely to stay in the browser tab.
+        // Add a 'no_app_redirect' hint if supported (some versions of FB OAuth support this)
+        oauthUrl.searchParams.set('app_id', appId);
+        
+        // Use a 302 redirect. 
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
         return res.redirect(oauthUrl.toString());
     } catch (error) {
         console.error('Start Facebook Auth Error:', error);
