@@ -249,21 +249,23 @@ export default function WhatsAppOfficialIntegration() {
     };
 
     if (isMobile) {
-        pollInterval = window.setInterval(runPoll, 3000);
+        pollInterval = window.setInterval(runPoll, 2000); // Increased frequency for WhatsApp
         
-        // ACCELERATE POLLING ON FOCUS: When user returns from Facebook App to Chrome
+        // ACCELERATE POLLING ON FOCUS
         const handleFocus = () => {
-            console.log("Window focused, accelerating poll...");
+            console.log("WhatsApp window focused, accelerating poll...");
             void runPoll();
         };
         window.addEventListener("focus", handleFocus);
         window.addEventListener("visibilitychange", handleFocus);
+        window.addEventListener("pageshow", handleFocus); // Added pageshow for iOS safari back button support
         
         return () => {
             clearSignupPoll();
             if (pollInterval) window.clearInterval(pollInterval);
             window.removeEventListener("focus", handleFocus);
             window.removeEventListener("visibilitychange", handleFocus);
+            window.removeEventListener("pageshow", handleFocus);
             if (metaTimeoutRef.current) {
                 window.clearTimeout(metaTimeoutRef.current);
             }

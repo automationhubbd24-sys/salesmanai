@@ -237,29 +237,35 @@ exports.startFacebookAuth = async (req, res) => {
             scope = 'pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_read_user_content';
         }
 
-        // FORCE BROWSER-ONLY BEHAVIOR: 
-        // Using m.facebook.com and display=touch is the most aggressive way to stay in the browser.
-        // Also, using a direct redirect from a backend response often bypasses the OS App Link check.
-        const oauthUrl = new URL('https://m.facebook.com/v25.0/dialog/oauth');
+        if (type === 'whatsapp') {
+            // WHATSAPP SPECIAL: Embedded signup is very picky about domains.
+            // Using m.facebook.com with display=touch is the best way to force browser.
+            oauthUrl = new URL('https://m.facebook.com/v25.0/dialog/oauth');
+            redirectUri = `${redirectBase}/auth/facebook/whatsapp/callback`;
+            extras = JSON.stringify({
+                setup: {},
+                featureType: "whatsapp_business_app_onboarding",
+                sessionInfoVersion: "3"
+            });
+            oauthUrl.searchParams.set('config_id', configId);
+            oauthUrl.searchParams.set('override_default_response_type', 'true');
+            oauthUrl.searchParams.set('extras', extras);
+        } else {
+            oauthUrl = new URL('https://m.facebook.com/v25.0/dialog/oauth');
+            redirectUri = `${redirectBase}/auth/facebook/messenger/callback`;
+            scope = 'pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_read_user_content';
+            oauthUrl.searchParams.set('scope', scope);
+        }
+
         oauthUrl.searchParams.set('client_id', appId);
         oauthUrl.searchParams.set('redirect_uri', redirectUri);
         oauthUrl.searchParams.set('state', state);
         oauthUrl.searchParams.set('response_type', 'code');
         oauthUrl.searchParams.set('display', 'touch');
-        oauthUrl.searchParams.set('sdk', 'joey'); // A small trick to make it look like an SDK request
-
-        if (type === 'whatsapp') {
-            oauthUrl.searchParams.set('config_id', configId);
-            oauthUrl.searchParams.set('override_default_response_type', 'true');
-            oauthUrl.searchParams.set('extras', extras);
-        } else {
-            oauthUrl.searchParams.set('scope', scope);
-        }
-
-        // Add a 'no_app_redirect' hint if supported (some versions of FB OAuth support this)
+        oauthUrl.searchParams.set('sdk', 'joey');
         oauthUrl.searchParams.set('app_id', appId);
         
-        // Use a 302 redirect. 
+        // Cache-Control to prevent browser from using an old redirect
         res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
         return res.redirect(oauthUrl.toString());
     } catch (error) {
