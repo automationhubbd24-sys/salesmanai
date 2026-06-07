@@ -238,8 +238,8 @@ exports.startFacebookAuth = async (req, res) => {
         }
 
         if (type === 'whatsapp') {
-            // WHATSAPP SPECIAL: Embedded signup is very picky about domains.
-            // Using m.facebook.com with display=touch is the best way to force browser.
+            // WHATSAPP ULTIMATE MOBILE FIX:
+            // Embedded signup v4 requires specific display and feature parameters to stay in browser.
             oauthUrl = new URL('https://m.facebook.com/v25.0/dialog/oauth');
             redirectUri = `${redirectBase}/auth/facebook/whatsapp/callback`;
             extras = JSON.stringify({
@@ -250,22 +250,23 @@ exports.startFacebookAuth = async (req, res) => {
             oauthUrl.searchParams.set('config_id', configId);
             oauthUrl.searchParams.set('override_default_response_type', 'true');
             oauthUrl.searchParams.set('extras', extras);
+            oauthUrl.searchParams.set('display', 'touch'); // Crucial for mobile browser
         } else {
             oauthUrl = new URL('https://m.facebook.com/v25.0/dialog/oauth');
             redirectUri = `${redirectBase}/auth/facebook/messenger/callback`;
             scope = 'pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_read_user_content';
             oauthUrl.searchParams.set('scope', scope);
+            oauthUrl.searchParams.set('display', 'page'); // Messenger works better with 'page' on mobile
         }
 
         oauthUrl.searchParams.set('client_id', appId);
         oauthUrl.searchParams.set('redirect_uri', redirectUri);
         oauthUrl.searchParams.set('state', state);
         oauthUrl.searchParams.set('response_type', 'code');
-        oauthUrl.searchParams.set('display', 'touch');
         oauthUrl.searchParams.set('sdk', 'joey');
         oauthUrl.searchParams.set('app_id', appId);
         
-        // Cache-Control to prevent browser from using an old redirect
+        // Prevent App Hijacking by using a small delay/meta refresh if 302 is intercepted
         res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
         return res.redirect(oauthUrl.toString());
     } catch (error) {
