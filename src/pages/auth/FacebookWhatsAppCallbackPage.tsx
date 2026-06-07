@@ -6,6 +6,7 @@ import {
   readFlowState,
   storeCallbackPayload,
 } from "@/lib/facebookMobileAuth";
+import { BACKEND_URL } from "@/config";
 
 export default function FacebookWhatsAppCallbackPage() {
   useEffect(() => {
@@ -14,7 +15,7 @@ export default function FacebookWhatsAppCallbackPage() {
     const returnedState = params.get("state");
     const isStateValid = Boolean(storedState?.state && returnedState && storedState.state === returnedState);
 
-    storeCallbackPayload(WHATSAPP_MOBILE_CALLBACK_KEY, {
+    const payload = {
       code: isStateValid ? params.get("code") : null,
       error: isStateValid ? params.get("error") : (params.get("error") || "invalid_state"),
       errorReason: isStateValid ? params.get("error_reason") : "state_mismatch",
@@ -22,7 +23,18 @@ export default function FacebookWhatsAppCallbackPage() {
         ? params.get("error_description")
         : "Facebook login state mismatch. Please try again.",
       state: returnedState,
-    });
+    };
+
+    storeCallbackPayload(WHATSAPP_MOBILE_CALLBACK_KEY, payload);
+
+    // PERSIST TO DATABASE FOR POLLING (Mobile Fix)
+    if (returnedState) {
+        void fetch(`${BACKEND_URL}/api/auth/facebook/callback-persist`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ state: returnedState, ...payload })
+        }).catch(e => console.error("Persistence failed:", e));
+    }
 
     clearFlowState(WHATSAPP_MOBILE_FLOW_STATE_KEY);
 

@@ -23,9 +23,11 @@ import { useMessenger } from "@/context/MessengerContext";
 import { useIsMobile } from "@/hooks/use-mobile";
 import {
     MESSENGER_MOBILE_CALLBACK_KEY,
+    MESSENGER_MOBILE_FLOW_STATE_KEY,
     beginMessengerMobileOAuth,
     consumeCallbackPayload,
     getMessengerMobileRedirectUri,
+    readFlowState,
 } from "@/lib/facebookMobileAuth";
 import { logFrontendError } from "../../../lib/logger";
 
@@ -508,6 +510,34 @@ export default function MessengerIntegrationPage() {
 
         window.addEventListener("message", handleMobileMessage);
 
+        // POLLING FOR MOBILE OAUTH COMPLETION (Failsafe for App Hijacking)
+        let pollInterval: number | null = null;
+        if (isMobile) {
+            pollInterval = window.setInterval(async () => {
+                const flowState = readFlowState(MESSENGER_MOBILE_FLOW_STATE_KEY);
+                if (!flowState?.state) return;
+
+                try {
+                    const res = await fetch(`${BACKEND_URL}/api/auth/facebook/poll?state=${flowState.state}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data.completed) {
+                            console.log("Mobile Messenger OAuth completed via polling!");
+                            if (data.error) {
+                                toast.error(data.errorDescription || "Messenger connection failed.");
+                                setConnecting(false);
+                            } else if (data.code) {
+                                void handleMessengerMobileCallback(data.code);
+                            }
+                            if (pollInterval) window.clearInterval(pollInterval);
+                        }
+                    }
+                } catch (e) {
+                    // Silent poll error
+                }
+            }, 3000);
+        }
+
         const callbackPayload = consumeCallbackPayload(MESSENGER_MOBILE_CALLBACK_KEY);
         if (!callbackPayload) {
             return;
@@ -523,7 +553,10 @@ export default function MessengerIntegrationPage() {
 
         void handleMessengerMobileCallback(callbackPayload.code);
 
-        return () => window.removeEventListener("message", handleMobileMessage);
+        return () => {
+            window.removeEventListener("message", handleMobileMessage);
+            if (pollInterval) window.clearInterval(pollInterval);
+        };
     }, [userEmail, userId]);
 
     // --- Action Handlers ---

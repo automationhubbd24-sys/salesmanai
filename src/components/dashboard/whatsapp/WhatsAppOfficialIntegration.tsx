@@ -9,9 +9,11 @@ import { useNavigate } from "react-router-dom";
 import { useIsMobile } from "@/hooks/use-mobile";
 import {
   WHATSAPP_MOBILE_CALLBACK_KEY,
+  WHATSAPP_MOBILE_FLOW_STATE_KEY,
   beginWhatsAppMobileOAuth,
   consumeCallbackPayload,
   getWhatsAppMobileRedirectUri,
+  readFlowState,
 } from "@/lib/facebookMobileAuth";
 
 declare global {
@@ -215,8 +217,38 @@ export default function WhatsAppOfficialIntegration() {
     };
     window.addEventListener("message", mobileCallbackListener);
 
+    // POLLING FOR MOBILE OAUTH COMPLETION (Failsafe for App Hijacking)
+    let pollInterval: number | null = null;
+    if (isMobile) {
+        pollInterval = window.setInterval(async () => {
+            const flowState = readFlowState(WHATSAPP_MOBILE_FLOW_STATE_KEY);
+            if (!flowState?.state) return;
+
+            try {
+                const res = await fetch(`${BACKEND_URL}/api/auth/facebook/poll?state=${flowState.state}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.completed) {
+                        console.log("Mobile OAuth completed via polling!");
+                        if (data.error) {
+                            toast.error(data.errorDescription || "WhatsApp connection failed.");
+                            setLoading(false);
+                        } else if (data.code) {
+                            setLoading(true);
+                            void handleSignupCompletion(data.code, null, getWhatsAppMobileRedirectUri());
+                        }
+                        if (pollInterval) window.clearInterval(pollInterval);
+                    }
+                }
+            } catch (e) {
+                // Silent poll error
+            }
+        }, 3000);
+    }
+
     return () => {
       clearSignupPoll();
+      if (pollInterval) window.clearInterval(pollInterval);
       if (metaTimeoutRef.current) {
         window.clearTimeout(metaTimeoutRef.current);
       }

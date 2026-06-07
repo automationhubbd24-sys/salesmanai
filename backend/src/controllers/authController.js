@@ -195,6 +195,28 @@ exports.startFacebookAuth = async (req, res) => {
             return res.status(500).send('FACEBOOK_APP_ID not configured on server.');
         }
 
+        // Ensure table exists for polling
+        await pgClient.query(`
+            CREATE TABLE IF NOT EXISTS facebook_pending_auths (
+                state TEXT PRIMARY KEY,
+                type TEXT,
+                code TEXT,
+                error TEXT,
+                error_description TEXT,
+                completed BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Clean up old pending auths (older than 30 mins)
+        await pgClient.query(`DELETE FROM facebook_pending_auths WHERE created_at < NOW() - INTERVAL '30 minutes'`);
+
+        // Insert new pending auth
+        await pgClient.query(
+            `INSERT INTO facebook_pending_auths (state, type) VALUES ($1, $2) ON CONFLICT (state) DO UPDATE SET type = $2, created_at = NOW(), completed = FALSE, code = NULL, error = NULL`,
+            [state, type]
+        );
+
         const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`;
         const redirectBase = baseUrl.replace(/\/+$/, '');
         
@@ -219,7 +241,7 @@ exports.startFacebookAuth = async (req, res) => {
         oauthUrl.searchParams.set('redirect_uri', redirectUri);
         oauthUrl.searchParams.set('state', state);
         oauthUrl.searchParams.set('response_type', 'code');
-        oauthUrl.searchParams.set('display', 'touch'); // Better for mobile browser
+        oauthUrl.searchParams.set('display', 'touch');
 
         if (type === 'whatsapp') {
             oauthUrl.searchParams.set('config_id', configId);
@@ -229,12 +251,55 @@ exports.startFacebookAuth = async (req, res) => {
             oauthUrl.searchParams.set('scope', scope);
         }
 
-        // Redirect to Facebook. Because the user initiated a request to OUR domain, 
-        // the 302 redirect often stays within the browser instead of switching to the app.
         return res.redirect(oauthUrl.toString());
     } catch (error) {
         console.error('Start Facebook Auth Error:', error);
         res.status(500).send('Internal Server Error');
+    }
+};
+
+exports.pollFacebookAuth = async (req, res) => {
+    try {
+        const { state } = req.query;
+        if (!state) return res.status(400).json({ error: 'Missing state' });
+
+        const result = await pgClient.query(
+            `SELECT code, error, error_description, completed FROM facebook_pending_auths WHERE state = $1`,
+            [state]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'Auth session not found' });
+        }
+
+        const row = result.rows[0];
+        if (row.completed) {
+            // Delete once consumed to keep DB clean
+            await pgClient.query(`DELETE FROM facebook_pending_auths WHERE state = $1`, [state]);
+            return res.json({ completed: true, code: row.code, error: row.error, errorDescription: row.error_description });
+        }
+
+        return res.json({ completed: false });
+    } catch (error) {
+        console.error('Poll Facebook Auth Error:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
+exports.persistFacebookCallback = async (req, res) => {
+    try {
+        const { state, code, error, errorDescription } = req.body;
+        if (!state) return res.status(400).json({ error: 'Missing state' });
+
+        await pgClient.query(
+            `UPDATE facebook_pending_auths SET code = $1, error = $2, error_description = $3, completed = TRUE WHERE state = $4`,
+            [code, error, errorDescription, state]
+        );
+
+        return res.json({ success: true });
+    } catch (error) {
+        console.error('Persist Facebook Callback Error:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
     }
 };
 
