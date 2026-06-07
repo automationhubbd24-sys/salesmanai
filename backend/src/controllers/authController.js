@@ -238,8 +238,9 @@ exports.startFacebookAuth = async (req, res) => {
         }
 
         if (type === 'whatsapp') {
-            // WHATSAPP ULTIMATE MOBILE FIX:
-            // Embedded signup v4 requires specific display and feature parameters to stay in browser.
+            // WHATSAPP BROWSER-FORCE FIX:
+            // Using 'display=page' instead of 'touch' to avoid triggering the Facebook App.
+            // Messenger worked with 'page', so we apply the same here.
             oauthUrl = new URL('https://m.facebook.com/v25.0/dialog/oauth');
             redirectUri = `${redirectBase}/auth/facebook/whatsapp/callback`;
             extras = JSON.stringify({
@@ -250,13 +251,13 @@ exports.startFacebookAuth = async (req, res) => {
             oauthUrl.searchParams.set('config_id', configId);
             oauthUrl.searchParams.set('override_default_response_type', 'true');
             oauthUrl.searchParams.set('extras', extras);
-            oauthUrl.searchParams.set('display', 'touch'); // Crucial for mobile browser
+            oauthUrl.searchParams.set('display', 'page'); // CHANGED FROM 'touch' TO 'page'
         } else {
             oauthUrl = new URL('https://m.facebook.com/v25.0/dialog/oauth');
             redirectUri = `${redirectBase}/auth/facebook/messenger/callback`;
             scope = 'pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_read_user_content';
             oauthUrl.searchParams.set('scope', scope);
-            oauthUrl.searchParams.set('display', 'page'); // Messenger works better with 'page' on mobile
+            oauthUrl.searchParams.set('display', 'page');
         }
 
         oauthUrl.searchParams.set('client_id', appId);
