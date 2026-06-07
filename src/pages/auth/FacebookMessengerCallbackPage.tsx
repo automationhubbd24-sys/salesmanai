@@ -36,10 +36,9 @@ export default function FacebookMessengerCallbackPage() {
         }).catch(e => console.error("Persistence failed:", e));
     }
 
-    // Try to find the original flow state to know where to return
+    // DON'T clear state here! Let the main page handle it after polling success
     const storedState = readFlowState(MESSENGER_MOBILE_FLOW_STATE_KEY);
-    clearFlowState(MESSENGER_MOBILE_FLOW_STATE_KEY);
-
+    
     // PC/Smart Mobile Flow: Close popup if possible
     if (window.opener) {
       try {

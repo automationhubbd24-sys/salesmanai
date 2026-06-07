@@ -28,7 +28,6 @@ export default function FacebookWhatsAppCallbackPage() {
     storeCallbackPayload(WHATSAPP_MOBILE_CALLBACK_KEY, payload);
 
     // PERSIST TO DATABASE FOR POLLING (Crucial for Mobile/App Hijacking)
-    // This allows the original browser (Chrome) to see the result from the FB App browser
     if (returnedState) {
         void fetch(`${BACKEND_URL}/api/auth/facebook/callback-persist`, {
             method: "POST",
@@ -37,10 +36,9 @@ export default function FacebookWhatsAppCallbackPage() {
         }).catch(e => console.error("Persistence failed:", e));
     }
 
-    // Try to find the original flow state to know where to return
+    // DON'T clear state here! Let the main page handle it after polling success
     const storedState = readFlowState(WHATSAPP_MOBILE_FLOW_STATE_KEY);
-    clearFlowState(WHATSAPP_MOBILE_FLOW_STATE_KEY);
-
+    
     // PC/Smart Mobile Flow: Close popup if possible
     if (window.opener) {
       try {

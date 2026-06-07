@@ -238,6 +238,7 @@ export default function WhatsAppOfficialIntegration() {
                             void handleSignupCompletion(data.code, null, getWhatsAppMobileRedirectUri());
                         }
                         if (pollInterval) window.clearInterval(pollInterval);
+                        clearFlowState(WHATSAPP_MOBILE_FLOW_STATE_KEY); // Clear only after success
                     }
                 }
             } catch (e) {

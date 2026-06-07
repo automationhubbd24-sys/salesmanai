@@ -530,6 +530,7 @@ export default function MessengerIntegrationPage() {
                                 void handleMessengerMobileCallback(data.code);
                             }
                             if (pollInterval) window.clearInterval(pollInterval);
+                            clearFlowState(MESSENGER_MOBILE_FLOW_STATE_KEY); // Clear only after success
                         }
                     }
                 } catch (e) {

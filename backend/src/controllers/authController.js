@@ -225,6 +225,7 @@ exports.startFacebookAuth = async (req, res) => {
         let extras = '';
 
         if (type === 'whatsapp') {
+            oauthUrl = new URL('https://m.facebook.com/v25.0/dialog/oauth'); // Use mobile domain to force browser
             redirectUri = `${redirectBase}/auth/facebook/whatsapp/callback`;
             extras = JSON.stringify({
                 setup: {},
@@ -232,16 +233,16 @@ exports.startFacebookAuth = async (req, res) => {
                 sessionInfoVersion: "3"
             });
         } else {
+            oauthUrl = new URL('https://m.facebook.com/v25.0/dialog/oauth'); // Use mobile domain to force browser
             redirectUri = `${redirectBase}/auth/facebook/messenger/callback`;
             scope = 'pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_read_user_content';
         }
 
-        const oauthUrl = new URL('https://www.facebook.com/v25.0/dialog/oauth');
         oauthUrl.searchParams.set('client_id', appId);
         oauthUrl.searchParams.set('redirect_uri', redirectUri);
         oauthUrl.searchParams.set('state', state);
         oauthUrl.searchParams.set('response_type', 'code');
-        oauthUrl.searchParams.set('display', 'touch');
+        oauthUrl.searchParams.set('display', 'touch'); // Specific for mobile touch browsers
 
         if (type === 'whatsapp') {
             oauthUrl.searchParams.set('config_id', configId);
