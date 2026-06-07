@@ -28,6 +28,7 @@ import {
     consumeCallbackPayload,
     getMessengerMobileRedirectUri,
     readFlowState,
+    clearFlowState,
 } from "@/lib/facebookMobileAuth";
 import { logFrontendError } from "../../../lib/logger";
 

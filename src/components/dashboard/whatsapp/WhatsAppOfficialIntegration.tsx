@@ -14,6 +14,7 @@ import {
   consumeCallbackPayload,
   getWhatsAppMobileRedirectUri,
   readFlowState,
+  clearFlowState,
 } from "@/lib/facebookMobileAuth";
 
 declare global {
