@@ -11,23 +11,24 @@ import { BACKEND_URL } from "@/config";
 export default function FacebookWhatsAppCallbackPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const storedState = readFlowState(WHATSAPP_MOBILE_FLOW_STATE_KEY);
     const returnedState = params.get("state");
-    const isStateValid = Boolean(storedState?.state && returnedState && storedState.state === returnedState);
+    const code = params.get("code");
+    const error = params.get("error");
+    const errorDescription = params.get("error_description");
 
     const payload = {
-      code: isStateValid ? params.get("code") : null,
-      error: isStateValid ? params.get("error") : (params.get("error") || "invalid_state"),
-      errorReason: isStateValid ? params.get("error_reason") : "state_mismatch",
-      errorDescription: isStateValid
-        ? params.get("error_description")
-        : "Facebook login state mismatch. Please try again.",
+      code,
+      error,
+      errorReason: error ? "facebook_error" : null,
+      errorDescription: errorDescription || (error ? "Facebook login failed." : null),
       state: returnedState,
     };
 
+    // Store locally for PC/Direct browser flow
     storeCallbackPayload(WHATSAPP_MOBILE_CALLBACK_KEY, payload);
 
-    // PERSIST TO DATABASE FOR POLLING (Mobile Fix)
+    // PERSIST TO DATABASE FOR POLLING (Crucial for Mobile/App Hijacking)
+    // This allows the original browser (Chrome) to see the result from the FB App browser
     if (returnedState) {
         void fetch(`${BACKEND_URL}/api/auth/facebook/callback-persist`, {
             method: "POST",
@@ -36,6 +37,8 @@ export default function FacebookWhatsAppCallbackPage() {
         }).catch(e => console.error("Persistence failed:", e));
     }
 
+    // Try to find the original flow state to know where to return
+    const storedState = readFlowState(WHATSAPP_MOBILE_FLOW_STATE_KEY);
     clearFlowState(WHATSAPP_MOBILE_FLOW_STATE_KEY);
 
     // PC/Smart Mobile Flow: Close popup if possible
