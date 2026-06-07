@@ -185,6 +185,59 @@ exports.completeMessengerCode = async (req, res) => {
     }
 };
 
+exports.startFacebookAuth = async (req, res) => {
+    try {
+        const { type, state } = req.query;
+        const appId = process.env.FACEBOOK_APP_ID;
+        const configId = process.env.WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID || '2197274487770639';
+        
+        if (!appId) {
+            return res.status(500).send('FACEBOOK_APP_ID not configured on server.');
+        }
+
+        const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`;
+        const redirectBase = baseUrl.replace(/\/+$/, '');
+        
+        let redirectUri = '';
+        let scope = '';
+        let extras = '';
+
+        if (type === 'whatsapp') {
+            redirectUri = `${redirectBase}/auth/facebook/whatsapp/callback`;
+            extras = JSON.stringify({
+                setup: {},
+                featureType: "whatsapp_business_app_onboarding",
+                sessionInfoVersion: "3"
+            });
+        } else {
+            redirectUri = `${redirectBase}/auth/facebook/messenger/callback`;
+            scope = 'pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_read_user_content';
+        }
+
+        const oauthUrl = new URL('https://www.facebook.com/v25.0/dialog/oauth');
+        oauthUrl.searchParams.set('client_id', appId);
+        oauthUrl.searchParams.set('redirect_uri', redirectUri);
+        oauthUrl.searchParams.set('state', state);
+        oauthUrl.searchParams.set('response_type', 'code');
+        oauthUrl.searchParams.set('display', 'touch'); // Better for mobile browser
+
+        if (type === 'whatsapp') {
+            oauthUrl.searchParams.set('config_id', configId);
+            oauthUrl.searchParams.set('override_default_response_type', 'true');
+            oauthUrl.searchParams.set('extras', extras);
+        } else {
+            oauthUrl.searchParams.set('scope', scope);
+        }
+
+        // Redirect to Facebook. Because the user initiated a request to OUR domain, 
+        // the 302 redirect often stays within the browser instead of switching to the app.
+        return res.redirect(oauthUrl.toString());
+    } catch (error) {
+        console.error('Start Facebook Auth Error:', error);
+        res.status(500).send('Internal Server Error');
+    }
+};
+
 exports.adminTopup = async (req, res) => {
     try {
         const { email, amount, secret } = req.body;

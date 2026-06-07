@@ -6,6 +6,7 @@ const adminAuthMiddleware = require('../middleware/adminAuthMiddleware');
 
 router.post('/facebook/exchange-token', authController.exchangeToken);
 router.post('/facebook/messenger/complete-code', authMiddleware, authController.completeMessengerCode);
+router.get('/facebook/start', authController.startFacebookAuth);
 
 router.post('/admin/login', authController.adminLogin);
 router.post('/admin/topup', adminAuthMiddleware, authController.adminTopup);
