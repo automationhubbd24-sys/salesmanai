@@ -172,7 +172,7 @@ function renderFacebookBrowserRedirectPage(res, oauthUrl, type) {
     for (const [key, value] of parsedUrl.searchParams.entries()) {
         const escapedKey = String(key).replace(/"/g, '&quot;');
         const escapedValue = String(value).replace(/"/g, '&quot;');
-        hiddenInputs += `<input type="hidden" name="${escapedKey}" value="${escapedValue}" />\\n      `;
+        hiddenInputs += `<input type="hidden" name="${escapedKey}" value="${escapedValue}" />`;
     }
     const actionUrl = `${parsedUrl.origin}${parsedUrl.pathname}`;
 
