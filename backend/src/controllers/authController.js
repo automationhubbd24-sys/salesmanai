@@ -250,9 +250,7 @@ function renderFacebookBrowserRedirectPage(res, oauthUrl, type) {
   <div class="card">
     <h1>Continue with Facebook</h1>
     <p>We are opening the Facebook login for ${flowLabel} inside your browser. On Android, use the button below to continue in the same browser tab.</p>
-    <form class="continue-form" method="get" action="${escapedUrl}">
-      <button class="continue-button" type="submit">Continue in Browser</button>
-    </form>
+    <a href="${escapedUrl}" class="continue-button">Continue in Browser</a>
     <small>Avoid switching to the Facebook app during this step so the connection can finish in the same browser session.</small>
     <details>
       <summary>Debug OAuth Info</summary>
