@@ -630,11 +630,18 @@ export default function WhatsAppOfficialIntegration() {
   };
 
   const startWhatsAppMobileConnect = (forceNew: boolean = false) => {
-    // #region debug-point B:start-mobile-flow
-    fetch(DEBUG_SERVER_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: DEBUG_SESSION_ID, runId: "pre-fix", hypothesisId: "B", location: "WhatsAppOfficialIntegration.tsx:startWhatsAppMobileConnect", msg: "[DEBUG] Starting WhatsApp mobile embedded signup via direct button tap", data: { forceNew, origin: window.location.origin, appId: APP_ID, configId: CONFIG_ID, sdkReady, hasFB: Boolean(window.FB) }, ts: Date.now() }) }).catch(() => {});
-    // #endregion
+    if (forceNew) {
+      embeddedSignupMetaRef.current = {};
+      localStorage.removeItem("active_wa_session_id");
+      localStorage.removeItem("active_wp_db_id");
+      setCurrentSession(null);
+    }
 
-    openWhatsAppEmbeddedSignup(forceNew);
+    setLoading(true);
+    // #region debug-point B:start-mobile-flow
+    fetch(DEBUG_SERVER_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: DEBUG_SESSION_ID, runId: "pre-fix", hypothesisId: "B", location: "WhatsAppOfficialIntegration.tsx:startWhatsAppMobileConnect", msg: "[DEBUG] Starting WhatsApp mobile browser redirect flow", data: { forceNew, origin: window.location.origin, appId: APP_ID, configId: CONFIG_ID, sdkReady, hasFB: Boolean(window.FB) }, ts: Date.now() }) }).catch(() => {});
+    // #endregion
+    beginWhatsAppMobileOAuth();
   };
 
   const launchWhatsAppSignup = (forceNew: boolean = false) => {
