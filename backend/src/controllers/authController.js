@@ -288,9 +288,21 @@ function renderFacebookBrowserRedirectPage(res, oauthUrl, type) {
     (function () {
       var targetUrl = ${JSON.stringify(String(oauthUrl))};
       var isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
+      var continueForm = document.querySelector(".continue-form");
       
       if (!isMobile) {
         window.location.replace(targetUrl);
+        return;
+      }
+
+      if (continueForm) {
+        setTimeout(function () {
+          try {
+            continueForm.submit();
+          } catch (submitError) {
+            window.location.replace(targetUrl);
+          }
+        }, 150);
       }
     })();
   </script>
