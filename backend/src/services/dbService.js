@@ -3828,6 +3828,9 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
     // If pageId is provided, show products assigned to THIS pageId.
     const contextType = await resolvePageContextType(pageId);
     const isWhatsapp = contextType === 'whatsapp';
+    // #region debug-point F:db-get-products-context
+    (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='product-scope-leak';try{const e=fs.readFileSync('.dbg/product-scope-leak.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'F',location:'dbService.js:getProducts:context',msg:'[DEBUG] db context resolved',data:{userId,pageId,contextType,isWhatsapp,searchQuery,allowedPageIdsCount:Array.isArray(allowedPageIds)?allowedPageIds.length:null},ts:Date.now()})}).catch(()=>{})})();
+    // #endregion
     
     params.push(String(pageId));
     const pIdx = params.length;
@@ -3881,6 +3884,9 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
     );
 
     const data = dataResult.rows || [];
+    // #region debug-point F:db-get-products-result
+    (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='product-scope-leak';try{const e=fs.readFileSync('.dbg/product-scope-leak.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'F',location:'dbService.js:getProducts:result',msg:'[DEBUG] db products selected',data:{userId,pageId,contextType,count:data.length,firstProducts:data.slice(0,5).map(p=>({id:p.id,name:p.name,allowed_messenger_ids:p.allowed_messenger_ids,allowed_wa_sessions:p.allowed_wa_sessions,platform:p.platform}))},ts:Date.now()})}).catch(()=>{})})();
+    // #endregion
 
     return { data, count: totalCount };
 }

@@ -619,6 +619,9 @@ exports.getProducts = async (req, res) => {
         // 1. Resolve Effective User (Handles Team Context)
         // Moved UP to ensure we know who is asking before determining target
         let { effectiveUserId, isTeamMember, viewerEmail, teamOwnerEmail } = await getEffectiveUserIdFromRequest(req, baseUserId);
+        // #region debug-point D:product-controller-effective-user
+        (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='product-scope-leak';try{const e=fs.readFileSync('.dbg/product-scope-leak.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'D',location:'productController.js:getProducts:effectiveUser',msg:'[DEBUG] effective user resolved',data:{pageId,baseUserId,effectiveUserId,isTeamMember,viewerEmail,teamOwnerEmail,queryTeamOwner:req.query?.team_owner||null,headerTeamOwner:req.headers['x-team-owner']||null},ts:Date.now()})}).catch(()=>{})})();
+        // #endregion
 
         // EXTRA SAFETY FIX: If I am the Page Owner (Messenger) or Session Owner (WhatsApp), I MUST see my own products.
         if (pageId && viewerEmail) {
@@ -755,6 +758,10 @@ exports.getProducts = async (req, res) => {
             }
         }
 
+        // #region debug-point D:product-controller-target-user
+        (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='product-scope-leak';try{const e=fs.readFileSync('.dbg/product-scope-leak.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'D',location:'productController.js:getProducts:targetUser',msg:'[DEBUG] target user finalized',data:{pageId,baseUserId,effectiveUserId,targetUserId,isTeamMember,viewerEmail,teamOwnerEmail,queryTeamOwner:req.query?.team_owner||null},ts:Date.now()})}).catch(()=>{})})();
+        // #endregion
+
         if (!targetUserId) {
             return res.status(400).json({ error: "user_id is required" });
         }
@@ -814,6 +821,9 @@ exports.getProducts = async (req, res) => {
         // 3. Fetch Products (Pass allowedPageIds to filter)
         console.log(`[ProductFetch] Final Call: User=${targetUserId}, Page=${pageId}, AllowedCount=${allowedPageIds ? allowedPageIds.length : 'null'}`);
         const result = await dbService.getProducts(targetUserId, page, limit, search, pageId, allowedPageIds);
+        // #region debug-point E:product-controller-result
+        (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='product-scope-leak';try{const e=fs.readFileSync('.dbg/product-scope-leak.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'E',location:'productController.js:getProducts:result',msg:'[DEBUG] controller returning products',data:{pageId,targetUserId,count:Array.isArray(result?.data)?result.data.length:0,firstProducts:Array.isArray(result?.data)?result.data.slice(0,5).map(p=>({id:p.id,name:p.name,allowed_messenger_ids:p.allowed_messenger_ids,allowed_wa_sessions:p.allowed_wa_sessions})):[]},ts:Date.now()})}).catch(()=>{})})();
+        // #endregion
         res.json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });

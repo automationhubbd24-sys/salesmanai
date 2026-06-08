@@ -255,11 +255,21 @@ export default function ProductsPage() {
     const getTeamOwnerForContext = () => {
         if (typeof window === "undefined") return null;
         const teamOwner = localStorage.getItem("active_team_owner");
+        const authUserRaw = localStorage.getItem("auth_user");
+        let authEmail = null;
+        try {
+            authEmail = JSON.parse(authUserRaw || "{}")?.email || null;
+        } catch (e) {}
 
         // Safety: If I am the team owner, I don't need to send the param
         try {
             const user = JSON.parse(localStorage.getItem("auth_user") || "{}");
-            if (user.email && teamOwner === user.email) return null;
+            if (user.email && teamOwner === user.email) {
+                // #region debug-point A:products-team-owner-self
+                fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"product-scope-leak",runId:"pre-fix",hypothesisId:"A",location:"ProductsPage.tsx:getTeamOwnerForContext:self",msg:"[DEBUG] team owner matched auth user",data:{pageId,teamOwner,authEmail,activeFb:localStorage.getItem("active_fb_page_id"),activeWa:localStorage.getItem("active_wa_session_id"),messengerViewMode:localStorage.getItem("messenger_view_mode"),whatsappViewMode:localStorage.getItem("whatsapp_view_mode")},ts:Date.now()})}).catch(()=>{});
+                // #endregion
+                return null;
+            }
         } catch (e) {
             
         }
@@ -269,16 +279,27 @@ export default function ProductsPage() {
 
         if (pageId && activeWa && pageId === activeWa) {
             const mode = localStorage.getItem("whatsapp_view_mode");
+            const result = mode === "team" ? teamOwner : null;
+            // #region debug-point A:products-team-owner-wa
+            fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"product-scope-leak",runId:"pre-fix",hypothesisId:"A",location:"ProductsPage.tsx:getTeamOwnerForContext:wa",msg:"[DEBUG] team owner resolution for whatsapp",data:{pageId,activeWa,activeFb,teamOwner,authEmail,mode,result,messengerViewMode:localStorage.getItem("messenger_view_mode"),whatsappViewMode:localStorage.getItem("whatsapp_view_mode")},ts:Date.now()})}).catch(()=>{});
+            // #endregion
             if (mode === "team") return teamOwner;
             return null;
         }
 
         if (pageId && activeFb && pageId === activeFb) {
             const mode = localStorage.getItem("messenger_view_mode");
+            const result = mode === "team" ? teamOwner : null;
+            // #region debug-point A:products-team-owner-fb
+            fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"product-scope-leak",runId:"pre-fix",hypothesisId:"A",location:"ProductsPage.tsx:getTeamOwnerForContext:fb",msg:"[DEBUG] team owner resolution for messenger",data:{pageId,activeWa,activeFb,teamOwner,authEmail,mode,result,messengerViewMode:localStorage.getItem("messenger_view_mode"),whatsappViewMode:localStorage.getItem("whatsapp_view_mode")},ts:Date.now()})}).catch(()=>{});
+            // #endregion
             if (mode === "team") return teamOwner;
             return null;
         }
 
+        // #region debug-point A:products-team-owner-fallback
+        fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"product-scope-leak",runId:"pre-fix",hypothesisId:"A",location:"ProductsPage.tsx:getTeamOwnerForContext:fallback",msg:"[DEBUG] fallback team owner resolution",data:{pageId,activeWa,activeFb,teamOwner,authEmail,messengerViewMode:localStorage.getItem("messenger_view_mode"),whatsappViewMode:localStorage.getItem("whatsapp_view_mode"),returnedTeamOwner:teamOwner||null},ts:Date.now()})}).catch(()=>{});
+        // #endregion
         return teamOwner || null;
     };
 
@@ -373,6 +394,9 @@ export default function ProductsPage() {
             }
 
             const url = `${BACKEND_URL}/api/products?${params.toString()}`;
+            // #region debug-point B:products-fetch-request
+            fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"product-scope-leak",runId:"pre-fix",hypothesisId:"B",location:"ProductsPage.tsx:fetchProducts:request",msg:"[DEBUG] products request prepared",data:{uid,query,resolvedPageId,statePageId:pageId,teamOwner,url,activeFb:typeof window!=="undefined"?localStorage.getItem("active_fb_page_id"):null,activeWa:typeof window!=="undefined"?localStorage.getItem("active_wa_session_id"):null,activeTeamOwner:typeof window!=="undefined"?localStorage.getItem("active_team_owner"):null,messengerViewMode:typeof window!=="undefined"?localStorage.getItem("messenger_view_mode"):null,whatsappViewMode:typeof window!=="undefined"?localStorage.getItem("whatsapp_view_mode"):null},ts:Date.now()})}).catch(()=>{});
+            // #endregion
 
             const headers: HeadersInit = {};
             if (token) {
@@ -388,6 +412,9 @@ export default function ProductsPage() {
             }
 
             if (data && data.data && Array.isArray(data.data)) {
+                // #region debug-point C:products-fetch-response
+                fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"product-scope-leak",runId:"pre-fix",hypothesisId:"C",location:"ProductsPage.tsx:fetchProducts:response",msg:"[DEBUG] products response received",data:{resolvedPageId,url,count:data.data.length,firstProducts:data.data.slice(0,5).map((p:any)=>({id:p.id,name:p.name,allowed_messenger_ids:p.allowed_messenger_ids,allowed_wa_sessions:p.allowed_wa_sessions}))},ts:Date.now()})}).catch(()=>{});
+                // #endregion
                 setProducts(data.data);
                 setDebugLogText(prev => `${prev}\n[Client] PRODUCTS_FETCH page=${resolvedPageId} count=${data.data.length}`);
             } else if (Array.isArray(data)) {
