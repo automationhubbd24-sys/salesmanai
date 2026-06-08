@@ -1,6 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { CheckCircle2, Facebook, Link2, Loader2, MessageSquare, RotateCcw, Settings2, ShieldCheck, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { BACKEND_URL } from "@/config";
@@ -55,6 +65,8 @@ export default function WhatsAppOfficialIntegration() {
   const [sdkReady, setSdkReady] = useState(false);
   const [connected, setConnected] = useState(false);
   const [wabaInfo, setWabaInfo] = useState<EmbeddedSignupMeta | null>(null);
+  const [isMobileConnectDialogOpen, setIsMobileConnectDialogOpen] = useState(false);
+  const [pendingMobileForceNew, setPendingMobileForceNew] = useState(false);
   const embeddedSignupMetaRef = useRef<EmbeddedSignupMeta>({});
   const metaResolverRef = useRef<((meta: EmbeddedSignupMeta | null) => void) | null>(null);
   const metaTimeoutRef = useRef<number | null>(null);
@@ -477,6 +489,22 @@ export default function WhatsAppOfficialIntegration() {
     void handleSignupCompletion(callbackPayload.code, null, getWhatsAppMobileRedirectUri());
   }, []); // Run once on mount
 
+  const startWhatsAppMobileConnect = () => {
+    const forceNew = pendingMobileForceNew;
+    setIsMobileConnectDialogOpen(false);
+    setPendingMobileForceNew(false);
+
+    if (forceNew) {
+      embeddedSignupMetaRef.current = {};
+      localStorage.removeItem("active_wa_session_id");
+      localStorage.removeItem("active_wp_db_id");
+      setCurrentSession(null);
+    }
+
+    setLoading(true);
+    beginWhatsAppMobileOAuth();
+  };
+
   const launchWhatsAppSignup = (forceNew: boolean = false) => {
     if (forceNew) {
       embeddedSignupMetaRef.current = {};
@@ -486,7 +514,8 @@ export default function WhatsAppOfficialIntegration() {
     }
 
     if (isMobile) {
-      beginWhatsAppMobileOAuth();
+      setPendingMobileForceNew(forceNew);
+      setIsMobileConnectDialogOpen(true);
       return;
     }
 
@@ -748,6 +777,11 @@ export default function WhatsAppOfficialIntegration() {
                 <p className="text-slate-400">
                   Follow the official Meta onboarding process to connect your WhatsApp Business number. This allows you to use the AI chatbot while keeping your mobile app active.
                 </p>
+                {isMobile && (
+                  <p className="rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-slate-200">
+                    Use Chrome or your phone&apos;s main browser. If Facebook opens its app, finish login there and return to this browser tab so we can finish the WhatsApp connection.
+                  </p>
+                )}
               </div>
               <Button 
                 size="lg" 
@@ -768,6 +802,22 @@ export default function WhatsAppOfficialIntegration() {
               )}
             </div>
           </div>
+          <AlertDialog open={isMobileConnectDialogOpen} onOpenChange={setIsMobileConnectDialogOpen}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Continue WhatsApp connection in browser</AlertDialogTitle>
+                <AlertDialogDescription>
+                  On Android, tap continue from Chrome or your phone&apos;s main browser. If Facebook opens its app, complete the login there and return to this browser tab.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={loading}>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={startWhatsAppMobileConnect} disabled={loading}>
+                  Continue in Browser
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       )}
     </div>

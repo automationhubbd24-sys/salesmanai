@@ -6,6 +6,16 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { 
     Facebook, 
@@ -89,6 +99,7 @@ export default function MessengerIntegrationPage() {
     const [directAccessToken, setDirectAccessToken] = useState("");
     const [directLoading, setDirectLoading] = useState(false);
     const [isManualSetupOpen, setIsManualSetupOpen] = useState(false);
+    const [isMobileConnectDialogOpen, setIsMobileConnectDialogOpen] = useState(false);
 
     // Subscription Modal State - DEPRECATED/REMOVED
     // const [isSubscriptionOpen, setIsSubscriptionOpen] = useState(false);
@@ -550,12 +561,14 @@ export default function MessengerIntegrationPage() {
             };
             window.addEventListener("focus", handleFocus);
             window.addEventListener("visibilitychange", handleFocus);
+            window.addEventListener("pageshow", handleFocus);
 
             return () => {
                 window.removeEventListener("message", handleMobileMessage);
                 if (pollInterval) window.clearInterval(pollInterval);
                 window.removeEventListener("focus", handleFocus);
                 window.removeEventListener("visibilitychange", handleFocus);
+                window.removeEventListener("pageshow", handleFocus);
             };
         }
 
@@ -582,9 +595,15 @@ export default function MessengerIntegrationPage() {
 
     // --- Action Handlers ---
 
+    const startMessengerMobileConnect = () => {
+        setIsMobileConnectDialogOpen(false);
+        setConnecting(true);
+        beginMessengerMobileOAuth();
+    };
+
     const handleConnectFacebook = async () => {
         if (isMobile) {
-            beginMessengerMobileOAuth();
+            setIsMobileConnectDialogOpen(true);
             return;
         }
 
@@ -850,6 +869,28 @@ export default function MessengerIntegrationPage() {
                     </Button>
                 </div>
             </div>
+            {isMobile && (
+                <div className="rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-slate-200">
+                    Use Chrome or your phone's main browser. If Facebook opens its app, finish login there and return to this browser tab so we can complete the Messenger connection.
+                </div>
+            )}
+
+            <AlertDialog open={isMobileConnectDialogOpen} onOpenChange={setIsMobileConnectDialogOpen}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Continue Messenger connection in browser</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            On Android, avoid in-app browsers. Tap continue, sign in with Facebook, then return to this browser tab if Facebook opens its app.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={connecting}>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={startMessengerMobileConnect} disabled={connecting}>
+                            Continue in Browser
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
 
             <Dialog open={isManualSetupOpen} onOpenChange={setIsManualSetupOpen}>
                 <DialogContent className="max-w-2xl">

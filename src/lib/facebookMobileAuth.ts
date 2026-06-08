@@ -65,11 +65,12 @@ export function beginWhatsAppMobileOAuth(): void {
   const startUrl = new URL(`${BACKEND_URL}/api/auth/facebook/start`);
   startUrl.searchParams.set("type", "whatsapp");
   startUrl.searchParams.set("state", state);
+  startUrl.searchParams.set("origin", window.location.origin);
 
   // SINGLE TAB REDIRECT: Most reliable way on mobile to keep everything in one browser session
   // Using window.location.href directly is more likely to be intercepted by the OS 
   // if it's a known app domain, but since we go to OUR backend first, it might help.
-  window.location.href = startUrl.toString();
+  window.location.replace(startUrl.toString());
 }
 
 /**
@@ -90,9 +91,10 @@ export function beginMessengerMobileOAuth(): void {
   const startUrl = new URL(`${BACKEND_URL}/api/auth/facebook/start`);
   startUrl.searchParams.set("type", "messenger");
   startUrl.searchParams.set("state", state);
+  startUrl.searchParams.set("origin", window.location.origin);
 
   // SINGLE TAB REDIRECT
-  window.location.href = startUrl.toString();
+  window.location.replace(startUrl.toString());
 }
 
 /**

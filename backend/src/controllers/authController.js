@@ -91,6 +91,149 @@ async function fetchMessengerPages(accessToken) {
     return Array.isArray(response.data?.data) ? response.data.data : [];
 }
 
+function isAllowedFrontendOrigin(origin) {
+    if (!origin) {
+        return false;
+    }
+
+    try {
+        const parsed = new URL(origin);
+        const hostname = parsed.hostname.toLowerCase();
+
+        if (hostname === 'localhost' || hostname === '127.0.0.1') {
+            return true;
+        }
+
+        if (hostname === 'salesmanchatbot.online' || hostname.endsWith('.salesmanchatbot.online')) {
+            return true;
+        }
+
+        const configuredOrigins = [
+            process.env.FRONTEND_URL,
+            process.env.PUBLIC_WEB_URL,
+            process.env.CLIENT_URL,
+            process.env.APP_URL
+        ]
+            .filter(Boolean)
+            .map((value) => {
+                try {
+                    return new URL(value).origin;
+                } catch {
+                    return null;
+                }
+            })
+            .filter(Boolean);
+
+        return configuredOrigins.includes(parsed.origin);
+    } catch {
+        return false;
+    }
+}
+
+function resolveFrontendOrigin(req, requestedOrigin) {
+    if (isAllowedFrontendOrigin(requestedOrigin)) {
+        return new URL(requestedOrigin).origin;
+    }
+
+    const fallbackCandidates = [
+        process.env.FRONTEND_URL,
+        process.env.PUBLIC_WEB_URL,
+        process.env.CLIENT_URL,
+        process.env.APP_URL,
+        'https://salesmanchatbot.online'
+    ];
+
+    for (const candidate of fallbackCandidates) {
+        if (isAllowedFrontendOrigin(candidate)) {
+            return new URL(candidate).origin;
+        }
+    }
+
+    return `${req.protocol}://${req.get('host')}`;
+}
+
+function renderFacebookBrowserRedirectPage(res, oauthUrl, type) {
+    const escapedUrl = String(oauthUrl).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    const flowLabel = type === 'whatsapp' ? 'WhatsApp Business' : 'Messenger';
+
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    return res.status(200).send(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta name="referrer" content="origin-when-cross-origin" />
+  <title>Continue with Facebook</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #050505;
+      color: #f8fafc;
+      font-family: Arial, sans-serif;
+      padding: 24px;
+    }
+    .card {
+      width: min(100%, 420px);
+      background: #101010;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 18px;
+      padding: 24px;
+      box-sizing: border-box;
+      text-align: center;
+    }
+    h1 { margin: 0 0 12px; font-size: 24px; }
+    p { margin: 0 0 18px; color: #cbd5e1; line-height: 1.5; }
+    a {
+      display: inline-block;
+      padding: 12px 18px;
+      border-radius: 999px;
+      background: #16a34a;
+      color: #03120a;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    small {
+      display: block;
+      margin-top: 14px;
+      color: #94a3b8;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Continue with Facebook</h1>
+    <p>We are opening the Facebook login for ${flowLabel} inside your browser. On Android, use the button below to continue in the same browser tab.</p>
+    <a id="continue-link" href="${escapedUrl}" rel="noopener noreferrer">Continue in Browser</a>
+    <small>Avoid switching to the Facebook app during this step so the connection can finish in the same browser session.</small>
+  </div>
+  <script>
+    (function () {
+      var targetUrl = ${JSON.stringify(String(oauthUrl))};
+      var continueLink = document.getElementById("continue-link");
+      var isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
+
+      if (continueLink) {
+        continueLink.addEventListener("click", function () {
+          window.location.assign(targetUrl);
+        });
+      }
+
+      if (!isMobile) {
+        window.location.replace(targetUrl);
+      }
+    })();
+  </script>
+</body>
+</html>`);
+}
+
 exports.exchangeToken = async (req, res) => {
     try {
         const { shortLivedToken } = req.body;
@@ -187,12 +330,20 @@ exports.completeMessengerCode = async (req, res) => {
 
 exports.startFacebookAuth = async (req, res) => {
     try {
-        const { type, state } = req.query;
+        const { type, state, origin } = req.query;
         const appId = process.env.FACEBOOK_APP_ID;
         const configId = process.env.WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID || '2197274487770639';
         
         if (!appId) {
             return res.status(500).send('FACEBOOK_APP_ID not configured on server.');
+        }
+
+        if (!state) {
+            return res.status(400).send('Missing OAuth state.');
+        }
+
+        if (type !== 'whatsapp' && type !== 'messenger') {
+            return res.status(400).send('Invalid Facebook auth type.');
         }
 
         // Ensure table exists for polling
@@ -218,47 +369,37 @@ exports.startFacebookAuth = async (req, res) => {
             [state, type]
         );
 
-        const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`;
-        const redirectBase = baseUrl.replace(/\/+$/, '');
+        const frontendOrigin = resolveFrontendOrigin(req, origin);
         
         let redirectUri = '';
         let scope = '';
         let extras = '';
+        let oauthUrl;
 
         if (type === 'whatsapp') {
-            redirectUri = `${redirectBase}/auth/facebook/whatsapp/callback`;
+            redirectUri = `${frontendOrigin}/auth/facebook/whatsapp/callback`;
             extras = JSON.stringify({
                 setup: {},
                 featureType: "whatsapp_business_app_onboarding",
                 sessionInfoVersion: "3"
             });
         } else {
-            redirectUri = `${redirectBase}/auth/facebook/messenger/callback`;
+            redirectUri = `${frontendOrigin}/auth/facebook/messenger/callback`;
             scope = 'pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_read_user_content';
         }
 
         if (type === 'whatsapp') {
-            // WHATSAPP WEB-FORCE FIX:
-            // Using 'web.facebook.com' instead of 'm.facebook.com' to force desktop-like web view.
-            // This is a known trick to bypass mobile app hijacking.
-            oauthUrl = new URL('https://web.facebook.com/v25.0/dialog/oauth');
-            redirectUri = `${redirectBase}/auth/facebook/whatsapp/callback`;
-            extras = JSON.stringify({
-                setup: {},
-                featureType: "whatsapp_business_app_onboarding",
-                sessionInfoVersion: "3"
-            });
+            oauthUrl = new URL(`https://www.facebook.com/${FACEBOOK_GRAPH_VERSION}/dialog/oauth`);
             oauthUrl.searchParams.set('config_id', configId);
             oauthUrl.searchParams.set('override_default_response_type', 'true');
             oauthUrl.searchParams.set('extras', extras);
-            oauthUrl.searchParams.set('display', 'page'); 
-        } else {
-            oauthUrl = new URL('https://m.facebook.com/v25.0/dialog/oauth');
-            redirectUri = `${redirectBase}/auth/facebook/messenger/callback`;
-            scope = 'pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_read_user_content';
-            oauthUrl.searchParams.set('scope', scope);
             oauthUrl.searchParams.set('display', 'page');
-            oauthUrl.searchParams.set('sdk', 'joey'); // Keep for messenger as it's working
+            oauthUrl.searchParams.set('auth_type', 'rerequest');
+        } else {
+            oauthUrl = new URL(`https://www.facebook.com/${FACEBOOK_GRAPH_VERSION}/dialog/oauth`);
+            oauthUrl.searchParams.set('scope', scope);
+            oauthUrl.searchParams.set('display', 'touch');
+            oauthUrl.searchParams.set('auth_type', 'rerequest');
         }
 
         oauthUrl.searchParams.set('client_id', appId);
@@ -266,10 +407,8 @@ exports.startFacebookAuth = async (req, res) => {
         oauthUrl.searchParams.set('state', state);
         oauthUrl.searchParams.set('response_type', 'code');
         oauthUrl.searchParams.set('app_id', appId);
-        
-        // Prevent App Hijacking by using a small delay/meta refresh if 302 is intercepted
-        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-        return res.redirect(oauthUrl.toString());
+
+        return renderFacebookBrowserRedirectPage(res, oauthUrl.toString(), type);
     } catch (error) {
         console.error('Start Facebook Auth Error:', error);
         res.status(500).send('Internal Server Error');
