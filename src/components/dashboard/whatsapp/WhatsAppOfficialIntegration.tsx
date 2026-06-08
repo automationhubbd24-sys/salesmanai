@@ -20,7 +20,6 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import {
   WHATSAPP_MOBILE_CALLBACK_KEY,
   WHATSAPP_MOBILE_FLOW_STATE_KEY,
-  beginWhatsAppMobileOAuth,
   consumeCallbackPayload,
   getWhatsAppMobileRedirectUri,
   readFlowState,
@@ -510,11 +509,7 @@ export default function WhatsAppOfficialIntegration() {
     void handleSignupCompletion(callbackPayload.code, null, getWhatsAppMobileRedirectUri());
   }, []); // Run once on mount
 
-  const startWhatsAppMobileConnect = () => {
-    const forceNew = pendingMobileForceNew;
-    setIsMobileConnectDialogOpen(false);
-    setPendingMobileForceNew(false);
-
+  const openWhatsAppEmbeddedSignup = (forceNew: boolean = false) => {
     if (forceNew) {
       embeddedSignupMetaRef.current = {};
       localStorage.removeItem("active_wa_session_id");
@@ -522,28 +517,7 @@ export default function WhatsAppOfficialIntegration() {
       setCurrentSession(null);
     }
 
-    setLoading(true);
-    // #region debug-point B:start-mobile-flow
-    fetch(DEBUG_SERVER_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: DEBUG_SESSION_ID, runId: "pre-fix", hypothesisId: "B", location: "WhatsAppOfficialIntegration.tsx:startWhatsAppMobileConnect", msg: "[DEBUG] Starting WhatsApp mobile OAuth flow", data: { forceNew, origin: window.location.origin, appId: APP_ID, configId: CONFIG_ID }, ts: Date.now() }) }).catch(() => {});
-    // #endregion
-    beginWhatsAppMobileOAuth();
-  };
-
-  const launchWhatsAppSignup = (forceNew: boolean = false) => {
-    if (forceNew) {
-      embeddedSignupMetaRef.current = {};
-      localStorage.removeItem("active_wa_session_id");
-      localStorage.removeItem("active_wp_db_id");
-      setCurrentSession(null);
-    }
-
-    if (isMobile) {
-      setPendingMobileForceNew(forceNew);
-      setIsMobileConnectDialogOpen(true);
-      return;
-    }
-
-    if (!sdkReady || !window.FB) {
+    if (!window.FB || (!sdkReady && !isMobile)) {
       toast.error("Facebook SDK is still loading. Please try again.");
       return;
     }
@@ -631,7 +605,6 @@ export default function WhatsAppOfficialIntegration() {
         config_id: CONFIG_ID,
         response_type: "code",
         override_default_response_type: true,
-        // MOBILE OPTIMIZATION: Use 'rerequest' and 'popup' to force browser behavior
         auth_type: 'rerequest',
         display: 'popup',
         extras: {
@@ -641,6 +614,28 @@ export default function WhatsAppOfficialIntegration() {
         },
       }
     );
+  };
+
+  const startWhatsAppMobileConnect = () => {
+    const forceNew = pendingMobileForceNew;
+    setIsMobileConnectDialogOpen(false);
+    setPendingMobileForceNew(false);
+
+    // #region debug-point B:start-mobile-flow
+    fetch(DEBUG_SERVER_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: DEBUG_SESSION_ID, runId: "pre-fix", hypothesisId: "B", location: "WhatsAppOfficialIntegration.tsx:startWhatsAppMobileConnect", msg: "[DEBUG] Starting WhatsApp mobile embedded signup via FB.login", data: { forceNew, origin: window.location.origin, appId: APP_ID, configId: CONFIG_ID, sdkReady, hasFB: Boolean(window.FB) }, ts: Date.now() }) }).catch(() => {});
+    // #endregion
+
+    openWhatsAppEmbeddedSignup(forceNew);
+  };
+
+  const launchWhatsAppSignup = (forceNew: boolean = false) => {
+    if (isMobile) {
+      setPendingMobileForceNew(forceNew);
+      setIsMobileConnectDialogOpen(true);
+      return;
+    }
+
+    openWhatsAppEmbeddedSignup(forceNew);
   };
 
   return (
