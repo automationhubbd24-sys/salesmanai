@@ -153,9 +153,9 @@ function resolveFrontendOrigin(req, requestedOrigin) {
 }
 
 function renderFacebookBrowserRedirectPage(res, oauthUrl, type) {
+    const parsedUrl = new URL(oauthUrl);
     const escapedUrl = String(oauthUrl).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
     const flowLabel = type === 'whatsapp' ? 'WhatsApp Business' : 'Messenger';
-    const parsedUrl = new URL(oauthUrl);
     const debugData = {
         host: parsedUrl.host,
         path: parsedUrl.pathname,
@@ -167,6 +167,14 @@ function renderFacebookBrowserRedirectPage(res, oauthUrl, type) {
         has_config_id: Boolean(parsedUrl.searchParams.get('config_id'))
     };
     const escapedDebugJson = JSON.stringify(debugData, null, 2).replace(/</g, '\\u003c');
+
+    let hiddenInputs = '';
+    for (const [key, value] of parsedUrl.searchParams.entries()) {
+        const escapedKey = String(key).replace(/"/g, '&quot;');
+        const escapedValue = String(value).replace(/"/g, '&quot;');
+        hiddenInputs += `<input type="hidden" name="${escapedKey}" value="${escapedValue}" />\\n      `;
+    }
+    const actionUrl = `${parsedUrl.origin}${parsedUrl.pathname}`;
 
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     return res.status(200).send(`<!doctype html>
@@ -250,7 +258,10 @@ function renderFacebookBrowserRedirectPage(res, oauthUrl, type) {
   <div class="card">
     <h1>Continue with Facebook</h1>
     <p>We are opening the Facebook login for ${flowLabel} inside your browser. On Android, use the button below to continue in the same browser tab.</p>
-    <a href="${escapedUrl}" id="continue-btn" class="continue-button">Continue in Browser</a>
+    <form class="continue-form" method="GET" action="${actionUrl}">
+      ${hiddenInputs}
+      <button type="submit" class="continue-button">Continue in Browser</button>
+    </form>
     <small>Avoid switching to the Facebook app during this step so the connection can finish in the same browser session.</small>
     <details>
       <summary>Debug OAuth Info</summary>
@@ -262,14 +273,6 @@ function renderFacebookBrowserRedirectPage(res, oauthUrl, type) {
       var targetUrl = ${JSON.stringify(String(oauthUrl))};
       var isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
       
-      var btn = document.getElementById('continue-btn');
-      if (btn) {
-        btn.addEventListener('click', function(e) {
-          e.preventDefault();
-          window.location.href = targetUrl;
-        });
-      }
-
       if (!isMobile) {
         window.location.replace(targetUrl);
       }
@@ -277,6 +280,7 @@ function renderFacebookBrowserRedirectPage(res, oauthUrl, type) {
   </script>
 </body>
 </html>`);
+}`);
 }
 
 exports.exchangeToken = async (req, res) => {
