@@ -332,11 +332,15 @@ exports.completeMessengerCode = async (req, res) => {
 exports.startFacebookAuth = async (req, res) => {
     try {
         const { type, state, origin } = req.query;
-        const appId = process.env.FACEBOOK_APP_ID;
+        const appId = String(process.env.FACEBOOK_APP_ID || '').trim();
         const configId = process.env.WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID || '2197274487770639';
         
         if (!appId) {
             return res.status(500).send('FACEBOOK_APP_ID not configured on server.');
+        }
+
+        if (!/^\d+$/.test(appId)) {
+            return res.status(500).send('FACEBOOK_APP_ID is invalid on server.');
         }
 
         if (!state) {
@@ -407,7 +411,6 @@ exports.startFacebookAuth = async (req, res) => {
         oauthUrl.searchParams.set('redirect_uri', redirectUri);
         oauthUrl.searchParams.set('state', state);
         oauthUrl.searchParams.set('response_type', 'code');
-        oauthUrl.searchParams.set('app_id', appId);
 
         return renderFacebookBrowserRedirectPage(res, oauthUrl.toString(), type);
     } catch (error) {
