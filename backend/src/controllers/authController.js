@@ -280,7 +280,6 @@ function renderFacebookBrowserRedirectPage(res, oauthUrl, type) {
   </script>
 </body>
 </html>`);
-}`);
 }
 
 exports.exchangeToken = async (req, res) => {
