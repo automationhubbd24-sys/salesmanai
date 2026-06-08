@@ -274,33 +274,74 @@ function renderFacebookBrowserRedirectPage(res, oauthUrl, type) {
   <div class="card">
     <h1>Facebook Connection</h1>
     
-    <div style="background: #3f3f46; border-left: 4px solid #facc15; padding: 12px; margin-bottom: 20px; border-radius: 4px; font-size: 14px; line-height: 1.5;">
-      <strong>⚠️ IMPORTANT:</strong>
-      <br />
-      If you are not already logged into Facebook in this mobile browser (Chrome/Safari), the next screen might get stuck loading.
-      <br /><br />
-      If it gets stuck, please open a new tab, log in to <strong>facebook.com</strong>, and then come back and try again.
+    <div style="background: #3f3f46; border-left: 4px solid #facc15; padding: 12px; margin-bottom: 20px; border-radius: 4px; font-size: 14px; line-height: 1.5; position: relative;">
+      <button onclick="toggleLang()" style="position: absolute; right: 10px; top: 10px; background: transparent; border: 1px solid #9ca3af; color: #cbd5e1; border-radius: 4px; padding: 2px 6px; font-size: 12px; cursor: pointer;">🌐 BN</button>
+      
+      <div id="warn-en">
+        <strong>⚠️ IMPORTANT:</strong>
+        <br />
+        If you are not already logged into Facebook in this mobile browser, the next screen might get stuck loading.
+        <br /><br />
+        If it gets stuck, please open a new tab, log in to <strong>facebook.com</strong>, and then come back and try again.
+      </div>
+      
+      <div id="warn-bn" style="display: none;">
+        <strong>⚠️ জরুরী:</strong>
+        <br />
+        আপনি যদি এই মোবাইল ব্রাউজারে আগে থেকে ফেসবুকে লগইন করা না থাকেন, তবে পরের স্ক্রিনটি লোডিং-এ আটকে যেতে পারে।
+        <br /><br />
+        যদি আটকে যায়, দয়া করে নতুন একটি ট্যাবে <strong>facebook.com</strong>-এ লগইন করুন, এবং এরপর এখানে ফিরে এসে আবার চেষ্টা করুন।
+      </div>
     </div>
 
-    <p>We are opening the Facebook login for ${flowLabel}. Please tap the button below to continue.</p>
+    <p id="desc-en">We are opening the Facebook login for ${flowLabel}. Please tap the button below to continue.</p>
+    <p id="desc-bn" style="display: none;">আমরা ${flowLabel} এর জন্য ফেসবুক লগইন খুলছি। দয়া করে নিচের বাটনে ক্লিক করুন।</p>
+    
     <form class="continue-form" method="GET" action="${actionUrl}">
       ${hiddenInputs}
       <button type="submit" class="continue-button" style="background: #22c55e; color: white; border: none; padding: 14px 20px; width: 100%; border-radius: 8px; font-size: 16px; font-weight: bold; margin-top: 10px;">Continue to Facebook</button>
     </form>
-    <div style="margin-top: 16px; font-size: 12px; color: #9ca3af; text-align: center;">
+    
+    <div id="footer-en" style="margin-top: 16px; font-size: 12px; color: #9ca3af; text-align: center;">
       Avoid switching to the Facebook App during this step. Finish the connection in this browser.
     </div>
-    <details style="margin-top: 24px;">
-      <summary>Debug OAuth Info</summary>
-      <pre>${escapedDebugJson}</pre>
-    </details>
+    <div id="footer-bn" style="display: none; margin-top: 16px; font-size: 12px; color: #9ca3af; text-align: center;">
+      লগইন করার সময় ফেসবুক অ্যাপে যাবেন না। এই ব্রাউজারেই কানেকশন সম্পন্ন করুন।
+    </div>
   </div>
   <script>
+    function toggleLang() {
+      var warnEn = document.getElementById('warn-en');
+      var warnBn = document.getElementById('warn-bn');
+      var descEn = document.getElementById('desc-en');
+      var descBn = document.getElementById('desc-bn');
+      var footerEn = document.getElementById('footer-en');
+      var footerBn = document.getElementById('footer-bn');
+      var btn = document.querySelector('button[onclick="toggleLang()"]');
+      
+      if (warnEn.style.display === 'none') {
+        warnEn.style.display = 'block';
+        descEn.style.display = 'block';
+        footerEn.style.display = 'block';
+        warnBn.style.display = 'none';
+        descBn.style.display = 'none';
+        footerBn.style.display = 'none';
+        btn.textContent = '🌐 BN';
+      } else {
+        warnEn.style.display = 'none';
+        descEn.style.display = 'none';
+        footerEn.style.display = 'none';
+        warnBn.style.display = 'block';
+        descBn.style.display = 'block';
+        footerBn.style.display = 'block';
+        btn.textContent = '🌐 EN';
+      }
+    }
+
     (function () {
       var targetUrl = ${JSON.stringify(String(oauthUrl))};
       var isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
       
-      // Removed Auto-submit logic for mobile so the user can read the warning.
       if (!isMobile) {
         window.location.replace(targetUrl);
       }
