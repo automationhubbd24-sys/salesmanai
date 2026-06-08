@@ -130,11 +130,7 @@ function isAllowedFrontendOrigin(origin) {
     }
 }
 
-function resolveFrontendOrigin(req, requestedOrigin) {
-    if (isAllowedFrontendOrigin(requestedOrigin)) {
-        return new URL(requestedOrigin).origin;
-    }
-
+function getCanonicalFrontendOrigin() {
     const fallbackCandidates = [
         process.env.FRONTEND_URL,
         process.env.PUBLIC_WEB_URL,
@@ -147,6 +143,24 @@ function resolveFrontendOrigin(req, requestedOrigin) {
         if (isAllowedFrontendOrigin(candidate)) {
             return new URL(candidate).origin;
         }
+    }
+
+    return 'https://salesmanchatbot.online';
+}
+
+function resolveFrontendOrigin(req, requestedOrigin) {
+    if (isAllowedFrontendOrigin(requestedOrigin)) {
+        const parsedOrigin = new URL(requestedOrigin).origin;
+        const parsedHostname = new URL(requestedOrigin).hostname.toLowerCase();
+
+        if (parsedHostname === 'localhost' || parsedHostname === '127.0.0.1') {
+            return parsedOrigin;
+        }
+    }
+
+    const canonicalOrigin = getCanonicalFrontendOrigin();
+    if (canonicalOrigin) {
+        return canonicalOrigin;
     }
 
     return `${req.protocol}://${req.get('host')}`;

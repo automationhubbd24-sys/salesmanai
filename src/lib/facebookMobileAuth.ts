@@ -26,6 +26,27 @@ interface CallbackPayload {
   state: string | null;
 }
 
+const DEFAULT_PUBLIC_FRONTEND_ORIGIN = "https://salesmanchatbot.online";
+
+function getFacebookAuthFrontendOrigin(): string {
+  const { origin, hostname } = window.location;
+  const configuredOrigin = import.meta.env.VITE_PUBLIC_APP_URL || import.meta.env.VITE_FRONTEND_URL;
+
+  if (hostname === "localhost" || hostname === "127.0.0.1") {
+    return origin;
+  }
+
+  if (configuredOrigin) {
+    try {
+      return new URL(configuredOrigin).origin;
+    } catch {
+      // Ignore invalid env values and use the production fallback.
+    }
+  }
+
+  return DEFAULT_PUBLIC_FRONTEND_ORIGIN;
+}
+
 /**
  * Generate a random state string for OAuth security
  */
@@ -37,14 +58,14 @@ function generateState(): string {
  * Get the redirect URI for WhatsApp mobile flow
  */
 export function getWhatsAppMobileRedirectUri(): string {
-  return `${window.location.origin}/auth/facebook/whatsapp/callback`;
+  return `${getFacebookAuthFrontendOrigin()}/auth/facebook/whatsapp/callback`;
 }
 
 /**
  * Get the redirect URI for Messenger mobile flow
  */
 export function getMessengerMobileRedirectUri(): string {
-  return `${window.location.origin}/auth/facebook/messenger/callback`;
+  return `${getFacebookAuthFrontendOrigin()}/auth/facebook/messenger/callback`;
 }
 
 /**
@@ -65,7 +86,7 @@ export function beginWhatsAppMobileOAuth(): void {
   const startUrl = new URL(`${BACKEND_URL}/api/auth/facebook/start`);
   startUrl.searchParams.set("type", "whatsapp");
   startUrl.searchParams.set("state", state);
-  startUrl.searchParams.set("origin", window.location.origin);
+  startUrl.searchParams.set("origin", getFacebookAuthFrontendOrigin());
 
   // SINGLE TAB REDIRECT: Most reliable way on mobile to keep everything in one browser session
   // Using window.location.href directly is more likely to be intercepted by the OS 
@@ -91,7 +112,7 @@ export function beginMessengerMobileOAuth(): void {
   const startUrl = new URL(`${BACKEND_URL}/api/auth/facebook/start`);
   startUrl.searchParams.set("type", "messenger");
   startUrl.searchParams.set("state", state);
-  startUrl.searchParams.set("origin", window.location.origin);
+  startUrl.searchParams.set("origin", getFacebookAuthFrontendOrigin());
 
   // SINGLE TAB REDIRECT
   window.location.replace(startUrl.toString());
