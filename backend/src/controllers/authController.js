@@ -250,7 +250,7 @@ function renderFacebookBrowserRedirectPage(res, oauthUrl, type) {
   <div class="card">
     <h1>Continue with Facebook</h1>
     <p>We are opening the Facebook login for ${flowLabel} inside your browser. On Android, use the button below to continue in the same browser tab.</p>
-    <a href="${escapedUrl}" class="continue-button">Continue in Browser</a>
+    <a href="${escapedUrl}" id="continue-btn" class="continue-button">Continue in Browser</a>
     <small>Avoid switching to the Facebook app during this step so the connection can finish in the same browser session.</small>
     <details>
       <summary>Debug OAuth Info</summary>
@@ -261,6 +261,14 @@ function renderFacebookBrowserRedirectPage(res, oauthUrl, type) {
     (function () {
       var targetUrl = ${JSON.stringify(String(oauthUrl))};
       var isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
+      
+      var btn = document.getElementById('continue-btn');
+      if (btn) {
+        btn.addEventListener('click', function(e) {
+          e.preventDefault();
+          window.location.href = targetUrl;
+        });
+      }
 
       if (!isMobile) {
         window.location.replace(targetUrl);
