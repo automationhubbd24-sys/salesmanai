@@ -468,15 +468,17 @@ exports.startFacebookAuth = async (req, res) => {
             scope = 'pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_read_user_content';
         }
 
+        let baseHost = 'm.facebook.com';
+        
         if (type === 'whatsapp') {
-            oauthUrl = new URL(`https://m.facebook.com/${FACEBOOK_GRAPH_VERSION}/dialog/oauth`);
+            oauthUrl = new URL(`https://${baseHost}/${FACEBOOK_GRAPH_VERSION}/dialog/oauth`);
             oauthUrl.searchParams.set('config_id', configId);
             oauthUrl.searchParams.set('override_default_response_type', 'true');
             oauthUrl.searchParams.set('extras', extras);
             oauthUrl.searchParams.set('display', 'page');
             oauthUrl.searchParams.set('auth_type', 'rerequest');
         } else {
-            oauthUrl = new URL(`https://m.facebook.com/${FACEBOOK_GRAPH_VERSION}/dialog/oauth`);
+            oauthUrl = new URL(`https://${baseHost}/${FACEBOOK_GRAPH_VERSION}/dialog/oauth`);
             oauthUrl.searchParams.set('scope', scope);
             oauthUrl.searchParams.set('display', 'touch');
             oauthUrl.searchParams.set('auth_type', 'rerequest');
@@ -486,6 +488,12 @@ exports.startFacebookAuth = async (req, res) => {
         oauthUrl.searchParams.set('redirect_uri', redirectUri);
         oauthUrl.searchParams.set('state', state);
         oauthUrl.searchParams.set('response_type', 'code');
+
+        // Smart workaround: Force Facebook to ensure the user is logged in via mobile web first
+        // before trying to load the heavy WhatsApp Embedded Signup dialog.
+        // This prevents the white screen/loading loop when no active session exists on m.facebook.com.
+        const finalRedirectUrl = new URL(`https://m.facebook.com/login.php`);
+        finalRedirectUrl.searchParams.set('next', oauthUrl.toString());
 
         if (type === 'whatsapp') {
             // #region debug-point A:whatsapp-oauth-start
@@ -502,7 +510,7 @@ exports.startFacebookAuth = async (req, res) => {
             path: oauthUrl.pathname
         });
 
-        return renderFacebookBrowserRedirectPage(res, oauthUrl.toString(), type);
+        return renderFacebookBrowserRedirectPage(res, finalRedirectUrl.toString(), type);
     } catch (error) {
         console.error('Start Facebook Auth Error:', error);
         res.status(500).send('Internal Server Error');
