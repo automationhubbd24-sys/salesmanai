@@ -8,6 +8,8 @@ const OTP_COOLDOWN_MS = 60 * 1000;
 const OTP_WINDOW_MS = 15 * 60 * 1000;
 const OTP_MAX_PER_WINDOW = 5;
 const FACEBOOK_GRAPH_VERSION = process.env.FACEBOOK_GRAPH_VERSION || 'v25.0';
+const DEBUG_SERVER_URL = 'http://10.2.0.2:7777/event';
+const DEBUG_SESSION_ID = 'whatsapp-loading-stuck';
 
 function getClientIp(req) {
     const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
@@ -473,6 +475,12 @@ exports.startFacebookAuth = async (req, res) => {
         oauthUrl.searchParams.set('state', state);
         oauthUrl.searchParams.set('response_type', 'code');
 
+        if (type === 'whatsapp') {
+            // #region debug-point A:whatsapp-oauth-start
+            void axios.post(DEBUG_SERVER_URL, { sessionId: DEBUG_SESSION_ID, runId: 'pre-fix', hypothesisId: 'A', location: 'authController.js:startFacebookAuth', msg: '[DEBUG] Starting WhatsApp Facebook OAuth', data: { origin, frontendOrigin, redirectUri, host: oauthUrl.host, path: oauthUrl.pathname, hasConfigId: Boolean(configId), state }, ts: Date.now() }).catch(() => {});
+            // #endregion
+        }
+
         console.log('[Facebook OAuth Start]', {
             type,
             frontendOrigin,
@@ -505,6 +513,9 @@ exports.pollFacebookAuth = async (req, res) => {
 
         const row = result.rows[0];
         if (row.completed) {
+            // #region debug-point C:poll-completed
+            void axios.post(DEBUG_SERVER_URL, { sessionId: DEBUG_SESSION_ID, runId: 'pre-fix', hypothesisId: 'C', location: 'authController.js:pollFacebookAuth', msg: '[DEBUG] WhatsApp/Messenger auth poll completed', data: { state, hasCode: Boolean(row.code), hasError: Boolean(row.error) }, ts: Date.now() }).catch(() => {});
+            // #endregion
             // Delete once consumed to keep DB clean
             await pgClient.query(`DELETE FROM facebook_pending_auths WHERE state = $1`, [state]);
             return res.json({ completed: true, code: row.code, error: row.error, errorDescription: row.error_description });
@@ -521,6 +532,9 @@ exports.persistFacebookCallback = async (req, res) => {
     try {
         const { state, code, error, errorDescription } = req.body;
         console.log(`Persisting callback for state: ${state}, hasCode: ${!!code}, error: ${error}`);
+        // #region debug-point C:callback-persist-received
+        void axios.post(DEBUG_SERVER_URL, { sessionId: DEBUG_SESSION_ID, runId: 'pre-fix', hypothesisId: 'C', location: 'authController.js:persistFacebookCallback', msg: '[DEBUG] Facebook callback persistence request received', data: { state, hasCode: Boolean(code), hasError: Boolean(error), errorDescription: errorDescription || null }, ts: Date.now() }).catch(() => {});
+        // #endregion
         
         if (!state) return res.status(400).json({ error: 'Missing state' });
 
@@ -539,6 +553,10 @@ exports.persistFacebookCallback = async (req, res) => {
                 [state, code, error, errorDescription]
             );
         }
+
+        // #region debug-point C:callback-persist-saved
+        void axios.post(DEBUG_SERVER_URL, { sessionId: DEBUG_SESSION_ID, runId: 'pre-fix', hypothesisId: 'C', location: 'authController.js:persistFacebookCallback', msg: '[DEBUG] Facebook callback persistence saved', data: { state, hasCode: Boolean(code), hasError: Boolean(error), createdFallbackRow: result.rowCount === 0 }, ts: Date.now() }).catch(() => {});
+        // #endregion
 
         return res.json({ success: true });
     } catch (error) {

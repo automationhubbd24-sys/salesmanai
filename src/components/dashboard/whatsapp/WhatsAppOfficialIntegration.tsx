@@ -45,6 +45,8 @@ const APP_ID = import.meta.env.VITE_FACEBOOK_APP_ID || "3741087806186945";
 const CONFIG_ID = import.meta.env.VITE_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID || "2197274487770639";
 const GRAPH_VERSION = import.meta.env.VITE_FACEBOOK_GRAPH_VERSION || "v25.0";
 const SIGNUP_META_WAIT_MS = 15000;
+const DEBUG_SERVER_URL = "http://10.2.0.2:7777/event";
+const DEBUG_SESSION_ID = "whatsapp-loading-stuck";
 
 function isAllowedFacebookOrigin(origin: string) {
   try {
@@ -214,10 +216,16 @@ export default function WhatsAppOfficialIntegration() {
     const mobileCallbackListener = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
       if (event.data?.type === "WA_MOBILE_CALLBACK_COMPLETE") {
+        // #region debug-point C:mobile-callback-message
+        fetch(DEBUG_SERVER_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: DEBUG_SESSION_ID, runId: "pre-fix", hypothesisId: "C", location: "WhatsAppOfficialIntegration.tsx:mobileCallbackListener", msg: "[DEBUG] Received WA mobile callback postMessage", data: { origin: event.origin }, ts: Date.now() }) }).catch(() => {});
+        // #endregion
         console.log("Mobile callback complete detected via postMessage");
         // Trigger the same logic as direct redirect return
         const callbackPayload = consumeCallbackPayload(WHATSAPP_MOBILE_CALLBACK_KEY);
         if (callbackPayload) {
+          // #region debug-point C:mobile-callback-payload
+          fetch(DEBUG_SERVER_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: DEBUG_SESSION_ID, runId: "pre-fix", hypothesisId: "C", location: "WhatsAppOfficialIntegration.tsx:mobileCallbackListener", msg: "[DEBUG] Consumed WA callback payload", data: { hasCode: Boolean(callbackPayload.code), hasError: Boolean(callbackPayload.error), state: callbackPayload.state }, ts: Date.now() }) }).catch(() => {});
+          // #endregion
           if (callbackPayload.error || !callbackPayload.code) {
             toast.error(callbackPayload.errorDescription || "WhatsApp connection was cancelled.");
             setLoading(false);
@@ -241,6 +249,9 @@ export default function WhatsAppOfficialIntegration() {
             const res = await fetch(`${BACKEND_URL}/api/auth/facebook/poll?state=${flowState.state}`);
             if (res.ok) {
                 const data = await res.json();
+                // #region debug-point C:poll-response
+                fetch(DEBUG_SERVER_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: DEBUG_SESSION_ID, runId: "pre-fix", hypothesisId: "C", location: "WhatsAppOfficialIntegration.tsx:runPoll", msg: "[DEBUG] WhatsApp poll response received", data: { completed: Boolean(data.completed), hasCode: Boolean(data.code), hasError: Boolean(data.error), state: flowState.state }, ts: Date.now() }) }).catch(() => {});
+                // #endregion
                 if (data.completed) {
                     console.log("Mobile OAuth completed via polling!");
                     if (data.error) {
@@ -426,6 +437,10 @@ export default function WhatsAppOfficialIntegration() {
         ? signupMeta
         : embeddedSignupMetaRef.current;
 
+      // #region debug-point E:signup-complete-request
+      fetch(DEBUG_SERVER_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: DEBUG_SESSION_ID, runId: "pre-fix", hypothesisId: "E", location: "WhatsAppOfficialIntegration.tsx:handleSignupCompletion", msg: "[DEBUG] Sending WhatsApp signup-complete request", data: { hasCode: Boolean(code), hasWabaId: Boolean(meta?.wabaId), hasPhoneNumberId: Boolean(meta?.phoneNumberId), redirectUri: redirectUri || null }, ts: Date.now() }) }).catch(() => {});
+      // #endregion
+
       const response = await fetch(`${BACKEND_URL}/api/whatsapp/official/signup-complete`, {
         method: "POST",
         headers: {
@@ -441,6 +456,9 @@ export default function WhatsAppOfficialIntegration() {
       });
 
       const data = await response.json();
+      // #region debug-point E:signup-complete-response
+      fetch(DEBUG_SERVER_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: DEBUG_SESSION_ID, runId: "pre-fix", hypothesisId: "E", location: "WhatsAppOfficialIntegration.tsx:handleSignupCompletion", msg: "[DEBUG] WhatsApp signup-complete response received", data: { ok: response.ok, success: Boolean(data?.success), hasSessionName: Boolean(data?.data?.sessionName), hasWabaId: Boolean(data?.data?.wabaId), hasPhoneNumberId: Boolean(data?.data?.phoneNumberId), error: data?.error || null }, ts: Date.now() }) }).catch(() => {});
+      // #endregion
       if (!response.ok || !data.success) {
         throw new Error(data.error || "Failed to complete official WhatsApp connection.");
       }
@@ -460,6 +478,9 @@ export default function WhatsAppOfficialIntegration() {
         phoneNumberId: data.data?.phoneNumberId,
       });
     } catch (error) {
+      // #region debug-point E:signup-complete-error
+      fetch(DEBUG_SERVER_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: DEBUG_SESSION_ID, runId: "pre-fix", hypothesisId: "E", location: "WhatsAppOfficialIntegration.tsx:handleSignupCompletion", msg: "[DEBUG] WhatsApp signup-complete failed", data: { message: error instanceof Error ? error.message : "unknown" }, ts: Date.now() }) }).catch(() => {});
+      // #endregion
       const message = error instanceof Error ? error.message : "Failed to connect official WhatsApp.";
       toast.error(message);
     } finally {
@@ -502,6 +523,9 @@ export default function WhatsAppOfficialIntegration() {
     }
 
     setLoading(true);
+    // #region debug-point B:start-mobile-flow
+    fetch(DEBUG_SERVER_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: DEBUG_SESSION_ID, runId: "pre-fix", hypothesisId: "B", location: "WhatsAppOfficialIntegration.tsx:startWhatsAppMobileConnect", msg: "[DEBUG] Starting WhatsApp mobile OAuth flow", data: { forceNew, origin: window.location.origin, appId: APP_ID, configId: CONFIG_ID }, ts: Date.now() }) }).catch(() => {});
+    // #endregion
     beginWhatsAppMobileOAuth();
   };
 

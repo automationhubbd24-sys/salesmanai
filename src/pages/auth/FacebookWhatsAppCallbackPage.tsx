@@ -7,6 +7,9 @@ import {
 } from "@/lib/facebookMobileAuth";
 import { BACKEND_URL } from "@/config";
 
+const DEBUG_SERVER_URL = "http://10.2.0.2:7777/event";
+const DEBUG_SESSION_ID = "whatsapp-loading-stuck";
+
 export default function FacebookWhatsAppCallbackPage() {
   useEffect(() => {
     void (async () => {
@@ -24,6 +27,10 @@ export default function FacebookWhatsAppCallbackPage() {
         state: returnedState,
       };
 
+      // #region debug-point C:callback-page-loaded
+      fetch(DEBUG_SERVER_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: DEBUG_SESSION_ID, runId: "pre-fix", hypothesisId: "C", location: "FacebookWhatsAppCallbackPage.tsx:useEffect", msg: "[DEBUG] WhatsApp callback page loaded", data: { hasCode: Boolean(code), hasError: Boolean(error), state: returnedState, search: window.location.search }, ts: Date.now() }) }).catch(() => {});
+      // #endregion
+
       // Store locally for direct browser return flow.
       storeCallbackPayload(WHATSAPP_MOBILE_CALLBACK_KEY, payload);
 
@@ -36,8 +43,14 @@ export default function FacebookWhatsAppCallbackPage() {
             body: JSON.stringify({ state: returnedState, ...payload }),
             keepalive: true,
           });
+          // #region debug-point C:callback-persist-success
+          fetch(DEBUG_SERVER_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: DEBUG_SESSION_ID, runId: "pre-fix", hypothesisId: "C", location: "FacebookWhatsAppCallbackPage.tsx:useEffect", msg: "[DEBUG] WhatsApp callback persisted", data: { state: returnedState, hasCode: Boolean(code), hasError: Boolean(error) }, ts: Date.now() }) }).catch(() => {});
+          // #endregion
         } catch (persistError) {
           console.error("Persistence failed:", persistError);
+          // #region debug-point C:callback-persist-failed
+          fetch(DEBUG_SERVER_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: DEBUG_SESSION_ID, runId: "pre-fix", hypothesisId: "C", location: "FacebookWhatsAppCallbackPage.tsx:useEffect", msg: "[DEBUG] WhatsApp callback persistence failed", data: { state: returnedState, message: persistError instanceof Error ? persistError.message : "unknown" }, ts: Date.now() }) }).catch(() => {});
+          // #endregion
         }
       }
 
@@ -53,6 +66,9 @@ export default function FacebookWhatsAppCallbackPage() {
         }
       }
 
+      // #region debug-point C:callback-page-redirect
+      fetch(DEBUG_SERVER_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: DEBUG_SESSION_ID, runId: "pre-fix", hypothesisId: "C", location: "FacebookWhatsAppCallbackPage.tsx:useEffect", msg: "[DEBUG] Redirecting from WhatsApp callback page", data: { returnPath: storedState?.returnPath || "/dashboard/whatsapp/sessions" }, ts: Date.now() }) }).catch(() => {});
+      // #endregion
       window.location.replace(storedState?.returnPath || "/dashboard/whatsapp/sessions");
     })();
   }, []);
