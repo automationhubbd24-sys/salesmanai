@@ -1,16 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { CheckCircle2, Facebook, Link2, Loader2, MessageSquare, RotateCcw, Settings2, ShieldCheck, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { BACKEND_URL } from "@/config";
@@ -18,6 +8,7 @@ import { useWhatsApp } from "@/context/WhatsAppContext";
 import { useNavigate } from "react-router-dom";
 import { useIsMobile } from "@/hooks/use-mobile";
 import {
+  beginWhatsAppMobileOAuth,
   WHATSAPP_MOBILE_CALLBACK_KEY,
   WHATSAPP_MOBILE_FLOW_STATE_KEY,
   consumeCallbackPayload,
@@ -66,8 +57,6 @@ export default function WhatsAppOfficialIntegration() {
   const [sdkReady, setSdkReady] = useState(false);
   const [connected, setConnected] = useState(false);
   const [wabaInfo, setWabaInfo] = useState<EmbeddedSignupMeta | null>(null);
-  const [isMobileConnectDialogOpen, setIsMobileConnectDialogOpen] = useState(false);
-  const [pendingMobileForceNew, setPendingMobileForceNew] = useState(false);
   const embeddedSignupMetaRef = useRef<EmbeddedSignupMeta>({});
   const metaResolverRef = useRef<((meta: EmbeddedSignupMeta | null) => void) | null>(null);
   const metaTimeoutRef = useRef<number | null>(null);
@@ -75,6 +64,7 @@ export default function WhatsAppOfficialIntegration() {
   const loadingRef = useRef(false);
   const sessionsRef = useRef(sessions);
   const mobileCallbackProcessedRef = useRef(false);
+  const mobileBrowserFallbackStartedRef = useRef(false);
 
   const officialSession = (currentSession?.provider_type === "official" ? currentSession : null)
     || sessions.find((session) => session.provider_type === "official" || String(session.name || "").startsWith("official_"))
@@ -487,6 +477,78 @@ export default function WhatsAppOfficialIntegration() {
     }
   };
 
+  const prepareWhatsAppSignupState = (forceNew: boolean = false) => {
+    if (forceNew) {
+      embeddedSignupMetaRef.current = {};
+      localStorage.removeItem("active_wa_session_id");
+      localStorage.removeItem("active_wp_db_id");
+      setCurrentSession(null);
+    }
+
+    embeddedSignupMetaRef.current = {};
+    clearSignupPoll();
+
+    const startTime = Date.now();
+    const existingOfficialNames = new Set(
+      sessionsRef.current
+        .filter((session) => session.provider_type === "official" || String(session.name || "").startsWith("official_"))
+        .map((session) => session.name)
+    );
+
+    pollIntervalRef.current = window.setInterval(async () => {
+      if (Date.now() - startTime > 5 * 60 * 1000) {
+        clearSignupPoll();
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const token = localStorage.getItem("auth_token");
+        if (!token) return;
+
+        const res = await fetch(`${BACKEND_URL}/api/whatsapp/sessions`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
+        if (res.ok) {
+          const sessionsData = await res.json();
+          if (Array.isArray(sessionsData) && sessionsData.length > 0) {
+            const detectedOfficial = sessionsData.find((session) =>
+              (session.provider_type === "official" || String(session.name || "").startsWith("official_")) &&
+              !existingOfficialNames.has(session.name)
+            );
+
+            if (detectedOfficial) {
+              await refreshSessions();
+              clearSignupPoll();
+              toast.success("WhatsApp connected successfully (detected via sync).");
+              finishConnectedFlow({
+                sessionName: detectedOfficial.name,
+                wabaId: detectedOfficial.waba_id,
+                phoneNumberId: detectedOfficial.phone_number_id,
+              });
+            }
+          }
+        }
+      } catch {
+        // Silent poll error
+      }
+    }, 5000);
+  };
+
+  const startWhatsAppBrowserFallback = (forceNew: boolean = false) => {
+    if (mobileBrowserFallbackStartedRef.current) {
+      return;
+    }
+
+    mobileBrowserFallbackStartedRef.current = true;
+    setLoading(true);
+    // #region debug-point B:start-mobile-browser-fallback
+    fetch(DEBUG_SERVER_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: DEBUG_SESSION_ID, runId: "pre-fix", hypothesisId: "B", location: "WhatsAppOfficialIntegration.tsx:startWhatsAppBrowserFallback", msg: "[DEBUG] Falling back to browser redirect for WhatsApp mobile flow", data: { forceNew, origin: window.location.origin }, ts: Date.now() }) }).catch(() => {});
+    // #endregion
+    beginWhatsAppMobileOAuth();
+  };
+
   useEffect(() => {
     if (mobileCallbackProcessedRef.current) {
       return;
@@ -510,86 +572,29 @@ export default function WhatsAppOfficialIntegration() {
   }, []); // Run once on mount
 
   const openWhatsAppEmbeddedSignup = (forceNew: boolean = false) => {
-    if (forceNew) {
-      embeddedSignupMetaRef.current = {};
-      localStorage.removeItem("active_wa_session_id");
-      localStorage.removeItem("active_wp_db_id");
-      setCurrentSession(null);
-    }
-
     if (!window.FB || (!sdkReady && !isMobile)) {
       toast.error("Facebook SDK is still loading. Please try again.");
       return;
     }
 
-    toast.info("When the Meta Popup opens, please try to select an existing WhatsApp Business account if available.", {
-      duration: 6000,
-    });
-
-    embeddedSignupMetaRef.current = {};
-    setLoading(true);
-    clearSignupPoll();
-
-    // MOBILE FIX: Start polling for session completion in case postMessage fails
-    const startTime = Date.now();
-    const existingOfficialNames = new Set(
-      sessionsRef.current
-        .filter((session) => session.provider_type === "official" || String(session.name || "").startsWith("official_"))
-        .map((session) => session.name)
-    );
-
-    pollIntervalRef.current = window.setInterval(async () => {
-      // Stop polling after 5 minutes
-      if (Date.now() - startTime > 5 * 60 * 1000) {
-        clearSignupPoll();
-        setLoading(false);
-        return;
-      }
-
-      try {
-        const token = localStorage.getItem("auth_token");
-        if (!token) return;
-
-        const res = await fetch(`${BACKEND_URL}/api/whatsapp/sessions`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        
-        if (res.ok) {
-          const sessionsData = await res.json();
-          if (Array.isArray(sessionsData) && sessionsData.length > 0) {
-            const detectedOfficial = sessionsData.find((session) =>
-              (session.provider_type === "official" || String(session.name || "").startsWith("official_")) &&
-              !existingOfficialNames.has(session.name)
-            );
-
-            if (detectedOfficial) {
-              console.log("New session detected via polling!");
-              await refreshSessions();
-              clearSignupPoll();
-              toast.success("WhatsApp connected successfully (detected via sync).");
-              finishConnectedFlow({
-                sessionName: detectedOfficial.name,
-                wabaId: detectedOfficial.waba_id,
-                phoneNumberId: detectedOfficial.phone_number_id,
-              });
-            }
-          }
-        }
-      } catch (e) {
-        // Silent poll error
-      }
-    }, 5000);
+    mobileBrowserFallbackStartedRef.current = false;
+    prepareWhatsAppSignupState(forceNew);
 
     window.FB.login(
       (response: any) => {
         const code = response?.authResponse?.code;
         if (!code) {
-          // MOBILE RECOVERY: If stuck in loading but no code, show reset option after timeout
+          clearSignupPoll();
+
+          if (isMobile) {
+            startWhatsAppBrowserFallback(forceNew);
+            return;
+          }
+
           setTimeout(() => {
             if (loadingRef.current) {
-               setLoading(false);
-               clearSignupPoll();
-               toast.error("Facebook connection timed out or was blocked by the app. Try using 'Desktop Site' mode if this persists.");
+              setLoading(false);
+              toast.error("Facebook connection timed out or was blocked by the app. Try using 'Desktop Site' mode if this persists.");
             }
           }, 8000);
           return;
@@ -614,15 +619,19 @@ export default function WhatsAppOfficialIntegration() {
         },
       }
     );
+
+    setLoading(true);
+
+    if (!isMobile) {
+      toast.info("When the Meta Popup opens, please try to select an existing WhatsApp Business account if available.", {
+        duration: 6000,
+      });
+    }
   };
 
-  const startWhatsAppMobileConnect = () => {
-    const forceNew = pendingMobileForceNew;
-    setIsMobileConnectDialogOpen(false);
-    setPendingMobileForceNew(false);
-
+  const startWhatsAppMobileConnect = (forceNew: boolean = false) => {
     // #region debug-point B:start-mobile-flow
-    fetch(DEBUG_SERVER_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: DEBUG_SESSION_ID, runId: "pre-fix", hypothesisId: "B", location: "WhatsAppOfficialIntegration.tsx:startWhatsAppMobileConnect", msg: "[DEBUG] Starting WhatsApp mobile embedded signup via FB.login", data: { forceNew, origin: window.location.origin, appId: APP_ID, configId: CONFIG_ID, sdkReady, hasFB: Boolean(window.FB) }, ts: Date.now() }) }).catch(() => {});
+    fetch(DEBUG_SERVER_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: DEBUG_SESSION_ID, runId: "pre-fix", hypothesisId: "B", location: "WhatsAppOfficialIntegration.tsx:startWhatsAppMobileConnect", msg: "[DEBUG] Starting WhatsApp mobile embedded signup via direct button tap", data: { forceNew, origin: window.location.origin, appId: APP_ID, configId: CONFIG_ID, sdkReady, hasFB: Boolean(window.FB) }, ts: Date.now() }) }).catch(() => {});
     // #endregion
 
     openWhatsAppEmbeddedSignup(forceNew);
@@ -630,8 +639,7 @@ export default function WhatsAppOfficialIntegration() {
 
   const launchWhatsAppSignup = (forceNew: boolean = false) => {
     if (isMobile) {
-      setPendingMobileForceNew(forceNew);
-      setIsMobileConnectDialogOpen(true);
+      startWhatsAppMobileConnect(forceNew);
       return;
     }
 
@@ -821,22 +829,6 @@ export default function WhatsAppOfficialIntegration() {
               )}
             </div>
           </div>
-          <AlertDialog open={isMobileConnectDialogOpen} onOpenChange={setIsMobileConnectDialogOpen}>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Continue WhatsApp connection in browser</AlertDialogTitle>
-                <AlertDialogDescription>
-                  On Android, tap continue from Chrome or your phone&apos;s main browser. If Facebook opens its app, complete the login there and return to this browser tab.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel disabled={loading}>Cancel</AlertDialogCancel>
-                <AlertDialogAction onClick={startWhatsAppMobileConnect} disabled={loading}>
-                  Continue in Browser
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
         </div>
       )}
     </div>
