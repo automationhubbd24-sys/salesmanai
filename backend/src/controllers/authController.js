@@ -272,14 +272,25 @@ function renderFacebookBrowserRedirectPage(res, oauthUrl, type) {
 </head>
 <body>
   <div class="card">
-    <h1>Continue with Facebook</h1>
-    <p>We are opening the Facebook login for ${flowLabel} inside your browser. On Android, use the button below to continue in the same browser tab.</p>
+    <h1>Facebook Connection</h1>
+    
+    <div style="background: #3f3f46; border-left: 4px solid #facc15; padding: 12px; margin-bottom: 20px; border-radius: 4px; font-size: 14px; line-height: 1.5;">
+      <strong>⚠️ IMPORTANT:</strong>
+      <br />
+      If you are not already logged into Facebook in this mobile browser (Chrome/Safari), the next screen might get stuck loading.
+      <br /><br />
+      If it gets stuck, please open a new tab, log in to <strong>facebook.com</strong>, and then come back and try again.
+    </div>
+
+    <p>We are opening the Facebook login for ${flowLabel}. Please tap the button below to continue.</p>
     <form class="continue-form" method="GET" action="${actionUrl}">
       ${hiddenInputs}
-      <button type="submit" class="continue-button">Continue in Browser</button>
+      <button type="submit" class="continue-button" style="background: #22c55e; color: white; border: none; padding: 14px 20px; width: 100%; border-radius: 8px; font-size: 16px; font-weight: bold; margin-top: 10px;">Continue to Facebook</button>
     </form>
-    <small>Avoid switching to the Facebook app during this step so the connection can finish in the same browser session.</small>
-    <details>
+    <div style="margin-top: 16px; font-size: 12px; color: #9ca3af; text-align: center;">
+      Avoid switching to the Facebook App during this step. Finish the connection in this browser.
+    </div>
+    <details style="margin-top: 24px;">
       <summary>Debug OAuth Info</summary>
       <pre>${escapedDebugJson}</pre>
     </details>
@@ -288,21 +299,10 @@ function renderFacebookBrowserRedirectPage(res, oauthUrl, type) {
     (function () {
       var targetUrl = ${JSON.stringify(String(oauthUrl))};
       var isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
-      var continueForm = document.querySelector(".continue-form");
       
+      // Removed Auto-submit logic for mobile so the user can read the warning.
       if (!isMobile) {
         window.location.replace(targetUrl);
-        return;
-      }
-
-      if (continueForm) {
-        setTimeout(function () {
-          try {
-            continueForm.submit();
-          } catch (submitError) {
-            window.location.replace(targetUrl);
-          }
-        }, 150);
       }
     })();
   </script>
@@ -468,20 +468,14 @@ exports.startFacebookAuth = async (req, res) => {
             scope = 'pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_read_user_content';
         }
 
-        // smart workaround ta remove kore dichi ar ager moto direct oauthUrl e pathacchi.
-        // WhatsApp e www.facebook.com dile login problem ta kom hoy ar m.facebook.com dile login na thakle loop e pore.
-        // Ebar amra hybrid approach nibo: type whatsapp hole host www rakhbo. Karon www e display=page thakle
-        // eta Facebook ke force kore desktop style login page dekhate, jeikhane app deep-link kom hoy.
-        // Tobe m.facebook.com e Messenger thik ase.
-
-        let baseHost = type === 'whatsapp' ? 'www.facebook.com' : 'm.facebook.com';
+        let baseHost = 'm.facebook.com';
         
         if (type === 'whatsapp') {
             oauthUrl = new URL(`https://${baseHost}/${FACEBOOK_GRAPH_VERSION}/dialog/oauth`);
             oauthUrl.searchParams.set('config_id', configId);
             oauthUrl.searchParams.set('override_default_response_type', 'true');
             oauthUrl.searchParams.set('extras', extras);
-            oauthUrl.searchParams.set('display', 'page'); // Eta important, www er sathe display=page mobile e auto responsive hoye login handle kore
+            oauthUrl.searchParams.set('display', 'page');
             oauthUrl.searchParams.set('auth_type', 'rerequest');
         } else {
             oauthUrl = new URL(`https://${baseHost}/${FACEBOOK_GRAPH_VERSION}/dialog/oauth`);
