@@ -430,14 +430,14 @@ exports.startFacebookAuth = async (req, res) => {
         }
 
         if (type === 'whatsapp') {
-            oauthUrl = new URL(`https://www.facebook.com/${FACEBOOK_GRAPH_VERSION}/dialog/oauth`);
+            oauthUrl = new URL(`https://web.facebook.com/${FACEBOOK_GRAPH_VERSION}/dialog/oauth`);
             oauthUrl.searchParams.set('config_id', configId);
             oauthUrl.searchParams.set('override_default_response_type', 'true');
             oauthUrl.searchParams.set('extras', extras);
             oauthUrl.searchParams.set('display', 'page');
             oauthUrl.searchParams.set('auth_type', 'rerequest');
         } else {
-            oauthUrl = new URL(`https://www.facebook.com/${FACEBOOK_GRAPH_VERSION}/dialog/oauth`);
+            oauthUrl = new URL(`https://m.facebook.com/${FACEBOOK_GRAPH_VERSION}/dialog/oauth`);
             oauthUrl.searchParams.set('scope', scope);
             oauthUrl.searchParams.set('display', 'touch');
             oauthUrl.searchParams.set('auth_type', 'rerequest');
