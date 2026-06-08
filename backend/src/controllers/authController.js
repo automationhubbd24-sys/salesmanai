@@ -155,6 +155,18 @@ function resolveFrontendOrigin(req, requestedOrigin) {
 function renderFacebookBrowserRedirectPage(res, oauthUrl, type) {
     const escapedUrl = String(oauthUrl).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
     const flowLabel = type === 'whatsapp' ? 'WhatsApp Business' : 'Messenger';
+    const parsedUrl = new URL(oauthUrl);
+    const debugData = {
+        host: parsedUrl.host,
+        path: parsedUrl.pathname,
+        client_id: parsedUrl.searchParams.get('client_id'),
+        redirect_uri: parsedUrl.searchParams.get('redirect_uri'),
+        response_type: parsedUrl.searchParams.get('response_type'),
+        display: parsedUrl.searchParams.get('display'),
+        state: parsedUrl.searchParams.get('state'),
+        has_config_id: Boolean(parsedUrl.searchParams.get('config_id'))
+    };
+    const escapedDebugJson = JSON.stringify(debugData, null, 2).replace(/</g, '\\u003c');
 
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     return res.status(200).send(`<!doctype html>
@@ -210,6 +222,28 @@ function renderFacebookBrowserRedirectPage(res, oauthUrl, type) {
       color: #94a3b8;
       line-height: 1.5;
     }
+    details {
+      margin-top: 18px;
+      text-align: left;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 12px;
+      background: #080808;
+    }
+    summary {
+      cursor: pointer;
+      color: #cbd5e1;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 10px 0 0;
+      color: #93c5fd;
+      font-size: 12px;
+      line-height: 1.5;
+    }
   </style>
 </head>
 <body>
@@ -220,6 +254,10 @@ function renderFacebookBrowserRedirectPage(res, oauthUrl, type) {
       <button class="continue-button" type="submit">Continue in Browser</button>
     </form>
     <small>Avoid switching to the Facebook app during this step so the connection can finish in the same browser session.</small>
+    <details>
+      <summary>Debug OAuth Info</summary>
+      <pre>${escapedDebugJson}</pre>
+    </details>
   </div>
   <script>
     (function () {
@@ -411,6 +449,15 @@ exports.startFacebookAuth = async (req, res) => {
         oauthUrl.searchParams.set('redirect_uri', redirectUri);
         oauthUrl.searchParams.set('state', state);
         oauthUrl.searchParams.set('response_type', 'code');
+
+        console.log('[Facebook OAuth Start]', {
+            type,
+            frontendOrigin,
+            redirectUri,
+            clientId: appId,
+            host: oauthUrl.host,
+            path: oauthUrl.pathname
+        });
 
         return renderFacebookBrowserRedirectPage(res, oauthUrl.toString(), type);
     } catch (error) {
