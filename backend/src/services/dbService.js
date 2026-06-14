@@ -4176,15 +4176,53 @@ async function getProductsByNames(userId, productNames, pageId = null) {
 
 async function resolveResourceSearchContext(pageId) {
     if (!pageId) {
-        return { contextType: null, isWhatsapp: false, resourceIds: [] };
+        return { contextType: null, isWhatsapp: false, resourceIds: [], userId: null };
     }
 
     const resourceId = String(pageId);
     const contextType = await resolvePageContextType(resourceId);
     const isWhatsapp = contextType === 'whatsapp';
 
+    let userId = null;
+
+    // Get User ID
+    try {
+        if (isWhatsapp) {
+            // Check whatsapp_sessions first
+            let result = await query(
+                `SELECT user_id FROM whatsapp_sessions 
+                 WHERE session_name = $1 OR waba_id = $1 OR phone_number_id = $1 LIMIT 1`,
+                [resourceId]
+            );
+            if (result.rows.length > 0) {
+                userId = result.rows[0].user_id;
+            } else {
+                // Fallback to whatsapp_message_database
+                result = await query(
+                    `SELECT user_id FROM whatsapp_message_database 
+                     WHERE session_name = $1 OR waba_id = $1 OR phone_number_id = $1 LIMIT 1`,
+                    [resourceId]
+                );
+                if (result.rows.length > 0) {
+                    userId = result.rows[0].user_id;
+                }
+            }
+        } else {
+            // Messenger: Check page_access_token_message
+            const result = await query(
+                `SELECT user_id FROM page_access_token_message WHERE page_id = $1 AND user_id IS NOT NULL LIMIT 1`,
+                [resourceId]
+            );
+            if (result.rows.length > 0) {
+                userId = result.rows[0].user_id;
+            }
+        }
+    } catch (err) {
+        console.warn(`[DB] resolveResourceSearchContext failed to get user_id for ${resourceId}: ${err.message}`);
+    }
+
     if (!isWhatsapp) {
-        return { contextType, isWhatsapp, resourceIds: [resourceId] };
+        return { contextType, isWhatsapp, resourceIds: [resourceId], userId };
     }
 
     try {
@@ -4210,10 +4248,10 @@ async function resolveResourceSearchContext(pageId) {
                 .filter(Boolean)
         ));
 
-        return { contextType, isWhatsapp, resourceIds };
+        return { contextType, isWhatsapp, resourceIds, userId };
     } catch (err) {
         console.warn(`[DB] resolveResourceSearchContext failed for ${resourceId}: ${err.message}`);
-        return { contextType, isWhatsapp, resourceIds: [resourceId] };
+        return { contextType, isWhatsapp, resourceIds: [resourceId], userId };
     }
 }
 
@@ -4259,7 +4297,7 @@ async function searchProductsForResource(queryText, pageId = null) {
     try {
         if (!pageId) return [];
 
-        const { isWhatsapp, resourceIds } = await resolveResourceSearchContext(pageId);
+        const { isWhatsapp, resourceIds, userId } = await resolveResourceSearchContext(pageId);
         if (resourceIds.length === 0) return [];
 
         const cleanQuery = (queryText || '').trim();
@@ -4267,6 +4305,13 @@ async function searchProductsForResource(queryText, pageId = null) {
         // If no query, return latest 5 products
         let latestSql = `SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, additional_images, 0 as distance FROM products WHERE is_active = true`;
         let latestParams = [];
+        
+        // Add user ID filter if we have it!
+        if (userId) {
+            latestParams.push(String(userId));
+            latestSql += ` AND user_id::text = $${latestParams.length}::text`;
+        }
+        
         ({ sql: latestSql, params: latestParams } = appendAssignmentFilter(latestSql, latestParams, isWhatsapp, resourceIds));
         latestSql += ` ORDER BY id DESC LIMIT 5`;
         const latestResult = await query(latestSql, latestParams);
@@ -4298,6 +4343,13 @@ async function searchProductsForResource(queryText, pageId = null) {
         `;
 
         let params = [JSON.stringify(queryVector)];
+        
+        // Add user ID filter if we have it!
+        if (userId) {
+            params.push(String(userId));
+            sql += ` AND user_id::text = $${params.length}::text`;
+        }
+
         ({ sql, params } = appendAssignmentFilter(sql, params, isWhatsapp, resourceIds));
         sql += ` ORDER BY distance ASC LIMIT 5`;
 
