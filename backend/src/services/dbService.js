@@ -214,20 +214,6 @@ async function checkDuplicate(messageId) {
 async function deductCredit(pageId, amount = 1) {
     const { query } = require('./pgClient');
     try {
-        // Migration on-the-fly: Ensure columns exist in user_configs
-        try {
-            await query(`
-                ALTER TABLE user_configs 
-                ADD COLUMN IF NOT EXISTS daily_limit NUMERIC DEFAULT 0,
-                ADD COLUMN IF NOT EXISTS daily_used NUMERIC DEFAULT 0,
-                ADD COLUMN IF NOT EXISTS monthly_used NUMERIC DEFAULT 0,
-                ADD COLUMN IF NOT EXISTS bonus_credit NUMERIC DEFAULT 0,
-                ADD COLUMN IF NOT EXISTS permanent_credit NUMERIC DEFAULT 0,
-                ADD COLUMN IF NOT EXISTS last_reset_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                ADD COLUMN IF NOT EXISTS last_monthly_reset_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
-            `);
-        } catch (e) {}
-
         const pageResult = await query(
             'SELECT user_id, email FROM page_access_token_message WHERE page_id = $1 LIMIT 1',
             [pageId]
@@ -239,19 +225,19 @@ async function deductCredit(pageId, amount = 1) {
         }
 
         const linkedUser = pageResult.rows[0];
+        const userIdStr = String(linkedUser.user_id);
 
         const userConfigResult = await query(
             'SELECT * FROM user_configs WHERE user_id::text = $1::text LIMIT 1',
-            [String(linkedUser.user_id)]
+            [userIdStr]
         );
 
         if (userConfigResult.rows.length === 0) {
-            console.warn(`[Credit] User config not found for ${linkedUser.user_id}.`);
+            console.warn(`[Credit] User config not found for ${userIdStr}.`);
             return false;
         }
 
         const config = userConfigResult.rows[0];
-        const userIdStr = String(linkedUser.user_id);
 
         // --- 1. RESET CHECKS (DAILY & MONTHLY) ---
         const now = new Date();
@@ -284,11 +270,8 @@ async function deductCredit(pageId, amount = 1) {
         }
 
         // --- 2. DEDUCTION LOGIC (SMART ROUTING: Free -> Daily -> Bonus -> Permanent) ---
-        
-        // --- SaaS Level Credit Deduction Logic (Priority Buckets) ---
 
         // 1. Free/Legacy Message Credit (Sign-up or Free Tier - 100 Messages)
-        // User wants this to be used FIRST.
         if (Number(config.message_credit || 0) > 0) {
             await query(
                 'UPDATE user_configs SET message_credit = message_credit - $1 WHERE user_id::text = $2',
@@ -301,7 +284,7 @@ async function deductCredit(pageId, amount = 1) {
         // 2. Daily Limit (Subscription Daily Quota - Resets Daily)
         if (Number(config.daily_limit || 0) > dailyUsed) {
             await query(
-                'UPDATE user_configs SET daily_used = daily_used + $1 WHERE user_id::text = $2',
+                'UPDATE user_configs SET daily_used = daily_used + $1, monthly_used = monthly_used + $1 WHERE user_id::text = $2',
                 [amount, userIdStr]
             );
             console.log(`[Credit] Deducted from Daily Limit for User ${userIdStr}`);
@@ -310,9 +293,10 @@ async function deductCredit(pageId, amount = 1) {
 
         // 3. Bonus Credit (Promotional / Monthly Bonus)
         if (bonusCredit > 0) {
+            const deduct = Math.min(bonusCredit, amount);
             await query(
-                'UPDATE user_configs SET bonus_credit = bonus_credit - $1 WHERE user_id::text = $2',
-                [amount, userIdStr]
+                'UPDATE user_configs SET bonus_credit = bonus_credit - $1, monthly_used = monthly_used + $1 WHERE user_id::text = $2',
+                [deduct, userIdStr]
             );
             console.log(`[Credit] Deducted from Bonus Credit for User ${userIdStr}`);
             return true;
@@ -320,9 +304,10 @@ async function deductCredit(pageId, amount = 1) {
 
         // 4. Permanent Credit (Lifetime Pack - No Expiry)
         if (Number(config.permanent_credit || 0) > 0) {
+            const deduct = Math.min(Number(config.permanent_credit), amount);
             await query(
                 'UPDATE user_configs SET permanent_credit = permanent_credit - $1 WHERE user_id::text = $2',
-                [amount, userIdStr]
+                [deduct, userIdStr]
             );
             console.log(`[Credit] Deducted from Permanent Credit for User ${userIdStr}`);
             return true;
@@ -1455,16 +1440,22 @@ async function getWhatsAppConfig(sessionName) {
     // 2. Fetch Centralized User Credit (Sync across all members & pages)
     if (data.user_id) {
         const creditResult = await query(
-            'SELECT message_credit, bonus_credit, permanent_credit, daily_limit, daily_used, subscription_plan FROM user_configs WHERE user_id::text = $1::text LIMIT 1',
+            'SELECT message_credit, bonus_credit, permanent_credit, daily_limit, daily_used, monthly_limit, monthly_used, subscription_plan FROM user_configs WHERE user_id::text = $1::text LIMIT 1',
             [String(data.user_id)]
         );
         if (creditResult.rows.length > 0) {
             const row = creditResult.rows[0];
-            data.message_credit = row.message_credit || 0;
-            data.bonus_credit = row.bonus_credit || 0;
-            data.permanent_credit = row.permanent_credit || 0;
-            data.daily_limit = row.daily_limit || 0;
-            data.daily_used = row.daily_used || 0;
+            // SaaS Level Summation: Available Monthly + Bonus + Legacy + Permanent
+            const availableMonthly = Math.max(0, Number(row.monthly_limit || 0) - Number(row.monthly_used || 0));
+            data.message_credit = availableMonthly + Number(row.bonus_credit || 0) + Number(row.message_credit || 0) + Number(row.permanent_credit || 0);
+            
+            data.bonus_credit = Number(row.bonus_credit || 0);
+            data.permanent_credit = Number(row.permanent_credit || 0);
+            data.daily_limit = Number(row.daily_limit || 0);
+            data.daily_used = Number(row.daily_used || 0);
+            data.monthly_limit = Number(row.monthly_limit || 0);
+            data.monthly_used = Number(row.monthly_used || 0);
+            
             // Also sync subscription status if it's 'active' or 'none'
             if (row.subscription_plan) {
                 data.subscription_status = row.subscription_plan;
@@ -1874,25 +1865,11 @@ async function getLastWhatsAppMessage(sessionName, recipientId) {
     return result.rows[0];
 }
 
-// 18. Deduct WhatsApp Credit (Smart Routing: Daily -> Bonus -> Permanent)
+// 18. Deduct WhatsApp Credit (Smart Routing: Free -> Daily -> Bonus -> Permanent)
 async function deductWhatsAppCredit(sessionName, amount = 1) {
     const { query } = require('./pgClient');
 
     try {
-        // Migration on-the-fly: Ensure columns exist in user_configs
-        try {
-            await query(`
-                ALTER TABLE user_configs 
-                ADD COLUMN IF NOT EXISTS daily_limit NUMERIC DEFAULT 0,
-                ADD COLUMN IF NOT EXISTS daily_used NUMERIC DEFAULT 0,
-                ADD COLUMN IF NOT EXISTS monthly_used NUMERIC DEFAULT 0,
-                ADD COLUMN IF NOT EXISTS bonus_credit NUMERIC DEFAULT 0,
-                ADD COLUMN IF NOT EXISTS permanent_credit NUMERIC DEFAULT 0,
-                ADD COLUMN IF NOT EXISTS last_reset_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                ADD COLUMN IF NOT EXISTS last_monthly_reset_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
-            `);
-        } catch (e) {}
-
         const sessionResult = await query(
             'SELECT user_id FROM whatsapp_message_database WHERE session_name = $1 LIMIT 1',
             [sessionName]
@@ -1936,38 +1913,19 @@ async function deductWhatsAppCredit(sessionName, amount = 1) {
                 'UPDATE user_configs SET daily_used = 0, monthly_used = 0, bonus_credit = 0, last_reset_at = NOW(), last_monthly_reset_at = NOW() WHERE user_id::text = $1',
                 [userIdStr]
             );
+            console.log(`[WA Credit] Monthly usage & Bonus reset for User ${userIdStr}`);
         } else if (isNewDay) {
             dailyUsed = 0;
             await query(
                 'UPDATE user_configs SET daily_used = 0, last_reset_at = NOW() WHERE user_id::text = $1',
                 [userIdStr]
             );
+            console.log(`[WA Credit] Daily usage reset for User ${userIdStr}`);
         }
 
-        // --- 2. DEDUCTION LOGIC (SMART ROUTING: Daily -> Bonus -> Free -> Permanent) ---
-        
-        // Priority 1: Daily Limit (RPD - Resets Daily)
-        if (Number(config.daily_limit || 0) > dailyUsed) {
-            await query(
-                'UPDATE user_configs SET daily_used = daily_used + $1, monthly_used = monthly_used + $1 WHERE user_id::text = $2',
-                [amount, userIdStr]
-            );
-            console.log(`[WA Credit] Deducted from Daily Limit for User ${userIdStr}`);
-            return true;
-        }
+        // --- 2. DEDUCTION LOGIC (SMART ROUTING: Free -> Daily -> Bonus -> Permanent) ---
 
-        // Priority 2: Bonus Credit (Monthly Bonus - Resets Monthly)
-        if (bonusCredit > 0) {
-            const deduct = Math.min(bonusCredit, amount);
-            await query(
-                'UPDATE user_configs SET bonus_credit = bonus_credit - $1, monthly_used = monthly_used + $1 WHERE user_id::text = $2',
-                [deduct, userIdStr]
-            );
-            console.log(`[WA Credit] Deducted from Bonus Credit for User ${userIdStr}`);
-            return true;
-        }
-
-        // Priority 3: Legacy Message Credit (Free 100 Messages)
+        // 1. Free/Legacy Message Credit (Sign-up or Free Tier)
         if (Number(config.message_credit || 0) > 0) {
             const deduct = Math.min(Number(config.message_credit), amount);
             await query(
@@ -1978,7 +1936,28 @@ async function deductWhatsAppCredit(sessionName, amount = 1) {
             return true;
         }
 
-        // Priority 4: Permanent Credit (Never Expires)
+        // 2. Daily Limit (Subscription Daily Quota - Resets Daily)
+        if (Number(config.daily_limit || 0) > dailyUsed) {
+            await query(
+                'UPDATE user_configs SET daily_used = daily_used + $1, monthly_used = monthly_used + $1 WHERE user_id::text = $2',
+                [amount, userIdStr]
+            );
+            console.log(`[WA Credit] Deducted from Daily Limit for User ${userIdStr}`);
+            return true;
+        }
+
+        // 3. Bonus Credit (Promotional / Monthly Bonus)
+        if (bonusCredit > 0) {
+            const deduct = Math.min(bonusCredit, amount);
+            await query(
+                'UPDATE user_configs SET bonus_credit = bonus_credit - $1, monthly_used = monthly_used + $1 WHERE user_id::text = $2',
+                [deduct, userIdStr]
+            );
+            console.log(`[WA Credit] Deducted from Bonus Credit for User ${userIdStr}`);
+            return true;
+        }
+
+        // 4. Permanent Credit (Lifetime Pack - No Expiry)
         if (Number(config.permanent_credit || 0) > 0) {
             const deduct = Math.min(Number(config.permanent_credit), amount);
             await query(
