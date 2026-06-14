@@ -4337,21 +4337,17 @@ function appendAssignmentFilter(sql, params, isWhatsapp, resourceIds) {
 
     const column = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_messenger_ids';
 
-    // Handle: if allowed array is empty ([]) OR array contains any of the resource IDs
+    // Handle: only allow products where allowed array contains any of the resource IDs
     if (normalizedIds.length === 1) {
         params.push(normalizedIds[0]);
         const pIdx = params.length;
-        sql += ` AND (
-            (COALESCE(${column}::jsonb, '[]'::jsonb) = '[]'::jsonb) OR 
-            (${column}::jsonb @> jsonb_build_array($${pIdx}::text))
-        )`;
+        sql += ` AND (${column}::jsonb @> jsonb_build_array($${pIdx}::text))`;
         return { sql, params };
     }
 
     params.push(normalizedIds);
     const pIdx = params.length;
     sql += ` AND (
-        (COALESCE(${column}::jsonb, '[]'::jsonb) = '[]'::jsonb) OR 
         EXISTS (
             SELECT 1
             FROM jsonb_array_elements_text(COALESCE(${column}, '[]'::jsonb)) AS elem

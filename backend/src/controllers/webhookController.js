@@ -1192,7 +1192,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
                 if (Array.isArray(adData.linked_product_ids) && adData.linked_product_ids.length > 0) {
                     const productDetails = [];
                     for (const productId of adData.linked_product_ids) {
-                        const product = await dbService.getProductById(productId);
+                        const product = await dbService.getProductByIdForPage(productId, effectiveSessionName);
                         if (product) {
                             productDetails.push(`${product.name} (Price: ${product.price} ${product.currency || 'BDT'})`);
                         }
@@ -1377,7 +1377,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
                 aiResponse.product_id = null;
             }
 
-            const product = aiResponse.product_id ? await dbService.getProductById(aiResponse.product_id) : null;
+            const product = aiResponse.product_id ? await dbService.getProductByIdForPage(aiResponse.product_id, effectiveSessionName) : null;
             if (product) {
                 if ((aiResponse.action === 'SEND_DETAILS' || aiResponse.action === 'SEND_BOTH') && (!finalReplyText || finalReplyText.length < 50)) {
                     const numericPrice = parsePrice(product.price);
@@ -1487,7 +1487,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
             if (state && isStrictNumericProductId(state.last_product_id)) targetProductId = state.last_product_id;
             if (!targetProductId && isStrictNumericProductId(aiResponse?.product_id)) targetProductId = aiResponse.product_id;
             if (targetProductId) {
-                const product = await dbService.getProductById(targetProductId);
+                const product = await dbService.getProductByIdForPage(targetProductId, effectiveSessionName);
                 if (product) {
                     const primaryUrl = product.image_url ? normalizeImageUrl(product.image_url) : null;
                     const additional = Array.isArray(product.additional_images)
@@ -2877,7 +2877,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                     if (adData.linked_product_ids && Array.isArray(adData.linked_product_ids) && adData.linked_product_ids.length > 0) {
                         const productDetails = [];
                         for (const pId of adData.linked_product_ids) {
-                            const p = await dbService.getProductById(pId);
+                            const p = await dbService.getProductByIdForPage(pId, pageId);
                             if (p) {
                                 productDetails.push(`${p.name} (Price: ${p.price} ${p.currency || 'BDT'})`);
                             }
@@ -3361,7 +3361,7 @@ STRICT RULES:
                     }
 
                     // Fetch product by exact ID
-                    const product = await dbService.getProductById(productId);
+                    const product = await dbService.getProductByIdForPage(productId, pageId);
                     if (product) {
                         const numericPrice = parsePrice(product.price);
                         let priceDisplay = numericPrice > 0 ? `${numericPrice} ${product.currency || 'BDT'}` : "Ask for Price";
@@ -3560,7 +3560,7 @@ STRICT RULES:
             if (!targetProductId && isStrictNumericProductId(aiResponse.product_id)) targetProductId = aiResponse.product_id;
             
             if (targetProductId) {
-                const product = await dbService.getProductById(targetProductId);
+                const product = await dbService.getProductByIdForPage(targetProductId, pageId);
                 if (product) {
                     const urls = [];
                     // 1. Add Primary Image
@@ -3959,7 +3959,7 @@ STRICT RULES:
                         // Check if product_id is a valid number (BigInt compatible)
                         const isNumericId = /^\d+$/.test(String(targetId));
                         if (isNumericId) {
-                            const product = await dbService.getProductById(targetId);
+                            const product = await dbService.getProductByIdForPage(targetId, pageId);
                             if (product) {
                                 if (aiResponse.action === "SEND_DETAILS" || aiResponse.action === "SEND_BOTH") {
                                     if (!replyText || replyText.length < 50) {

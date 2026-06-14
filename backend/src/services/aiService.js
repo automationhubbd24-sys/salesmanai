@@ -1407,8 +1407,9 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null
                 const breakdown = [];
 
                 for (const item of lineItems) {
-                    const product = await dbService.getProductById(item.product_id);
+                    const product = pageId ? await dbService.getProductByIdForPage(item.product_id, pageId) : await dbService.getProductById(item.product_id);
                     if (!product) continue;
+                    if (userId && String(product.user_id) !== String(userId)) continue;
 
                     let price = parsePrice(product.price);
                     // Variant logic could go here if needed
@@ -1423,9 +1424,10 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null
 
             case 'check_stock': {
                 const productId = args.product_id;
-                const product = await dbService.getProductById(productId);
+                const product = pageId ? await dbService.getProductByIdForPage(productId, pageId) : await dbService.getProductById(productId);
                 
                 if (!product) return { status: 'ERROR', message: "Product not found." };
+                if (userId && String(product.user_id) !== String(userId)) return { status: 'ERROR', message: "Product not found or access denied." };
                 
                 const stock = product.stock_quantity !== undefined ? product.stock_quantity : 'Unknown';
                 const inStock = stock === 'Unknown' || stock > 0;

@@ -1957,7 +1957,7 @@ STRICT RULES:
                     aiResponse.product_id = null;
                 }
                 if (isNumericId) {
-                    const product = await dbService.getProductById(aiResponse.product_id);
+                    const product = await dbService.getProductByIdForPage(aiResponse.product_id, sessionName);
                     if (product) {
                     if (aiResponse.action === "SEND_DETAILS" || aiResponse.action === "SEND_BOTH") {
                         // Backend only appends details if AI explicitly asks for it AND hasn't already included it.
@@ -2045,7 +2045,7 @@ STRICT RULES:
             if (state && isStrictNumericProductId(state.last_product_id)) targetProductId = state.last_product_id;
             if (!targetProductId && isStrictNumericProductId(aiResponse.product_id)) targetProductId = aiResponse.product_id;
             if (targetProductId) {
-                const product = await dbService.getProductById(targetProductId);
+                const product = await dbService.getProductByIdForPage(targetProductId, convPageId);
                 if (product) {
                     const primaryUrl = product.image_url ? normalizeImageUrl(product.image_url) : null;
                     const additional = Array.isArray(product.additional_images)
