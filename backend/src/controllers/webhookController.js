@@ -1385,7 +1385,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
                     finalReplyText = `${finalReplyText || ''}\n\n🛍️ *${product.name}*\n💰 Price: ${priceDisplay}\n📝 Info: ${product.description || 'No details available.'}`.trim();
                 }
 
-                if (aiResponse.action === 'SEND_PHOTO' || aiResponse.action === 'SEND_BOTH') {
+                if (aiResponse.action === 'SEND_PHOTO' || aiResponse.action === 'SEND_BOTH' || aiResponse.action === 'SEND_DETAILS') {
                     if (!aiResponse.images) aiResponse.images = [];
                     if (!aiResponse.videos) aiResponse.videos = [];
 
@@ -1395,6 +1395,23 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
                             title: product.name,
                             description: product.description || ''
                         });
+                        
+                        // Also add additional images!
+                        let additional = [];
+                        if (Array.isArray(product.additional_images)) {
+                            additional = product.additional_images;
+                        } else if (typeof product.additional_images === 'string') {
+                            try { additional = JSON.parse(product.additional_images); } catch(e) { additional = product.additional_images.split(',').map(s => s.trim()); }
+                        }
+
+                        if (Array.isArray(additional)) {
+                            additional.forEach(u => {
+                                const nU = normalizeImageUrl(u);
+                                if (nU) {
+                                    pushUniqueMedia(aiResponse.images, { url: nU, title: product.name });
+                                }
+                            });
+                        }
                     }
 
                     if (product.video_url) {
@@ -3970,8 +3987,8 @@ STRICT RULES:
                                     }
                                 }
                                 
-                                // Always fetch images if it's a SEND_PHOTO, SEND_BOTH, or if user explicitly asked for photos
-                                if (aiResponse.action === "SEND_PHOTO" || aiResponse.action === "SEND_BOTH" || hasPhotoIntent(effectiveHistory)) {
+                                // Always fetch images if it's a SEND_PHOTO, SEND_BOTH, SEND_DETAILS, or if user explicitly asked for photos
+                                if (aiResponse.action === "SEND_PHOTO" || aiResponse.action === "SEND_BOTH" || aiResponse.action === "SEND_DETAILS" || hasPhotoIntent(effectiveHistory)) {
                                     const urls = [];
                                     if (product.image_url) {
                                         const fullUrl = normalizeImageUrl(product.image_url);

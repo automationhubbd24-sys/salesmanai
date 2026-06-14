@@ -1970,7 +1970,7 @@ STRICT RULES:
                         }
                     }
 
-                    if (aiResponse.action === "SEND_PHOTO" || aiResponse.action === "SEND_BOTH") {
+                    if (aiResponse.action === "SEND_PHOTO" || aiResponse.action === "SEND_BOTH" || aiResponse.action === "SEND_DETAILS") {
                         if (!aiResponse.images) aiResponse.images = [];
                         if (!aiResponse.videos) aiResponse.videos = [];
 
@@ -1980,6 +1980,23 @@ STRICT RULES:
                                 title: product.name,
                                 description: product.description || ''
                             });
+                            
+                            // Also add additional images!
+                            let additional = [];
+                            if (Array.isArray(product.additional_images)) {
+                                additional = product.additional_images;
+                            } else if (typeof product.additional_images === 'string') {
+                                try { additional = JSON.parse(product.additional_images); } catch(e) { additional = product.additional_images.split(',').map(s => s.trim()); }
+                            }
+
+                            if (Array.isArray(additional)) {
+                                additional.forEach(u => {
+                                    const nU = normalizeImageUrl(u);
+                                    if (nU) {
+                                        pushUniqueMedia(aiResponse.images, { url: nU, title: product.name });
+                                    }
+                                });
+                            }
                         }
 
                         if (product.video_url) {

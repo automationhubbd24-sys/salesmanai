@@ -3818,8 +3818,68 @@ async function checkProductFeatureAccess(userId) {
     return true;
 }
 
+async function ensureProductsTableColumns() {
+    try {
+        await query(`
+            ALTER TABLE products ADD COLUMN IF NOT EXISTS additional_images JSONB DEFAULT '[]'::jsonb
+        `);
+    } catch (e) {
+        console.warn("[DB] Failed to add additional_images column:", e.message);
+    }
+    try {
+        await query(`
+            ALTER TABLE products ADD COLUMN IF NOT EXISTS allowed_messenger_ids JSONB DEFAULT '[]'::jsonb
+        `);
+    } catch (e) {
+        console.warn("[DB] Failed to add allowed_messenger_ids column:", e.message);
+    }
+    try {
+        await query(`
+            ALTER TABLE products ADD COLUMN IF NOT EXISTS allowed_wa_sessions JSONB DEFAULT '[]'::jsonb
+        `);
+    } catch (e) {
+        console.warn("[DB] Failed to add allowed_wa_sessions column:", e.message);
+    }
+    try {
+        await query(`
+            ALTER TABLE products ADD COLUMN IF NOT EXISTS platform TEXT DEFAULT 'global'
+        `);
+    } catch (e) {
+        console.warn("[DB] Failed to add platform column:", e.message);
+    }
+    try {
+        await query(`
+            ALTER TABLE products ADD COLUMN IF NOT EXISTS is_combo BOOLEAN DEFAULT false
+        `);
+    } catch (e) {
+        console.warn("[DB] Failed to add is_combo column:", e.message);
+    }
+    try {
+        await query(`
+            ALTER TABLE products ADD COLUMN IF NOT EXISTS combo_items JSONB DEFAULT '[]'::jsonb
+        `);
+    } catch (e) {
+        console.warn("[DB] Failed to add combo_items column:", e.message);
+    }
+    try {
+        await query(`
+            ALTER TABLE products ADD COLUMN IF NOT EXISTS allow_description BOOLEAN DEFAULT true
+        `);
+    } catch (e) {
+        console.warn("[DB] Failed to add allow_description column:", e.message);
+    }
+    try {
+        await query(`
+            ALTER TABLE products ADD COLUMN IF NOT EXISTS embedding JSONB
+        `);
+    } catch (e) {
+        console.warn("[DB] Failed to add embedding column:", e.message);
+    }
+}
+
 // 28. Create Product
 async function createProduct(productData) {
+    await ensureProductsTableColumns();
     const fields = [
         'user_id',
         'name',
@@ -3933,6 +3993,7 @@ async function resolvePageContextType(pageId) {
 }
 
 async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pageId = null, allowedPageIds = null) {
+    await ensureProductsTableColumns();
     console.log(`[DB] getProducts - User: ${userId}, Page: ${pageId}`);
     const offset = (page - 1) * limit;
 
@@ -4110,6 +4171,7 @@ async function getResourceProductsWithMedia(pageId) {
 
 // 29. Update Product
 async function updateProduct(id, userId, updates) {
+    await ensureProductsTableColumns();
     const keys = Object.keys(updates || {});
     
     if (keys.length === 0) {

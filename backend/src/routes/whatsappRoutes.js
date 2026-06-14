@@ -721,8 +721,27 @@ router.get('/stats', authMiddleware, async (req, res) => {
     }
 });
 
+async function ensureWhatsAppContactsColumns() {
+    try {
+        await pgClient.query(`
+            ALTER TABLE whatsapp_contacts ADD COLUMN IF NOT EXISTS labels JSONB DEFAULT '[]'::jsonb
+        `);
+    } catch (e) {
+        console.warn("[WhatsApp] Failed to add labels column:", e.message);
+    }
+    try {
+        await pgClient.query(`
+            ALTER TABLE whatsapp_contacts ADD COLUMN IF NOT EXISTS ai_action TEXT DEFAULT 'continue'
+        `);
+    } catch (e) {
+        console.warn("[WhatsApp] Failed to add ai_action column:", e.message);
+    }
+}
+
 router.get('/contacts', authMiddleware, async (req, res) => {
     try {
+        await ensureWhatsAppContactsColumns();
+        
         const sessionName = String(req.query.session_name || '').trim();
 
         if (!sessionName) {
