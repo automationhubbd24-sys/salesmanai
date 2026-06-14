@@ -1441,31 +1441,73 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     }
 
     if (hasPhotoIntent(recentRawHistory)) {
-        let targetProductId = null;
-        const state = await dbService.getConversationState(effectiveSessionName, senderId);
-        if (state && isStrictNumericProductId(state.last_product_id)) targetProductId = state.last_product_id;
-        if (!targetProductId && isStrictNumericProductId(aiResponse?.product_id)) targetProductId = aiResponse.product_id;
-        if (targetProductId) {
-            const product = await dbService.getProductById(targetProductId);
-            if (product) {
-                const primaryUrl = product.image_url ? normalizeImageUrl(product.image_url) : null;
-                const additional = Array.isArray(product.additional_images)
-                    ? product.additional_images.map(normalizeImageUrl).filter(Boolean)
-                    : [];
-                const urls = [primaryUrl, ...additional].filter(Boolean);
+        // Check if user asked for "all" or similar (Bangla & English)
+        const isRequestForAll = /\b(all|sob|সব|সবগুলো|সবগুলা)\b/i.test(finalUserMessage);
+        
+        if (isRequestForAll) {
+            // Search for matching products and get all their images
+            try {
+                const searchResults = await dbService.searchProductsForResource(finalUserMessage, effectiveSessionName);
+                if (searchResults && searchResults.length > 0) {
+                    if (!aiResponse.images) aiResponse.images = [];
+                    if (!aiResponse.videos) aiResponse.videos = [];
+                    
+                    for (const product of searchResults) {
+                        const primaryUrl = product.image_url ? normalizeImageUrl(product.image_url) : null;
+                        const additional = Array.isArray(product.additional_images)
+                            ? product.additional_images.map(normalizeImageUrl).filter(Boolean)
+                            : [];
+                        
+                        [primaryUrl, ...additional].forEach((url, idx) => {
+                            if (url) {
+                                pushUniqueMedia(aiResponse.images, {
+                                    url,
+                                    title: product.name || (idx === 0 ? 'Product Image' : `Product Image ${idx + 1}`),
+                                    description: product.description || ''
+                                });
+                            }
+                        });
+                        
+                        if (product.video_url) {
+                            pushUniqueMedia(aiResponse.videos, {
+                                url: normalizeImageUrl(product.video_url),
+                                title: product.name || 'Product Video',
+                                description: product.description || ''
+                            });
+                        }
+                    }
+                }
+            } catch (searchErr) {
+                console.warn(`[WhatsApp Webhook] All-products search failed: ${searchErr.message}`);
+            }
+        } else {
+            // Single product request
+            let targetProductId = null;
+            const state = await dbService.getConversationState(effectiveSessionName, senderId);
+            if (state && isStrictNumericProductId(state.last_product_id)) targetProductId = state.last_product_id;
+            if (!targetProductId && isStrictNumericProductId(aiResponse?.product_id)) targetProductId = aiResponse.product_id;
+            if (targetProductId) {
+                const product = await dbService.getProductById(targetProductId);
+                if (product) {
+                    const primaryUrl = product.image_url ? normalizeImageUrl(product.image_url) : null;
+                    const additional = Array.isArray(product.additional_images)
+                        ? product.additional_images.map(normalizeImageUrl).filter(Boolean)
+                        : [];
+                    const urls = [primaryUrl, ...additional].filter(Boolean);
 
-                aiResponse.images = urls.map((url, idx) => ({
-                    url,
-                    title: product.name || (idx === 0 ? 'Product Image' : `Product Image ${idx + 1}`),
-                    description: product.description || ''
-                }));
-
-                if (product.video_url) {
-                    aiResponse.videos = [{
-                        url: normalizeImageUrl(product.video_url),
-                        title: product.name || 'Product Video',
+                    aiResponse.images = urls.map((url, idx) => ({
+                        url,
+                        title: product.name || (idx === 0 ? 'Product Image' : `Product Image ${idx + 1}`),
                         description: product.description || ''
-                    }];
+                    }));
+
+                    if (product.video_url) {
+                        aiResponse.videos = [{
+                            url: normalizeImageUrl(product.video_url),
+                            title: product.name || 'Product Video',
+                            description: product.description || ''
+                        }];
+                    }
                 }
             }
         }
@@ -3862,73 +3904,109 @@ STRICT RULES:
 
         // --- TIER 2: AGENTIC ACTION (Priority if no Tags exist) ---
         if (extractedImages.length === 0 && (aiResponse.action && aiResponse.action !== "NONE" || hasPhotoIntent(effectiveHistory))) {
-            let targetId = isStrictNumericProductId(aiResponse.product_id) ? aiResponse.product_id : null;
-            if (aiResponse.product_id && !targetId) {
-                console.warn(`[Image Selection] Blocked non-numeric agentic product_id: ${aiResponse.product_id}`);
-            }
+            // Check if user asked for "all" or similar (Bangla & English)
+            const isRequestForAll = /\b(all|sob|সব|সবগুলো|সবগুলা)\b/i.test(combinedRawText);
             
-            // RECOVERY: If AI forgot the product_id but we have it in State Memory
-            if (!targetId && hasPhotoIntent(effectiveHistory)) {
-                const state = await dbService.getConversationState(pageId, senderId);
-                if (state && isStrictNumericProductId(state.last_product_id)) {
-                    targetId = state.last_product_id;
-                    console.log(`[Image Selection] TIER 2 Recovery: Using last_product_id from Memory: ${targetId}`);
-                }
-            }
-
-            if (targetId) {
-                console.log(`[Image Selection] TIER 2: Using Agentic Delivery for ID: ${targetId}`);
+            if (isRequestForAll) {
+                // Search for matching products and get all their images
                 try {
-                    // Check if product_id is a valid number (BigInt compatible)
-                    const isNumericId = /^\d+$/.test(String(targetId));
-                    if (isNumericId) {
-                        const product = await dbService.getProductById(targetId);
-                        if (product) {
-                            if (aiResponse.action === "SEND_DETAILS" || aiResponse.action === "SEND_BOTH") {
-                                if (!replyText || replyText.length < 50) {
-                                    const numericPrice = parsePrice(product.price);
-                                    const priceDisplay = numericPrice > 0 ? `${numericPrice} ${product.currency || 'BDT'}` : "Ask for Price";
-                                    const details = `🛍️ *${product.name}*\n💰 Price: ${priceDisplay}\n📝 Info: ${product.description || 'No details available.'}`;
-                                    replyText = `${replyText}\n\n${details}`;
-                                }
+                    const searchResults = await dbService.searchProductsForResource(combinedRawText, pageId);
+                    if (searchResults && searchResults.length > 0) {
+                        for (const product of searchResults) {
+                            const primaryUrl = product.image_url ? normalizeImageUrl(product.image_url) : null;
+                            let additional = [];
+                            if (Array.isArray(product.additional_images)) additional = product.additional_images;
+                            else if (typeof product.additional_images === 'string') {
+                                try { additional = JSON.parse(product.additional_images); } catch(e) { additional = product.additional_images.split(',').map(s => s.trim()); }
                             }
                             
-                            // Always fetch images if it's a SEND_PHOTO, SEND_BOTH, or if user explicitly asked for photos
-                            if (aiResponse.action === "SEND_PHOTO" || aiResponse.action === "SEND_BOTH" || hasPhotoIntent(effectiveHistory)) {
-                                const urls = [];
-                                if (product.image_url) {
-                                    const fullUrl = normalizeImageUrl(product.image_url);
-                                    if (fullUrl) urls.push(fullUrl);
+                            const urls = [primaryUrl, ...additional].filter(Boolean).map(normalizeImageUrl);
+                            urls.forEach(u => {
+                                if (!extractedImages.some(img => img.url === u)) {
+                                    extractedImages.push({ url: u, title: product.name, description: product.description || '' });
                                 }
-                                if (product.video_url) {
-                                    const fullVideoUrl = normalizeImageUrl(product.video_url);
-                                    if (fullVideoUrl && !extractedVideos.some(video => video.url === fullVideoUrl)) {
-                                        extractedVideos.push({ url: fullVideoUrl, title: product.name, description: product.description || '' });
-                                    }
+                            });
+                            
+                            if (product.video_url) {
+                                const fullVideoUrl = normalizeImageUrl(product.video_url);
+                                if (fullVideoUrl && !extractedVideos.some(video => video.url === fullVideoUrl)) {
+                                    extractedVideos.push({ url: fullVideoUrl, title: product.name, description: product.description || '' });
                                 }
-                                
-                                let additional = [];
-                                if (Array.isArray(product.additional_images)) additional = product.additional_images;
-                                else if (typeof product.additional_images === 'string') {
-                                    try { additional = JSON.parse(product.additional_images); } catch(e) { additional = product.additional_images.split(',').map(s => s.trim()); }
-                                }
-                                if (Array.isArray(additional)) {
-                                    additional.forEach(u => {
-                                        const nU = normalizeImageUrl(u);
-                                        if (nU && !urls.includes(nU)) urls.push(nU);
-                                    });
-                                }
-
-                                urls.forEach(u => {
-                                    if (!extractedImages.some(img => img.url === u)) {
-                                        extractedImages.push({ url: u, title: product.name, description: product.description || '' });
-                                    }
-                                });
                             }
                         }
                     }
-                } catch (err) {
-                    console.error(`[Agentic Delivery] Failed:`, err.message);
+                } catch (searchErr) {
+                    console.warn(`[Messenger Webhook] All-products search failed: ${searchErr.message}`);
+                }
+            } else {
+                let targetId = isStrictNumericProductId(aiResponse.product_id) ? aiResponse.product_id : null;
+                if (aiResponse.product_id && !targetId) {
+                    console.warn(`[Image Selection] Blocked non-numeric agentic product_id: ${aiResponse.product_id}`);
+                }
+                
+                // RECOVERY: If AI forgot the product_id but we have it in State Memory
+                if (!targetId && hasPhotoIntent(effectiveHistory)) {
+                    const state = await dbService.getConversationState(pageId, senderId);
+                    if (state && isStrictNumericProductId(state.last_product_id)) {
+                        targetId = state.last_product_id;
+                        console.log(`[Image Selection] TIER 2 Recovery: Using last_product_id from Memory: ${targetId}`);
+                    }
+                }
+
+                if (targetId) {
+                    console.log(`[Image Selection] TIER 2: Using Agentic Delivery for ID: ${targetId}`);
+                    try {
+                        // Check if product_id is a valid number (BigInt compatible)
+                        const isNumericId = /^\d+$/.test(String(targetId));
+                        if (isNumericId) {
+                            const product = await dbService.getProductById(targetId);
+                            if (product) {
+                                if (aiResponse.action === "SEND_DETAILS" || aiResponse.action === "SEND_BOTH") {
+                                    if (!replyText || replyText.length < 50) {
+                                        const numericPrice = parsePrice(product.price);
+                                        const priceDisplay = numericPrice > 0 ? `${numericPrice} ${product.currency || 'BDT'}` : "Ask for Price";
+                                        const details = `🛍️ *${product.name}*\n💰 Price: ${priceDisplay}\n📝 Info: ${product.description || 'No details available.'}`;
+                                        replyText = `${replyText}\n\n${details}`;
+                                    }
+                                }
+                                
+                                // Always fetch images if it's a SEND_PHOTO, SEND_BOTH, or if user explicitly asked for photos
+                                if (aiResponse.action === "SEND_PHOTO" || aiResponse.action === "SEND_BOTH" || hasPhotoIntent(effectiveHistory)) {
+                                    const urls = [];
+                                    if (product.image_url) {
+                                        const fullUrl = normalizeImageUrl(product.image_url);
+                                        if (fullUrl) urls.push(fullUrl);
+                                    }
+                                    if (product.video_url) {
+                                        const fullVideoUrl = normalizeImageUrl(product.video_url);
+                                        if (fullVideoUrl && !extractedVideos.some(video => video.url === fullVideoUrl)) {
+                                            extractedVideos.push({ url: fullVideoUrl, title: product.name, description: product.description || '' });
+                                        }
+                                    }
+                                    
+                                    let additional = [];
+                                    if (Array.isArray(product.additional_images)) additional = product.additional_images;
+                                    else if (typeof product.additional_images === 'string') {
+                                        try { additional = JSON.parse(product.additional_images); } catch(e) { additional = product.additional_images.split(',').map(s => s.trim()); }
+                                    }
+                                    if (Array.isArray(additional)) {
+                                        additional.forEach(u => {
+                                            const nU = normalizeImageUrl(u);
+                                            if (nU && !urls.includes(nU)) urls.push(nU);
+                                        });
+                                    }
+
+                                    urls.forEach(u => {
+                                        if (!extractedImages.some(img => img.url === u)) {
+                                            extractedImages.push({ url: u, title: product.name, description: product.description || '' });
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                    } catch (err) {
+                        console.error(`[Agentic Delivery] Failed:`, err.message);
+                    }
                 }
             }
         }
