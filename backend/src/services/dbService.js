@@ -4264,15 +4264,15 @@ async function searchProductsForResource(queryText, pageId = null) {
 
         const cleanQuery = (queryText || '').trim();
 
-        // First get the latest products as fallback
-        let fallbackSql = `SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, additional_images, 0 as distance FROM products WHERE is_active = true`;
-        let fallbackParams = [];
-        ({ sql: fallbackSql, params: fallbackParams } = appendAssignmentFilter(fallbackSql, fallbackParams, isWhatsapp, resourceIds));
-        fallbackSql += ` ORDER BY id DESC LIMIT 5`;
-        const fallbackResult = await query(fallbackSql, fallbackParams);
+        // If no query, return latest 5 products
+        let latestSql = `SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, additional_images, 0 as distance FROM products WHERE is_active = true`;
+        let latestParams = [];
+        ({ sql: latestSql, params: latestParams } = appendAssignmentFilter(latestSql, latestParams, isWhatsapp, resourceIds));
+        latestSql += ` ORDER BY id DESC LIMIT 5`;
+        const latestResult = await query(latestSql, latestParams);
 
         if (!cleanQuery) {
-            return fallbackResult.rows;
+            return latestResult.rows;
         }
 
         const aiService = require('./aiService');
@@ -4280,13 +4280,14 @@ async function searchProductsForResource(queryText, pageId = null) {
         try {
             queryVector = await aiService.getEmbedding(cleanQuery);
         } catch (e) {
-            console.warn("[DB] Embedding generation failed, using fallback:", e.message);
-            return fallbackResult.rows;
+            console.warn("[DB] Embedding generation failed:", e.message);
+            // If embedding fails, return empty so AI says "no product found"
+            return [];
         }
 
         if (!queryVector) {
-            console.warn("[DB] No query vector, using fallback");
-            return fallbackResult.rows;
+            console.warn("[DB] No query vector");
+            return [];
         }
 
         let sql = `
@@ -4308,26 +4309,26 @@ async function searchProductsForResource(queryText, pageId = null) {
             console.warn(`[DB] searchProductsForResource SLOW query: ${end - start}ms for "${cleanQuery}"`);
         }
 
-        // Use more lenient threshold (0.6 instead of 0.4)
-        const vectorResults = result.rows.filter(p => p.distance < 0.6);
+        // First try with 0.6 threshold
+        let vectorResults = result.rows.filter(p => p.distance < 0.6);
         
-        // If vector search returns nothing, use fallback
+        // If no results, try with more lenient 0.8 threshold
         if (vectorResults.length === 0) {
-            console.log(`[DB] No vector matches for "${cleanQuery}", using fallback products`);
-            return fallbackResult.rows;
+            vectorResults = result.rows.filter(p => p.distance < 0.8);
+            console.log(`[DB] Found ${vectorResults.length} products with higher threshold (0.8) for "${cleanQuery}"`);
+        }
+
+        // If still no results, return empty array so AI says "product not found"
+        if (vectorResults.length === 0) {
+            console.log(`[DB] No matching products found for "${cleanQuery}"`);
+            return [];
         }
 
         return vectorResults;
     } catch (error) {
         console.error("[DB] searchProductsForResource Error:", error.message);
-        // If anything fails, return fallback
-        const { isWhatsapp, resourceIds } = await resolveResourceSearchContext(pageId);
-        let fallbackSql = `SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, additional_images, 0 as distance FROM products WHERE is_active = true`;
-        let fallbackParams = [];
-        ({ sql: fallbackSql, params: fallbackParams } = appendAssignmentFilter(fallbackSql, fallbackParams, isWhatsapp, resourceIds));
-        fallbackSql += ` ORDER BY id DESC LIMIT 5`;
-        const fallbackResult = await query(fallbackSql, fallbackParams);
-        return fallbackResult.rows;
+        // On any error, return empty array
+        return [];
     }
 }
 
@@ -4337,26 +4338,26 @@ async function searchProducts(userId, queryText, pageId = null) {
         if (!userId) return [];
         const cleanQuery = (queryText || '').trim();
         
-        // First get the latest products as fallback
+        // Get latest products for empty query
         const contextType = pageId ? await resolvePageContextType(pageId) : null;
         const isWhatsapp = contextType === 'whatsapp';
         const pageColumn = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_messenger_ids';
         
-        let fallbackSql = `SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, additional_images, 0 as distance FROM products WHERE user_id::text = $1::text AND is_active = true`;
-        let fallbackParams = [String(userId)];
+        let latestSql = `SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, additional_images, 0 as distance FROM products WHERE user_id::text = $1::text AND is_active = true`;
+        let latestParams = [String(userId)];
         
         if (pageId) {
-            fallbackParams.push(String(pageId));
-            fallbackSql += ` AND (
+            latestParams.push(String(pageId));
+            latestSql += ` AND (
                 (COALESCE(${pageColumn}::jsonb, '[]'::jsonb) = '[]'::jsonb) OR 
                 (${pageColumn}::jsonb @> jsonb_build_array($2::text))
             )`;
         }
-        fallbackSql += ` ORDER BY id DESC LIMIT 5`;
-        const fallbackResult = await query(fallbackSql, fallbackParams);
+        latestSql += ` ORDER BY id DESC LIMIT 5`;
+        const latestResult = await query(latestSql, latestParams);
 
         if (!cleanQuery) {
-            return fallbackResult.rows;
+            return latestResult.rows;
         }
 
         const aiService = require('./aiService');
@@ -4364,13 +4365,14 @@ async function searchProducts(userId, queryText, pageId = null) {
         try {
             queryVector = await aiService.getEmbedding(cleanQuery);
         } catch (e) {
-            console.warn("[DB] Embedding generation failed, using fallback:", e.message);
-            return fallbackResult.rows;
+            console.warn("[DB] Embedding generation failed:", e.message);
+            // If embedding fails, return empty so AI says "no product found"
+            return [];
         }
         
         if (!queryVector) {
-            console.warn("[DB] No query vector, using fallback");
-            return fallbackResult.rows;
+            console.warn("[DB] No query vector");
+            return [];
         }
 
         let sql = `
@@ -4401,37 +4403,27 @@ async function searchProducts(userId, queryText, pageId = null) {
             console.warn(`[DB] searchProducts SLOW query: ${end - start}ms for "${cleanQuery}"`);
         }
 
-        // Use more lenient threshold (0.6 instead of 0.4)
-        const vectorResults = result.rows.filter(p => p.distance < 0.6);
+        // First try with 0.6 threshold
+        let vectorResults = result.rows.filter(p => p.distance < 0.6);
         
-        // If vector search returns nothing, use fallback
+        // If no results, try with more lenient 0.8 threshold
         if (vectorResults.length === 0) {
-            console.log(`[DB] No vector matches for "${cleanQuery}", using fallback products`);
-            return fallbackResult.rows;
+            vectorResults = result.rows.filter(p => p.distance < 0.8);
+            console.log(`[DB] Found ${vectorResults.length} products with higher threshold (0.8) for "${cleanQuery}"`);
+        }
+
+        // If still no results, return empty array so AI says "product not found"
+        if (vectorResults.length === 0) {
+            console.log(`[DB] No matching products found for "${cleanQuery}"`);
+            return [];
         }
 
         return vectorResults;
         
     } catch (error) {
         console.error("[DB] searchProducts Error:", error.message);
-        // If anything fails, return fallback
-        const contextType = pageId ? await resolvePageContextType(pageId) : null;
-        const isWhatsapp = contextType === 'whatsapp';
-        const pageColumn = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_messenger_ids';
-        
-        let fallbackSql = `SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, additional_images, 0 as distance FROM products WHERE user_id::text = $1::text AND is_active = true`;
-        let fallbackParams = [String(userId)];
-        
-        if (pageId) {
-            fallbackParams.push(String(pageId));
-            fallbackSql += ` AND (
-                (COALESCE(${pageColumn}::jsonb, '[]'::jsonb) = '[]'::jsonb) OR 
-                (${pageColumn}::jsonb @> jsonb_build_array($2::text))
-            )`;
-        }
-        fallbackSql += ` ORDER BY id DESC LIMIT 5`;
-        const fallbackResult = await query(fallbackSql, fallbackParams);
-        return fallbackResult.rows;
+        // On any error, return empty array
+        return [];
     }
 }
 
