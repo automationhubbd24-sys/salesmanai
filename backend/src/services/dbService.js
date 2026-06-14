@@ -3940,11 +3940,15 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
     let params = [String(userId)]; // $1
     let whereClause = 'user_id::text = $1::text';
 
+    // Initialize contextType to avoid "contextType is not defined" error
+    let contextType = null;
+    let isWhatsapp = false;
+
     // 1. Context Filtering (ID Array based)
     // If pageId is provided, show products assigned to THIS pageId OR products with no restrictions.
     if (pageId && pageId !== 'null' && pageId !== 'undefined') {
-        const contextType = await resolvePageContextType(pageId);
-        const isWhatsapp = contextType === 'whatsapp';
+        contextType = await resolvePageContextType(pageId);
+        isWhatsapp = contextType === 'whatsapp';
         // #region debug-point F:db-get-products-context
         (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='product-scope-leak';try{const e=fs.readFileSync('.dbg/product-scope-leak.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'F',location:'dbService.js:getProducts:context',msg:'[DEBUG] db context resolved',data:{userId,pageId,contextType,isWhatsapp,searchQuery,allowedPageIdsCount:Array.isArray(allowedPageIds)?allowedPageIds.length:null},ts:Date.now()})}).catch(()=>{})})();
         // #endregion
@@ -3952,16 +3956,11 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
         params.push(String(pageId));
         const pIdx = params.length;
 
+        // Only allow products that have the pageId in their allowed list (no empty list allowed)
         if (isWhatsapp) {
-            whereClause += ` AND (
-                (COALESCE(allowed_wa_sessions::jsonb, '[]'::jsonb) = '[]'::jsonb) 
-                OR (allowed_wa_sessions::jsonb @> jsonb_build_array($${pIdx}::text))
-            )`;
+            whereClause += ` AND (allowed_wa_sessions::jsonb @> jsonb_build_array($${pIdx}::text))`;
         } else {
-            whereClause += ` AND (
-                (COALESCE(allowed_messenger_ids::jsonb, '[]'::jsonb) = '[]'::jsonb) 
-                OR (allowed_messenger_ids::jsonb @> jsonb_build_array($${pIdx}::text))
-            )`;
+            whereClause += ` AND (allowed_messenger_ids::jsonb @> jsonb_build_array($${pIdx}::text))`;
         }
     }
 
