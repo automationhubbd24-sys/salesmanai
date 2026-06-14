@@ -1746,7 +1746,7 @@ async function approveDepositTransaction(txn) {
 
 // 17. Save WhatsApp Order Tracking
 async function saveWhatsAppOrderTracking(orderData) {
-    let { session_name, sender_id, product_name, number, location, product_quantity, price } = orderData;
+    let { session_name, sender_id, product_name, number, location, product_quantity, price, customer_email, customer_name } = orderData;
     const { query } = require('./pgClient');
 
     // Clean product name
@@ -1759,6 +1759,7 @@ async function saveWhatsAppOrderTracking(orderData) {
     try {
         await query(`
             ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS customer_email text;
+            ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS customer_name text;
             ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS status text DEFAULT 'ongoing';
         `);
     } catch (e) {
@@ -1766,11 +1767,9 @@ async function saveWhatsAppOrderTracking(orderData) {
     }
 
     try {
-        let { session_name, sender_id, product_name, number, location, product_quantity, price, customer_email } = orderData;
-        
         // SMART MERGE: Last 1 hour
         const recentOrder = await query(
-            `SELECT id, product_name, number, location, product_quantity, price, customer_email 
+            `SELECT id, product_name, number, location, product_quantity, price, customer_email, customer_name
              FROM whatsapp_order_tracking 
              WHERE session_name = $1::text AND sender_id = $2::text 
              AND created_at >= NOW() - INTERVAL '1 hour'
@@ -1808,6 +1807,10 @@ async function saveWhatsAppOrderTracking(orderData) {
                 updates.push(`customer_email = $${idx++}::text`);
                 values.push(customer_email);
             }
+            if (customer_name && customer_name !== 'Pending') {
+                updates.push(`customer_name = $${idx++}::text`);
+                values.push(customer_name);
+            }
 
             if (updates.length > 0) {
                 values.push(existing.id);
@@ -1830,10 +1833,10 @@ async function saveWhatsAppOrderTracking(orderData) {
 
         const result = await query(
             `INSERT INTO whatsapp_order_tracking
-                (session_name, sender_id, product_name, number, location, product_quantity, price, customer_email)
-             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text)
+                (session_name, sender_id, product_name, number, location, product_quantity, price, customer_email, customer_name)
+             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, $9::text)
              RETURNING *`,
-            [session_name || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null, customer_email || null]
+            [session_name || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null, customer_email || null, customer_name || null]
         );
         return result.rows[0];
     } catch (error) {
@@ -2345,7 +2348,8 @@ async function saveOrder(orderData) {
             location: orderData.address,
             product_quantity: orderData.quantity,
             price: orderData.price,
-            customer_email: orderData.customer_email
+            customer_email: orderData.customer_email,
+            customer_name: orderData.customer_name
         });
     } else {
         return await saveOrderTracking({
