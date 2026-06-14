@@ -4230,19 +4230,26 @@ function appendAssignmentFilter(sql, params, isWhatsapp, resourceIds) {
 
     const column = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_messenger_ids';
 
+    // Handle: if allowed array is empty ([]) OR array contains any of the resource IDs
     if (normalizedIds.length === 1) {
         params.push(normalizedIds[0]);
         const pIdx = params.length;
-        sql += ` AND (${column}::jsonb @> jsonb_build_array($${pIdx}::text))`;
+        sql += ` AND (
+            (COALESCE(${column}::jsonb, '[]'::jsonb) = '[]'::jsonb) OR 
+            (${column}::jsonb @> jsonb_build_array($${pIdx}::text))
+        )`;
         return { sql, params };
     }
 
     params.push(normalizedIds);
     const pIdx = params.length;
-    sql += ` AND EXISTS (
-        SELECT 1
-        FROM jsonb_array_elements_text(COALESCE(${column}, '[]'::jsonb)) AS elem
-        WHERE elem = ANY($${pIdx}::text[])
+    sql += ` AND (
+        (COALESCE(${column}::jsonb, '[]'::jsonb) = '[]'::jsonb) OR 
+        EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements_text(COALESCE(${column}, '[]'::jsonb)) AS elem
+            WHERE elem = ANY($${pIdx}::text[])
+        )
     )`;
 
     return { sql, params };
@@ -4313,8 +4320,11 @@ async function searchProducts(userId, queryText, pageId = null) {
             const params = [String(userId)];
             if (pageId) {
                 params.push(String(pageId));
-                if (isWhatsapp) sql += ` AND (allowed_wa_sessions::jsonb @> jsonb_build_array($2::text))`;
-                else sql += ` AND (allowed_messenger_ids::jsonb @> jsonb_build_array($2::text))`;
+                const pageColumn = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_messenger_ids';
+                sql += ` AND (
+                    (COALESCE(${pageColumn}::jsonb, '[]'::jsonb) = '[]'::jsonb) OR 
+                    (${pageColumn}::jsonb @> jsonb_build_array($2::text))
+                )`;
             }
             sql += ` ORDER BY id DESC LIMIT 5`;
             const res = await query(sql, params);
@@ -4344,12 +4354,10 @@ async function searchProducts(userId, queryText, pageId = null) {
         if (pageId) {
             params.push(String(pageId));
             const pIdx = params.length;
-
-            if (isWhatsapp) {
-                sql += ` AND (allowed_wa_sessions::jsonb @> jsonb_build_array($${pIdx}::text))`;
-            } else {
-                sql += ` AND (allowed_messenger_ids::jsonb @> jsonb_build_array($${pIdx}::text))`;
-            }
+            sql += ` AND (
+                (COALESCE(${pageColumn}::jsonb, '[]'::jsonb) = '[]'::jsonb) OR 
+                (${pageColumn}::jsonb @> jsonb_build_array($${pIdx}::text))
+            )`;
         }
 
         sql += ` ORDER BY distance ASC LIMIT 5`;
