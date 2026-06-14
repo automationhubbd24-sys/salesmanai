@@ -468,7 +468,7 @@ const whatsappCloudService = require('../services/whatsappCloudService');
 const handleWebhook = async (req, res) => {
     const body = req.body;
     console.log(`[Webhook] Incoming POST Request. Object: ${body.object}`); 
-    // console.log('Webhook Body Received:', JSON.stringify(body, null, 2)); // Too verbose for production
+    console.log('Webhook Body Received:', JSON.stringify(body, null, 2)); // Detailed debug for everything
 
     if (body.object === 'whatsapp_business_account') {
         return handleWhatsAppWebhook(req, res);
@@ -1547,7 +1547,14 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
 }
 
 async function processWhatsAppWebhook(body) {
-    console.log('[WhatsApp Webhook] Full payload:', JSON.stringify(body, null, 2));
+    console.log('=== [WhatsApp Webhook FULL DETAILS] ===');
+    console.log('Entry count:', body.entry?.length || 0);
+    if (body.entry && body.entry.length > 0) {
+        body.entry.forEach((entry, idx) => {
+            console.log(`  Entry ${idx + 1}:`, JSON.stringify(entry, null, 2));
+        });
+    }
+    console.log('=== END FULL DETAILS ===');
     console.log(`[WhatsApp Webhook] Processing ${body.entry?.length || 0} entries...`);
     for (const entry of body.entry || []) {
         const wabaId = entry.id;
