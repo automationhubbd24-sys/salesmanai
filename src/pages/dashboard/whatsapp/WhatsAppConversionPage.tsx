@@ -617,7 +617,9 @@ export default function WhatsAppConversionPage() {
                               ? 'bg-cyan-500/10 text-cyan-500 border-cyan-500/40'
                               : msg.status === 'analyzed'
                                 ? 'bg-violet-500/10 text-violet-500 border-violet-500/40'
-                                : 'bg-yellow-500/10 text-yellow-500 border-yellow-500/40'
+                                : msg.status === 'skipped_admin_reply'
+                                  ? 'bg-orange-500/10 text-orange-500 border-orange-500/40'
+                                  : 'bg-yellow-500/10 text-yellow-500 border-yellow-500/40'
                         }`}
                       >
                         {msg.status}

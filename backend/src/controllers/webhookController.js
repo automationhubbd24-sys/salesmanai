@@ -1080,6 +1080,27 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         return;
     }
 
+    // --- ADMIN REPLY CHECK ---
+    // If admin replied last, skip bot reply
+    const lastMessage = await dbService.getLastMessageInWaConversation(effectiveSessionName, senderId);
+    if (lastMessage && lastMessage.reply_by === 'admin') {
+        const logMsg = `[Skip] Bot skipped for ${senderId} because last message was from admin.`;
+        console.log(logMsg);
+        await dbService.saveWhatsAppChat({
+            session_name: effectiveSessionName,
+            sender_id: effectiveSessionName,
+            recipient_id: senderId,
+            message_id: `bot_skip_${Date.now()}`,
+            text: '[Bot skipped: Last message from admin]',
+            timestamp: Date.now(),
+            status: 'skipped_admin_reply',
+            reply_by: 'bot',
+            model_used: 'admin-check'
+        });
+        return;
+    }
+    // --------------------------
+
     const hasDaily = Number(controlConfig.daily_limit || 0) > Number(controlConfig.daily_used || 0);
     const hasMonthly = Number(controlConfig.monthly_limit || 0) > Number(controlConfig.monthly_used || 0);
     const hasBonus = Number(controlConfig.bonus_credit || 0) > 0;
@@ -2592,6 +2613,29 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             const logMsg = `[Handover Lock] AI is permanently disabled for ${senderId} on Page ${pageId}.`;
             console.log(logMsg);
             if (typeof logToFile === 'function') logToFile(logMsg);
+            return;
+        }
+        // --------------------------
+
+        // --- ADMIN REPLY CHECK ---
+        // If admin replied last, skip bot reply
+        const lastMessage = await dbService.getLastMessageInFbConversation(pageId, senderId);
+        if (lastMessage && lastMessage.reply_by === 'admin') {
+            const logMsg = `[Skip] Bot skipped for ${senderId} on Page ${pageId} because last message was from admin.`;
+            console.log(logMsg);
+            if (typeof logToFile === 'function') logToFile(logMsg);
+            // Save skipped status to DB for visibility
+            const pendingMessageId = `bot_skip_${Date.now()}`;
+            await saveFbOutgoingLog({
+                pageId,
+                recipientId: senderId,
+                messageId: pendingMessageId,
+                text: '[Bot skipped: Last message from admin]',
+                status: 'skipped_admin_reply',
+                replyBy: 'bot',
+                token: 0,
+                aiModel: 'admin-check'
+            });
             return;
         }
         // --------------------------

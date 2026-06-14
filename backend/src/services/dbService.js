@@ -2998,6 +2998,47 @@ async function toggleFbLock(pageId, senderId, isLocked) {
     }
 }
 
+// --- GET LAST MESSAGE IN CONVERSATION ---
+async function getLastMessageInFbConversation(pageId, senderId) {
+    try {
+        const result = await query(
+            `SELECT reply_by, text, timestamp
+             FROM fb_chats
+             WHERE page_id = $1 AND (sender_id = $2 OR recipient_id = $2)
+             ORDER BY timestamp DESC
+             LIMIT 1`,
+            [pageId, senderId]
+        );
+        if (result.rows.length > 0) {
+            return result.rows[0];
+        }
+        return null;
+    } catch (error) {
+        console.error("Error getting last FB message:", error);
+        return null;
+    }
+}
+
+async function getLastMessageInWaConversation(sessionName, phoneNumber) {
+    try {
+        const result = await query(
+            `SELECT reply_by, text, timestamp
+             FROM whatsapp_chats
+             WHERE session_name = $1 AND (sender_id = $2 OR recipient_id = $2)
+             ORDER BY timestamp DESC
+             LIMIT 1`,
+            [sessionName, phoneNumber]
+        );
+        if (result.rows.length > 0) {
+            return result.rows[0];
+        }
+        return null;
+    } catch (error) {
+        console.error("Error getting last WA message:", error);
+        return null;
+    }
+}
+
 // --- Helper: Get Last N WhatsApp Messages (Raw) for Echo Check ---
 async function getLastNWhatsAppMessages(sessionName, recipientId, limit = 20) {
     const { query } = require('./pgClient');
@@ -3623,6 +3664,8 @@ module.exports = {
     getWhatsAppDailyAICount,
     checkFbLockStatus,
     toggleFbLock,
+    getLastMessageInFbConversation,
+    getLastMessageInWaConversation,
     getAdContext,
     saveAdContext,
     getAdsByUserId,
