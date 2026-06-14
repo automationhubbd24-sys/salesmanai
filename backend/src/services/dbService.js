@@ -4195,7 +4195,25 @@ async function searchProductsForResource(queryText, pageId = null) {
             console.warn(`[DB] searchProductsForResource SLOW query: ${end - start}ms for "${cleanQuery}"`);
         }
 
-        return result.rows.filter(p => p.distance < 0.4);
+        let filtered = result.rows.filter(p => p.distance < 0.4);
+        
+        // --- FALLBACK: If query is generic or no semantic matches, return top 5 active products ---
+        if (filtered.length === 0) {
+            const genericTerms = ['ki ki', 'product', 'item', 'list', 'show', 'ase', 'details', 'picture', 'photo', 'দাম', 'ছবি', 'প্রোডাক্ট'];
+            const isGeneric = genericTerms.some(term => cleanQuery.toLowerCase().includes(term)) || cleanQuery.length < 10;
+            
+            if (isGeneric) {
+                console.log(`[DB] No semantic matches but query is generic. Fetching latest 5 products as fallback.`);
+                let fallbackSql = `SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, additional_images, 0.5 as distance FROM products WHERE is_active = true`;
+                let fallbackParams = [];
+                ({ sql: fallbackSql, params: fallbackParams } = appendAssignmentFilter(fallbackSql, fallbackParams, isWhatsapp, resourceIds));
+                fallbackSql += ` ORDER BY id DESC LIMIT 5`;
+                const fallbackRes = await query(fallbackSql, fallbackParams);
+                return fallbackRes.rows;
+            }
+        }
+
+        return filtered;
     } catch (error) {
         console.error("[DB] searchProductsForResource Error:", error.message);
         throw error;
