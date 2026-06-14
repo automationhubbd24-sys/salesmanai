@@ -1383,7 +1383,7 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null
 
             case 'get_product': {
                 const productId = args.product_id;
-                const product = await dbService.getProductById(productId);
+                const product = await dbService.getProductByIdForPage(productId, pageId);
                 
                 if (!product || String(product.user_id) !== String(userId)) {
                     return { status: 'ERROR', message: "Product not found or access denied." };
@@ -2108,7 +2108,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             // If no candidates and we have last product ID, add that product manually!
             if (currentContextId && (!candidates || candidates.length === 0)) {
                 try {
-                    const lastProduct = await dbService.getProductById(currentContextId);
+                    const lastProduct = await dbService.getProductByIdForPage(currentContextId, pageConfig.page_id);
                     if (lastProduct) candidates = [lastProduct];
                 } catch (e) {
                     console.warn("[AI] Failed to fetch last product by ID:", e.message);

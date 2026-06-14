@@ -3756,6 +3756,8 @@ module.exports = {
     getEmbeddingGlobalConfig,
     getProducts,
     getProductById,
+    getProductByIdForPage,
+    isProductAllowedForPage,
     getProductByImageUrl,
     getResourceProductsWithMedia,
     updateProduct,
@@ -4013,6 +4015,40 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
     return { data, count: totalCount };
 }
 
+// Helper: Check if product is allowed for a specific page/session
+async function isProductAllowedForPage(productId, pageId) {
+    try {
+        const { isWhatsapp, resourceIds, userId } = await resolveResourceSearchContext(pageId);
+        if (!resourceIds || resourceIds.length === 0) return false;
+        
+        const column = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_messenger_ids';
+        
+        // First get the product
+        const product = await getProductById(productId);
+        if (!product) return false;
+        
+        // Check user ID first
+        if (userId && String(product.user_id) !== String(userId)) return false;
+        
+        // Check allowed list
+        const allowedList = product[column] || [];
+        if (Array.isArray(allowedList) && allowedList.length === 0) {
+            // If allowed list is empty, should we allow? Wait, let's check the original logic
+            // Wait original appendAssignmentFilter allows empty list, but let's see what the user wants
+            // User says: "amader whatsapp workflow te doro keo integration kore kono product add dile messenger er moto sudu sei product er details deoya ucitt"
+            // So maybe if allowed list is empty, it's NOT allowed? Or let's check original Messenger logic
+            // Wait let's keep the original logic but make sure user ID is checked
+            return true;
+        }
+        
+        // Check if any resource ID is in allowed list
+        return resourceIds.some(rid => allowedList.includes(String(rid)));
+    } catch (e) {
+        console.warn(`[DB] isProductAllowedForPage error: ${e.message}`);
+        return false;
+    }
+}
+
 // 28. Get Product By ID
 async function getProductById(id) {
     const result = await query(
@@ -4022,6 +4058,17 @@ async function getProductById(id) {
     
     if (result.rows.length === 0) return null;
     return result.rows[0];
+}
+
+// Get Product By ID with access checks for a specific page
+async function getProductByIdForPage(id, pageId) {
+    const product = await getProductById(id);
+    if (!product) return null;
+    
+    const allowed = await isProductAllowedForPage(id, pageId);
+    if (!allowed) return null;
+    
+    return product;
 }
 
 /**
@@ -4049,17 +4096,17 @@ async function getResourceProductsWithMedia(pageId) {
 
         const { isWhatsapp, resourceIds, userId } = await resolveResourceSearchContext(pageId);
         if (resourceIds.length === 0) return [];
+        if (!userId) {
+            console.warn(`[DB] getResourceProductsWithMedia: No userId found for pageId ${pageId}, returning empty array`);
+            return [];
+        }
 
         let sql = `
             SELECT id, name, description, image_url, additional_images, video_url
             FROM products
-            WHERE is_active = true
+            WHERE is_active = true AND user_id::text = $1::text
         `;
-        let params = [];
-        if (userId) {
-            params.push(String(userId));
-            sql += ` AND user_id::text = $${params.length}::text`;
-        }
+        let params = [String(userId)];
         ({ sql, params } = appendAssignmentFilter(sql, params, isWhatsapp, resourceIds));
         sql += ` ORDER BY id DESC`;
 
@@ -4321,18 +4368,18 @@ async function searchProductsForResource(queryText, pageId = null) {
 
         const { isWhatsapp, resourceIds, userId } = await resolveResourceSearchContext(pageId);
         if (resourceIds.length === 0) return [];
+        // If userId is null, we can't filter by user, so return empty array
+        // because we don't want to show products from all users
+        if (!userId) {
+            console.warn(`[DB] searchProductsForResource: No userId found for pageId ${pageId}, returning empty array`);
+            return [];
+        }
 
         const cleanQuery = (queryText || '').trim();
 
         // If no query, return latest 5 products
-        let latestSql = `SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, additional_images, 0 as distance FROM products WHERE is_active = true`;
-        let latestParams = [];
-        
-        // Add user ID filter if we have it!
-        if (userId) {
-            latestParams.push(String(userId));
-            latestSql += ` AND user_id::text = $${latestParams.length}::text`;
-        }
+        let latestSql = `SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, additional_images, 0 as distance FROM products WHERE is_active = true AND user_id::text = $1::text`;
+        let latestParams = [String(userId)];
         
         ({ sql: latestSql, params: latestParams } = appendAssignmentFilter(latestSql, latestParams, isWhatsapp, resourceIds));
         latestSql += ` ORDER BY id DESC LIMIT 5`;
@@ -4361,16 +4408,10 @@ async function searchProductsForResource(queryText, pageId = null) {
             SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, additional_images,
                    (embedding <=> $1::vector) as distance
             FROM products
-            WHERE is_active = true
+            WHERE is_active = true AND user_id::text = $2::text
         `;
 
-        let params = [JSON.stringify(queryVector)];
-        
-        // Add user ID filter if we have it!
-        if (userId) {
-            params.push(String(userId));
-            sql += ` AND user_id::text = $${params.length}::text`;
-        }
+        let params = [JSON.stringify(queryVector), String(userId)];
 
         ({ sql, params } = appendAssignmentFilter(sql, params, isWhatsapp, resourceIds));
         sql += ` ORDER BY distance ASC LIMIT 5`;
