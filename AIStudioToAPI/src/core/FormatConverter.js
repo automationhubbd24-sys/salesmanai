@@ -752,6 +752,37 @@ class FormatConverter {
                                 text: "[System Note: Skipped an image input because image_url format was unsupported]",
                             });
                         }
+                    } else if (part.type === "input_audio" && part.input_audio) {
+                        // Handle OpenAI input_audio format
+                        if (part.input_audio.data && part.input_audio.format) {
+                            // Convert format to mimeType (e.g., "mp3" -> "audio/mpeg")
+                            let mimeType;
+                            const format = part.input_audio.format.toLowerCase();
+                            if (format === "mp3" || format === "mpeg") {
+                                mimeType = "audio/mpeg";
+                            } else if (format === "wav") {
+                                mimeType = "audio/wav";
+                            } else if (format === "ogg") {
+                                mimeType = "audio/ogg";
+                            } else if (format === "m4a" || format === "mp4") {
+                                mimeType = "audio/mp4";
+                            } else {
+                                // Fallback, try to guess
+                                mimeType = mime.lookup(format) || "audio/mpeg";
+                            }
+                            googleParts.push({
+                                inlineData: {
+                                    data: part.input_audio.data,
+                                    mimeType: mimeType,
+                                },
+                            });
+                            this.logger.info(`[Adapter] Successfully processed input_audio in format: ${format}`);
+                        } else {
+                            this.logger.warn("[Adapter] Skipping input_audio part because data or format was missing.");
+                            googleParts.push({
+                                text: "[System Note: Skipped an audio input because data or format was missing]",
+                            });
+                        }
                     }
                 }
             }
