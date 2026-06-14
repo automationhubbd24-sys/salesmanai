@@ -1547,6 +1547,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
 }
 
 async function processWhatsAppWebhook(body) {
+    console.log('[WhatsApp Webhook] Full payload:', JSON.stringify(body, null, 2));
     console.log(`[WhatsApp Webhook] Processing ${body.entry?.length || 0} entries...`);
     for (const entry of body.entry || []) {
         const wabaId = entry.id;
@@ -1554,13 +1555,121 @@ async function processWhatsAppWebhook(body) {
             const value = change.value || {};
             const phoneNumberId = value.metadata?.phone_number_id;
 
-            // Process messages (incoming from users)
+            // Process messages (incoming from users and admin)
             if (change.field === 'messages') {
                 const groupedMessages = new Map();
 
                 for (const message of value.messages || []) {
                     const messageId = message.id;
                     console.log(`[WhatsApp Webhook] Evaluating message ID: ${messageId}`);
+
+                    // --- ADMIN/ECHO CHECK ---
+                    // Check if this message is FROM the business (admin)
+                    const businessPhoneNumber = value.metadata?.phone_number; // This is the business number, e.g., "+8801712345678"
+                    // Also check if the message is from our bot (echo)
+                    const isEcho = isRecentBotReply(message.from, extractOfficialMessageText(message));
+                    const isAdminSender = message.from === businessPhoneNumber || isEcho;
+                    if (isAdminSender) {
+                        console.log(`[WhatsApp Webhook] ADMIN ACTION DETECTED: Business → User ${message.to}`);
+                        
+                        // Find config
+                        const lookupKeys = [
+                            phoneNumberId,
+                            wabaId,
+                            phoneNumberId ? `official_${phoneNumberId}` : null,
+                            wabaId ? `official_${wabaId}` : null
+                        ].filter(Boolean);
+                        
+                        let pageData = { config: null, prompts: null };
+                        for (const lookupKey of lookupKeys) {
+                            const candidate = await getCachedPageData(lookupKey);
+                            if (candidate?.config) {
+                                pageData = candidate;
+                                break;
+                            }
+                        }
+                        
+                        if (!pageData.config) {
+                            console.warn(`[WhatsApp Webhook] No config found for admin message lookup`);
+                            continue;
+                        }
+                        
+                        const effectiveSessionName = pageData.config.session_name || `official_${wabaId || phoneNumberId}`;
+                        const msgText = extractOfficialMessageText(message);
+                        
+                        // Save admin reply
+                        await dbService.saveWhatsAppChat({
+                            session_name: effectiveSessionName,
+                            sender_id: phoneNumberId,
+                            recipient_id: message.to,
+                            message_id: messageId,
+                            text: msgText,
+                            timestamp: Date.now(),
+                            status: 'sent',
+                            reply_by: 'admin'
+                        });
+                        
+                        // Emoji lock/unlock check
+                        const config = pageData.config;
+                        const prompts = pageData.prompts || {};
+                        
+                        const lockList = [
+                            prompts.block_emoji,
+                            prompts.lock_emojis,
+                            prompts.block_emojis,
+                            config.block_emoji,
+                            config.lock_emojis,
+                            config.block_emojis
+                        ].filter(Boolean).join(',').split(/[, ]+/).map(e => normalizeText(e.trim())).filter(e => e);
+                        
+                        const unlockList = [
+                            prompts.unblock_emoji,
+                            prompts.unlock_emojis,
+                            prompts.unblock_emojis,
+                            config.unblock_emoji,
+                            config.unlock_emojis,
+                            config.unblock_emojis
+                        ].filter(Boolean).join(',').split(/[, ]+/).map(e => normalizeText(e.trim())).filter(e => e);
+                        
+                        const cleanText = normalizeText(msgText);
+                        
+                        let isLocked = lockList.some(e => cleanText.includes(e));
+                        let isUnlocked = !isLocked && unlockList.some(e => cleanText.includes(e));
+                        
+                        if (isLocked) {
+                            await dbService.toggleWhatsAppLock(effectiveSessionName, message.to, true);
+                            console.log(`[Handover Lock] Locked chat for user ${message.to} via emoji`);
+                            
+                            // Register to avoid echo
+                            trackBotReply(message.to, msgText);
+                            
+                            // Send emoji back
+                            if (phoneNumberId && config.cloud_access_token) {
+                                try {
+                                    await whatsappCloudService.sendTextMessage(phoneNumberId, config.cloud_access_token, message.to, msgText);
+                                } catch (err) {
+                                    console.warn(`[Handover Lock] Failed to send lock emoji: ${err.message}`);
+                                }
+                            }
+                        } else if (isUnlocked) {
+                            await dbService.toggleWhatsAppLock(effectiveSessionName, message.to, false);
+                            console.log(`[Handover Lock] Unlocked chat for user ${message.to} via emoji`);
+                            
+                            // Register to avoid echo
+                            trackBotReply(message.to, msgText);
+                            
+                            // Send emoji back
+                            if (phoneNumberId && config.cloud_access_token) {
+                                try {
+                                    await whatsappCloudService.sendTextMessage(phoneNumberId, config.cloud_access_token, message.to, msgText);
+                                } catch (err) {
+                                    console.warn(`[Handover Lock] Failed to send unlock emoji: ${err.message}`);
+                                }
+                            }
+                        }
+                        
+                        continue;
+                    }
 
                     // Check for duplicates
                     const isDuplicate = await dbService.checkWhatsAppDuplicate(messageId);
