@@ -1200,41 +1200,79 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         }
     }
 
-    if (aiResponse?.action && aiResponse.action !== 'NONE' && aiResponse.product_id) {
+    if (aiResponse?.product_id) {
         try {
-            const product = await dbService.getProductById(aiResponse.product_id);
-            if (product) {
-                if ((aiResponse.action === 'SEND_DETAILS' || aiResponse.action === 'SEND_BOTH') && (!finalReplyText || finalReplyText.length < 50)) {
-                    const numericPrice = parsePrice(product.price);
-                    const priceDisplay = numericPrice > 0 ? `${numericPrice} ${product.currency || 'BDT'}` : 'দাম জানতে ইনবক্স করুন';
-                    finalReplyText = `${finalReplyText || ''}\n\n🛍️ *${product.name}*\n💰 Price: ${priceDisplay}\n📝 Info: ${product.description || 'No details available.'}`.trim();
-                }
-
-                if (aiResponse.action === 'SEND_PHOTO' || aiResponse.action === 'SEND_BOTH') {
-                    if (!aiResponse.images) aiResponse.images = [];
-                    if (!aiResponse.videos) aiResponse.videos = [];
-
-                    if (product.image_url) {
-                        pushUniqueMedia(aiResponse.images, {
-                            url: product.image_url,
-                            title: product.name,
-                            description: product.description || ''
-                        });
-                    }
-
-                    if (product.video_url) {
-                        pushUniqueMedia(aiResponse.videos, {
-                            url: normalizeImageUrl(product.video_url),
-                            title: product.name,
-                            description: product.description || ''
-                        });
-                    }
-                }
-            }
-        } catch (agenticErr) {
-            console.warn(`[WhatsApp Webhook] Agentic delivery failed: ${agenticErr.message}`);
+            await dbService.setConversationState(effectiveSessionName, senderId, { last_product_id: aiResponse.product_id });
+        } catch (stateErr) {
+            console.warn(`[Context] Failed to update WhatsApp conversation state: ${stateErr.message}`);
         }
     }
+
+    // --- NEW PROFESSIONAL TAG PROCESSOR (PRODUCT_ID) ---
+    // Robust check for the tag, allowing for variations in spacing and quotes
+    if (/\[PRODUCT_ID\s*:\s*/i.test(finalReplyText)) {
+        // Loose regex to capture whatever is inside the tag
+        const productTagRegex = /\[PRODUCT_ID\s*:\s*["']?\s*([^"\]\s']+)["']?\s*\]/gi;
+        
+        const matches = [...finalReplyText.matchAll(productTagRegex)];
+        const uniqueTags = new Set(matches.map(m => m[0]));
+
+        for (const fullTag of uniqueTags) {
+            const match = matches.find(m => m[0] === fullTag);
+            const productId = match[1].trim().replace(/["']/g, ''); // Extra cleanup for quotes
+
+            try {
+                // Fetch product by exact ID
+                const product = await dbService.getProductById(productId);
+                if (product) {
+                    const numericPrice = parsePrice(product.price);
+                    let priceDisplay = numericPrice > 0 ? `${numericPrice} ${product.currency || 'BDT'}` : "Ask for Price";
+                    const description = product.description || "No description available.";
+
+                    // Prepare replacement text
+                    const replacementText = `\n\n🛍️ *${product.name}*\n💰 Price: ${priceDisplay}\n📝 Details: ${description}`;
+                    
+                    // Replace all occurrences of this exact tag string
+                    finalReplyText = finalReplyText.split(fullTag).join(replacementText);
+
+                    // Image attachment logic
+                    const historyText = getHistoryText(recentRawHistory);
+                    const imageAlreadySent = historyText.includes(product.image_url);
+                    const userWantsPhoto = hasPhotoIntent(recentRawHistory);
+
+                    if ((!imageAlreadySent || userWantsPhoto) && product.image_url) {
+                        if (!aiResponse.images) aiResponse.images = [];
+                        if (!aiResponse.images.some(img => img.url === product.image_url)) {
+                            aiResponse.images.push({
+                                url: product.image_url,
+                                title: product.name,
+                                description: description
+                            });
+                        }
+                    }
+                    
+                    if ((!imageAlreadySent || userWantsPhoto) && product.video_url) {
+                        if (!aiResponse.videos) aiResponse.videos = [];
+                        if (!aiResponse.videos.some(vid => vid.url === product.video_url)) {
+                            aiResponse.videos.push({
+                                url: normalizeImageUrl(product.video_url),
+                                title: product.name,
+                                description: description
+                            });
+                        }
+                    }
+
+                } else {
+                    console.warn(`[TagProcessor] Product ID "${productId}" not found in DB.`);
+                    // If not found, we still remove the tag but show a clean "not found" message
+                    finalReplyText = finalReplyText.split(fullTag).join(`\n(Product info currently unavailable)`);
+                }
+            } catch (err) {
+                console.error(`[TagProcessor] Error for ID ${productId}:`, err);
+            }
+        }
+    }
+    // -----------------------------------------------------
 
     if (Array.isArray(aiResponse?.image_urls)) {
         if (!aiResponse.images) aiResponse.images = [];
