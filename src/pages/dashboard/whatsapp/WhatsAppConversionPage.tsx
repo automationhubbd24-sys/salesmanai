@@ -584,7 +584,9 @@ export default function WhatsAppConversionPage() {
                 messages.map((msg) => {
                   const phoneNumber = msg.sender_id || msg.recipient_id || '';
                   const labels = contactLabels[phoneNumber] || [];
-                  
+                  const contactId = msg.reply_by === 'user' ? msg.sender_id : msg.recipient_id;
+                  const isLocked = !!lockedContacts[contactId];
+
                   return (
                   <TableRow key={msg.id || msg.message_id}>
                     <TableCell>{formatTimestamp(msg.timestamp)}</TableCell>
@@ -657,30 +659,25 @@ export default function WhatsAppConversionPage() {
                     </TableCell>
                     <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-2">
-                            {(() => {
-                                const contactId = msg.reply_by === 'user' ? msg.sender_id : msg.recipient_id;
-                                if (!contactId || contactId === activeSessionName) return null;
-                                const isLocked = !!lockedContacts[contactId];
-                                
-                                return (
-                                    <Button 
-                                        variant="ghost" 
-                                        size="sm" 
-                                        onClick={() => handleToggleLock(contactId)}
-                                        className="h-8 w-8 p-0"
-                                        title={isLocked ? "Unlock AI" : "Lock AI (Handover)"}
-                                    >
-                                        {isLocked ? 
-                                            <Lock className="h-4 w-4 text-red-500" /> : 
-                                            <Unlock className="h-4 w-4 text-emerald-500" />
-                                        }
-                                    </Button>
-                                );
-                            })()}
+                            {contactId && contactId !== activeSessionName ? (
+                                <Button 
+                                    variant="ghost" 
+                                    size="sm" 
+                                    onClick={() => handleToggleLock(contactId)}
+                                    className="h-8 w-8 p-0"
+                                    title={isLocked ? "Unlock AI" : "Lock AI (Handover)"}
+                                >
+                                    {isLocked ? 
+                                        <Lock className="h-4 w-4 text-red-500" /> : 
+                                        <Unlock className="h-4 w-4 text-emerald-500" />
+                                    }
+                                </Button>
+                            ) : null}
                         </div>
                     </TableCell>
                   </TableRow>
-                ))
+                  );
+                })
               )}
             </TableBody>
           </Table>
