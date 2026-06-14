@@ -458,8 +458,7 @@ export default function MessengerConversionPage() {
               ) : (
                 messages.map((msg) => (
                   <TableRow key={msg.id}>
-                    <TableCell>{new Date(msg.created_at).toLocaleString()}</TableCell>
-                    <TableCell className="font-mono text-xs">{msg.sender_id}</TableCell>
+                    <TableCell>{new Date(msg.created_at || msg.timestamp).toLocaleString()}</TableCell>
                     <TableCell className="max-w-[300px] truncate" title={msg.text}>{msg.text}</TableCell>
                     <TableCell>
                       <span
@@ -502,6 +501,9 @@ export default function MessengerConversionPage() {
                       >
                         {msg.status}
                       </span>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <span className="font-mono text-[10px] text-muted-foreground">ID: {msg.sender_id}</span>
                     </TableCell>
                   </TableRow>
                 ))
