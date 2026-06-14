@@ -721,27 +721,8 @@ router.get('/stats', authMiddleware, async (req, res) => {
     }
 });
 
-async function ensureWhatsAppContactsColumns() {
-    try {
-        await pgClient.query(`
-            ALTER TABLE whatsapp_contacts ADD COLUMN IF NOT EXISTS labels JSONB DEFAULT '[]'::jsonb
-        `);
-    } catch (e) {
-        console.warn("[WhatsApp] Failed to add labels column:", e.message);
-    }
-    try {
-        await pgClient.query(`
-            ALTER TABLE whatsapp_contacts ADD COLUMN IF NOT EXISTS ai_action TEXT DEFAULT 'continue'
-        `);
-    } catch (e) {
-        console.warn("[WhatsApp] Failed to add ai_action column:", e.message);
-    }
-}
-
 router.get('/contacts', authMiddleware, async (req, res) => {
     try {
-        await ensureWhatsAppContactsColumns();
-        
         const sessionName = String(req.query.session_name || '').trim();
 
         if (!sessionName) {
@@ -756,14 +737,37 @@ router.get('/contacts', authMiddleware, async (req, res) => {
             return res.status(403).json({ error: 'Forbidden' });
         }
 
-        const result = await pgClient.query(
-            `
-            SELECT phone_number, is_locked, labels, ai_action
-            FROM whatsapp_contacts
-            WHERE session_name = $1
-            `,
-            [sessionName]
-        );
+        let result;
+        try {
+            result = await pgClient.query(
+                `
+                SELECT phone_number, is_locked, labels, ai_action
+                FROM whatsapp_contacts
+                WHERE session_name = $1
+                `,
+                [sessionName]
+            );
+        } catch (err) {
+            if (err && err.code === '42703') {
+                const fallbackResult = await pgClient.query(
+                    `
+                    SELECT phone_number, is_locked
+                    FROM whatsapp_contacts
+                    WHERE session_name = $1
+                    `,
+                    [sessionName]
+                );
+                result = {
+                    rows: fallbackResult.rows.map(row => ({
+                        ...row,
+                        labels: [],
+                        ai_action: 'continue'
+                    }))
+                };
+            } else {
+                throw err;
+            }
+        }
 
         res.json(result.rows);
     } catch (err) {
