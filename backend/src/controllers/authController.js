@@ -1453,12 +1453,11 @@ exports.buyCredits = async (req, res) => {
         }
 
         const newBalance = currentBalance - finalCost;
-        const newCredits = (Number(userConfig.message_credit) || 0) + finalAmount;
         const newPermanent = (Number(userConfig.permanent_credit) || 0) + finalAmount;
 
         await pgClient.query(
-            'UPDATE user_configs SET balance = $1, message_credit = $2, permanent_credit = $3 WHERE user_id = $4::uuid',
-            [newBalance, newCredits, newPermanent, userId]
+            'UPDATE user_configs SET balance = $1, permanent_credit = $2 WHERE user_id = $3::uuid',
+            [newBalance, newPermanent, userId]
         );
 
         await pgClient.query(
