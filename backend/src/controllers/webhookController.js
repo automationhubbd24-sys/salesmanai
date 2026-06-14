@@ -114,6 +114,19 @@ function trackBotReply(senderId, text) {
     recentBotReplies.set(senderId, history);
 }
 
+// Helper to check if a message is a recent bot reply
+function isRecentBotReply(senderId, text) {
+    const normalized = normalizeText(text);
+    if (!normalized) return false;
+    
+    const now = Date.now();
+    const history = recentBotReplies.get(senderId) || [];
+    return history.some(reply => {
+        const timeDiff = now - reply.timestamp;
+        return timeDiff < 20000 && reply.text === normalized;
+    });
+}
+
 async function hasRecentOutgoingFbMatch(pageId, recipientId, text, allowedReplyBy = ['bot', 'system'], windowMs = 120000) {
     const normalized = normalizeText(text);
     if (!pageId || !recipientId || !normalized) return false;
