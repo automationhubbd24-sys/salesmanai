@@ -4247,10 +4247,10 @@ async function resolveResourceSearchContext(pageId) {
     // Get User ID
     try {
         if (isWhatsapp) {
-            // Check whatsapp_sessions first
+            // Check whatsapp_sessions first (only session_name, since it may not have waba_id/phone_number_id)
             let result = await query(
                 `SELECT user_id FROM whatsapp_sessions 
-                 WHERE session_name = $1 OR waba_id = $1 OR phone_number_id = $1 LIMIT 1`,
+                 WHERE session_name = $1 LIMIT 1`,
                 [resourceId]
             );
             if (result.rows.length > 0) {
@@ -4449,10 +4449,7 @@ async function searchProducts(userId, queryText, pageId = null) {
         
         if (pageId) {
             latestParams.push(String(pageId));
-            latestSql += ` AND (
-                (COALESCE(${pageColumn}::jsonb, '[]'::jsonb) = '[]'::jsonb) OR 
-                (${pageColumn}::jsonb @> jsonb_build_array($2::text))
-            )`;
+            latestSql += ` AND (${pageColumn}::jsonb @> jsonb_build_array($2::text))`;
         }
         latestSql += ` ORDER BY id DESC LIMIT 5`;
         const latestResult = await query(latestSql, latestParams);
@@ -4488,10 +4485,7 @@ async function searchProducts(userId, queryText, pageId = null) {
         if (pageId) {
             params.push(String(pageId));
             const pIdx = params.length;
-            sql += ` AND (
-                (COALESCE(${pageColumn}::jsonb, '[]'::jsonb) = '[]'::jsonb) OR 
-                (${pageColumn}::jsonb @> jsonb_build_array($${pIdx}::text))
-            )`;
+            sql += ` AND (${pageColumn}::jsonb @> jsonb_build_array($${pIdx}::text))`;
         }
 
         sql += ` ORDER BY distance ASC LIMIT 5`;
