@@ -1061,37 +1061,6 @@ function extractImagesFromText(text) {
     };
 }
 
-function sanitizeStructuredProductId(productId) {
-    const normalized = String(productId || '').trim();
-    return /^\d+$/.test(normalized) ? normalized : null;
-}
-
-function sanitizeStructuredImageUrls(imageUrls, verifiedProductId = null) {
-    if (!Array.isArray(imageUrls) || !verifiedProductId) return [];
-
-    const unique = new Set();
-    return imageUrls
-        .map(url => String(url || '').trim())
-        .filter(url => /^https?:\/\//i.test(url))
-        .filter(url => {
-            if (unique.has(url)) return false;
-            unique.add(url);
-            return true;
-        })
-        .slice(0, 10);
-}
-
-function sanitizeStructuredSalesResponse(payload) {
-    const safeProductId = sanitizeStructuredProductId(payload?.product_id);
-    const safeImageUrls = sanitizeStructuredImageUrls(payload?.image_urls, safeProductId);
-
-    return {
-        ...payload,
-        product_id: safeProductId,
-        image_urls: safeImageUrls
-    };
-}
-
 async function getEmbedding(text, customApiKey = null) {
     if (!text) return null;
     
@@ -1383,7 +1352,7 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null
 
             case 'get_product': {
                 const productId = args.product_id;
-                const product = await dbService.getProductByIdForPage(productId, pageId);
+                const product = await dbService.getProductById(productId);
                 
                 if (!product || String(product.user_id) !== String(userId)) {
                     return { status: 'ERROR', message: "Product not found or access denied." };
@@ -1393,8 +1362,7 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null
                 if (senderId) {
                     await dbService.setConversationState(pageId, senderId, {
                         last_product_id: productId,
-                        last_intent: 'product_fetched',
-                        last_user_query: cleanUserMessage
+                        last_intent: 'product_fetched'
                     });
                 }
 
@@ -1407,9 +1375,8 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null
                 const breakdown = [];
 
                 for (const item of lineItems) {
-                    const product = pageId ? await dbService.getProductByIdForPage(item.product_id, pageId) : await dbService.getProductById(item.product_id);
+                    const product = await dbService.getProductById(item.product_id);
                     if (!product) continue;
-                    if (userId && String(product.user_id) !== String(userId)) continue;
 
                     let price = parsePrice(product.price);
                     // Variant logic could go here if needed
@@ -1424,10 +1391,9 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null
 
             case 'check_stock': {
                 const productId = args.product_id;
-                const product = pageId ? await dbService.getProductByIdForPage(productId, pageId) : await dbService.getProductById(productId);
+                const product = await dbService.getProductById(productId);
                 
                 if (!product) return { status: 'ERROR', message: "Product not found." };
-                if (userId && String(product.user_id) !== String(userId)) return { status: 'ERROR', message: "Product not found or access denied." };
                 
                 const stock = product.stock_quantity !== undefined ? product.stock_quantity : 'Unknown';
                 const inStock = stock === 'Unknown' || stock > 0;
@@ -1533,8 +1499,19 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                             properties: {
                                 reply_text: { type: "string", description: "The human-like response to the user." },
                                 action: { type: "string", enum: ["NONE", "SEND_DETAILS", "SEND_PHOTO", "SEND_BOTH", "save_order"], description: "The action to take." },
-                                product_id: { type: ["string", "null"], description: "Verified numeric database product ID only. Use null if no verified product was returned by tools or product context. Never invent IDs." },
-                                image_urls: { type: "array", items: { type: "string" }, description: "Optional exact image URLs copied from verified database/product context or tool results for the same verified numeric product_id. Otherwise return an empty array." },
+                                product_id: { type: ["string", "null"], description: "The ID of the matched product." },
+                                image_urls: { type: "array", items: { type: "string" }, description: "List of product image URLs to send. Only use URLs that came from the database/product context or tool results. Never invent or use external URLs." },
+                                photo_decision: {
+                                    type: ["object", "null"],
+                                    properties: {
+                                        clarification_needed: { type: "boolean" },
+                                        requested_scope: { type: "string", enum: ["focused", "all"] },
+                                        target_product_id: { type: ["string", "null"] },
+                                        clarification_text: { type: "string" }
+                                    },
+                                    required: ["clarification_needed", "requested_scope", "target_product_id", "clarification_text"],
+                                    additionalProperties: false
+                                },
                                 customer_phone: { type: ["string", "null"] },
                                 customer_address: { type: ["string", "null"] },
                                 customer_name: { type: ["string", "null"] },
@@ -1561,7 +1538,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                                     required: ["intent", "fields"]
                                 }
                             },
-                            required: ["reply_text", "action", "product_id", "image_urls", "customer_phone", "customer_address", "customer_name", "product_name", "quantity", "price", "order_details"],
+                            required: ["reply_text", "action", "product_id", "image_urls", "photo_decision", "customer_phone", "customer_address", "customer_name", "product_name", "quantity", "price", "order_details"],
                             additionalProperties: false
                         }
                     }
@@ -1607,14 +1584,14 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 // If AI already gave us a reply_text in this first turn, RETURN IT NOW.
                 // This saves 1 full API call cost.
                 if (structured && structured.reply_text) {
-                    const safeStructured = sanitizeStructuredSalesResponse(structured);
                     console.log(`[AgentLoop] Single-Call Success: Returning reply and executing tools in background.`);
                     return { 
-                        reply: safeStructured.reply_text, 
-                        action: safeStructured.action || "NONE",
-                        product_id: safeStructured.product_id || null,
-                        image_urls: Array.isArray(safeStructured.image_urls) ? safeStructured.image_urls : [],
-                        order_details: safeStructured.order_details || null,
+                        reply: structured.reply_text, 
+                        action: structured.action || "NONE",
+                        product_id: structured.product_id || null,
+                        image_urls: Array.isArray(structured.image_urls) ? structured.image_urls : [],
+                        photo_decision: structured.photo_decision || null,
+                        order_details: structured.order_details || null,
                         token_usage: (completionUsage?.total_tokens || 0) + totalTokensInLoop, 
                         model: model, 
                         foundProducts 
@@ -1664,7 +1641,6 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 }
 
                 if (structuredFinal) {
-                    structuredFinal = sanitizeStructuredSalesResponse(structuredFinal);
                     // --- AUTO-ORDER SAVE FALLBACK (User Request: JSON based incremental order save) ---
                     // CASE A/B/C: AI provides any piece of order data (phone, address, etc.)
                     if (structuredFinal.order_details || (structuredFinal.action === "save_order" && (structuredFinal.order_data || structuredFinal.details)) || structuredFinal.customer_phone || structuredFinal.customer_address || structuredFinal.phone) {
@@ -1741,6 +1717,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                             action: structuredFinal.action || "NONE",
                             product_id: structuredFinal.product_id || null,
                             image_urls: Array.isArray(structuredFinal.image_urls) ? structuredFinal.image_urls : [],
+                            photo_decision: structuredFinal.photo_decision || null,
                             order_details: structuredFinal.order_details || null,
                             token_usage: tokenUsage + totalTokensInLoop, 
                             model: model, 
@@ -1884,20 +1861,6 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         releaseAiSlot();
 
         if (!result) return null;
-        result = sanitizeStructuredSalesResponse(result);
-
-        // --- Save last user query to conversation state ---
-        if (userId && pageConfig.page_id && cleanUserMessage) {
-            try {
-                await dbService.setConversationState(pageConfig.page_id, userId, {
-                    last_user_query: cleanUserMessage,
-                    last_product_id: result.product_id || null,
-                    last_intent: result.action || null
-                });
-            } catch (err) {
-                console.warn("[AI] Failed to save conversation state:", err.message);
-            }
-        }
         
         let displayModel = 'unknown';
         let usageTokens = 0;
@@ -2085,7 +2048,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     let productContext = "";
     let foundProducts = [];
 
-    if (pageConfig.page_id && (cleanUserMessage || currentContextId)) {
+    if (pageConfig.page_id && cleanUserMessage) {
         try {
             const normalizeUrl = (url) => {
                 if (!url || url === 'N/A') return 'N/A';
@@ -2095,43 +2058,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                 return `${baseUrl}${cleanPath}`;
             };
 
-            // Build a better search query!
-            let searchQuery = cleanUserMessage;
-            if (cleanUserMessage && cleanUserMessage.length < 20 && history && history.length > 0) {
-                // If short message, combine with last user query for better search
-                const lastUserMsgs = [...history].reverse().filter(m => m.role === 'user').slice(0, 2);
-                const contextWords = lastUserMsgs.map(m => m.content).join(' ');
-                searchQuery = `${contextWords} ${cleanUserMessage}`;
-            }
-
-            // First search with the improved query
-            let candidates = searchQuery ? await dbService.searchProductsForResource(searchQuery, pageConfig.page_id) : [];
-            
-            // If no candidates and we have last product ID, add that product manually!
-            if (currentContextId && (!candidates || candidates.length === 0)) {
-                try {
-                    const lastProduct = await dbService.getProductByIdForPage(currentContextId, pageConfig.page_id);
-                    if (lastProduct) candidates = [lastProduct];
-                } catch (e) {
-                    console.warn("[AI] Failed to fetch last product by ID:", e.message);
-                }
-            }
-
-            // If still no candidates but we have last product ID in conv state, try a simpler search
-            if (currentContextId && (!candidates || candidates.length === 0)) {
-                try {
-                    const state = await dbService.getConversationState(pageConfig.page_id, userId);
-                    if (state && state.last_user_query) {
-                        const lastQueryCandidates = await dbService.searchProductsForResource(state.last_user_query, pageConfig.page_id);
-                        if (lastQueryCandidates && lastQueryCandidates.length > 0) {
-                            candidates = lastQueryCandidates;
-                        }
-                    }
-                } catch (e) {
-                    console.warn("[AI] Failed to search with last user query:", e.message);
-                }
-            }
-
+            const candidates = await dbService.searchProductsForResource(cleanUserMessage, pageConfig.page_id);
             if (candidates && candidates.length > 0) {
                 const topCandidates = candidates.slice(0, 5);
                 productContext = "[PRODUCT LIST SNAPSHOT - FROM PRODUCT ENTRY]\n";
@@ -2396,12 +2323,15 @@ ${productContext || "No specific product context provided yet."}
 - You are an AI Salesman for "${ownerName}".
 - Output MUST be a valid JSON object only. No plain text.
 - reply_text: Human-like response. Follow the Owner's tone and language strictly. (Note: Only use Markdown formatting if explicitly requested by the business owner).
-- PHOTO INTENT: If the user asks for a photo/image, set "action": "SEND_PHOTO" only when you have a verified numeric database product_id from tools or [PRODUCT CONTEXT]. Otherwise ask a clarification question. If the user asks for "all products", "all pictures", "all jerseys" or similar, include image_urls with ALL matching product images from [PRODUCT CONTEXT].
+- PHOTO INTENT: If the user asks for a photo/image, set "action": "SEND_PHOTO" and provide the product_id.
 - action: ["NONE", "SEND_DETAILS", "SEND_PHOTO", "SEND_BOTH"]
-- product_id: verified numeric database product ID only. Never invent, rename, slugify, or format your own IDs. If multiple products are being shown, use null. If not verified, use null.
-- image_urls: Include exact product image URLs that already exist in [PRODUCT CONTEXT] or tool/database results. For single product, use images of that product. For multiple products (e.g., "all Brazil jerseys"), include all matching product images. If you are not certain, use an empty array.
+- product_id: UUID of the matched product.
+- image_urls: Only include product image URLs that already exist in [PRODUCT CONTEXT] or tool/database results. If you are not certain, use an empty array.
+- photo_decision: ALWAYS include this object. Use "clarification_needed": true when the user wants a photo but the target product is still ambiguous.
 - Never generate, guess, or invent image links from Unsplash, Google, Facebook CDN, random websites, or any external source.
-- Never fabricate domains, file names, or plausible-looking image paths.
+- If the customer asks for a photo but multiple products/options are active in the conversation, do NOT guess. Ask which specific product they want first and set "action": "NONE".
+- If one product is clearly selected, focus only on that product. Do NOT send all images/variants by default unless the customer explicitly asks for all images of that selected product.
+- Never say that a photo has already been sent/delivered. Keep photo wording neutral because the backend decides the final delivery message.
 - order_details: Whenever the user provides ANY order info (phone, address, etc.), you MUST include it here.
 
 [SALES WORKFLOW - EVOLUTIONARY TRACKING]
@@ -2416,6 +2346,12 @@ ${productContext || "No specific product context provided yet."}
   "action": "save_order",
   "product_id": "...",
   "image_urls": ["url1", "url2"],
+  "photo_decision": {
+    "clarification_needed": false,
+    "requested_scope": "focused",
+    "target_product_id": "...",
+    "clarification_text": ""
+  },
   "customer_phone": "Extracted phone or null",
   "customer_address": "Extracted address or null",
   "customer_name": "Extracted name or null",
@@ -2504,13 +2440,12 @@ ${productContext || "No specific product context provided yet."}
                         
                         // If it's our own internal structured format, return it
                         if (structured.reply_text || structured.order_details) {
-                            const safeStructured = sanitizeStructuredSalesResponse(structured);
                             return finalize({ 
-                                reply: safeStructured.reply_text || aiText.substring(0, firstBrace).trim(), 
-                                action: safeStructured.action || "NONE",
-                                product_id: safeStructured.product_id || null,
-                                image_urls: Array.isArray(safeStructured.image_urls) ? safeStructured.image_urls : [],
-                                order_details: safeStructured.order_details || null,
+                                reply: structured.reply_text || aiText.substring(0, firstBrace).trim(), 
+                                action: structured.action || "NONE",
+                                product_id: structured.product_id || null,
+                                image_urls: Array.isArray(structured.image_urls) ? structured.image_urls : [],
+                                order_details: structured.order_details || null,
                                 sentiment: 'neutral', 
                                 token_usage: tokenUsage + totalTokenUsage, 
                                 model: modelToUse, 

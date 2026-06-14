@@ -114,19 +114,6 @@ function trackBotReply(senderId, text) {
     recentBotReplies.set(senderId, history);
 }
 
-// Helper to check if a message is a recent bot reply
-function isRecentBotReply(senderId, text) {
-    const normalized = normalizeText(text);
-    if (!normalized) return false;
-    
-    const now = Date.now();
-    const history = recentBotReplies.get(senderId) || [];
-    return history.some(reply => {
-        const timeDiff = now - reply.timestamp;
-        return timeDiff < 20000 && reply.text === normalized;
-    });
-}
-
 async function hasRecentOutgoingFbMatch(pageId, recipientId, text, allowedReplyBy = ['bot', 'system'], windowMs = 120000) {
     const normalized = normalizeText(text);
     if (!pageId || !recipientId || !normalized) return false;
@@ -256,10 +243,6 @@ function normalizeImageUrl(url) {
     return `${baseUrl.replace(/\/$/, '')}${cleanPath}`;
 }
 
-function isStrictNumericProductId(productId) {
-    return /^\d+$/.test(String(productId || '').trim());
-}
-
 function pushUniqueMedia(target, media) {
     if (!Array.isArray(target) || !media || !media.url) return;
     const mediaUrl = String(media.url).trim();
@@ -308,28 +291,11 @@ async function getAllowedResourceMediaMap(pageId) {
 }
 
 function filterQueuedMediaByAllowedUrls(queue, allowedUrls) {
-    if (!Array.isArray(queue)) return [];
-
-    const queuedItems = queue.filter(item => {
+    if (!Array.isArray(queue) || allowedUrls.size === 0) return [];
+    return queue.filter(item => {
         const url = typeof item === 'string' ? item : item?.url;
-        return !!String(url || '').trim();
+        return !!url && allowedUrls.has(String(url).trim());
     });
-
-    if (queuedItems.length === 0) return [];
-    if (!(allowedUrls instanceof Set) || allowedUrls.size === 0) return queuedItems;
-
-    const filteredItems = queuedItems.filter(item => {
-        const rawUrl = typeof item === 'string' ? item : item?.url;
-        const trimmedUrl = String(rawUrl).trim();
-        const normalizedUrl = normalizeImageUrl(trimmedUrl) || trimmedUrl;
-        return allowedUrls.has(trimmedUrl) || allowedUrls.has(normalizedUrl);
-    });
-
-    if (filteredItems.length !== queuedItems.length) {
-        console.warn(`[Media Guard] Blocked ${queuedItems.length - filteredItems.length} unapproved media item(s).`);
-    }
-
-    return filteredItems;
 }
 
 function stripUnsupportedLinksFromText(text, allowedUrls) {
@@ -365,6 +331,20 @@ function hasPhotoIntent(historyList) {
         else if (item.message && typeof item.message.text === 'string') content = item.message.text;
         return typeof content === 'string' && content.includes('[INTENT_DETECTED: USER_REQUESTED_PHOTO]');
     });
+}
+
+function normalizePhotoDecision(photoDecision) {
+    if (!photoDecision || typeof photoDecision !== 'object') return null;
+    return {
+        clarification_needed: photoDecision.clarification_needed === true,
+        requested_scope: photoDecision.requested_scope === 'all' ? 'all' : 'focused',
+        target_product_id: photoDecision.target_product_id != null
+            ? String(photoDecision.target_product_id).trim() || null
+            : null,
+        clarification_text: typeof photoDecision.clarification_text === 'string'
+            ? photoDecision.clarification_text.trim()
+            : ''
+    };
 }
 
 function shouldBlockOutgoingReply(text) {
@@ -481,7 +461,7 @@ const whatsappCloudService = require('../services/whatsappCloudService');
 const handleWebhook = async (req, res) => {
     const body = req.body;
     console.log(`[Webhook] Incoming POST Request. Object: ${body.object}`); 
-    console.log('Webhook Body Received:', JSON.stringify(body, null, 2)); // Detailed debug for everything
+    // console.log('Webhook Body Received:', JSON.stringify(body, null, 2)); // Too verbose for production
 
     if (body.object === 'whatsapp_business_account') {
         return handleWhatsAppWebhook(req, res);
@@ -738,62 +718,6 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     let totalVisionTokens = 0;
     let totalAudioTokens = 0;
 
-    // --- EMOJI LOCK/UNLOCK CHECK ---
-    const lockEmojis = [
-        controlConfig.block_emoji,
-        controlConfig.lock_emojis,
-        controlConfig.block_emojis
-    ].filter(Boolean).join(',').split(/[, ]+/).map(e => e.trim()).filter(e => e);
-
-    const unlockEmojis = [
-        controlConfig.unblock_emoji,
-        controlConfig.unlock_emojis,
-        controlConfig.unblock_emojis
-    ].filter(Boolean).join(',').split(/[, ]+/).map(e => e.trim()).filter(e => e);
-
-    // Helper to normalize emojis (remove VS16 \uFE0F and NFC)
-    const normalize = (str) => (str || '').replace(/\uFE0F/g, '').normalize('NFC');
-    const normLock = lockEmojis.map(normalize);
-    const normUnlock = unlockEmojis.map(normalize);
-
-    // Check current messages for lock/unlock emojis
-    for (const msg of bufferedMessages) {
-        const msgText = extractOfficialMessageText(msg);
-        const normText = normalize(msgText);
-        
-        for (const emoji of normLock) {
-            if (normText.includes(emoji)) {
-                console.log(`[WA Lock] Lock emoji found in message from ${senderId}. Locking chat.`);
-                await dbService.toggleWhatsAppLock(effectiveSessionName, senderId, true);
-            }
-        }
-        
-        for (const emoji of normUnlock) {
-            if (normText.includes(emoji)) {
-                console.log(`[WA Lock] Unlock emoji found in message from ${senderId}. Unlocking chat.`);
-                await dbService.toggleWhatsAppLock(effectiveSessionName, senderId, false);
-            }
-        }
-    }
-
-    // Check history for missed lock/unlock emojis (like legacy code does)
-    if (normLock.length > 0 || normUnlock.length > 0) {
-        try {
-            const historyCheck = await dbService.checkWhatsAppEmojiLock(effectiveSessionName, senderId, normLock, normUnlock);
-            if (historyCheck) {
-                if (historyCheck.locked) {
-                    console.log(`[WA Lock] History scan found lock emoji for ${senderId}. Ensuring lock.`);
-                    await dbService.toggleWhatsAppLock(effectiveSessionName, senderId, true);
-                } else {
-                    console.log(`[WA Lock] History scan found unlock emoji for ${senderId}. Ensuring unlock.`);
-                    await dbService.toggleWhatsAppLock(effectiveSessionName, senderId, false);
-                }
-            }
-        } catch (err) {
-            console.warn(`[WA Lock] History scan failed: ${err.message}`);
-        }
-    }
-
     // 1. Media Collection
     const imageUrls = [];
     const audioUrls = [];
@@ -802,19 +726,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     const whatsappCloudService = require('../services/whatsappCloudService');
 
     for (const msg of bufferedMessages) {
-        let msgImages, msgAudios, notes;
-        if (msg.images && msg.audios) {
-            // Media already extracted in queueWhatsAppMessage
-            msgImages = msg.images;
-            msgAudios = msg.audios;
-            notes = [];
-        } else {
-            // Fallback: extract media if not already extracted
-            const extracted = await collectOfficialMediaUrls(msg, config.cloud_access_token);
-            msgImages = extracted.imageUrls;
-            msgAudios = extracted.audioUrls;
-            notes = extracted.notes;
-        }
+        const { imageUrls: msgImages, audioUrls: msgAudios, notes } = await collectOfficialMediaUrls(msg, config.cloud_access_token);
         const msgText = extractOfficialMessageText(msg);
         
         imageUrls.push(...msgImages);
@@ -1092,46 +1004,6 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         return;
     }
 
-    // --- AI ACTION CHECK ---
-    // If ai_action is 'stop', skip bot reply
-    const contact = await dbService.getWhatsAppContact(effectiveSessionName, senderId);
-    if (contact && contact.ai_action === 'stop') {
-        console.log(`[WhatsApp Webhook] Skipping AI reply for ${senderId} (ai_action = stop).`);
-        await dbService.saveWhatsAppChat({
-            session_name: effectiveSessionName,
-            sender_id: effectiveSessionName,
-            recipient_id: senderId,
-            message_id: `bot_skip_${Date.now()}`,
-            text: '[Bot skipped: AI action set to stop]',
-            timestamp: Date.now(),
-            status: 'skipped_ai_action',
-            reply_by: 'bot',
-            model_used: 'ai-action-check'
-        });
-        return;
-    }
-
-    // --- ADMIN REPLY CHECK ---
-    // If admin replied last, skip bot reply
-    const lastMessage = await dbService.getLastMessageInWaConversation(effectiveSessionName, senderId);
-    if (lastMessage && lastMessage.reply_by === 'admin') {
-        const logMsg = `[Skip] Bot skipped for ${senderId} because last message was from admin.`;
-        console.log(logMsg);
-        await dbService.saveWhatsAppChat({
-            session_name: effectiveSessionName,
-            sender_id: effectiveSessionName,
-            recipient_id: senderId,
-            message_id: `bot_skip_${Date.now()}`,
-            text: '[Bot skipped: Last message from admin]',
-            timestamp: Date.now(),
-            status: 'skipped_admin_reply',
-            reply_by: 'bot',
-            model_used: 'admin-check'
-        });
-        return;
-    }
-    // --------------------------
-
     const hasDaily = Number(controlConfig.daily_limit || 0) > Number(controlConfig.daily_used || 0);
     const hasMonthly = Number(controlConfig.monthly_limit || 0) > Number(controlConfig.monthly_used || 0);
     const hasBonus = Number(controlConfig.bonus_credit || 0) > 0;
@@ -1192,7 +1064,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
                 if (Array.isArray(adData.linked_product_ids) && adData.linked_product_ids.length > 0) {
                     const productDetails = [];
                     for (const productId of adData.linked_product_ids) {
-                        const product = await dbService.getProductByIdForPage(productId, effectiveSessionName);
+                        const product = await dbService.getProductById(productId);
                         if (product) {
                             productDetails.push(`${product.name} (Price: ${product.price} ${product.currency || 'BDT'})`);
                         }
@@ -1255,16 +1127,10 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     const professionalRules = `\n\n[PROFESSIONAL OUTPUT RULES]\n`
         + `1) IDENTITY: You are a professional human sales representative. Talk naturally.\n`
         + `2) TOOL-FIRST: If the user asks about product price/details, you MUST call tools. Do NOT invent prices or descriptions.\n`
-        + `3) VERIFIED PRODUCT IDS ONLY: If you include [PRODUCT_ID:id], it MUST be an exact numeric database product ID already returned by tool/database context. Never invent, rename, or slugify product IDs.\n`
-        + `4) VERIFIED MEDIA ONLY: Never write or invent image URLs, file names, domains, or CDN links. Use only verified tool/database product context.\n`
-        + `5) SYSTEM PROMPT PRIORITY: If your custom instructions say NOT to send images proactively, obey that and only use [PRODUCT_ID:id] when the user explicitly asks for a photo.\n`
-        + `6) LISTING PRODUCTS: If asked what products are available, mention a short natural list and ask which one they want.\n`
-        + `7) NO HALLUCINATIONS: Never guess or invent prices, IDs, descriptions, or media links. Always use tool data only.\n`
-        + `8) ACTIONS: You can perform the following actions by including a JSON array in your response:\n`
-        + `   - add_label: Add a label to the conversation (e.g., {"type": "add_label", "label": "order-track"})\n`
-        + `   - set_ai_action: Set AI action (continue or stop) (e.g., {"type": "set_ai_action", "action": "stop"})\n`
-        + `   Always include the actions array in your JSON response. The structure should be:\n`
-        + `   {"response": "Your reply text here", "actions": [{"type": "add_label", "label": "order-track"}]}\n`;
+        + `3) IMAGE DECISION: If you decide to send a product's image (based on user request or appropriateness), you MUST append [PRODUCT_ID:id] to your reply. Example: "Yes, it is available. [PRODUCT_ID:82]".\n`
+        + `4) SYSTEM PROMPT PRIORITY: If your custom instructions say NOT to send images proactively, obey that and only use [PRODUCT_ID:id] when the user explicitly asks for a photo.\n`
+        + `5) LISTING PRODUCTS: If asked what products are available, mention a short natural list and ask which one they want.\n`
+        + `6) NO HALLUCINATIONS: Never guess or invent prices. Always use tool data only.\n`;
 
     const aiConfig = { ...controlConfig };
     aiConfig.text_prompt = aiConfig.text_prompt
@@ -1321,63 +1187,22 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
 
     let finalReplyText = aiResponse.reply || aiResponse.text || '';
 
-    // --- PARSE AI RESPONSE ACTIONS ---
-    let actions = [];
-    try {
-        // Try to parse the entire response as JSON
-        const cleanJson = finalReplyText.replace(/```json|```/g, '').trim();
-        const parsed = JSON.parse(cleanJson);
-        if (parsed.response) finalReplyText = parsed.response;
-        else if (parsed.reply) finalReplyText = parsed.reply;
-        else if (parsed.message) finalReplyText = parsed.message;
-        else if (parsed.text) finalReplyText = parsed.text;
-        
-        if (parsed.actions && Array.isArray(parsed.actions)) {
-            actions = parsed.actions;
-        }
-    } catch (jsonErr) {
-        // If parsing fails, check if there's a JSON object in the text
+    if (finalReplyText && (finalReplyText.trim().startsWith('{') || finalReplyText.trim().startsWith('['))) {
         try {
-            const jsonMatch = finalReplyText.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                const parsed = JSON.parse(jsonMatch[0]);
-                if (parsed.response) finalReplyText = parsed.response;
-                else if (parsed.reply) finalReplyText = parsed.reply;
-                else if (parsed.message) finalReplyText = parsed.message;
-                else if (parsed.text) finalReplyText = parsed.text;
-                
-                if (parsed.actions && Array.isArray(parsed.actions)) {
-                    actions = parsed.actions;
-                }
-            }
-        } catch (e) {
-            // Ignore, just use the text as is
-        }
-    }
-
-    // --- EXECUTE AI RESPONSE ACTIONS ---
-    for (const action of actions) {
-        try {
-            if (action.type === 'add_label' && action.label) {
-                await dbService.addLabelToWhatsAppContact(effectiveSessionName, senderId, action.label);
-                console.log(`[WhatsApp] Added label "${action.label}" to contact ${senderId}`);
-            } else if (action.type === 'set_ai_action' && action.action) {
-                await dbService.setWhatsAppContactAiAction(effectiveSessionName, senderId, action.action);
-                console.log(`[WhatsApp] Set ai_action to "${action.action}" for contact ${senderId}`);
-            }
-        } catch (actionErr) {
-            console.warn(`[WhatsApp] Failed to execute action:`, actionErr.message);
+            const cleanJson = finalReplyText.replace(/```json|```/g, '').trim();
+            const parsed = JSON.parse(cleanJson);
+            if (parsed.reply_text) finalReplyText = parsed.reply_text;
+            else if (parsed.reply) finalReplyText = parsed.reply;
+            else if (parsed.message) finalReplyText = parsed.message;
+            else if (parsed.text) finalReplyText = parsed.text;
+        } catch (jsonErr) {
+            console.warn(`[WhatsApp Webhook] JSON rescue failed: ${jsonErr.message}`);
         }
     }
 
     if (aiResponse?.action && aiResponse.action !== 'NONE' && aiResponse.product_id) {
         try {
-            if (!isStrictNumericProductId(aiResponse.product_id)) {
-                console.warn(`[WhatsApp Webhook] Blocked non-numeric product_id: ${aiResponse.product_id}`);
-                aiResponse.product_id = null;
-            }
-
-            const product = aiResponse.product_id ? await dbService.getProductByIdForPage(aiResponse.product_id, effectiveSessionName) : null;
+            const product = await dbService.getProductById(aiResponse.product_id);
             if (product) {
                 if ((aiResponse.action === 'SEND_DETAILS' || aiResponse.action === 'SEND_BOTH') && (!finalReplyText || finalReplyText.length < 50)) {
                     const numericPrice = parsePrice(product.price);
@@ -1385,7 +1210,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
                     finalReplyText = `${finalReplyText || ''}\n\n🛍️ *${product.name}*\n💰 Price: ${priceDisplay}\n📝 Info: ${product.description || 'No details available.'}`.trim();
                 }
 
-                if (aiResponse.action === 'SEND_PHOTO' || aiResponse.action === 'SEND_BOTH' || aiResponse.action === 'SEND_DETAILS') {
+                if (aiResponse.action === 'SEND_PHOTO' || aiResponse.action === 'SEND_BOTH') {
                     if (!aiResponse.images) aiResponse.images = [];
                     if (!aiResponse.videos) aiResponse.videos = [];
 
@@ -1395,23 +1220,6 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
                             title: product.name,
                             description: product.description || ''
                         });
-                        
-                        // Also add additional images!
-                        let additional = [];
-                        if (Array.isArray(product.additional_images)) {
-                            additional = product.additional_images;
-                        } else if (typeof product.additional_images === 'string') {
-                            try { additional = JSON.parse(product.additional_images); } catch(e) { additional = product.additional_images.split(',').map(s => s.trim()); }
-                        }
-
-                        if (Array.isArray(additional)) {
-                            additional.forEach(u => {
-                                const nU = normalizeImageUrl(u);
-                                if (nU) {
-                                    pushUniqueMedia(aiResponse.images, { url: nU, title: product.name });
-                                }
-                            });
-                        }
                     }
 
                     if (product.video_url) {
@@ -1458,73 +1266,31 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     }
 
     if (hasPhotoIntent(recentRawHistory)) {
-        // Check if user asked for "all" or similar (Bangla & English)
-        const isRequestForAll = /\b(all|sob|সব|সবগুলো|সবগুলা)\b/i.test(finalUserMessage);
-        
-        if (isRequestForAll) {
-            // Search for matching products and get all their images
-            try {
-                const searchResults = await dbService.searchProductsForResource(finalUserMessage, effectiveSessionName);
-                if (searchResults && searchResults.length > 0) {
-                    if (!aiResponse.images) aiResponse.images = [];
-                    if (!aiResponse.videos) aiResponse.videos = [];
-                    
-                    for (const product of searchResults) {
-                        const primaryUrl = product.image_url ? normalizeImageUrl(product.image_url) : null;
-                        const additional = Array.isArray(product.additional_images)
-                            ? product.additional_images.map(normalizeImageUrl).filter(Boolean)
-                            : [];
-                        
-                        [primaryUrl, ...additional].forEach((url, idx) => {
-                            if (url) {
-                                pushUniqueMedia(aiResponse.images, {
-                                    url,
-                                    title: product.name || (idx === 0 ? 'Product Image' : `Product Image ${idx + 1}`),
-                                    description: product.description || ''
-                                });
-                            }
-                        });
-                        
-                        if (product.video_url) {
-                            pushUniqueMedia(aiResponse.videos, {
-                                url: normalizeImageUrl(product.video_url),
-                                title: product.name || 'Product Video',
-                                description: product.description || ''
-                            });
-                        }
-                    }
-                }
-            } catch (searchErr) {
-                console.warn(`[WhatsApp Webhook] All-products search failed: ${searchErr.message}`);
-            }
-        } else {
-            // Single product request
-            let targetProductId = null;
-            const state = await dbService.getConversationState(effectiveSessionName, senderId);
-            if (state && isStrictNumericProductId(state.last_product_id)) targetProductId = state.last_product_id;
-            if (!targetProductId && isStrictNumericProductId(aiResponse?.product_id)) targetProductId = aiResponse.product_id;
-            if (targetProductId) {
-                const product = await dbService.getProductByIdForPage(targetProductId, effectiveSessionName);
-                if (product) {
-                    const primaryUrl = product.image_url ? normalizeImageUrl(product.image_url) : null;
-                    const additional = Array.isArray(product.additional_images)
-                        ? product.additional_images.map(normalizeImageUrl).filter(Boolean)
-                        : [];
-                    const urls = [primaryUrl, ...additional].filter(Boolean);
+        let targetProductId = null;
+        const state = await dbService.getConversationState(effectiveSessionName, senderId);
+        if (state && state.last_product_id) targetProductId = state.last_product_id;
+        if (!targetProductId && aiResponse?.product_id) targetProductId = aiResponse.product_id;
+        if (targetProductId) {
+            const product = await dbService.getProductById(targetProductId);
+            if (product) {
+                const primaryUrl = product.image_url ? normalizeImageUrl(product.image_url) : null;
+                const additional = Array.isArray(product.additional_images)
+                    ? product.additional_images.map(normalizeImageUrl).filter(Boolean)
+                    : [];
+                const urls = [primaryUrl, ...additional].filter(Boolean);
 
-                    aiResponse.images = urls.map((url, idx) => ({
-                        url,
-                        title: product.name || (idx === 0 ? 'Product Image' : `Product Image ${idx + 1}`),
+                aiResponse.images = urls.map((url, idx) => ({
+                    url,
+                    title: product.name || (idx === 0 ? 'Product Image' : `Product Image ${idx + 1}`),
+                    description: product.description || ''
+                }));
+
+                if (product.video_url) {
+                    aiResponse.videos = [{
+                        url: normalizeImageUrl(product.video_url),
+                        title: product.name || 'Product Video',
                         description: product.description || ''
-                    }));
-
-                    if (product.video_url) {
-                        aiResponse.videos = [{
-                            url: normalizeImageUrl(product.video_url),
-                            title: product.name || 'Product Video',
-                            description: product.description || ''
-                        }];
-                    }
+                    }];
                 }
             }
         }
@@ -1712,411 +1478,80 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
 }
 
 async function processWhatsAppWebhook(body) {
-    console.log('=== [WhatsApp Webhook FULL DETAILS] ===');
-    console.log('Entry count:', body.entry?.length || 0);
-    if (body.entry && body.entry.length > 0) {
-        body.entry.forEach((entry, idx) => {
-            console.log(`  Entry ${idx + 1}:`, JSON.stringify(entry, null, 2));
-        });
-    }
-    console.log('=== END FULL DETAILS ===');
     console.log(`[WhatsApp Webhook] Processing ${body.entry?.length || 0} entries...`);
     for (const entry of body.entry || []) {
         const wabaId = entry.id;
         for (const change of entry.changes || []) {
+            if (change.field !== 'messages') continue;
+
             const value = change.value || {};
             const phoneNumberId = value.metadata?.phone_number_id;
+            const groupedMessages = new Map();
 
-            // Process messages (incoming from users and admin) and SMB message echoes
-            if (change.field === 'messages' || change.field === 'smb_message_echoes') {
-                // Process either value.messages or value.message_echoes
-                const messagesToProcess = change.field === 'messages' 
-                    ? value.messages 
-                    : value.message_echoes;
-
-                for (const message of messagesToProcess || []) {
-                    const messageId = message.id;
-                    console.log(`[WhatsApp Webhook] Evaluating message ID: ${messageId}, field: ${change.field}`);
-
-                    // --- ADMIN/ECHO CHECK ---
-                    // Check if this message is FROM the business (admin)
-                    const businessPhoneNumber = value.metadata?.display_phone_number; // This is the business number, e.g., "8801956871403" (from metadata.display_phone_number!)
-                    // Normalize phone numbers by removing "+" and whitespace
-                    const normalizePhone = (phone) => phone ? phone.replace(/[+\s]/g, '') : '';
-                    const normalizedBusinessPhone = normalizePhone(businessPhoneNumber);
-                    const normalizedMessageFrom = normalizePhone(message.from);
-                    // Also check if the message is from our bot (echo)
-                    const msgText = extractOfficialMessageText(message);
-                    const isEcho = isRecentBotReply(message.to || message.recipient_id, msgText);
-                    const isAdminSender = normalizedMessageFrom === normalizedBusinessPhone || isEcho;
-                    if (isAdminSender) {
-                        console.log(`[WhatsApp Webhook] ADMIN ACTION DETECTED: Business → User ${message.to || message.recipient_id}`);
-                        
-                        // Find config
-                        const lookupKeys = [
-                            phoneNumberId,
-                            wabaId,
-                            phoneNumberId ? `official_${phoneNumberId}` : null,
-                            wabaId ? `official_${wabaId}` : null
-                        ].filter(Boolean);
-                        
-                        let pageData = { config: null, prompts: null };
-                        for (const lookupKey of lookupKeys) {
-                            const candidate = await getCachedPageData(lookupKey);
-                            if (candidate?.config) {
-                                pageData = candidate;
-                                break;
-                            }
-                        }
-                        
-                        if (!pageData.config) {
-                            console.warn(`[WhatsApp Webhook] No config found for admin message lookup`);
-                            continue;
-                        }
-                        
-                        const effectiveSessionName = pageData.config.session_name || `official_${wabaId || phoneNumberId}`;
-                        const recipientId = message.to || message.recipient_id;
-                        
-                        // Save admin reply
-                        await dbService.saveWhatsAppChat({
-                            session_name: effectiveSessionName,
-                            sender_id: phoneNumberId,
-                            recipient_id: recipientId,
-                            message_id: messageId,
-                            text: msgText,
-                            timestamp: Date.now(),
-                            status: 'sent',
-                            reply_by: 'admin'
-                        });
-                        
-                        // Emoji Lock/Unlock Check
-                        const config = pageData.config;
-                        const prompts = pageData.prompts || {};
-                        
-                        const lockList = [
-                            prompts.block_emoji,
-                            prompts.lock_emojis,
-                            prompts.block_emojis,
-                            config.block_emoji,
-                            config.lock_emojis,
-                            config.block_emojis
-                        ].filter(Boolean).join(',').split(/[, ]+/).map(e => normalizeText(e.trim())).filter(e => e);
-                        
-                        const unlockList = [
-                            prompts.unblock_emoji,
-                            prompts.unlock_emojis,
-                            prompts.unblock_emojis,
-                            config.unblock_emoji,
-                            config.unlock_emojis,
-                            config.unblock_emojis
-                        ].filter(Boolean).join(',').split(/[, ]+/).map(e => normalizeText(e.trim())).filter(e => e);
-                        
-                        const cleanText = normalizeText(msgText);
-                        
-                        let isLocked = lockList.some(e => cleanText.includes(e));
-                        let isUnlocked = !isLocked && unlockList.some(e => cleanText.includes(e));
-                        
-                        if (isLocked) {
-                            await dbService.toggleWhatsAppLock(effectiveSessionName, recipientId, true);
-                            console.log(`[Handover Lock] Locked chat for user ${recipientId} via emoji`);
-                            
-                            // Register to avoid echo
-                            trackBotReply(recipientId, msgText);
-                            
-                            // Send emoji back
-                            if (phoneNumberId && config.cloud_access_token) {
-                                try {
-                                    await whatsappCloudService.sendTextMessage(phoneNumberId, config.cloud_access_token, recipientId, msgText);
-                                } catch (err) {
-                                    console.warn(`[Handover Lock] Failed to send lock emoji: ${err.message}`);
-                                }
-                            }
-                        } else if (isUnlocked) {
-                            await dbService.toggleWhatsAppLock(effectiveSessionName, recipientId, false);
-                            console.log(`[Handover Lock] Unlocked chat for user ${recipientId} via emoji`);
-                            
-                            // Register to avoid echo
-                            trackBotReply(recipientId, msgText);
-                            
-                            // Send emoji back
-                            if (phoneNumberId && config.cloud_access_token) {
-                                try {
-                                    await whatsappCloudService.sendTextMessage(phoneNumberId, config.cloud_access_token, recipientId, msgText);
-                                } catch (err) {
-                                    console.warn(`[Handover Lock] Failed to send unlock emoji: ${err.message}`);
-                                }
-                            }
-                        }
-                        
-                        continue;
-                    }
-
-                    // Check for duplicates
-                    const isDuplicate = await dbService.checkWhatsAppDuplicate(messageId);
-                    console.log(`[WhatsApp Webhook] Duplicate check for ${messageId}: ${isDuplicate}`);
-                    
-                    if (isDuplicate) {
-                        continue;
-                    }
-
-                    await queueWhatsAppMessage(message, value, phoneNumberId, wabaId);
+            for (const message of value.messages || []) {
+                const messageId = message.id;
+                console.log(`[WhatsApp Webhook] Evaluating message ID: ${messageId}`);
+                
+                // Use checkWhatsAppDuplicate which is the specialized version for WhatsApp
+                const isDuplicate = await dbService.checkWhatsAppDuplicate(messageId);
+                console.log(`[WhatsApp Webhook] Duplicate check for ${messageId}: ${isDuplicate}`);
+                
+                if (isDuplicate) {
+                    continue;
                 }
-            }
 
-            // Process statuses (outgoing from business/admin)
-            if (change.field === 'statuses') {
-                for (const status of value.statuses || []) {
-                    await processWhatsAppStatus(status, value, phoneNumberId, wabaId);
+                const senderId = message.from;
+                const senderName = value.contacts?.[0]?.profile?.name || 'Unknown';
+                console.log(`[WhatsApp Webhook] Inbound from ${senderName} (${senderId}). Type: ${message.type}`);
+
+                const lookupKeys = [
+                    phoneNumberId,
+                    wabaId,
+                    phoneNumberId ? `official_${phoneNumberId}` : null,
+                    wabaId ? `official_${wabaId}` : null
+                ].filter(Boolean);
+
+                let pageData = { config: null, prompts: null };
+                for (const lookupKey of lookupKeys) {
+                    const candidate = await getCachedPageData(lookupKey);
+                    if (candidate?.config) {
+                        pageData = candidate;
+                        break;
+                    }
                 }
+
+                if (!pageData.config) {
+                    console.warn(`[WhatsApp Webhook] No config found for lookup keys: ${lookupKeys.join(', ')}`);
+                    continue;
+                }
+
+                const batchKey = `${senderId}:${pageData.config.session_name || pageData.config.waba_id || wabaId || phoneNumberId}`;
+                const existingBatch = groupedMessages.get(batchKey) || {
+                    messages: [],
+                    config: pageData.config,
+                    prompts: pageData.prompts,
+                    senderName,
+                    senderId,
+                    wabaId,
+                    phoneNumberId
+                };
+
+                existingBatch.messages.push(message);
+                groupedMessages.set(batchKey, existingBatch);
             }
-        }
-    }
-}
 
-async function queueWhatsAppMessage(message, value, phoneNumberId, wabaId) {
-    const senderId = message.from;
-    const senderName = value.contacts?.[0]?.profile?.name || 'Unknown';
-
-    const lookupKeys = [
-        phoneNumberId,
-        wabaId,
-        phoneNumberId ? `official_${phoneNumberId}` : null,
-        wabaId ? `official_${wabaId}` : null
-    ].filter(Boolean);
-
-    let pageData = { config: null, prompts: null };
-    for (const lookupKey of lookupKeys) {
-        const candidate = await getCachedPageData(lookupKey);
-        if (candidate?.config) {
-            pageData = candidate;
-            break;
-        }
-    }
-
-    const effectiveSessionName = pageData.config?.session_name || `official_${wabaId || phoneNumberId}`;
-    const batchKey = `${senderId}:${effectiveSessionName}`;
-
-    // --- EXTRACT MEDIA ---
-    const thisMsgImages = [];
-    const thisMsgAudios = [];
-    const { imageUrls: msgImages, audioUrls: msgAudios } = await collectOfficialMediaUrls(message, pageData.config?.cloud_access_token);
-    thisMsgImages.push(...msgImages);
-    thisMsgAudios.push(...msgAudios);
-
-    // Initialize buffer if not exists
-    if (!waDebounceMap.has(batchKey)) {
-        waDebounceMap.set(batchKey, {
-            messages: [],
-            timer: null,
-            isProcessing: false,
-            config: pageData.config,
-            prompts: pageData.prompts,
-            senderName,
-            wabaId,
-            phoneNumberId
-        });
-    }
-
-    const sessionData = waDebounceMap.get(batchKey);
-
-    sessionData.messages.push({
-        ...message,
-        images: thisMsgImages,
-        audios: thisMsgAudios,
-        timestamp: Date.now()
-    });
-
-    console.log(`[WA Debounce] Queued message for ${batchKey}. Buffer size: ${sessionData.messages.length} (Processing: ${sessionData.isProcessing})`);
-
-    if (sessionData.isProcessing) {
-        console.log(`[WA Debounce] Session ${batchKey} is busy processing. Message appended to buffer.`);
-        return;
-    }
-
-    if (sessionData.timer) {
-        clearTimeout(sessionData.timer);
-    }
-
-    // Dynamic Debounce from Cache/DB
-    let debounceTime = 8000; // Default 8s
-    if (pageData.prompts && pageData.prompts.wait !== undefined) {
-        debounceTime = Number(pageData.prompts.wait) * 1000;
-    }
-
-    if (debounceTime < 0) debounceTime = 0;
-
-    console.log(`[WA Debounce] Using wait time: ${debounceTime}ms for ${batchKey}`);
-
-    sessionData.timer = setTimeout(async () => {
-        sessionData.isProcessing = true;
-        try {
-            await processWhatsAppBufferedMessages(batchKey);
-        } catch (err) {
-            console.error(`[WA Debounce] Error processing buffered messages for ${batchKey}:`, err);
-        } finally {
-            const remaining = waDebounceMap.get(batchKey);
-            if (remaining && remaining.messages.length > 0) {
-                console.log(`[WA Debounce] More messages in buffer for ${batchKey}. Processing again...`);
-                remaining.isProcessing = false;
-                await processWhatsAppBufferedMessages(batchKey);
-            } else {
-                console.log(`[WA Debounce] No more messages for ${batchKey}. Cleaning up...`);
-                waDebounceMap.delete(batchKey);
+            for (const batch of groupedMessages.values()) {
+                console.log(`[WhatsApp Webhook] Processing batch for ${batch.senderId} (${batch.messages.length} msgs)`);
+                await processWhatsAppBatch(
+                    batch.messages,
+                    batch.config,
+                    batch.prompts,
+                    batch.senderName,
+                    batch.senderId,
+                    batch.wabaId,
+                    batch.phoneNumberId
+                );
             }
-        }
-    }, debounceTime);
-}
-
-async function processWhatsAppBufferedMessages(batchKey) {
-    const sessionData = waDebounceMap.get(batchKey);
-    if (!sessionData) return;
-
-    const bufferedMessages = sessionData.messages;
-    sessionData.messages = []; // Clear buffer immediately
-
-    if (bufferedMessages.length === 0) {
-        console.log(`[WA Debounce] No messages to process for ${batchKey}`);
-        return;
-    }
-
-    console.log(`[WA Debounce] Processing ${bufferedMessages.length} buffered messages for ${batchKey}`);
-
-    await processWhatsAppBatch(
-        bufferedMessages,
-        sessionData.config,
-        sessionData.prompts,
-        sessionData.senderName,
-        bufferedMessages[0].from,
-        sessionData.wabaId,
-        sessionData.phoneNumberId
-    );
-}
-
-// Process WhatsApp Cloud API status updates (outgoing messages from business/admin)
-async function processWhatsAppStatus(status, value, phoneNumberId, wabaId) {
-    const messageId = status.id;
-    const recipientId = status.recipient_id;
-    const statusType = status.status;
-    const conversation = status.conversation;
-    const pricing = status.pricing;
-    console.log(`[WhatsApp Webhook] Status update: ${statusType} for message ${messageId} to ${recipientId}`);
-
-    // Find config first
-    const lookupKeys = [
-        phoneNumberId,
-        wabaId,
-        phoneNumberId ? `official_${phoneNumberId}` : null,
-        wabaId ? `official_${wabaId}` : null
-    ].filter(Boolean);
-
-    let pageData = { config: null, prompts: null };
-    for (const lookupKey of lookupKeys) {
-        const candidate = await getCachedPageData(lookupKey);
-        if (candidate?.config) {
-            pageData = candidate;
-            break;
-        }
-    }
-
-    if (!pageData.config) {
-        console.warn(`[WhatsApp Webhook] No config found for status update: ${lookupKeys.join(', ')}`);
-        return;
-    }
-
-    const effectiveSessionName = pageData.config.session_name || `official_${wabaId || phoneNumberId}`;
-
-    // Try to get the message text from status or webhook value
-    let text = '';
-    if (value.messages && value.messages.length > 0) {
-        const matchingMsg = value.messages.find(m => m.id === messageId);
-        if (matchingMsg) {
-            text = extractOfficialMessageText(matchingMsg);
-        }
-    }
-
-    // Check if this is a duplicate or a bot message (echo filter)
-    const existingChat = await dbService.getWhatsAppChatById(messageId);
-    if (existingChat) {
-        if (existingChat.reply_by === 'bot' || existingChat.reply_by === 'system') {
-            console.log(`[WhatsApp Webhook] This status is a bot message, skipping admin save`);
-            return;
-        }
-        if (existingChat.reply_by === 'admin') {
-            console.log(`[WhatsApp Webhook] This admin message already saved, skipping`);
-            return;
-        }
-    }
-
-    // Check recent bot replies to filter out echoes
-    const recentBotRepliesForUser = recentBotReplies.get(recipientId) || [];
-    const normalizedText = normalizeText(text);
-    const isEcho = recentBotRepliesForUser.some(reply => {
-        const timeDiff = Date.now() - reply.timestamp;
-        return timeDiff < 20000 && reply.text === normalizedText;
-    });
-
-    if (isEcho) {
-        console.log(`[WhatsApp Webhook] This status is a bot echo, skipping admin save`);
-        return;
-    }
-
-    // If not a bot message/echo, save as admin message
-    console.log(`[WhatsApp Webhook] Saving admin message: ${text.substring(0, Math.min(50, text.length))}...`);
-
-    await dbService.saveWhatsAppChat({
-        session_name: effectiveSessionName,
-        sender_id: phoneNumberId,
-        recipient_id: recipientId,
-        message_id: messageId,
-        text: text,
-        timestamp: Date.now(),
-        status: statusType,
-        reply_by: 'admin'
-    });
-
-    // Emoji Lock/Unlock Check
-    const config = pageData.config;
-    const prompts = pageData.prompts || {};
-
-    const lockList = [
-        prompts.block_emoji,
-        prompts.lock_emojis,
-        prompts.block_emojis,
-        config.block_emoji,
-        config.lock_emojis,
-        config.block_emojis
-    ].filter(Boolean).join(',').split(/[, ]+/).map(e => normalizeText(e.trim())).filter(e => e);
-
-    const unlockList = [
-        prompts.unblock_emoji,
-        prompts.unlock_emojis,
-        prompts.unblock_emojis,
-        config.unblock_emoji,
-        config.unlock_emojis,
-        config.unblock_emojis
-    ].filter(Boolean).join(',').split(/[, ]+/).map(e => normalizeText(e.trim())).filter(e => e);
-
-    const cleanText = normalizeText(text);
-    let isLocked = lockList.some(e => cleanText.includes(e));
-    let isUnlocked = !isLocked && unlockList.some(e => cleanText.includes(e));
-
-    if (isLocked) {
-        await dbService.toggleWhatsAppLock(effectiveSessionName, recipientId, true);
-        console.log(`[Handover Lock] Locked WA chat for User ${recipientId} via emoji.`);
-        trackBotReply(recipientId, text);
-        try {
-            await whatsappCloudService.sendTextMessage(phoneNumberId, config.cloud_access_token, recipientId, text);
-        } catch (sendErr) {
-            console.warn(`[Handover Lock] Failed to send lock emoji: ${sendErr.message}`);
-        }
-    } else if (isUnlocked) {
-        await dbService.toggleWhatsAppLock(effectiveSessionName, recipientId, false);
-        console.log(`[Handover Lock] Unlocked WA chat for User ${recipientId} via emoji.`);
-        trackBotReply(recipientId, text);
-        try {
-            await whatsappCloudService.sendTextMessage(phoneNumberId, config.cloud_access_token, recipientId, text);
-        } catch (sendErr) {
-            console.warn(`[Handover Lock] Failed to send unlock emoji: ${sendErr.message}`);
         }
     }
 }
@@ -2815,29 +2250,6 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         }
         // --------------------------
 
-        // --- ADMIN REPLY CHECK ---
-        // If admin replied last, skip bot reply
-        const lastMessage = await dbService.getLastMessageInFbConversation(pageId, senderId);
-        if (lastMessage && lastMessage.reply_by === 'admin') {
-            const logMsg = `[Skip] Bot skipped for ${senderId} on Page ${pageId} because last message was from admin.`;
-            console.log(logMsg);
-            if (typeof logToFile === 'function') logToFile(logMsg);
-            // Save skipped status to DB for visibility
-            const pendingMessageId = `bot_skip_${Date.now()}`;
-            await saveFbOutgoingLog({
-                pageId,
-                recipientId: senderId,
-                messageId: pendingMessageId,
-                text: '[Bot skipped: Last message from admin]',
-                status: 'skipped_admin_reply',
-                replyBy: 'bot',
-                token: 0,
-                aiModel: 'admin-check'
-            });
-            return;
-        }
-        // --------------------------
-
         // --- OPTIMIZATION: PARALLEL DATA FETCHING (Modified for Dynamic History) ---
         // 1. Fetch Page Prompts FIRST to get the 'check_conversion' (History Limit)
         // This ensures we only fetch exactly what the user configured (Token Saving)
@@ -2894,7 +2306,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                     if (adData.linked_product_ids && Array.isArray(adData.linked_product_ids) && adData.linked_product_ids.length > 0) {
                         const productDetails = [];
                         for (const pId of adData.linked_product_ids) {
-                            const p = await dbService.getProductByIdForPage(pId, pageId);
+                            const p = await dbService.getProductById(pId);
                             if (p) {
                                 productDetails.push(`${p.name} (Price: ${p.price} ${p.currency || 'BDT'})`);
                             }
@@ -3283,11 +2695,13 @@ STRICT RULES:
         const professionalRules = `\n\n[PROFESSIONAL OUTPUT RULES]\n` +
                 `1) IDENTITY: You are a professional human sales representative. Talk naturally.\n` +
                 `2) TOOL-FIRST: If the user asks about product price/details, you MUST call tools. Do NOT invent prices or descriptions.\n` +
-                `3) VERIFIED PRODUCT IDS ONLY: If you include [PRODUCT_ID:id], it MUST be an exact numeric database product ID already returned by tool/database context. Never invent, rename, or slugify product IDs.\n` +
-                `4) VERIFIED MEDIA ONLY: Never write or invent image URLs, file names, domains, or CDN links. Use only verified tool/database product context.\n` +
-                `5) SYSTEM PROMPT PRIORITY: If your custom instructions (System Prompt) say NOT to send images proactively, you MUST obey that and only use the [PRODUCT_ID:id] tag when the user explicitly asks for a photo.\n` +
-                `6) LISTING PRODUCTS: If asked "What do you sell?", list 3-5 names naturally and ask which one they are interested in.\n` +
-                `7) NO HALLUCINATIONS: Never guess or invent prices, IDs, descriptions, or media links. Always use tool data only.\n`;
+                `3) IMAGE DECISION: If you decide to send a product's image (based on user request or appropriateness), you MUST append [PRODUCT_ID:id] to your reply. Example: "Yes, it is available. [PRODUCT_ID:82]".\n` +
+                `4) SYSTEM PROMPT PRIORITY: If your custom instructions (System Prompt) say NOT to send images proactively, you MUST obey that and only use the [PRODUCT_ID:id] tag when the user explicitly asks for a photo.\n` +
+                `5) SMART PHOTO FLOW: If the customer asks for a photo but multiple products/options are active in the conversation, do NOT guess and do NOT send all photos. Ask which specific product they want first.\n` +
+                `6) PHOTO SCOPE: If one product is clearly selected, focus only on that product. Only send all variants/images when the customer explicitly asks for all images of that selected product.\n` +
+                `7) LISTING PRODUCTS: If asked "What do you sell?", list 3-5 names naturally and ask which one they are interested in.\n` +
+                `8) DELIVERY CLAIMS: Never say a photo has already been sent or delivered. Keep the wording neutral; the system will decide final delivery wording.\n` +
+                `9) NO HALLUCINATIONS: Never guess or invent prices. Always use tool data only.\n`;
 
         if (finalPrompt) {
              finalPrompt += professionalRules;
@@ -3357,6 +2771,14 @@ STRICT RULES:
 
         let replyText = aiResponse.reply || "";
 
+        if (aiResponse.product_id) {
+            try {
+                await dbService.setConversationState(pageId, senderId, { last_product_id: aiResponse.product_id });
+            } catch (stateErr) {
+                console.warn(`[Context] Failed to update Messenger conversation state: ${stateErr.message}`);
+            }
+        }
+
         // --- NEW PROFESSIONAL TAG PROCESSOR (PRODUCT_ID) ---
         // Robust check for the tag, allowing for variations in spacing and quotes
         if (/\[PRODUCT_ID\s*:\s*/i.test(replyText)) {
@@ -3371,14 +2793,8 @@ STRICT RULES:
                 const productId = match[1].trim().replace(/["']/g, ''); // Extra cleanup for quotes
 
                 try {
-                    if (!isStrictNumericProductId(productId)) {
-                        console.warn(`[TagProcessor] Blocked fake PRODUCT_ID "${productId}".`);
-                        replyText = replyText.split(fullTag).join(`\n(Product info currently unavailable)`);
-                        continue;
-                    }
-
                     // Fetch product by exact ID
-                    const product = await dbService.getProductByIdForPage(productId, pageId);
+                    const product = await dbService.getProductById(productId);
                     if (product) {
                         const numericPrice = parsePrice(product.price);
                         let priceDisplay = numericPrice > 0 ? `${numericPrice} ${product.currency || 'BDT'}` : "Ask for Price";
@@ -3573,11 +2989,11 @@ STRICT RULES:
         if (hasPhotoIntent(effectiveHistory)) {
             let targetProductId = null;
             const state = await dbService.getConversationState(pageId, senderId);
-            if (state && isStrictNumericProductId(state.last_product_id)) targetProductId = state.last_product_id;
-            if (!targetProductId && isStrictNumericProductId(aiResponse.product_id)) targetProductId = aiResponse.product_id;
+            if (state && state.last_product_id) targetProductId = state.last_product_id;
+            if (!targetProductId && aiResponse.product_id) targetProductId = aiResponse.product_id;
             
             if (targetProductId) {
-                const product = await dbService.getProductByIdForPage(targetProductId, pageId);
+                const product = await dbService.getProductById(targetProductId);
                 if (product) {
                     const urls = [];
                     // 1. Add Primary Image
@@ -3921,109 +3337,70 @@ STRICT RULES:
 
         // --- TIER 2: AGENTIC ACTION (Priority if no Tags exist) ---
         if (extractedImages.length === 0 && (aiResponse.action && aiResponse.action !== "NONE" || hasPhotoIntent(effectiveHistory))) {
-            // Check if user asked for "all" or similar (Bangla & English)
-            const isRequestForAll = /\b(all|sob|সব|সবগুলো|সবগুলা)\b/i.test(combinedRawText);
+            let targetId = aiResponse.product_id;
             
-            if (isRequestForAll) {
-                // Search for matching products and get all their images
-                try {
-                    const searchResults = await dbService.searchProductsForResource(combinedRawText, pageId);
-                    if (searchResults && searchResults.length > 0) {
-                        for (const product of searchResults) {
-                            const primaryUrl = product.image_url ? normalizeImageUrl(product.image_url) : null;
-                            let additional = [];
-                            if (Array.isArray(product.additional_images)) additional = product.additional_images;
-                            else if (typeof product.additional_images === 'string') {
-                                try { additional = JSON.parse(product.additional_images); } catch(e) { additional = product.additional_images.split(',').map(s => s.trim()); }
-                            }
-                            
-                            const urls = [primaryUrl, ...additional].filter(Boolean).map(normalizeImageUrl);
-                            urls.forEach(u => {
-                                if (!extractedImages.some(img => img.url === u)) {
-                                    extractedImages.push({ url: u, title: product.name, description: product.description || '' });
-                                }
-                            });
-                            
-                            if (product.video_url) {
-                                const fullVideoUrl = normalizeImageUrl(product.video_url);
-                                if (fullVideoUrl && !extractedVideos.some(video => video.url === fullVideoUrl)) {
-                                    extractedVideos.push({ url: fullVideoUrl, title: product.name, description: product.description || '' });
-                                }
-                            }
-                        }
-                    }
-                } catch (searchErr) {
-                    console.warn(`[Messenger Webhook] All-products search failed: ${searchErr.message}`);
+            // RECOVERY: If AI forgot the product_id but we have it in State Memory
+            if (!targetId && hasPhotoIntent(effectiveHistory)) {
+                const state = await dbService.getConversationState(pageId, senderId);
+                if (state && state.last_product_id) {
+                    targetId = state.last_product_id;
+                    console.log(`[Image Selection] TIER 2 Recovery: Using last_product_id from Memory: ${targetId}`);
                 }
-            } else {
-                let targetId = isStrictNumericProductId(aiResponse.product_id) ? aiResponse.product_id : null;
-                if (aiResponse.product_id && !targetId) {
-                    console.warn(`[Image Selection] Blocked non-numeric agentic product_id: ${aiResponse.product_id}`);
-                }
-                
-                // RECOVERY: If AI forgot the product_id but we have it in State Memory
-                if (!targetId && hasPhotoIntent(effectiveHistory)) {
-                    const state = await dbService.getConversationState(pageId, senderId);
-                    if (state && isStrictNumericProductId(state.last_product_id)) {
-                        targetId = state.last_product_id;
-                        console.log(`[Image Selection] TIER 2 Recovery: Using last_product_id from Memory: ${targetId}`);
-                    }
-                }
+            }
 
-                if (targetId) {
-                    console.log(`[Image Selection] TIER 2: Using Agentic Delivery for ID: ${targetId}`);
-                    try {
-                        // Check if product_id is a valid number (BigInt compatible)
-                        const isNumericId = /^\d+$/.test(String(targetId));
-                        if (isNumericId) {
-                            const product = await dbService.getProductByIdForPage(targetId, pageId);
-                            if (product) {
-                                if (aiResponse.action === "SEND_DETAILS" || aiResponse.action === "SEND_BOTH") {
-                                    if (!replyText || replyText.length < 50) {
-                                        const numericPrice = parsePrice(product.price);
-                                        const priceDisplay = numericPrice > 0 ? `${numericPrice} ${product.currency || 'BDT'}` : "Ask for Price";
-                                        const details = `🛍️ *${product.name}*\n💰 Price: ${priceDisplay}\n📝 Info: ${product.description || 'No details available.'}`;
-                                        replyText = `${replyText}\n\n${details}`;
+            if (targetId) {
+                console.log(`[Image Selection] TIER 2: Using Agentic Delivery for ID: ${targetId}`);
+                try {
+                    // Check if product_id is a valid number (BigInt compatible)
+                    const isNumericId = /^\d+$/.test(String(targetId));
+                    if (isNumericId) {
+                        const product = await dbService.getProductById(targetId);
+                        if (product) {
+                            if (aiResponse.action === "SEND_DETAILS" || aiResponse.action === "SEND_BOTH") {
+                                if (!replyText || replyText.length < 50) {
+                                    const numericPrice = parsePrice(product.price);
+                                    const priceDisplay = numericPrice > 0 ? `${numericPrice} ${product.currency || 'BDT'}` : "Ask for Price";
+                                    const details = `🛍️ *${product.name}*\n💰 Price: ${priceDisplay}\n📝 Info: ${product.description || 'No details available.'}`;
+                                    replyText = `${replyText}\n\n${details}`;
+                                }
+                            }
+                            
+                            // Always fetch images if it's a SEND_PHOTO, SEND_BOTH, or if user explicitly asked for photos
+                            if (aiResponse.action === "SEND_PHOTO" || aiResponse.action === "SEND_BOTH" || hasPhotoIntent(effectiveHistory)) {
+                                const urls = [];
+                                if (product.image_url) {
+                                    const fullUrl = normalizeImageUrl(product.image_url);
+                                    if (fullUrl) urls.push(fullUrl);
+                                }
+                                if (product.video_url) {
+                                    const fullVideoUrl = normalizeImageUrl(product.video_url);
+                                    if (fullVideoUrl && !extractedVideos.some(video => video.url === fullVideoUrl)) {
+                                        extractedVideos.push({ url: fullVideoUrl, title: product.name, description: product.description || '' });
                                     }
                                 }
                                 
-                                // Always fetch images if it's a SEND_PHOTO, SEND_BOTH, SEND_DETAILS, or if user explicitly asked for photos
-                                if (aiResponse.action === "SEND_PHOTO" || aiResponse.action === "SEND_BOTH" || aiResponse.action === "SEND_DETAILS" || hasPhotoIntent(effectiveHistory)) {
-                                    const urls = [];
-                                    if (product.image_url) {
-                                        const fullUrl = normalizeImageUrl(product.image_url);
-                                        if (fullUrl) urls.push(fullUrl);
-                                    }
-                                    if (product.video_url) {
-                                        const fullVideoUrl = normalizeImageUrl(product.video_url);
-                                        if (fullVideoUrl && !extractedVideos.some(video => video.url === fullVideoUrl)) {
-                                            extractedVideos.push({ url: fullVideoUrl, title: product.name, description: product.description || '' });
-                                        }
-                                    }
-                                    
-                                    let additional = [];
-                                    if (Array.isArray(product.additional_images)) additional = product.additional_images;
-                                    else if (typeof product.additional_images === 'string') {
-                                        try { additional = JSON.parse(product.additional_images); } catch(e) { additional = product.additional_images.split(',').map(s => s.trim()); }
-                                    }
-                                    if (Array.isArray(additional)) {
-                                        additional.forEach(u => {
-                                            const nU = normalizeImageUrl(u);
-                                            if (nU && !urls.includes(nU)) urls.push(nU);
-                                        });
-                                    }
-
-                                    urls.forEach(u => {
-                                        if (!extractedImages.some(img => img.url === u)) {
-                                            extractedImages.push({ url: u, title: product.name, description: product.description || '' });
-                                        }
+                                let additional = [];
+                                if (Array.isArray(product.additional_images)) additional = product.additional_images;
+                                else if (typeof product.additional_images === 'string') {
+                                    try { additional = JSON.parse(product.additional_images); } catch(e) { additional = product.additional_images.split(',').map(s => s.trim()); }
+                                }
+                                if (Array.isArray(additional)) {
+                                    additional.forEach(u => {
+                                        const nU = normalizeImageUrl(u);
+                                        if (nU && !urls.includes(nU)) urls.push(nU);
                                     });
                                 }
+
+                                urls.forEach(u => {
+                                    if (!extractedImages.some(img => img.url === u)) {
+                                        extractedImages.push({ url: u, title: product.name, description: product.description || '' });
+                                    }
+                                });
                             }
                         }
-                    } catch (err) {
-                        console.error(`[Agentic Delivery] Failed:`, err.message);
                     }
+                } catch (err) {
+                    console.error(`[Agentic Delivery] Failed:`, err.message);
                 }
             }
         }
@@ -4100,6 +3477,36 @@ STRICT RULES:
             uniqueVideoUrls.add(video.url);
             return true;
         });
+
+        const photoDecision = normalizePhotoDecision(aiResponse.photo_decision);
+        const isPhotoRequestFlow = aiResponse.action === 'SEND_PHOTO'
+            || aiResponse.action === 'SEND_BOTH'
+            || hasPhotoIntent(effectiveHistory);
+
+        if (isPhotoRequestFlow && photoDecision) {
+            if (photoDecision.target_product_id && !aiResponse.product_id) {
+                aiResponse.product_id = photoDecision.target_product_id;
+            }
+
+            if (photoDecision.clarification_needed) {
+                aiResponse.images = [];
+                aiResponse.videos = [];
+                aiResponse.action = 'NONE';
+                aiResponse.product_id = null;
+                if (photoDecision.clarification_text) {
+                    replyText = photoDecision.clarification_text;
+                }
+                console.log(`[Photo Clarification] AI requested clarification before sending media.`);
+            } else if (photoDecision.requested_scope !== 'all' && aiResponse.images.length > 2) {
+                const trimmedCount = aiResponse.images.length - 2;
+                aiResponse.images = aiResponse.images.slice(0, 2);
+                if (!/আরও ছবি/i.test(replyText)) {
+                    const moreHint = `আরও ছবি লাগলে বলবেন, আমি বাকি ছবিগুলোও দেখাচ্ছি।`;
+                    replyText = replyText ? `${replyText}\n\n${moreHint}` : moreHint;
+                }
+                console.log(`[Photo Scope] Applied AI-focused image scope. Trimmed ${trimmedCount} extra image(s).`);
+            }
+        }
 
         // NEW SMART TAG DETECTION
         let promptMode = decisionMode;

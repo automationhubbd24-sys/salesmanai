@@ -737,37 +737,15 @@ router.get('/contacts', authMiddleware, async (req, res) => {
             return res.status(403).json({ error: 'Forbidden' });
         }
 
-        let result;
-        try {
-            result = await pgClient.query(
-                `
-                SELECT phone_number, is_locked, labels, ai_action
-                FROM whatsapp_contacts
-                WHERE session_name = $1
-                `,
-                [sessionName]
-            );
-        } catch (err) {
-            if (err && err.code === '42703') {
-                const fallbackResult = await pgClient.query(
-                    `
-                    SELECT phone_number, is_locked
-                    FROM whatsapp_contacts
-                    WHERE session_name = $1
-                    `,
-                    [sessionName]
-                );
-                result = {
-                    rows: fallbackResult.rows.map(row => ({
-                        ...row,
-                        labels: [],
-                        ai_action: 'continue'
-                    }))
-                };
-            } else {
-                throw err;
-            }
-        }
+        const result = await pgClient.query(
+            `
+            SELECT phone_number, is_locked
+            FROM whatsapp_contacts
+            WHERE session_name = $1
+              AND is_locked = true
+            `,
+            [sessionName]
+        );
 
         res.json(result.rows);
     } catch (err) {

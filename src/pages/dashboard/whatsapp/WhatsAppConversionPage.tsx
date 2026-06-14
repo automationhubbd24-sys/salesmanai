@@ -58,9 +58,6 @@ export default function WhatsAppConversionPage() {
   const [tokenBreakdown, setTokenBreakdown] = useState<Record<string, number>>({});
   const [expandedMessageIds, setExpandedMessageIds] = useState<Set<string | number>>(new Set());
   const [lockedContacts, setLockedContacts] = useState<Record<string, boolean>>({});
-  const [contactLabels, setContactLabels] = useState<Record<string, string[]>>({});
-  const [contactAiActions, setContactAiActions] = useState<Record<string, string>>({});
-
   const [currentPageNum, setCurrentPageNum] = useState(1);
   const [totalMessages, setTotalMessages] = useState(0);
   const LIMIT = 50;
@@ -87,19 +84,11 @@ export default function WhatsAppConversionPage() {
       if (!res.ok) return;
 
       const data = await res.json();
-      const lockedMap: Record<string, boolean> = {};
-      const labelsMap: Record<string, string[]> = {};
-      const aiActionsMap: Record<string, string> = {};
-      
+      const map: Record<string, boolean> = {};
       (Array.isArray(data) ? data : []).forEach((c: any) => {
-        lockedMap[c.phone_number] = c.is_locked;
-        labelsMap[c.phone_number] = c.labels || [];
-        aiActionsMap[c.phone_number] = c.ai_action || 'continue';
+        map[c.phone_number] = c.is_locked;
       });
-      
-      setLockedContacts(lockedMap);
-      setContactLabels(labelsMap);
-      setContactAiActions(aiActionsMap);
+      setLockedContacts(map);
     } catch (e) {
       console.error("Error fetching contacts:", e);
     }
@@ -565,7 +554,6 @@ export default function WhatsAppConversionPage() {
                 <TableHead>Time</TableHead>
                 <TableHead>Message</TableHead>
                 <TableHead>Reply By</TableHead>
-                <TableHead>Labels</TableHead>
                 <TableHead>Tokens</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -574,22 +562,17 @@ export default function WhatsAppConversionPage() {
             <TableBody>
               {loading && messages.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center">Loading...</TableCell>
+                  <TableCell colSpan={6} className="text-center">Loading...</TableCell>
                 </TableRow>
               ) : messages.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center">No messages found for this session</TableCell>
+                  <TableCell colSpan={6} className="text-center">No messages found for this session</TableCell>
                 </TableRow>
               ) : (
-                messages.map((msg) => {
-                  const phoneNumber = msg.sender_id || msg.recipient_id || '';
-                  const labels = contactLabels[phoneNumber] || [];
-                  const contactId = msg.reply_by === 'user' ? msg.sender_id : msg.recipient_id;
-                  const isLocked = !!lockedContacts[contactId];
-
-                  return (
+                messages.map((msg) => (
                   <TableRow key={msg.id || msg.message_id}>
                     <TableCell>{formatTimestamp(msg.timestamp)}</TableCell>
+                    <TableCell className="font-mono text-xs">{msg.sender_id}</TableCell>
                     <TableCell
                       className={`max-w-[300px] cursor-pointer transition-all text-primary hover:text-primary/80 hover:underline ${
                         expandedMessageIds.has(msg.id || msg.message_id || 'unknown')
@@ -606,25 +589,11 @@ export default function WhatsAppConversionPage() {
                         className={`px-2 py-1 rounded-full text-xs border ${
                           msg.reply_by === 'bot'
                             ? 'bg-primary/10 text-primary border-primary/40'
-                            : msg.reply_by === 'admin'
-                            ? 'bg-green-500/10 text-green-500 border-green-500/40'
                             : 'bg-muted/10 text-muted-foreground border-border'
                         }`}
                       >
                         {msg.reply_by || 'Unknown'}
                       </span>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1">
-                        {labels.map((label, idx) => (
-                          <span
-                            key={idx}
-                            className="px-2 py-0.5 rounded-full text-xs bg-blue-500/10 text-blue-500 border border-blue-500/30"
-                          >
-                            {label}
-                          </span>
-                        ))}
-                      </div>
                     </TableCell>
                     <TableCell>
                       {msg.token_usage ? (
@@ -649,9 +618,7 @@ export default function WhatsAppConversionPage() {
                               ? 'bg-cyan-500/10 text-cyan-500 border-cyan-500/40'
                               : msg.status === 'analyzed'
                                 ? 'bg-violet-500/10 text-violet-500 border-violet-500/40'
-                                : msg.status === 'skipped_admin_reply'
-                                  ? 'bg-orange-500/10 text-orange-500 border-orange-500/40'
-                                  : 'bg-yellow-500/10 text-yellow-500 border-yellow-500/40'
+                                : 'bg-yellow-500/10 text-yellow-500 border-yellow-500/40'
                         }`}
                       >
                         {msg.status}
@@ -659,25 +626,30 @@ export default function WhatsAppConversionPage() {
                     </TableCell>
                     <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-2">
-                            {contactId && contactId !== activeSessionName ? (
-                                <Button 
-                                    variant="ghost" 
-                                    size="sm" 
-                                    onClick={() => handleToggleLock(contactId)}
-                                    className="h-8 w-8 p-0"
-                                    title={isLocked ? "Unlock AI" : "Lock AI (Handover)"}
-                                >
-                                    {isLocked ? 
-                                        <Lock className="h-4 w-4 text-red-500" /> : 
-                                        <Unlock className="h-4 w-4 text-emerald-500" />
-                                    }
-                                </Button>
-                            ) : null}
+                            {(() => {
+                                const contactId = msg.reply_by === 'user' ? msg.sender_id : msg.recipient_id;
+                                if (!contactId || contactId === activeSessionName) return null;
+                                const isLocked = !!lockedContacts[contactId];
+                                
+                                return (
+                                    <Button 
+                                        variant="ghost" 
+                                        size="sm" 
+                                        onClick={() => handleToggleLock(contactId)}
+                                        className="h-8 w-8 p-0"
+                                        title={isLocked ? "Unlock AI" : "Lock AI (Handover)"}
+                                    >
+                                        {isLocked ? 
+                                            <Lock className="h-4 w-4 text-red-500" /> : 
+                                            <Unlock className="h-4 w-4 text-emerald-500" />
+                                        }
+                                    </Button>
+                                );
+                            })()}
                         </div>
                     </TableCell>
                   </TableRow>
-                  );
-                })
+                ))
               )}
             </TableBody>
           </Table>

@@ -35,7 +35,7 @@ const APP_ID = import.meta.env.VITE_FACEBOOK_APP_ID || "3741087806186945";
 const CONFIG_ID = import.meta.env.VITE_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID || "2197274487770639";
 const GRAPH_VERSION = import.meta.env.VITE_FACEBOOK_GRAPH_VERSION || "v25.0";
 const SIGNUP_META_WAIT_MS = 15000;
-const DEBUG_SERVER_URL = "http://10.2.0.2:7777/event";
+const DEBUG_SERVER_URL = import.meta.env.VITE_DEBUG_SERVER_URL || "";
 const DEBUG_SESSION_ID = "whatsapp-loading-stuck";
 
 function isAllowedFacebookOrigin(origin: string) {

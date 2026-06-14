@@ -162,16 +162,15 @@ async function getConversationState(pageId, senderId) {
 async function setConversationState(pageId, senderId, data) {
     try {
         await query(
-            `INSERT INTO conversation_state (page_id, sender_id, last_product_id, last_variant_key, last_intent, last_user_query, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, NOW())
+            `INSERT INTO conversation_state (page_id, sender_id, last_product_id, last_variant_key, last_intent, updated_at)
+             VALUES ($1, $2, $3, $4, $5, NOW())
              ON CONFLICT (page_id, sender_id) 
              DO UPDATE SET 
                 last_product_id = EXCLUDED.last_product_id,
                 last_variant_key = EXCLUDED.last_variant_key,
                 last_intent = EXCLUDED.last_intent,
-                last_user_query = COALESCE(EXCLUDED.last_user_query, conversation_state.last_user_query),
                 updated_at = NOW()`,
-            [pageId, senderId, data.last_product_id || null, data.last_variant_key || null, data.last_intent || null, data.last_user_query || null]
+            [pageId, senderId, data.last_product_id || null, data.last_variant_key || null, data.last_intent || null]
         );
         return true;
     } catch (error) {
@@ -215,6 +214,20 @@ async function checkDuplicate(messageId) {
 async function deductCredit(pageId, amount = 1) {
     const { query } = require('./pgClient');
     try {
+        // Migration on-the-fly: Ensure columns exist in user_configs
+        try {
+            await query(`
+                ALTER TABLE user_configs 
+                ADD COLUMN IF NOT EXISTS daily_limit NUMERIC DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS daily_used NUMERIC DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS monthly_used NUMERIC DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS bonus_credit NUMERIC DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS permanent_credit NUMERIC DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS last_reset_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                ADD COLUMN IF NOT EXISTS last_monthly_reset_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+            `);
+        } catch (e) {}
+
         const pageResult = await query(
             'SELECT user_id, email FROM page_access_token_message WHERE page_id = $1 LIMIT 1',
             [pageId]
@@ -226,19 +239,19 @@ async function deductCredit(pageId, amount = 1) {
         }
 
         const linkedUser = pageResult.rows[0];
-        const userIdStr = String(linkedUser.user_id);
 
         const userConfigResult = await query(
             'SELECT * FROM user_configs WHERE user_id::text = $1::text LIMIT 1',
-            [userIdStr]
+            [String(linkedUser.user_id)]
         );
 
         if (userConfigResult.rows.length === 0) {
-            console.warn(`[Credit] User config not found for ${userIdStr}.`);
+            console.warn(`[Credit] User config not found for ${linkedUser.user_id}.`);
             return false;
         }
 
         const config = userConfigResult.rows[0];
+        const userIdStr = String(linkedUser.user_id);
 
         // --- 1. RESET CHECKS (DAILY & MONTHLY) ---
         const now = new Date();
@@ -271,8 +284,11 @@ async function deductCredit(pageId, amount = 1) {
         }
 
         // --- 2. DEDUCTION LOGIC (SMART ROUTING: Free -> Daily -> Bonus -> Permanent) ---
+        
+        // --- SaaS Level Credit Deduction Logic (Priority Buckets) ---
 
         // 1. Free/Legacy Message Credit (Sign-up or Free Tier - 100 Messages)
+        // User wants this to be used FIRST.
         if (Number(config.message_credit || 0) > 0) {
             await query(
                 'UPDATE user_configs SET message_credit = message_credit - $1 WHERE user_id::text = $2',
@@ -285,7 +301,7 @@ async function deductCredit(pageId, amount = 1) {
         // 2. Daily Limit (Subscription Daily Quota - Resets Daily)
         if (Number(config.daily_limit || 0) > dailyUsed) {
             await query(
-                'UPDATE user_configs SET daily_used = daily_used + $1, monthly_used = monthly_used + $1 WHERE user_id::text = $2',
+                'UPDATE user_configs SET daily_used = daily_used + $1 WHERE user_id::text = $2',
                 [amount, userIdStr]
             );
             console.log(`[Credit] Deducted from Daily Limit for User ${userIdStr}`);
@@ -294,10 +310,9 @@ async function deductCredit(pageId, amount = 1) {
 
         // 3. Bonus Credit (Promotional / Monthly Bonus)
         if (bonusCredit > 0) {
-            const deduct = Math.min(bonusCredit, amount);
             await query(
-                'UPDATE user_configs SET bonus_credit = bonus_credit - $1, monthly_used = monthly_used + $1 WHERE user_id::text = $2',
-                [deduct, userIdStr]
+                'UPDATE user_configs SET bonus_credit = bonus_credit - $1 WHERE user_id::text = $2',
+                [amount, userIdStr]
             );
             console.log(`[Credit] Deducted from Bonus Credit for User ${userIdStr}`);
             return true;
@@ -305,10 +320,9 @@ async function deductCredit(pageId, amount = 1) {
 
         // 4. Permanent Credit (Lifetime Pack - No Expiry)
         if (Number(config.permanent_credit || 0) > 0) {
-            const deduct = Math.min(Number(config.permanent_credit), amount);
             await query(
                 'UPDATE user_configs SET permanent_credit = permanent_credit - $1 WHERE user_id::text = $2',
-                [deduct, userIdStr]
+                [amount, userIdStr]
             );
             console.log(`[Credit] Deducted from Permanent Credit for User ${userIdStr}`);
             return true;
@@ -689,24 +703,12 @@ async function initTables() {
                 last_product_id TEXT,
                 last_variant_key TEXT,
                 last_intent TEXT,
-                last_user_query TEXT,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                 PRIMARY KEY (page_id, sender_id)
             );
             CREATE INDEX IF NOT EXISTS idx_conv_state_updated ON conversation_state(updated_at DESC);
         `);
         console.log("[DB] 'conversation_state' table initialized.");
-
-        // Add last_user_query column if it doesn't exist
-        await query(`
-            DO $$ 
-            BEGIN 
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='conversation_state' AND column_name='last_user_query') THEN
-                    ALTER TABLE conversation_state ADD COLUMN last_user_query TEXT;
-                END IF;
-            END $$;
-        `);
-        console.log("[DB] 'conversation_state' table checked for last_user_query column.");
 
         // Ensure 'custom_base_url' column exists
         await query(`
@@ -1426,6 +1428,14 @@ async function createWhatsAppSessionEntry(sessionName, userId, planDays = 30, in
 async function getWhatsAppConfig(sessionName) {
     const { query } = require('./pgClient');
 
+    await query(`
+        ALTER TABLE whatsapp_message_database
+        ADD COLUMN IF NOT EXISTS provider_type text,
+        ADD COLUMN IF NOT EXISTS waba_id text,
+        ADD COLUMN IF NOT EXISTS phone_number_id text,
+        ADD COLUMN IF NOT EXISTS cloud_access_token text
+    `);
+
     const mainResult = await query(
         `SELECT *
          FROM whatsapp_message_database
@@ -1453,22 +1463,16 @@ async function getWhatsAppConfig(sessionName) {
     // 2. Fetch Centralized User Credit (Sync across all members & pages)
     if (data.user_id) {
         const creditResult = await query(
-            'SELECT message_credit, bonus_credit, permanent_credit, daily_limit, daily_used, monthly_limit, monthly_used, subscription_plan FROM user_configs WHERE user_id::text = $1::text LIMIT 1',
+            'SELECT message_credit, bonus_credit, permanent_credit, daily_limit, daily_used, subscription_plan FROM user_configs WHERE user_id::text = $1::text LIMIT 1',
             [String(data.user_id)]
         );
         if (creditResult.rows.length > 0) {
             const row = creditResult.rows[0];
-            // SaaS Level Summation: Available Monthly + Bonus + Legacy + Permanent
-            const availableMonthly = Math.max(0, Number(row.monthly_limit || 0) - Number(row.monthly_used || 0));
-            data.message_credit = availableMonthly + Number(row.bonus_credit || 0) + Number(row.message_credit || 0) + Number(row.permanent_credit || 0);
-            
-            data.bonus_credit = Number(row.bonus_credit || 0);
-            data.permanent_credit = Number(row.permanent_credit || 0);
-            data.daily_limit = Number(row.daily_limit || 0);
-            data.daily_used = Number(row.daily_used || 0);
-            data.monthly_limit = Number(row.monthly_limit || 0);
-            data.monthly_used = Number(row.monthly_used || 0);
-            
+            data.message_credit = row.message_credit || 0;
+            data.bonus_credit = row.bonus_credit || 0;
+            data.permanent_credit = row.permanent_credit || 0;
+            data.daily_limit = row.daily_limit || 0;
+            data.daily_used = row.daily_used || 0;
             // Also sync subscription status if it's 'active' or 'none'
             if (row.subscription_plan) {
                 data.subscription_status = row.subscription_plan;
@@ -1878,11 +1882,25 @@ async function getLastWhatsAppMessage(sessionName, recipientId) {
     return result.rows[0];
 }
 
-// 18. Deduct WhatsApp Credit (Smart Routing: Free -> Daily -> Bonus -> Permanent)
+// 18. Deduct WhatsApp Credit (Smart Routing: Daily -> Bonus -> Permanent)
 async function deductWhatsAppCredit(sessionName, amount = 1) {
     const { query } = require('./pgClient');
 
     try {
+        // Migration on-the-fly: Ensure columns exist in user_configs
+        try {
+            await query(`
+                ALTER TABLE user_configs 
+                ADD COLUMN IF NOT EXISTS daily_limit NUMERIC DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS daily_used NUMERIC DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS monthly_used NUMERIC DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS bonus_credit NUMERIC DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS permanent_credit NUMERIC DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS last_reset_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                ADD COLUMN IF NOT EXISTS last_monthly_reset_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+            `);
+        } catch (e) {}
+
         const sessionResult = await query(
             'SELECT user_id FROM whatsapp_message_database WHERE session_name = $1 LIMIT 1',
             [sessionName]
@@ -1926,30 +1944,17 @@ async function deductWhatsAppCredit(sessionName, amount = 1) {
                 'UPDATE user_configs SET daily_used = 0, monthly_used = 0, bonus_credit = 0, last_reset_at = NOW(), last_monthly_reset_at = NOW() WHERE user_id::text = $1',
                 [userIdStr]
             );
-            console.log(`[WA Credit] Monthly usage & Bonus reset for User ${userIdStr}`);
         } else if (isNewDay) {
             dailyUsed = 0;
             await query(
                 'UPDATE user_configs SET daily_used = 0, last_reset_at = NOW() WHERE user_id::text = $1',
                 [userIdStr]
             );
-            console.log(`[WA Credit] Daily usage reset for User ${userIdStr}`);
         }
 
-        // --- 2. DEDUCTION LOGIC (SMART ROUTING: Free -> Daily -> Bonus -> Permanent) ---
-
-        // 1. Free/Legacy Message Credit (Sign-up or Free Tier)
-        if (Number(config.message_credit || 0) > 0) {
-            const deduct = Math.min(Number(config.message_credit), amount);
-            await query(
-                'UPDATE user_configs SET message_credit = message_credit - $1 WHERE user_id::text = $2',
-                [deduct, userIdStr]
-            );
-            console.log(`[WA Credit] Deducted from Free Message Credit for User ${userIdStr}`);
-            return true;
-        }
-
-        // 2. Daily Limit (Subscription Daily Quota - Resets Daily)
+        // --- 2. DEDUCTION LOGIC (SMART ROUTING: Daily -> Bonus -> Free -> Permanent) ---
+        
+        // Priority 1: Daily Limit (RPD - Resets Daily)
         if (Number(config.daily_limit || 0) > dailyUsed) {
             await query(
                 'UPDATE user_configs SET daily_used = daily_used + $1, monthly_used = monthly_used + $1 WHERE user_id::text = $2',
@@ -1959,7 +1964,7 @@ async function deductWhatsAppCredit(sessionName, amount = 1) {
             return true;
         }
 
-        // 3. Bonus Credit (Promotional / Monthly Bonus)
+        // Priority 2: Bonus Credit (Monthly Bonus - Resets Monthly)
         if (bonusCredit > 0) {
             const deduct = Math.min(bonusCredit, amount);
             await query(
@@ -1970,7 +1975,18 @@ async function deductWhatsAppCredit(sessionName, amount = 1) {
             return true;
         }
 
-        // 4. Permanent Credit (Lifetime Pack - No Expiry)
+        // Priority 3: Legacy Message Credit (Free 100 Messages)
+        if (Number(config.message_credit || 0) > 0) {
+            const deduct = Math.min(Number(config.message_credit), amount);
+            await query(
+                'UPDATE user_configs SET message_credit = message_credit - $1 WHERE user_id::text = $2',
+                [deduct, userIdStr]
+            );
+            console.log(`[WA Credit] Deducted from Free Message Credit for User ${userIdStr}`);
+            return true;
+        }
+
+        // Priority 4: Permanent Credit (Never Expires)
         if (Number(config.permanent_credit || 0) > 0) {
             const deduct = Math.min(Number(config.permanent_credit), amount);
             await query(
@@ -2982,128 +2998,6 @@ async function toggleFbLock(pageId, senderId, isLocked) {
     }
 }
 
-// --- GET LAST MESSAGE IN CONVERSATION ---
-async function getLastMessageInFbConversation(pageId, senderId) {
-    try {
-        const result = await query(
-            `SELECT reply_by, text, timestamp
-             FROM fb_chats
-             WHERE page_id = $1 AND (sender_id = $2 OR recipient_id = $2)
-             ORDER BY timestamp DESC
-             LIMIT 1`,
-            [pageId, senderId]
-        );
-        if (result.rows.length > 0) {
-            return result.rows[0];
-        }
-        return null;
-    } catch (error) {
-        console.error("Error getting last FB message:", error);
-        return null;
-    }
-}
-
-async function getLastMessageInWaConversation(sessionName, phoneNumber) {
-    try {
-        const result = await query(
-            `SELECT reply_by, text, timestamp
-             FROM whatsapp_chats
-             WHERE session_name = $1 AND (sender_id = $2 OR recipient_id = $2)
-             ORDER BY timestamp DESC
-             LIMIT 1`,
-            [sessionName, phoneNumber]
-        );
-        if (result.rows.length > 0) {
-            return result.rows[0];
-        }
-        return null;
-    } catch (error) {
-        console.error("Error getting last WA message:", error);
-        return null;
-    }
-}
-
-// --- WhatsApp Labels & AI Action ---
-async function getWhatsAppContact(sessionName, phoneNumber) {
-    try {
-        const result = await query(
-            `SELECT * FROM whatsapp_contacts WHERE session_name = $1 AND phone_number = $2 LIMIT 1`,
-            [sessionName, phoneNumber]
-        );
-        if (result.rows.length > 0) {
-            return result.rows[0];
-        }
-        return null;
-    } catch (error) {
-        console.error("Error getting WhatsApp contact:", error);
-        return null;
-    }
-}
-
-async function addLabelToWhatsAppContact(sessionName, phoneNumber, label) {
-    try {
-        // Upsert contact if not exists
-        await query(
-            `INSERT INTO whatsapp_contacts (session_name, phone_number, labels, ai_action, is_locked, last_interaction)
-             VALUES ($1, $2, '[]'::jsonb, 'continue', false, NOW())
-             ON CONFLICT (session_name, phone_number)
-             DO UPDATE SET last_interaction = NOW()`,
-            [sessionName, phoneNumber]
-        );
-
-        // Add label if not exists
-        await query(
-            `UPDATE whatsapp_contacts
-             SET labels = jsonb_insert(labels, '{-1}', $3::jsonb, true)
-             WHERE session_name = $1 AND phone_number = $2
-               AND NOT (labels @> $3::jsonb)`,
-            [sessionName, phoneNumber, JSON.stringify(label)]
-        );
-
-        // Ensure label exists in label_actions
-        await query(
-            `INSERT INTO label_actions (page_id, label_name, ai_action, created_at)
-             VALUES ($1, $2, 'continue', NOW())
-             ON CONFLICT (page_id, label_name)
-             DO NOTHING`,
-            [sessionName, label]
-        );
-
-        console.log(`[DB] Added label "${label}" to WA contact ${phoneNumber} in session ${sessionName}`);
-        return true;
-    } catch (error) {
-        console.error("Error adding label to WA contact:", error);
-        return false;
-    }
-}
-
-async function setWhatsAppContactAiAction(sessionName, phoneNumber, aiAction) {
-    try {
-        // Upsert contact if not exists
-        await query(
-            `INSERT INTO whatsapp_contacts (session_name, phone_number, labels, ai_action, is_locked, last_interaction)
-             VALUES ($1, $2, '[]'::jsonb, 'continue', false, NOW())
-             ON CONFLICT (session_name, phone_number)
-             DO UPDATE SET last_interaction = NOW()`,
-            [sessionName, phoneNumber]
-        );
-
-        // Update ai_action
-        await query(
-            `UPDATE whatsapp_contacts
-             SET ai_action = $3
-             WHERE session_name = $1 AND phone_number = $2`,
-            [sessionName, phoneNumber, aiAction]
-        );
-
-        console.log(`[DB] Set WA contact ${phoneNumber} ai_action to "${aiAction}" in session ${sessionName}`);
-        return true;
-    } catch (error) {
-        console.error("Error setting WA contact ai_action:", error);
-        return false;
-    }
-}
-
 // --- Helper: Get Last N WhatsApp Messages (Raw) for Echo Check ---
 async function getLastNWhatsAppMessages(sessionName, recipientId, limit = 20) {
     const { query } = require('./pgClient');
@@ -3729,10 +3623,6 @@ module.exports = {
     getWhatsAppDailyAICount,
     checkFbLockStatus,
     toggleFbLock,
-    getLastMessageInFbConversation,
-    getLastMessageInWaConversation,
-    addLabelToWhatsAppContact,
-    setWhatsAppContactAiAction,
     getAdContext,
     saveAdContext,
     getAdsByUserId,
@@ -3756,8 +3646,6 @@ module.exports = {
     getEmbeddingGlobalConfig,
     getProducts,
     getProductById,
-    getProductByIdForPage,
-    isProductAllowedForPage,
     getProductByImageUrl,
     getResourceProductsWithMedia,
     updateProduct,
@@ -3934,35 +3822,30 @@ async function resolvePageContextType(pageId) {
 
 async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pageId = null, allowedPageIds = null) {
     console.log(`[DB] getProducts - User: ${userId}, Page: ${pageId}`);
+    if (!pageId || pageId === 'null' || pageId === 'undefined') {
+        return { data: [], count: 0 };
+    }
     const offset = (page - 1) * limit;
 
     // USE CASTING TO TEXT FOR POSTGRES COMPATIBILITY (Handles both TEXT and UUID schemas)
     let params = [String(userId)]; // $1
     let whereClause = 'user_id::text = $1::text';
 
-    // Initialize contextType to avoid "contextType is not defined" error
-    let contextType = null;
-    let isWhatsapp = false;
-
     // 1. Context Filtering (ID Array based)
-    // If pageId is provided AND allowedPageIds is provided (team member), show products assigned to THIS pageId
-    // If allowedPageIds is null (owner), show all products regardless of pageId
-    if (pageId && pageId !== 'null' && pageId !== 'undefined' && allowedPageIds !== null) {
-        contextType = await resolvePageContextType(pageId);
-        isWhatsapp = contextType === 'whatsapp';
-        // #region debug-point F:db-get-products-context
-        (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='product-scope-leak';try{const e=fs.readFileSync('.dbg/product-scope-leak.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'F',location:'dbService.js:getProducts:context',msg:'[DEBUG] db context resolved',data:{userId,pageId,contextType,isWhatsapp,searchQuery,allowedPageIdsCount:Array.isArray(allowedPageIds)?allowedPageIds.length:null},ts:Date.now()})}).catch(()=>{})})();
-        // #endregion
-        
-        params.push(String(pageId));
-        const pIdx = params.length;
+    // If pageId is provided, show products assigned to THIS pageId.
+    const contextType = await resolvePageContextType(pageId);
+    const isWhatsapp = contextType === 'whatsapp';
+    // #region debug-point F:db-get-products-context
+    (()=>{const fs=require('fs');let u='',s='product-scope-leak';try{const e=fs.readFileSync('.dbg/product-scope-leak.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}if(u)fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'F',location:'dbService.js:getProducts:context',msg:'[DEBUG] db context resolved',data:{userId,pageId,contextType,isWhatsapp,searchQuery,allowedPageIdsCount:Array.isArray(allowedPageIds)?allowedPageIds.length:null},ts:Date.now()})}).catch(()=>{})})();
+    // #endregion
+    
+    params.push(String(pageId));
+    const pIdx = params.length;
 
-        // Only allow products that have the pageId in their allowed list (no empty list allowed)
-        if (isWhatsapp) {
-            whereClause += ` AND (allowed_wa_sessions::jsonb @> jsonb_build_array($${pIdx}::text))`;
-        } else {
-            whereClause += ` AND (allowed_messenger_ids::jsonb @> jsonb_build_array($${pIdx}::text))`;
-        }
+    if (isWhatsapp) {
+        whereClause += ` AND (allowed_wa_sessions::jsonb @> jsonb_build_array($${pIdx}::text))`;
+    } else {
+        whereClause += ` AND (allowed_messenger_ids::jsonb @> jsonb_build_array($${pIdx}::text))`;
     }
 
     // 2. Search Query
@@ -4015,30 +3898,6 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
     return { data, count: totalCount };
 }
 
-// Helper: Check if product is allowed for a specific page/session
-async function isProductAllowedForPage(productId, pageId) {
-    try {
-        const { isWhatsapp, resourceIds, userId } = await resolveResourceSearchContext(pageId);
-        if (!resourceIds || resourceIds.length === 0) return false;
-        
-        const column = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_messenger_ids';
-        
-        // First get the product
-        const product = await getProductById(productId);
-        if (!product) return false;
-        
-        // Check user ID first
-        if (userId && String(product.user_id) !== String(userId)) return false;
-        
-        // Check allowed list (only allow if list is not empty and contains the resource ID)
-        const allowedList = product[column] || [];
-        return resourceIds.some(rid => allowedList.includes(String(rid)));
-    } catch (e) {
-        console.warn(`[DB] isProductAllowedForPage error: ${e.message}`);
-        return false;
-    }
-}
-
 // 28. Get Product By ID
 async function getProductById(id) {
     const result = await query(
@@ -4048,17 +3907,6 @@ async function getProductById(id) {
     
     if (result.rows.length === 0) return null;
     return result.rows[0];
-}
-
-// Get Product By ID with access checks for a specific page
-async function getProductByIdForPage(id, pageId) {
-    const product = await getProductById(id);
-    if (!product) return null;
-    
-    const allowed = await isProductAllowedForPage(id, pageId);
-    if (!allowed) return null;
-    
-    return product;
 }
 
 /**
@@ -4084,19 +3932,15 @@ async function getResourceProductsWithMedia(pageId) {
     try {
         if (!pageId) return [];
 
-        const { isWhatsapp, resourceIds, userId } = await resolveResourceSearchContext(pageId);
+        const { isWhatsapp, resourceIds } = await resolveResourceSearchContext(pageId);
         if (resourceIds.length === 0) return [];
-        if (!userId) {
-            console.warn(`[DB] getResourceProductsWithMedia: No userId found for pageId ${pageId}, returning empty array`);
-            return [];
-        }
 
         let sql = `
             SELECT id, name, description, image_url, additional_images, video_url
             FROM products
-            WHERE is_active = true AND user_id::text = $1::text
+            WHERE is_active = true
         `;
-        let params = [String(userId)];
+        let params = [];
         ({ sql, params } = appendAssignmentFilter(sql, params, isWhatsapp, resourceIds));
         sql += ` ORDER BY id DESC`;
 
@@ -4235,53 +4079,15 @@ async function getProductsByNames(userId, productNames, pageId = null) {
 
 async function resolveResourceSearchContext(pageId) {
     if (!pageId) {
-        return { contextType: null, isWhatsapp: false, resourceIds: [], userId: null };
+        return { contextType: null, isWhatsapp: false, resourceIds: [] };
     }
 
     const resourceId = String(pageId);
     const contextType = await resolvePageContextType(resourceId);
     const isWhatsapp = contextType === 'whatsapp';
 
-    let userId = null;
-
-    // Get User ID
-    try {
-        if (isWhatsapp) {
-            // Check whatsapp_sessions first (only session_name, since it may not have waba_id/phone_number_id)
-            let result = await query(
-                `SELECT user_id FROM whatsapp_sessions 
-                 WHERE session_name = $1 LIMIT 1`,
-                [resourceId]
-            );
-            if (result.rows.length > 0) {
-                userId = result.rows[0].user_id;
-            } else {
-                // Fallback to whatsapp_message_database
-                result = await query(
-                    `SELECT user_id FROM whatsapp_message_database 
-                     WHERE session_name = $1 OR waba_id = $1 OR phone_number_id = $1 LIMIT 1`,
-                    [resourceId]
-                );
-                if (result.rows.length > 0) {
-                    userId = result.rows[0].user_id;
-                }
-            }
-        } else {
-            // Messenger: Check page_access_token_message
-            const result = await query(
-                `SELECT user_id FROM page_access_token_message WHERE page_id = $1 AND user_id IS NOT NULL LIMIT 1`,
-                [resourceId]
-            );
-            if (result.rows.length > 0) {
-                userId = result.rows[0].user_id;
-            }
-        }
-    } catch (err) {
-        console.warn(`[DB] resolveResourceSearchContext failed to get user_id for ${resourceId}: ${err.message}`);
-    }
-
     if (!isWhatsapp) {
-        return { contextType, isWhatsapp, resourceIds: [resourceId], userId };
+        return { contextType, isWhatsapp, resourceIds: [resourceId] };
     }
 
     try {
@@ -4307,10 +4113,10 @@ async function resolveResourceSearchContext(pageId) {
                 .filter(Boolean)
         ));
 
-        return { contextType, isWhatsapp, resourceIds, userId };
+        return { contextType, isWhatsapp, resourceIds };
     } catch (err) {
         console.warn(`[DB] resolveResourceSearchContext failed for ${resourceId}: ${err.message}`);
-        return { contextType, isWhatsapp, resourceIds: [resourceId], userId };
+        return { contextType, isWhatsapp, resourceIds: [resourceId] };
     }
 }
 
@@ -4327,7 +4133,6 @@ function appendAssignmentFilter(sql, params, isWhatsapp, resourceIds) {
 
     const column = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_messenger_ids';
 
-    // Handle: only allow products where allowed array contains any of the resource IDs
     if (normalizedIds.length === 1) {
         params.push(normalizedIds[0]);
         const pIdx = params.length;
@@ -4337,12 +4142,10 @@ function appendAssignmentFilter(sql, params, isWhatsapp, resourceIds) {
 
     params.push(normalizedIds);
     const pIdx = params.length;
-    sql += ` AND (
-        EXISTS (
-            SELECT 1
-            FROM jsonb_array_elements_text(COALESCE(${column}, '[]'::jsonb)) AS elem
-            WHERE elem = ANY($${pIdx}::text[])
-        )
+    sql += ` AND EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements_text(COALESCE(${column}, '[]'::jsonb)) AS elem
+        WHERE elem = ANY($${pIdx}::text[])
     )`;
 
     return { sql, params };
@@ -4352,53 +4155,35 @@ async function searchProductsForResource(queryText, pageId = null) {
     try {
         if (!pageId) return [];
 
-        const { isWhatsapp, resourceIds, userId } = await resolveResourceSearchContext(pageId);
+        const { isWhatsapp, resourceIds } = await resolveResourceSearchContext(pageId);
         if (resourceIds.length === 0) return [];
-        // If userId is null, we can't filter by user, so return empty array
-        // because we don't want to show products from all users
-        if (!userId) {
-            console.warn(`[DB] searchProductsForResource: No userId found for pageId ${pageId}, returning empty array`);
-            return [];
-        }
 
         const cleanQuery = (queryText || '').trim();
 
-        // If no query, return latest 5 products
-        let latestSql = `SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, additional_images, 0 as distance FROM products WHERE is_active = true AND user_id::text = $1::text`;
-        let latestParams = [String(userId)];
-        
-        ({ sql: latestSql, params: latestParams } = appendAssignmentFilter(latestSql, latestParams, isWhatsapp, resourceIds));
-        latestSql += ` ORDER BY id DESC LIMIT 5`;
-        const latestResult = await query(latestSql, latestParams);
-
         if (!cleanQuery) {
-            return latestResult.rows;
+            let sql = `SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, additional_images, 0 as distance FROM products WHERE is_active = true`;
+            let params = [];
+            ({ sql, params } = appendAssignmentFilter(sql, params, isWhatsapp, resourceIds));
+            sql += ` ORDER BY id DESC LIMIT 5`;
+            const res = await query(sql, params);
+            return res.rows;
         }
 
         const aiService = require('./aiService');
-        let queryVector = null;
-        try {
-            queryVector = await aiService.getEmbedding(cleanQuery);
-        } catch (e) {
-            console.warn("[DB] Embedding generation failed:", e.message);
-            // If embedding fails, return empty so AI says "no product found"
-            return [];
-        }
+        const queryVector = await aiService.getEmbedding(cleanQuery);
 
         if (!queryVector) {
-            console.warn("[DB] No query vector");
-            return [];
+            throw new Error("Vector search failed: Embedding generation returned null.");
         }
 
         let sql = `
             SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, additional_images,
                    (embedding <=> $1::vector) as distance
             FROM products
-            WHERE is_active = true AND user_id::text = $2::text
+            WHERE is_active = true
         `;
 
-        let params = [JSON.stringify(queryVector), String(userId)];
-
+        let params = [JSON.stringify(queryVector)];
         ({ sql, params } = appendAssignmentFilter(sql, params, isWhatsapp, resourceIds));
         sql += ` ORDER BY distance ASC LIMIT 5`;
 
@@ -4410,26 +4195,10 @@ async function searchProductsForResource(queryText, pageId = null) {
             console.warn(`[DB] searchProductsForResource SLOW query: ${end - start}ms for "${cleanQuery}"`);
         }
 
-        // First try with 0.6 threshold
-        let vectorResults = result.rows.filter(p => p.distance < 0.6);
-        
-        // If no results, try with more lenient 0.8 threshold
-        if (vectorResults.length === 0) {
-            vectorResults = result.rows.filter(p => p.distance < 0.8);
-            console.log(`[DB] Found ${vectorResults.length} products with higher threshold (0.8) for "${cleanQuery}"`);
-        }
-
-        // If still no results, return empty array so AI says "product not found"
-        if (vectorResults.length === 0) {
-            console.log(`[DB] No matching products found for "${cleanQuery}"`);
-            return [];
-        }
-
-        return vectorResults;
+        return result.rows.filter(p => p.distance < 0.4);
     } catch (error) {
         console.error("[DB] searchProductsForResource Error:", error.message);
-        // On any error, return empty array
-        return [];
+        throw error;
     }
 }
 
@@ -4439,42 +4208,35 @@ async function searchProducts(userId, queryText, pageId = null) {
         if (!userId) return [];
         const cleanQuery = (queryText || '').trim();
         
-        // Get latest products for empty query
-        const contextType = pageId ? await resolvePageContextType(pageId) : null;
-        const isWhatsapp = contextType === 'whatsapp';
-        const pageColumn = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_messenger_ids';
-        
-        let latestSql = `SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, additional_images, 0 as distance FROM products WHERE user_id::text = $1::text AND is_active = true`;
-        let latestParams = [String(userId)];
-        
-        if (pageId) {
-            latestParams.push(String(pageId));
-            latestSql += ` AND (${pageColumn}::jsonb @> jsonb_build_array($2::text))`;
-        }
-        latestSql += ` ORDER BY id DESC LIMIT 5`;
-        const latestResult = await query(latestSql, latestParams);
-
+        // --- FALLBACK: If query is empty, return latest products for this user/page ---
         if (!cleanQuery) {
-            return latestResult.rows;
+            const contextType = pageId ? await resolvePageContextType(pageId) : null;
+            const isWhatsapp = contextType === 'whatsapp';
+            let sql = `SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, 0 as distance FROM products WHERE user_id::text = $1::text AND is_active = true`;
+            const params = [String(userId)];
+            if (pageId) {
+                params.push(String(pageId));
+                if (isWhatsapp) sql += ` AND (allowed_wa_sessions::jsonb @> jsonb_build_array($2::text))`;
+                else sql += ` AND (allowed_messenger_ids::jsonb @> jsonb_build_array($2::text))`;
+            }
+            sql += ` ORDER BY id DESC LIMIT 5`;
+            const res = await query(sql, params);
+            return res.rows;
         }
 
         const aiService = require('./aiService');
-        let queryVector = null;
-        try {
-            queryVector = await aiService.getEmbedding(cleanQuery);
-        } catch (e) {
-            console.warn("[DB] Embedding generation failed:", e.message);
-            // If embedding fails, return empty so AI says "no product found"
-            return [];
-        }
+        const queryVector = await aiService.getEmbedding(cleanQuery);
         
         if (!queryVector) {
-            console.warn("[DB] No query vector");
-            return [];
+            throw new Error("Vector search failed: Embedding generation returned null.");
         }
 
+        const contextType = pageId ? await resolvePageContextType(pageId) : null;
+        const isWhatsapp = contextType === 'whatsapp';
+        const pageColumn = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_messenger_ids';
+
         let sql = `
-            SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, additional_images,
+            SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description,
                    (embedding <=> $1::vector) as distance
             FROM products
             WHERE user_id::text = $2::text AND is_active = true
@@ -4485,7 +4247,12 @@ async function searchProducts(userId, queryText, pageId = null) {
         if (pageId) {
             params.push(String(pageId));
             const pIdx = params.length;
-            sql += ` AND (${pageColumn}::jsonb @> jsonb_build_array($${pIdx}::text))`;
+
+            if (isWhatsapp) {
+                sql += ` AND (allowed_wa_sessions::jsonb @> jsonb_build_array($${pIdx}::text))`;
+            } else {
+                sql += ` AND (allowed_messenger_ids::jsonb @> jsonb_build_array($${pIdx}::text))`;
+            }
         }
 
         sql += ` ORDER BY distance ASC LIMIT 5`;
@@ -4496,29 +4263,17 @@ async function searchProducts(userId, queryText, pageId = null) {
         
         if (end - start > 1000) {
             console.warn(`[DB] searchProducts SLOW query: ${end - start}ms for "${cleanQuery}"`);
+        } else {
+            // console.log(`[DB] searchProducts FAST query: ${end - start}ms`);
         }
-
-        // First try with 0.6 threshold
-        let vectorResults = result.rows.filter(p => p.distance < 0.6);
         
-        // If no results, try with more lenient 0.8 threshold
-        if (vectorResults.length === 0) {
-            vectorResults = result.rows.filter(p => p.distance < 0.8);
-            console.log(`[DB] Found ${vectorResults.length} products with higher threshold (0.8) for "${cleanQuery}"`);
-        }
-
-        // If still no results, return empty array so AI says "product not found"
-        if (vectorResults.length === 0) {
-            console.log(`[DB] No matching products found for "${cleanQuery}"`);
-            return [];
-        }
-
-        return vectorResults;
+        // Return products only if they are reasonably similar (threshold check)
+        // distance < 0.4 is usually a good match for cosine similarity
+        return result.rows.filter(p => p.distance < 0.4);
         
     } catch (error) {
-        console.error("[DB] searchProducts Error:", error.message);
-        // On any error, return empty array
-        return [];
+        console.error("[DB] searchProducts Vector Error:", error.message);
+        throw error; // Throw error so controller can handle it (Status: 503)
     }
 }
 

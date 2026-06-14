@@ -7,7 +7,7 @@ import {
 } from "@/lib/facebookMobileAuth";
 import { BACKEND_URL } from "@/config";
 
-const DEBUG_SERVER_URL = "http://10.2.0.2:7777/event";
+const DEBUG_SERVER_URL = import.meta.env.VITE_DEBUG_SERVER_URL || "";
 const DEBUG_SESSION_ID = "whatsapp-loading-stuck";
 
 export default function FacebookWhatsAppCallbackPage() {
