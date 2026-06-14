@@ -572,7 +572,6 @@ export default function WhatsAppConversionPage() {
                 messages.map((msg) => (
                   <TableRow key={msg.id || msg.message_id}>
                     <TableCell>{formatTimestamp(msg.timestamp)}</TableCell>
-                    <TableCell className="font-mono text-xs">{msg.sender_id}</TableCell>
                     <TableCell
                       className={`max-w-[300px] cursor-pointer transition-all text-primary hover:text-primary/80 hover:underline ${
                         expandedMessageIds.has(msg.id || msg.message_id || 'unknown')
