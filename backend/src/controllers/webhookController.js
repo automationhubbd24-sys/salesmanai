@@ -802,7 +802,19 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     const whatsappCloudService = require('../services/whatsappCloudService');
 
     for (const msg of bufferedMessages) {
-        const { imageUrls: msgImages, audioUrls: msgAudios, notes } = await collectOfficialMediaUrls(msg, config.cloud_access_token);
+        let msgImages, msgAudios, notes;
+        if (msg.images && msg.audios) {
+            // Media already extracted in queueWhatsAppMessage
+            msgImages = msg.images;
+            msgAudios = msg.audios;
+            notes = [];
+        } else {
+            // Fallback: extract media if not already extracted
+            const extracted = await collectOfficialMediaUrls(msg, config.cloud_access_token);
+            msgImages = extracted.imageUrls;
+            msgAudios = extracted.audioUrls;
+            notes = extracted.notes;
+        }
         const msgText = extractOfficialMessageText(msg);
         
         imageUrls.push(...msgImages);
@@ -1658,8 +1670,6 @@ async function processWhatsAppWebhook(body) {
 
             // Process messages (incoming from users and admin) and SMB message echoes
             if (change.field === 'messages' || change.field === 'smb_message_echoes') {
-                const groupedMessages = new Map();
-                
                 // Process either value.messages or value.message_echoes
                 const messagesToProcess = change.field === 'messages' 
                     ? value.messages 
@@ -1790,57 +1800,7 @@ async function processWhatsAppWebhook(body) {
                         continue;
                     }
 
-                    const senderId = message.from;
-                    const senderName = value.contacts?.[0]?.profile?.name || 'Unknown';
-                    console.log(`[WhatsApp Webhook] Inbound from ${senderName} (${senderId}). Type: ${message.type}`);
-
-                    const lookupKeys = [
-                        phoneNumberId,
-                        wabaId,
-                        phoneNumberId ? `official_${phoneNumberId}` : null,
-                        wabaId ? `official_${wabaId}` : null
-                    ].filter(Boolean);
-
-                    let pageData = { config: null, prompts: null };
-                    for (const lookupKey of lookupKeys) {
-                        const candidate = await getCachedPageData(lookupKey);
-                        if (candidate?.config) {
-                            pageData = candidate;
-                            break;
-                        }
-                    }
-
-                    if (!pageData.config) {
-                        console.warn(`[WhatsApp Webhook] No config found for lookup keys: ${lookupKeys.join(', ')}`);
-                        continue;
-                    }
-
-                    const batchKey = `${senderId}:${pageData.config.session_name || pageData.config.waba_id || wabaId || phoneNumberId}`;
-                    const existingBatch = groupedMessages.get(batchKey) || {
-                        messages: [],
-                        config: pageData.config,
-                        prompts: pageData.prompts,
-                        senderName,
-                        senderId,
-                        wabaId,
-                        phoneNumberId
-                    };
-
-                    existingBatch.messages.push(message);
-                    groupedMessages.set(batchKey, existingBatch);
-                }
-
-                for (const batch of groupedMessages.values()) {
-                    console.log(`[WhatsApp Webhook] Processing batch for ${batch.senderId} (${batch.messages.length} msgs)`);
-                    await processWhatsAppBatch(
-                        batch.messages,
-                        batch.config,
-                        batch.prompts,
-                        batch.senderName,
-                        batch.senderId,
-                        batch.wabaId,
-                        batch.phoneNumberId
-                    );
+                    await queueWhatsAppMessage(message, value, phoneNumberId, wabaId);
                 }
             }
 
@@ -1852,6 +1812,125 @@ async function processWhatsAppWebhook(body) {
             }
         }
     }
+}
+
+async function queueWhatsAppMessage(message, value, phoneNumberId, wabaId) {
+    const senderId = message.from;
+    const senderName = value.contacts?.[0]?.profile?.name || 'Unknown';
+
+    const lookupKeys = [
+        phoneNumberId,
+        wabaId,
+        phoneNumberId ? `official_${phoneNumberId}` : null,
+        wabaId ? `official_${wabaId}` : null
+    ].filter(Boolean);
+
+    let pageData = { config: null, prompts: null };
+    for (const lookupKey of lookupKeys) {
+        const candidate = await getCachedPageData(lookupKey);
+        if (candidate?.config) {
+            pageData = candidate;
+            break;
+        }
+    }
+
+    const effectiveSessionName = pageData.config?.session_name || `official_${wabaId || phoneNumberId}`;
+    const batchKey = `${senderId}:${effectiveSessionName}`;
+
+    // --- EXTRACT MEDIA ---
+    const thisMsgImages = [];
+    const thisMsgAudios = [];
+    const { imageUrls: msgImages, audioUrls: msgAudios } = await collectOfficialMediaUrls(message, pageData.config?.cloud_access_token);
+    thisMsgImages.push(...msgImages);
+    thisMsgAudios.push(...msgAudios);
+
+    // Initialize buffer if not exists
+    if (!waDebounceMap.has(batchKey)) {
+        waDebounceMap.set(batchKey, {
+            messages: [],
+            timer: null,
+            isProcessing: false,
+            config: pageData.config,
+            prompts: pageData.prompts,
+            senderName,
+            wabaId,
+            phoneNumberId
+        });
+    }
+
+    const sessionData = waDebounceMap.get(batchKey);
+
+    sessionData.messages.push({
+        ...message,
+        images: thisMsgImages,
+        audios: thisMsgAudios,
+        timestamp: Date.now()
+    });
+
+    console.log(`[WA Debounce] Queued message for ${batchKey}. Buffer size: ${sessionData.messages.length} (Processing: ${sessionData.isProcessing})`);
+
+    if (sessionData.isProcessing) {
+        console.log(`[WA Debounce] Session ${batchKey} is busy processing. Message appended to buffer.`);
+        return;
+    }
+
+    if (sessionData.timer) {
+        clearTimeout(sessionData.timer);
+    }
+
+    // Dynamic Debounce from Cache/DB
+    let debounceTime = 8000; // Default 8s
+    if (pageData.prompts && pageData.prompts.wait !== undefined) {
+        debounceTime = Number(pageData.prompts.wait) * 1000;
+    }
+
+    if (debounceTime < 0) debounceTime = 0;
+
+    console.log(`[WA Debounce] Using wait time: ${debounceTime}ms for ${batchKey}`);
+
+    sessionData.timer = setTimeout(async () => {
+        sessionData.isProcessing = true;
+        try {
+            await processWhatsAppBufferedMessages(batchKey);
+        } catch (err) {
+            console.error(`[WA Debounce] Error processing buffered messages for ${batchKey}:`, err);
+        } finally {
+            const remaining = waDebounceMap.get(batchKey);
+            if (remaining && remaining.messages.length > 0) {
+                console.log(`[WA Debounce] More messages in buffer for ${batchKey}. Processing again...`);
+                remaining.isProcessing = false;
+                await processWhatsAppBufferedMessages(batchKey);
+            } else {
+                console.log(`[WA Debounce] No more messages for ${batchKey}. Cleaning up...`);
+                waDebounceMap.delete(batchKey);
+            }
+        }
+    }, debounceTime);
+}
+
+async function processWhatsAppBufferedMessages(batchKey) {
+    const sessionData = waDebounceMap.get(batchKey);
+    if (!sessionData) return;
+
+    const bufferedMessages = sessionData.messages;
+    sessionData.messages = []; // Clear buffer immediately
+
+    if (bufferedMessages.length === 0) {
+        console.log(`[WA Debounce] No messages to process for ${batchKey}`);
+        return;
+    }
+
+    console.log(`[WA Debounce] Processing ${bufferedMessages.length} buffered messages for ${batchKey}`);
+
+    await processWhatsAppBatch(
+        bufferedMessages,
+        sessionData.config,
+        sessionData.prompts,
+        sessionData.senderName,
+        bufferedMessages[0].from,
+        sessionData.wabaId,
+        sessionData.phoneNumberId
+    );
 }
 
 // Process WhatsApp Cloud API status updates (outgoing messages from business/admin)
