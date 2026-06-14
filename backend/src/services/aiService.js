@@ -1393,7 +1393,8 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null
                 if (senderId) {
                     await dbService.setConversationState(pageId, senderId, {
                         last_product_id: productId,
-                        last_intent: 'product_fetched'
+                        last_intent: 'product_fetched',
+                        last_user_query: cleanUserMessage
                     });
                 }
 
@@ -1882,6 +1883,19 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
 
         if (!result) return null;
         result = sanitizeStructuredSalesResponse(result);
+
+        // --- Save last user query to conversation state ---
+        if (userId && pageConfig.page_id && cleanUserMessage) {
+            try {
+                await dbService.setConversationState(pageConfig.page_id, userId, {
+                    last_user_query: cleanUserMessage,
+                    last_product_id: result.product_id || null,
+                    last_intent: result.action || null
+                });
+            } catch (err) {
+                console.warn("[AI] Failed to save conversation state:", err.message);
+            }
+        }
         
         let displayModel = 'unknown';
         let usageTokens = 0;
@@ -2069,7 +2083,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     let productContext = "";
     let foundProducts = [];
 
-    if (pageConfig.page_id && cleanUserMessage) {
+    if (pageConfig.page_id && (cleanUserMessage || currentContextId)) {
         try {
             const normalizeUrl = (url) => {
                 if (!url || url === 'N/A') return 'N/A';
@@ -2079,7 +2093,43 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
                 return `${baseUrl}${cleanPath}`;
             };
 
-            const candidates = await dbService.searchProductsForResource(cleanUserMessage, pageConfig.page_id);
+            // Build a better search query!
+            let searchQuery = cleanUserMessage;
+            if (cleanUserMessage && cleanUserMessage.length < 20 && history && history.length > 0) {
+                // If short message, combine with last user query for better search
+                const lastUserMsgs = [...history].reverse().filter(m => m.role === 'user').slice(0, 2);
+                const contextWords = lastUserMsgs.map(m => m.content).join(' ');
+                searchQuery = `${contextWords} ${cleanUserMessage}`;
+            }
+
+            // First search with the improved query
+            let candidates = searchQuery ? await dbService.searchProductsForResource(searchQuery, pageConfig.page_id) : [];
+            
+            // If no candidates and we have last product ID, add that product manually!
+            if (currentContextId && (!candidates || candidates.length === 0)) {
+                try {
+                    const lastProduct = await dbService.getProductById(currentContextId);
+                    if (lastProduct) candidates = [lastProduct];
+                } catch (e) {
+                    console.warn("[AI] Failed to fetch last product by ID:", e.message);
+                }
+            }
+
+            // If still no candidates but we have last product ID in conv state, try a simpler search
+            if (currentContextId && (!candidates || candidates.length === 0)) {
+                try {
+                    const state = await dbService.getConversationState(pageConfig.page_id, userId);
+                    if (state && state.last_user_query) {
+                        const lastQueryCandidates = await dbService.searchProductsForResource(state.last_user_query, pageConfig.page_id);
+                        if (lastQueryCandidates && lastQueryCandidates.length > 0) {
+                            candidates = lastQueryCandidates;
+                        }
+                    }
+                } catch (e) {
+                    console.warn("[AI] Failed to search with last user query:", e.message);
+                }
+            }
+
             if (candidates && candidates.length > 0) {
                 const topCandidates = candidates.slice(0, 5);
                 productContext = "[PRODUCT LIST SNAPSHOT - FROM PRODUCT ENTRY]\n";

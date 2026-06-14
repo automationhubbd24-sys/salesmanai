@@ -162,15 +162,16 @@ async function getConversationState(pageId, senderId) {
 async function setConversationState(pageId, senderId, data) {
     try {
         await query(
-            `INSERT INTO conversation_state (page_id, sender_id, last_product_id, last_variant_key, last_intent, updated_at)
-             VALUES ($1, $2, $3, $4, $5, NOW())
+            `INSERT INTO conversation_state (page_id, sender_id, last_product_id, last_variant_key, last_intent, last_user_query, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, NOW())
              ON CONFLICT (page_id, sender_id) 
              DO UPDATE SET 
                 last_product_id = EXCLUDED.last_product_id,
                 last_variant_key = EXCLUDED.last_variant_key,
                 last_intent = EXCLUDED.last_intent,
+                last_user_query = COALESCE(EXCLUDED.last_user_query, conversation_state.last_user_query),
                 updated_at = NOW()`,
-            [pageId, senderId, data.last_product_id || null, data.last_variant_key || null, data.last_intent || null]
+            [pageId, senderId, data.last_product_id || null, data.last_variant_key || null, data.last_intent || null, data.last_user_query || null]
         );
         return true;
     } catch (error) {
@@ -688,12 +689,24 @@ async function initTables() {
                 last_product_id TEXT,
                 last_variant_key TEXT,
                 last_intent TEXT,
+                last_user_query TEXT,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                 PRIMARY KEY (page_id, sender_id)
             );
             CREATE INDEX IF NOT EXISTS idx_conv_state_updated ON conversation_state(updated_at DESC);
         `);
         console.log("[DB] 'conversation_state' table initialized.");
+
+        // Add last_user_query column if it doesn't exist
+        await query(`
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='conversation_state' AND column_name='last_user_query') THEN
+                    ALTER TABLE conversation_state ADD COLUMN last_user_query TEXT;
+                END IF;
+            END $$;
+        `);
+        console.log("[DB] 'conversation_state' table checked for last_user_query column.");
 
         // Ensure 'custom_base_url' column exists
         await query(`
