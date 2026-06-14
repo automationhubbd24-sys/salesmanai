@@ -3945,8 +3945,9 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
     let isWhatsapp = false;
 
     // 1. Context Filtering (ID Array based)
-    // If pageId is provided, show products assigned to THIS pageId OR products with no restrictions.
-    if (pageId && pageId !== 'null' && pageId !== 'undefined') {
+    // If pageId is provided AND allowedPageIds is provided (team member), show products assigned to THIS pageId
+    // If allowedPageIds is null (owner), show all products regardless of pageId
+    if (pageId && pageId !== 'null' && pageId !== 'undefined' && allowedPageIds !== null) {
         contextType = await resolvePageContextType(pageId);
         isWhatsapp = contextType === 'whatsapp';
         // #region debug-point F:db-get-products-context
