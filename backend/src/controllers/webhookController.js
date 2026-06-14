@@ -1562,27 +1562,32 @@ async function processWhatsAppWebhook(body) {
             const value = change.value || {};
             const phoneNumberId = value.metadata?.phone_number_id;
 
-            // Process messages (incoming from users and admin)
-            if (change.field === 'messages') {
+            // Process messages (incoming from users and admin) and SMB message echoes
+            if (change.field === 'messages' || change.field === 'smb_message_echoes') {
                 const groupedMessages = new Map();
+                
+                // Process either value.messages or value.message_echoes
+                const messagesToProcess = change.field === 'messages' 
+                    ? value.messages 
+                    : value.message_echoes;
 
-                for (const message of value.messages || []) {
+                for (const message of messagesToProcess || []) {
                     const messageId = message.id;
-                    console.log(`[WhatsApp Webhook] Evaluating message ID: ${messageId}`);
+                    console.log(`[WhatsApp Webhook] Evaluating message ID: ${messageId}, field: ${change.field}`);
 
                     // --- ADMIN/ECHO CHECK ---
                     // Check if this message is FROM the business (admin)
-                    const businessPhoneNumber = value.metadata?.phone_number; // This is the business number, e.g., "+8801712345678"
+                    const businessPhoneNumber = value.metadata?.display_phone_number; // This is the business number, e.g., "8801956871403" (from metadata.display_phone_number!)
                     // Normalize phone numbers by removing "+" and whitespace
                     const normalizePhone = (phone) => phone ? phone.replace(/[+\s]/g, '') : '';
                     const normalizedBusinessPhone = normalizePhone(businessPhoneNumber);
                     const normalizedMessageFrom = normalizePhone(message.from);
                     // Also check if the message is from our bot (echo)
                     const msgText = extractOfficialMessageText(message);
-                    const isEcho = isRecentBotReply(message.from, msgText);
+                    const isEcho = isRecentBotReply(message.to || message.recipient_id, msgText);
                     const isAdminSender = normalizedMessageFrom === normalizedBusinessPhone || isEcho;
                     if (isAdminSender) {
-                        console.log(`[WhatsApp Webhook] ADMIN ACTION DETECTED: Business → User ${message.to}`);
+                        console.log(`[WhatsApp Webhook] ADMIN ACTION DETECTED: Business → User ${message.to || message.recipient_id}`);
                         
                         // Find config
                         const lookupKeys = [
@@ -1607,12 +1612,13 @@ async function processWhatsAppWebhook(body) {
                         }
                         
                         const effectiveSessionName = pageData.config.session_name || `official_${wabaId || phoneNumberId}`;
+                        const recipientId = message.to || message.recipient_id;
                         
                         // Save admin reply
                         await dbService.saveWhatsAppChat({
                             session_name: effectiveSessionName,
                             sender_id: phoneNumberId,
-                            recipient_id: message.to,
+                            recipient_id: recipientId,
                             message_id: messageId,
                             text: msgText,
                             timestamp: Date.now(),
@@ -1648,31 +1654,31 @@ async function processWhatsAppWebhook(body) {
                         let isUnlocked = !isLocked && unlockList.some(e => cleanText.includes(e));
                         
                         if (isLocked) {
-                            await dbService.toggleWhatsAppLock(effectiveSessionName, message.to, true);
-                            console.log(`[Handover Lock] Locked chat for user ${message.to} via emoji`);
+                            await dbService.toggleWhatsAppLock(effectiveSessionName, recipientId, true);
+                            console.log(`[Handover Lock] Locked chat for user ${recipientId} via emoji`);
                             
                             // Register to avoid echo
-                            trackBotReply(message.to, msgText);
+                            trackBotReply(recipientId, msgText);
                             
                             // Send emoji back
                             if (phoneNumberId && config.cloud_access_token) {
                                 try {
-                                    await whatsappCloudService.sendTextMessage(phoneNumberId, config.cloud_access_token, message.to, msgText);
+                                    await whatsappCloudService.sendTextMessage(phoneNumberId, config.cloud_access_token, recipientId, msgText);
                                 } catch (err) {
                                     console.warn(`[Handover Lock] Failed to send lock emoji: ${err.message}`);
                                 }
                             }
                         } else if (isUnlocked) {
-                            await dbService.toggleWhatsAppLock(effectiveSessionName, message.to, false);
-                            console.log(`[Handover Lock] Unlocked chat for user ${message.to} via emoji`);
+                            await dbService.toggleWhatsAppLock(effectiveSessionName, recipientId, false);
+                            console.log(`[Handover Lock] Unlocked chat for user ${recipientId} via emoji`);
                             
                             // Register to avoid echo
-                            trackBotReply(message.to, msgText);
+                            trackBotReply(recipientId, msgText);
                             
                             // Send emoji back
                             if (phoneNumberId && config.cloud_access_token) {
                                 try {
-                                    await whatsappCloudService.sendTextMessage(phoneNumberId, config.cloud_access_token, message.to, msgText);
+                                    await whatsappCloudService.sendTextMessage(phoneNumberId, config.cloud_access_token, recipientId, msgText);
                                 } catch (err) {
                                     console.warn(`[Handover Lock] Failed to send unlock emoji: ${err.message}`);
                                 }
