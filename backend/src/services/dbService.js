@@ -1428,14 +1428,6 @@ async function createWhatsAppSessionEntry(sessionName, userId, planDays = 30, in
 async function getWhatsAppConfig(sessionName) {
     const { query } = require('./pgClient');
 
-    await query(`
-        ALTER TABLE whatsapp_message_database
-        ADD COLUMN IF NOT EXISTS provider_type text,
-        ADD COLUMN IF NOT EXISTS waba_id text,
-        ADD COLUMN IF NOT EXISTS phone_number_id text,
-        ADD COLUMN IF NOT EXISTS cloud_access_token text
-    `);
-
     const mainResult = await query(
         `SELECT *
          FROM whatsapp_message_database
