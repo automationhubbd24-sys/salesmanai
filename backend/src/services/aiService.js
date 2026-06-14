@@ -2329,8 +2329,9 @@ ${productContext || "No specific product context provided yet."}
 - image_urls: Only include product image URLs that already exist in [PRODUCT CONTEXT] or tool/database results. If you are not certain, use an empty array.
 - photo_decision: ALWAYS include this object. Use "clarification_needed": true when the user wants a photo but the target product is still ambiguous.
 - Never generate, guess, or invent image links from Unsplash, Google, Facebook CDN, random websites, or any external source.
-- If the customer asks for a photo but multiple products/options are active in the conversation, do NOT guess. Ask which specific product they want first and set "action": "NONE".
-- If one product is clearly selected, focus only on that product. Do NOT send all images/variants by default unless the customer explicitly asks for all images of that selected product.
+- If the customer asks for photos of multiple specific products, you should provide [PRODUCT_ID:id] for each of them in your response.
+- If the customer asks for a photo but the products are vague or they haven't specified which one, use "clarification_needed": true.
+- If one or more products are clearly selected or asked for, focus on those. Do NOT send images for unrelated products.
 - Never say that a photo has already been sent/delivered. Keep photo wording neutral because the backend decides the final delivery message.
 - order_details: Whenever the user provides ANY order info (phone, address, etc.), you MUST include it here.
 
