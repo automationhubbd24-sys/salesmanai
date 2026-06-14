@@ -4029,18 +4029,8 @@ async function isProductAllowedForPage(productId, pageId) {
         // Check user ID first
         if (userId && String(product.user_id) !== String(userId)) return false;
         
-        // Check allowed list
+        // Check allowed list (only allow if list is not empty and contains the resource ID)
         const allowedList = product[column] || [];
-        if (Array.isArray(allowedList) && allowedList.length === 0) {
-            // If allowed list is empty, should we allow? Wait, let's check the original logic
-            // Wait original appendAssignmentFilter allows empty list, but let's see what the user wants
-            // User says: "amader whatsapp workflow te doro keo integration kore kono product add dile messenger er moto sudu sei product er details deoya ucitt"
-            // So maybe if allowed list is empty, it's NOT allowed? Or let's check original Messenger logic
-            // Wait let's keep the original logic but make sure user ID is checked
-            return true;
-        }
-        
-        // Check if any resource ID is in allowed list
         return resourceIds.some(rid => allowedList.includes(String(rid)));
     } catch (e) {
         console.warn(`[DB] isProductAllowedForPage error: ${e.message}`);
