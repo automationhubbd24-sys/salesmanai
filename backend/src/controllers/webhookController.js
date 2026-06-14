@@ -1566,9 +1566,14 @@ async function processWhatsAppWebhook(body) {
                     // --- ADMIN/ECHO CHECK ---
                     // Check if this message is FROM the business (admin)
                     const businessPhoneNumber = value.metadata?.phone_number; // This is the business number, e.g., "+8801712345678"
+                    // Normalize phone numbers by removing "+" and whitespace
+                    const normalizePhone = (phone) => phone ? phone.replace(/[+\s]/g, '') : '';
+                    const normalizedBusinessPhone = normalizePhone(businessPhoneNumber);
+                    const normalizedMessageFrom = normalizePhone(message.from);
                     // Also check if the message is from our bot (echo)
-                    const isEcho = isRecentBotReply(message.from, extractOfficialMessageText(message));
-                    const isAdminSender = message.from === businessPhoneNumber || isEcho;
+                    const msgText = extractOfficialMessageText(message);
+                    const isEcho = isRecentBotReply(message.from, msgText);
+                    const isAdminSender = normalizedMessageFrom === normalizedBusinessPhone || isEcho;
                     if (isAdminSender) {
                         console.log(`[WhatsApp Webhook] ADMIN ACTION DETECTED: Business → User ${message.to}`);
                         
@@ -1595,7 +1600,6 @@ async function processWhatsAppWebhook(body) {
                         }
                         
                         const effectiveSessionName = pageData.config.session_name || `official_${wabaId || phoneNumberId}`;
-                        const msgText = extractOfficialMessageText(message);
                         
                         // Save admin reply
                         await dbService.saveWhatsAppChat({
@@ -1609,7 +1613,7 @@ async function processWhatsAppWebhook(body) {
                             reply_by: 'admin'
                         });
                         
-                        // Emoji lock/unlock check
+                        // Emoji Lock/Unlock Check
                         const config = pageData.config;
                         const prompts = pageData.prompts || {};
                         
