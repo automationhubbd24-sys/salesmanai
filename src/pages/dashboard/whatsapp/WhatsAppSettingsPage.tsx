@@ -824,7 +824,7 @@ export default function WhatsAppSettingsPage() {
                                 <div>
                                     <div className="text-sm font-semibold">Switch Pro Plus Mode</div>
                                     <p className="text-xs text-muted-foreground">
-                                        Enabling this uses AI Studio endpoints for smart text, audio, and image fallbacks.
+                                        Enabling this uses smart endpoints for text, audio, and image fallbacks.
                                     </p>
                                 </div>
                                 <div className="flex items-center gap-3">
@@ -845,7 +845,7 @@ export default function WhatsAppSettingsPage() {
                                     <div>
                                         <h3 className="font-bold text-emerald-900 dark:text-emerald-100">User Cloud API</h3>
                                         <p className="text-xs text-emerald-700 dark:text-emerald-300 font-medium">
-                                            {proPlusMode ? "AI Studio Pro Plus routing with smart fallback." : "High-speed engine. No setup required."}
+                                            {proPlusMode ? "Smart Pro Plus routing with fallback engine." : "High-speed engine. No setup required."}
                                         </p>
                                     </div>
                                 </div>
