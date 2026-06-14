@@ -100,6 +100,15 @@ export default function MessengerIntegrationPage() {
     const [directLoading, setDirectLoading] = useState(false);
     const [isManualSetupOpen, setIsManualSetupOpen] = useState(false);
     const [isMobileConnectDialogOpen, setIsMobileConnectDialogOpen] = useState(false);
+    // Error Dialog State
+    const [isErrorDialogOpen, setIsErrorDialogOpen] = useState(false);
+    const [errorDetails, setErrorDetails] = useState<{
+        title: string;
+        message: string;
+        code?: string;
+        pageName?: string;
+        tips: string[];
+    } | null>(null);
 
     // Subscription Modal State - DEPRECATED/REMOVED
     // const [isSubscriptionOpen, setIsSubscriptionOpen] = useState(false);
@@ -162,6 +171,18 @@ export default function MessengerIntegrationPage() {
         const webhookUrl = `${BACKEND_URL}/webhook`;
         navigator.clipboard.writeText(webhookUrl);
         toast.success("Webhook URL copied!");
+    };
+
+    // Helper to show detailed error dialog
+    const showDetailedError = (details: {
+        title: string;
+        message: string;
+        code?: string;
+        pageName?: string;
+        tips: string[];
+    }) => {
+        setErrorDetails(details);
+        setIsErrorDialogOpen(true);
     };
 
     const fetchPages = async () => {
@@ -368,7 +389,18 @@ export default function MessengerIntegrationPage() {
                             pageId: page.id
                         });
 
-                        toast.error(`${page.name}: Connection Failed. ${subResult.error.message || 'Check Permissions'}`);
+                        showDetailedError({
+                            title: "Page Connection Failed",
+                            message: subResult.error.message || "Failed to connect this Facebook Page.",
+                            code: subResult.error.code,
+                            pageName: page.name,
+                            tips: [
+                                "Check if you're an Admin of this Page with Full Control.",
+                                "Verify the Page is published and not restricted.",
+                                "Make sure you've granted all required permissions to our app.",
+                                "Go to Facebook Settings > Business Integrations and remove our app, then try connecting again.",
+                            ],
+                        });
                     } else {
                         console.log(`Subscribed app to page ${page.name}`);
                         
@@ -686,7 +718,17 @@ export default function MessengerIntegrationPage() {
                 stack: error.stack,
                 context: 'MessengerIntegrationPage:handleConnectFacebook'
             });
-            toast.error(error.message || "Failed to connect Facebook");
+            showDetailedError({
+                title: "Facebook Connection Failed",
+                message: error.message || "Something went wrong while connecting Facebook.",
+                code: error.code,
+                tips: [
+                    "Make sure you have granted all required permissions.",
+                    "Ensure you're an Admin of the Facebook Page(s).",
+                    "Check if your Facebook account has Two-Factor Authentication enabled if required.",
+                    "Try disconnecting and reconnecting from Facebook Settings > Business Integrations.",
+                ],
+            });
         } finally {
             setConnecting(false);
         }
@@ -734,7 +776,18 @@ export default function MessengerIntegrationPage() {
                 stack: error.stack,
                 context: 'MessengerIntegrationPage:handleDirectConnect'
             });
-            toast.error(error.message || "Failed to connect page");
+            showDetailedError({
+                title: "Direct Connect Failed",
+                message: error.message || "Failed to connect page using manual setup.",
+                code: error.code,
+                pageName: directPageName,
+                tips: [
+                    "Make sure you've entered the correct Page ID and Access Token.",
+                    "Verify the Access Token has all required permissions.",
+                    "Check if the Page ID matches exactly what's in Facebook.",
+                    "Ensure the token is not expired.",
+                ],
+            });
         } finally {
             setDirectLoading(false);
         }
@@ -982,6 +1035,53 @@ export default function MessengerIntegrationPage() {
                         <Button variant="outline" onClick={() => setIsManualSetupOpen(false)}>Cancel</Button>
                         <Button onClick={handleDirectConnect} disabled={directLoading}>
                             {directLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Connect Page"}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Detailed Error Dialog */}
+            <Dialog open={isErrorDialogOpen} onOpenChange={setIsErrorDialogOpen}>
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>{errorDetails?.title}</DialogTitle>
+                        {errorDetails?.pageName && (
+                            <DialogDescription className="mt-1 font-medium text-blue-400">
+                                Page: {errorDetails.pageName}
+                            </DialogDescription>
+                        )}
+                    </DialogHeader>
+                    
+                    <div className="space-y-4 py-4">
+                        <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4">
+                            <p className="text-sm text-red-300">
+                                {errorDetails?.message}
+                            </p>
+                            {errorDetails?.code && (
+                                <p className="mt-2 text-xs font-mono text-red-400/70">
+                                    Error Code: {errorDetails.code}
+                                </p>
+                            )}
+                        </div>
+                        
+                        <div className="space-y-2">
+                            <h4 className="font-semibold text-sm text-gray-300">
+                                Troubleshooting Tips:
+                            </h4>
+                            <ul className="space-y-2">
+                                {errorDetails?.tips.map((tip, index) => (
+                                    <li key={index} className="flex items-start gap-2 text-sm text-gray-400">
+                                        <span className="mt-1 text-green-400">•</span>
+                                        {tip}
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    </div>
+
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setIsErrorDialogOpen(false)}>
+                            Close
                         </Button>
                     </DialogFooter>
                 </DialogContent>
