@@ -1132,7 +1132,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         + `5) LISTING PRODUCTS: If asked what products are available, mention a short natural list and ask which one they want.\n`
         + `6) NO HALLUCINATIONS: Never guess or invent prices. Always use tool data only.\n`;
 
-    const aiConfig = { ...controlConfig };
+    const aiConfig = { ...controlConfig, page_id: effectiveSessionName };
     aiConfig.text_prompt = aiConfig.text_prompt
         ? `${aiConfig.text_prompt}${professionalRules}`
         : professionalRules;
