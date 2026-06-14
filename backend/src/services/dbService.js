@@ -4047,7 +4047,7 @@ async function getResourceProductsWithMedia(pageId) {
     try {
         if (!pageId) return [];
 
-        const { isWhatsapp, resourceIds } = await resolveResourceSearchContext(pageId);
+        const { isWhatsapp, resourceIds, userId } = await resolveResourceSearchContext(pageId);
         if (resourceIds.length === 0) return [];
 
         let sql = `
@@ -4056,6 +4056,10 @@ async function getResourceProductsWithMedia(pageId) {
             WHERE is_active = true
         `;
         let params = [];
+        if (userId) {
+            params.push(String(userId));
+            sql += ` AND user_id::text = $${params.length}::text`;
+        }
         ({ sql, params } = appendAssignmentFilter(sql, params, isWhatsapp, resourceIds));
         sql += ` ORDER BY id DESC`;
 
