@@ -58,6 +58,9 @@ export default function WhatsAppConversionPage() {
   const [tokenBreakdown, setTokenBreakdown] = useState<Record<string, number>>({});
   const [expandedMessageIds, setExpandedMessageIds] = useState<Set<string | number>>(new Set());
   const [lockedContacts, setLockedContacts] = useState<Record<string, boolean>>({});
+  const [contactLabels, setContactLabels] = useState<Record<string, string[]>>({});
+  const [contactAiActions, setContactAiActions] = useState<Record<string, string>>({});
+
   const [currentPageNum, setCurrentPageNum] = useState(1);
   const [totalMessages, setTotalMessages] = useState(0);
   const LIMIT = 50;
@@ -84,11 +87,19 @@ export default function WhatsAppConversionPage() {
       if (!res.ok) return;
 
       const data = await res.json();
-      const map: Record<string, boolean> = {};
+      const lockedMap: Record<string, boolean> = {};
+      const labelsMap: Record<string, string[]> = {};
+      const aiActionsMap: Record<string, string> = {};
+      
       (Array.isArray(data) ? data : []).forEach((c: any) => {
-        map[c.phone_number] = c.is_locked;
+        lockedMap[c.phone_number] = c.is_locked;
+        labelsMap[c.phone_number] = c.labels || [];
+        aiActionsMap[c.phone_number] = c.ai_action || 'continue';
       });
-      setLockedContacts(map);
+      
+      setLockedContacts(lockedMap);
+      setContactLabels(labelsMap);
+      setContactAiActions(aiActionsMap);
     } catch (e) {
       console.error("Error fetching contacts:", e);
     }
@@ -554,6 +565,7 @@ export default function WhatsAppConversionPage() {
                 <TableHead>Time</TableHead>
                 <TableHead>Message</TableHead>
                 <TableHead>Reply By</TableHead>
+                <TableHead>Labels</TableHead>
                 <TableHead>Tokens</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -562,14 +574,18 @@ export default function WhatsAppConversionPage() {
             <TableBody>
               {loading && messages.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center">Loading...</TableCell>
+                  <TableCell colSpan={7} className="text-center">Loading...</TableCell>
                 </TableRow>
               ) : messages.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center">No messages found for this session</TableCell>
+                  <TableCell colSpan={7} className="text-center">No messages found for this session</TableCell>
                 </TableRow>
               ) : (
-                messages.map((msg) => (
+                messages.map((msg) => {
+                  const phoneNumber = msg.sender_id || msg.recipient_id || '';
+                  const labels = contactLabels[phoneNumber] || [];
+                  
+                  return (
                   <TableRow key={msg.id || msg.message_id}>
                     <TableCell>{formatTimestamp(msg.timestamp)}</TableCell>
                     <TableCell
@@ -588,11 +604,25 @@ export default function WhatsAppConversionPage() {
                         className={`px-2 py-1 rounded-full text-xs border ${
                           msg.reply_by === 'bot'
                             ? 'bg-primary/10 text-primary border-primary/40'
+                            : msg.reply_by === 'admin'
+                            ? 'bg-green-500/10 text-green-500 border-green-500/40'
                             : 'bg-muted/10 text-muted-foreground border-border'
                         }`}
                       >
                         {msg.reply_by || 'Unknown'}
                       </span>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1">
+                        {labels.map((label, idx) => (
+                          <span
+                            key={idx}
+                            className="px-2 py-0.5 rounded-full text-xs bg-blue-500/10 text-blue-500 border border-blue-500/30"
+                          >
+                            {label}
+                          </span>
+                        ))}
+                      </div>
                     </TableCell>
                     <TableCell>
                       {msg.token_usage ? (

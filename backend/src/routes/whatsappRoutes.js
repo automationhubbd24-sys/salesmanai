@@ -739,10 +739,9 @@ router.get('/contacts', authMiddleware, async (req, res) => {
 
         const result = await pgClient.query(
             `
-            SELECT phone_number, is_locked
+            SELECT phone_number, is_locked, labels, ai_action
             FROM whatsapp_contacts
             WHERE session_name = $1
-              AND is_locked = true
             `,
             [sessionName]
         );

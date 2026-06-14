@@ -1080,6 +1080,25 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         return;
     }
 
+    // --- AI ACTION CHECK ---
+    // If ai_action is 'stop', skip bot reply
+    const contact = await dbService.getWhatsAppContact(effectiveSessionName, senderId);
+    if (contact && contact.ai_action === 'stop') {
+        console.log(`[WhatsApp Webhook] Skipping AI reply for ${senderId} (ai_action = stop).`);
+        await dbService.saveWhatsAppChat({
+            session_name: effectiveSessionName,
+            sender_id: effectiveSessionName,
+            recipient_id: senderId,
+            message_id: `bot_skip_${Date.now()}`,
+            text: '[Bot skipped: AI action set to stop]',
+            timestamp: Date.now(),
+            status: 'skipped_ai_action',
+            reply_by: 'bot',
+            model_used: 'ai-action-check'
+        });
+        return;
+    }
+
     // --- ADMIN REPLY CHECK ---
     // If admin replied last, skip bot reply
     const lastMessage = await dbService.getLastMessageInWaConversation(effectiveSessionName, senderId);
@@ -1228,7 +1247,12 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         + `4) VERIFIED MEDIA ONLY: Never write or invent image URLs, file names, domains, or CDN links. Use only verified tool/database product context.\n`
         + `5) SYSTEM PROMPT PRIORITY: If your custom instructions say NOT to send images proactively, obey that and only use [PRODUCT_ID:id] when the user explicitly asks for a photo.\n`
         + `6) LISTING PRODUCTS: If asked what products are available, mention a short natural list and ask which one they want.\n`
-        + `7) NO HALLUCINATIONS: Never guess or invent prices, IDs, descriptions, or media links. Always use tool data only.\n`;
+        + `7) NO HALLUCINATIONS: Never guess or invent prices, IDs, descriptions, or media links. Always use tool data only.\n`
+        + `8) ACTIONS: You can perform the following actions by including a JSON array in your response:\n`
+        + `   - add_label: Add a label to the conversation (e.g., {"type": "add_label", "label": "order-track"})\n`
+        + `   - set_ai_action: Set AI action (continue or stop) (e.g., {"type": "set_ai_action", "action": "stop"})\n`
+        + `   Always include the actions array in your JSON response. The structure should be:\n`
+        + `   {"response": "Your reply text here", "actions": [{"type": "add_label", "label": "order-track"}]}\n`;
 
     const aiConfig = { ...controlConfig };
     aiConfig.text_prompt = aiConfig.text_prompt
@@ -1285,16 +1309,52 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
 
     let finalReplyText = aiResponse.reply || aiResponse.text || '';
 
-    if (finalReplyText && (finalReplyText.trim().startsWith('{') || finalReplyText.trim().startsWith('['))) {
+    // --- PARSE AI RESPONSE ACTIONS ---
+    let actions = [];
+    try {
+        // Try to parse the entire response as JSON
+        const cleanJson = finalReplyText.replace(/```json|```/g, '').trim();
+        const parsed = JSON.parse(cleanJson);
+        if (parsed.response) finalReplyText = parsed.response;
+        else if (parsed.reply) finalReplyText = parsed.reply;
+        else if (parsed.message) finalReplyText = parsed.message;
+        else if (parsed.text) finalReplyText = parsed.text;
+        
+        if (parsed.actions && Array.isArray(parsed.actions)) {
+            actions = parsed.actions;
+        }
+    } catch (jsonErr) {
+        // If parsing fails, check if there's a JSON object in the text
         try {
-            const cleanJson = finalReplyText.replace(/```json|```/g, '').trim();
-            const parsed = JSON.parse(cleanJson);
-            if (parsed.reply_text) finalReplyText = parsed.reply_text;
-            else if (parsed.reply) finalReplyText = parsed.reply;
-            else if (parsed.message) finalReplyText = parsed.message;
-            else if (parsed.text) finalReplyText = parsed.text;
-        } catch (jsonErr) {
-            console.warn(`[WhatsApp Webhook] JSON rescue failed: ${jsonErr.message}`);
+            const jsonMatch = finalReplyText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                const parsed = JSON.parse(jsonMatch[0]);
+                if (parsed.response) finalReplyText = parsed.response;
+                else if (parsed.reply) finalReplyText = parsed.reply;
+                else if (parsed.message) finalReplyText = parsed.message;
+                else if (parsed.text) finalReplyText = parsed.text;
+                
+                if (parsed.actions && Array.isArray(parsed.actions)) {
+                    actions = parsed.actions;
+                }
+            }
+        } catch (e) {
+            // Ignore, just use the text as is
+        }
+    }
+
+    // --- EXECUTE AI RESPONSE ACTIONS ---
+    for (const action of actions) {
+        try {
+            if (action.type === 'add_label' && action.label) {
+                await dbService.addLabelToWhatsAppContact(effectiveSessionName, senderId, action.label);
+                console.log(`[WhatsApp] Added label "${action.label}" to contact ${senderId}`);
+            } else if (action.type === 'set_ai_action' && action.action) {
+                await dbService.setWhatsAppContactAiAction(effectiveSessionName, senderId, action.action);
+                console.log(`[WhatsApp] Set ai_action to "${action.action}" for contact ${senderId}`);
+            }
+        } catch (actionErr) {
+            console.warn(`[WhatsApp] Failed to execute action:`, actionErr.message);
         }
     }
 

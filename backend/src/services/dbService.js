@@ -3039,6 +3039,87 @@ async function getLastMessageInWaConversation(sessionName, phoneNumber) {
     }
 }
 
+// --- WhatsApp Labels & AI Action ---
+async function getWhatsAppContact(sessionName, phoneNumber) {
+    try {
+        const result = await query(
+            `SELECT * FROM whatsapp_contacts WHERE session_name = $1 AND phone_number = $2 LIMIT 1`,
+            [sessionName, phoneNumber]
+        );
+        if (result.rows.length > 0) {
+            return result.rows[0];
+        }
+        return null;
+    } catch (error) {
+        console.error("Error getting WhatsApp contact:", error);
+        return null;
+    }
+}
+
+async function addLabelToWhatsAppContact(sessionName, phoneNumber, label) {
+    try {
+        // Upsert contact if not exists
+        await query(
+            `INSERT INTO whatsapp_contacts (session_name, phone_number, labels, ai_action, is_locked, last_interaction)
+             VALUES ($1, $2, '[]'::jsonb, 'continue', false, NOW())
+             ON CONFLICT (session_name, phone_number)
+             DO UPDATE SET last_interaction = NOW()`,
+            [sessionName, phoneNumber]
+        );
+
+        // Add label if not exists
+        await query(
+            `UPDATE whatsapp_contacts
+             SET labels = jsonb_insert(labels, '{-1}', $3::jsonb, true)
+             WHERE session_name = $1 AND phone_number = $2
+               AND NOT (labels @> $3::jsonb)`,
+            [sessionName, phoneNumber, JSON.stringify(label)]
+        );
+
+        // Ensure label exists in label_actions
+        await query(
+            `INSERT INTO label_actions (page_id, label_name, ai_action, created_at)
+             VALUES ($1, $2, 'continue', NOW())
+             ON CONFLICT (page_id, label_name)
+             DO NOTHING`,
+            [sessionName, label]
+        );
+
+        console.log(`[DB] Added label "${label}" to WA contact ${phoneNumber} in session ${sessionName}`);
+        return true;
+    } catch (error) {
+        console.error("Error adding label to WA contact:", error);
+        return false;
+    }
+}
+
+async function setWhatsAppContactAiAction(sessionName, phoneNumber, aiAction) {
+    try {
+        // Upsert contact if not exists
+        await query(
+            `INSERT INTO whatsapp_contacts (session_name, phone_number, labels, ai_action, is_locked, last_interaction)
+             VALUES ($1, $2, '[]'::jsonb, 'continue', false, NOW())
+             ON CONFLICT (session_name, phone_number)
+             DO UPDATE SET last_interaction = NOW()`,
+            [sessionName, phoneNumber]
+        );
+
+        // Update ai_action
+        await query(
+            `UPDATE whatsapp_contacts
+             SET ai_action = $3
+             WHERE session_name = $1 AND phone_number = $2`,
+            [sessionName, phoneNumber, aiAction]
+        );
+
+        console.log(`[DB] Set WA contact ${phoneNumber} ai_action to "${aiAction}" in session ${sessionName}`);
+        return true;
+    } catch (error) {
+        console.error("Error setting WA contact ai_action:", error);
+        return false;
+    }
+}
+
 // --- Helper: Get Last N WhatsApp Messages (Raw) for Echo Check ---
 async function getLastNWhatsAppMessages(sessionName, recipientId, limit = 20) {
     const { query } = require('./pgClient');
@@ -3666,6 +3747,8 @@ module.exports = {
     toggleFbLock,
     getLastMessageInFbConversation,
     getLastMessageInWaConversation,
+    addLabelToWhatsAppContact,
+    setWhatsAppContactAiAction,
     getAdContext,
     saveAdContext,
     getAdsByUserId,
