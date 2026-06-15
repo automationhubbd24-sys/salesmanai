@@ -989,47 +989,6 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         reply_by: 'user'
     });
 
-    // --- Emoji Lock History Check (Self-Healing) ---
-    let LOCK_EMOJIS = ['🛑', '🔒', '⛔'];
-    let UNLOCK_EMOJIS = ['🟢', '🔓', '✅'];
-    // Get lock/unlock emojis from config
-    if (controlConfig) {
-        const pagePrompts = controlConfig.page_prompts || {};
-        // Merge emojis from config and prompts
-        const lockEmojiList = [
-            pagePrompts.lock_emojis,
-            controlConfig.lock_emojis,
-            pagePrompts.block_emoji,
-            controlConfig.block_emoji
-        ].filter(Boolean).join(' ').split(/[, ]+/).map(e => e.trim()).filter(e => e && e.length > 0);
-        if (lockEmojiList.length > 0) LOCK_EMOJIS = lockEmojiList;
-
-        const unlockEmojiList = [
-            pagePrompts.unlock_emojis,
-            controlConfig.unlock_emojis,
-            pagePrompts.unblock_emoji,
-            controlConfig.unblock_emoji
-        ].filter(Boolean).join(' ').split(/[, ]+/).map(e => e.trim()).filter(e => e && e.length > 0);
-        if (unlockEmojiList.length > 0) UNLOCK_EMOJIS = unlockEmojiList;
-    }
-    console.log(`[WhatsApp Webhook] Using lock emojis: [${LOCK_EMOJIS.join(', ')}], unlock emojis: [${UNLOCK_EMOJIS.join(', ')}]`);
-
-    // Check history for emoji lock/unlock commands
-    try {
-        const historyCheck = await dbService.checkWhatsAppEmojiLock(effectiveSessionName, senderId, LOCK_EMOJIS, UNLOCK_EMOJIS);
-        if (historyCheck) {
-            if (historyCheck.locked) {
-                console.log(`[WhatsApp Webhook] Lock detected via emoji history for ${senderId}. Setting lock.`);
-                await dbService.toggleWhatsAppLock(effectiveSessionName, senderId, true);
-            } else {
-                console.log(`[WhatsApp Webhook] Unlock detected via emoji history for ${senderId}. Removing lock.`);
-                await dbService.toggleWhatsAppLock(effectiveSessionName, senderId, false);
-            }
-        }
-    } catch (historyErr) {
-        console.warn(`[WhatsApp Webhook] Failed emoji lock history check: ${historyErr.message}`);
-    }
-
     const isLocked = await dbService.checkWhatsAppLockStatus(effectiveSessionName, senderId);
     if (isLocked) {
         console.log(`[WhatsApp Webhook] Conversation locked for ${senderId}. Skipping AI reply.`);
@@ -1634,16 +1593,104 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     }
 }
 
+async function processWhatsAppEcho(echo, phoneNumberId, wabaId, metadata) {
+    const messageId = echo.id;
+    const senderId = echo.to; // recipient is user
+    let text = '';
+    if (echo.type === 'text' && echo.text?.body) {
+        text = echo.text.body;
+    } else if (echo.type === 'image' && echo.image?.caption) {
+        text = echo.image.caption;
+    }
+
+    console.log(`[WhatsApp Echo] ADMIN ACTION DETECTED: Phone Number ${phoneNumberId} -> User ${senderId}. Text: ${text.substring(0, 50)}...`);
+
+    const lookupKeys = [
+        phoneNumberId,
+        wabaId,
+        phoneNumberId ? `official_${phoneNumberId}` : null,
+        wabaId ? `official_${wabaId}` : null
+    ].filter(Boolean);
+
+    let pageData = { config: null, prompts: null };
+    for (const lookupKey of lookupKeys) {
+        const candidate = await getCachedPageData(lookupKey);
+        if (candidate?.config) {
+            pageData = candidate;
+            break;
+        }
+    }
+    if (!pageData.config) {
+        console.warn(`[WhatsApp Echo] No config found for lookup keys: ${lookupKeys.join(', ')}`);
+        return;
+    }
+
+    const effectiveSessionName = pageData.config.session_name || `official_${phoneNumberId || wabaId}`;
+
+    // Save Admin Reply to DB (Async - Fire and Forget)
+    dbService.saveWhatsAppChat({
+        session_name: effectiveSessionName,
+        sender_id: effectiveSessionName,
+        recipient_id: senderId,
+        message_id: messageId,
+        text: text,
+        timestamp: Date.now(),
+        status: 'sent',
+        reply_by: 'admin'
+    }).catch(() => {});
+
+    // Save to AI Context Memory (Async)
+    const echoSessionId = `${effectiveSessionName}_${senderId}`;
+    dbService.saveChatMessage(echoSessionId, 'assistant', text, messageId).catch(() => {});
+
+    // --- INSTANT EMOJI LOCK CHECK ---
+    const { config: controlConfig, prompts } = pageData;
+    if (prompts && text) {
+        const lockList = [
+            prompts.lock_emojis,
+            controlConfig.lock_emojis,
+            prompts.block_emoji,
+            controlConfig.block_emoji
+        ].filter(Boolean).join(' ').split(/[, ]+/).map(e => e.trim()).filter(e => e && e.length > 0);
+        const unlockList = [
+            prompts.unlock_emojis,
+            controlConfig.unlock_emojis,
+            prompts.unblock_emoji,
+            controlConfig.unblock_emoji
+        ].filter(Boolean).join(' ').split(/[, ]+/).map(e => e.trim()).filter(e => e && e.length > 0);
+
+        let isLocked = lockList.some(e => text.includes(e));
+        let isUnlocked = !isLocked && unlockList.some(e => text.includes(e));
+
+        if (isLocked) {
+            await dbService.toggleWhatsAppLock(effectiveSessionName, senderId, true);
+            console.log(`[WhatsApp Handover Lock] Session ${effectiveSessionName} locked chat for User ${senderId} via emoji.`);
+        } else if (isUnlocked) {
+            await dbService.toggleWhatsAppLock(effectiveSessionName, senderId, false);
+            console.log(`[WhatsApp Handover Lock] Session ${effectiveSessionName} unlocked chat for User ${senderId} via emoji.`);
+        }
+    }
+}
+
 async function processWhatsAppWebhook(body) {
     console.log(`[WhatsApp Webhook] Processing ${body.entry?.length || 0} entries...`);
     console.log(`[WhatsApp Webhook] Full body: ${JSON.stringify(body, null, 2)}`);
     for (const entry of body.entry || []) {
         const wabaId = entry.id;
         for (const change of entry.changes || []) {
-            if (change.field !== 'messages') continue;
-
             const value = change.value || {};
             const phoneNumberId = value.metadata?.phone_number_id;
+
+            if (change.field === 'smb_message_echoes') {
+                // Handle WhatsApp Cloud API Echo (admin/bot replies
+                for (const echo of value.message_echoes || []) {
+                    await processWhatsAppEcho(echo, phoneNumberId, wabaId, value.metadata);
+                }
+                continue;
+            }
+
+            if (change.field !== 'messages') continue;
+
             const groupedMessages = new Map();
 
             // Handle incoming messages from users

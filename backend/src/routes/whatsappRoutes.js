@@ -452,7 +452,7 @@ router.get('/orders', authMiddleware, async (req, res) => {
 
         const where = conditions.join(' AND ');
         const queryText = `
-            SELECT id, product_name, number, location, product_quantity, price, created_at, sender_id, status
+            SELECT id, product_name, number, location, product_quantity, price, created_at, sender_id, status, customer_name
             FROM whatsapp_order_tracking
             WHERE ${where}
             ORDER BY created_at DESC
