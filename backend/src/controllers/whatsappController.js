@@ -1793,14 +1793,15 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
     if (pageConfig) {
          // Fix: Robust Splitting for Space/Comma separated emojis
          if (pageConfig.lock_emojis) {
-             const locks = pageConfig.lock_emojis.split(/[, ]+/).map(e => e.trim()).filter(e => e);
+             const locks = pageConfig.lock_emojis.split(/[, ]+/).map(e => e.trim()).filter(e => e && e.length > 0);
              if (locks.length > 0) LOCK_EMOJIS = locks;
          }
          if (pageConfig.unlock_emojis) {
-             const unlocks = pageConfig.unlock_emojis.split(/[, ]+/).map(e => e.trim()).filter(e => e);
+             const unlocks = pageConfig.unlock_emojis.split(/[, ]+/).map(e => e.trim()).filter(e => e && e.length > 0);
              if (unlocks.length > 0) UNLOCK_EMOJIS = unlocks;
          }
     }
+    console.log(`[WA] Using lock emojis: [${LOCK_EMOJIS.join(', ')}], unlock emojis: [${UNLOCK_EMOJIS.join(', ')}]`);
 
     // Layer 3: Message History Scan (Self-Healing) - PRIORITY CHECK
     // Checks last 20 messages for missed Emoji Commands. 
