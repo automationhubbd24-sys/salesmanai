@@ -1068,6 +1068,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         console.warn(`[WhatsApp Cloud] Failed to check DB lock: ${err.message}`);
     }
 
+    // Layer 1: Original failure-based lock check
     const isLocked = await dbService.checkWhatsAppLockStatus(effectiveSessionName, senderId);
     if (isLocked) {
         console.log(`[WhatsApp Webhook] Conversation locked for ${senderId}. Skipping AI reply.`);
