@@ -1735,14 +1735,24 @@ export default function ProductsPage() {
                         {/* Advanced / Variants Toggle */}
                         <div className="border-t pt-4">
                             <div className="flex items-center justify-between mb-4">
-                                <Label className="text-muted-foreground">Advanced: Variable Product</Label>
+                                <div className="space-y-0.5">
+                                    <Label className="text-sm font-medium">Advanced: Variable Product</Label>
+                                    <p className="text-[10px] text-muted-foreground">
+                                        একই পণ্যের বিভিন্ন সাইজ/কালার/অপশনের জন্য আলাদা দাম set করুন।
+                                    </p>
+                                </div>
                                 <Switch checked={showVariants} onCheckedChange={setShowVariants} />
                             </div>
                             
                             {showVariants && (
                                 <div className="space-y-3 animate-in fade-in slide-in-from-top-2">
                                     <div className="flex items-center justify-between">
-                                        <Label>Variants (Price Options)</Label>
+                                        <div>
+                                            <Label className="text-sm">Variants (Price Options)</Label>
+                                            <p className="text-[10px] text-muted-foreground mt-1">
+                                                যেমন: Small - ৳500, Medium - ৳700, Large - ৳1000
+                                            </p>
+                                        </div>
                                         <Button variant="outline" size="sm" onClick={() => setVariants([...variants, { name: `Option ${variants.length + 1}`, price: productPrice, currency: productCurrency, available: true }])}>
                                             <Plus className="w-3 h-3 mr-1" />
                                             Add Option
@@ -1753,8 +1763,10 @@ export default function ProductsPage() {
                                             <TableHeader>
                                                 <TableRow>
                                                     <TableHead className="w-[40px] text-center">#</TableHead>
-                                                    <TableHead>Price</TableHead>
-                                                    <TableHead className="w-[80px]">Stock</TableHead>
+                                                    <TableHead>Option Name</TableHead>
+                                                    <TableHead className="w-[120px]">Price</TableHead>
+                                                    <TableHead className="w-[90px]">Currency</TableHead>
+                                                    <TableHead className="w-[80px]">Available</TableHead>
                                                     <TableHead className="w-[50px]"></TableHead>
                                                 </TableRow>
                                             </TableHeader>
@@ -1766,9 +1778,22 @@ export default function ProductsPage() {
                                                         </TableCell>
                                                         <TableCell>
                                                             <Input 
+                                                                value={variant.name} 
+                                                                className="h-8"
+                                                                placeholder="যেমন: Small, Red, 500ml"
+                                                                onChange={(e) => {
+                                                                    const newV = [...variants];
+                                                                    newV[index].name = e.target.value;
+                                                                    setVariants(newV);
+                                                                }}
+                                                            />
+                                                        </TableCell>
+                                                        <TableCell>
+                                                            <Input 
                                                                 type="number" 
                                                                 value={variant.price} 
                                                                 className="h-8"
+                                                                placeholder="0"
                                                                 onChange={(e) => {
                                                                     const newV = [...variants];
                                                                     newV[index].price = e.target.value;
@@ -1777,6 +1802,28 @@ export default function ProductsPage() {
                                                             />
                                                         </TableCell>
                                                         <TableCell>
+                                                            <Select 
+                                                                value={variant.currency} 
+                                                                onValueChange={(val) => {
+                                                                    const newV = [...variants];
+                                                                    newV[index].currency = val;
+                                                                    setVariants(newV);
+                                                                }}
+                                                            >
+                                                                <SelectTrigger className="h-8">
+                                                                    <SelectValue />
+                                                                </SelectTrigger>
+                                                                <SelectContent>
+                                                                    <SelectItem value="BDT">BDT</SelectItem>
+                                                                    <SelectItem value="USD">USD</SelectItem>
+                                                                    <SelectItem value="EUR">EUR</SelectItem>
+                                                                    <SelectItem value="GBP">GBP</SelectItem>
+                                                                    <SelectItem value="INR">INR</SelectItem>
+                                                                    <SelectItem value="PKR">PKR</SelectItem>
+                                                                </SelectContent>
+                                                            </Select>
+                                                        </TableCell>
+                                                        <TableCell className="text-center">
                                                             <Switch 
                                                                 checked={variant.available} 
                                                                 onCheckedChange={(c) => {
@@ -1784,14 +1831,24 @@ export default function ProductsPage() {
                                                                     newV[index].available = c;
                                                                     setVariants(newV);
                                                                 }}
+                                                                className="data-[state=checked]:bg-[#00ff88]"
                                                             />
                                                         </TableCell>
                                                         <TableCell>
-                                                            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => {
-                                                                const newV = [...variants];
-                                                                newV.splice(index, 1);
-                                                                setVariants(newV);
-                                                            }}>
+                                                            <Button 
+                                                                variant="ghost" 
+                                                                size="icon" 
+                                                                className="h-8 w-8 text-destructive" 
+                                                                onClick={() => {
+                                                                    if (variants.length > 1) {
+                                                                        const newV = [...variants];
+                                                                        newV.splice(index, 1);
+                                                                        setVariants(newV);
+                                                                    } else {
+                                                                        toast.error("কমপক্ষে 1টি variant থাকতে হবে!");
+                                                                    }
+                                                                }}
+                                                            >
                                                                 <Trash2 className="w-4 h-4" />
                                                             </Button>
                                                         </TableCell>

@@ -1112,12 +1112,26 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
                 const priceDisplay = product.price ? `${product.price} ${product.currency || 'BDT'}` : 'N/A';
                 const imgDisplay = product.image_url || 'N/A';
                 const descDisplay = product.description ? product.description.replace(/\n/g, ' ').substring(0, 200) : '';
+                
+                // Build variants string for prompt
+                let variantsPart = '';
+                if (product.variants && Array.isArray(product.variants) && product.variants.length > 0) {
+                    const availableVariants = product.variants.filter(v => v.available !== false);
+                    if (availableVariants.length > 0) {
+                        variantsPart = ' | Variants: ' + availableVariants.map(v => {
+                            const vPrice = v.price || product.price;
+                            const vCurrency = v.currency || product.currency || 'BDT';
+                            return `${v.name || 'Option'}:${vPrice}${vCurrency}`;
+                        }).join(', ');
+                    }
+                }
+                
                 if (!product.allow_description) {
-                    promptProductContext += `Item ${index + 1}: Image URL: ${imgDisplay}\n`;
+                    promptProductContext += `Item ${index + 1}: Image URL: ${imgDisplay}${variantsPart}\n`;
                     return;
                 }
                 const descPart = descDisplay ? ` | Desc: ${descDisplay}` : '';
-                promptProductContext += `Item ${index + 1}: ${product.name} | Price: ${priceDisplay} | Image URL: ${imgDisplay}${descPart}\n`;
+                promptProductContext += `Item ${index + 1}: ${product.name} | Price: ${priceDisplay} | Image URL: ${imgDisplay}${descPart}${variantsPart}\n`;
             });
             promptProductContext += "[End of Instruction Products]\n";
         }
@@ -1235,8 +1249,22 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
                     let priceDisplay = numericPrice > 0 ? `${numericPrice} ${product.currency || 'BDT'}` : "Ask for Price";
                     const description = product.description || "No description available.";
 
+                    // Build variants display
+                    let variantsDisplay = '';
+                    if (product.variants && Array.isArray(product.variants) && product.variants.length > 0) {
+                        const availableVariants = product.variants.filter(v => v.available !== false);
+                        if (availableVariants.length > 0) {
+                            variantsDisplay = '\n📋 Available Options:';
+                            availableVariants.forEach((v, idx) => {
+                                const variantPrice = parsePrice(v.price);
+                                const variantPriceDisplay = variantPrice > 0 ? `${variantPrice} ${v.currency || product.currency || 'BDT'}` : "Ask for Price";
+                                variantsDisplay += `\n   ${idx + 1}. ${v.name || `Option ${idx + 1}`}: ${variantPriceDisplay}`;
+                            });
+                        }
+                    }
+
                     // Prepare replacement text
-                    const replacementText = `\n\n🛍️ *${product.name}*\n💰 Price: ${priceDisplay}\n📝 Details: ${description}`;
+                    const replacementText = `\n\n🛍️ *${product.name}*\n💰 Price: ${priceDisplay}\n📝 Details: ${description}${variantsDisplay}`;
                     
                     // Replace all occurrences of this exact tag string
                     finalReplyText = finalReplyText.split(fullTag).join(replacementText);
@@ -2713,12 +2741,26 @@ STRICT RULES:
                         const priceDisplay = p.price ? `${p.price} ${p.currency || 'BDT'}` : 'N/A';
                         const imgDisplay = p.image_url || 'N/A';
                         const descDisplay = p.description ? p.description.replace(/\n/g, ' ').substring(0, 200) : '';
+                        
+                        // Build variants string for prompt
+                        let variantsPart = '';
+                        if (p.variants && Array.isArray(p.variants) && p.variants.length > 0) {
+                            const availableVariants = p.variants.filter(v => v.available !== false);
+                            if (availableVariants.length > 0) {
+                                variantsPart = ' | Variants: ' + availableVariants.map(v => {
+                                    const vPrice = v.price || p.price;
+                                    const vCurrency = v.currency || p.currency || 'BDT';
+                                    return `${v.name || 'Option'}:${vPrice}${vCurrency}`;
+                                }).join(', ');
+                            }
+                        }
+                        
                         if (!p.allow_description) {
-                            promptProductContext += `Item ${i + 1}: Image URL: ${imgDisplay}\n`;
+                            promptProductContext += `Item ${i + 1}: Image URL: ${imgDisplay}${variantsPart}\n`;
                             return;
                         }
                         const descPart = descDisplay ? ` | Desc: ${descDisplay}` : '';
-                        promptProductContext += `Item ${i + 1}: ${p.name} | Price: ${priceDisplay} | Image URL: ${imgDisplay}${descPart}\n`;
+                        promptProductContext += `Item ${i + 1}: ${p.name} | Price: ${priceDisplay} | Image URL: ${imgDisplay}${descPart}${variantsPart}\n`;
                     });
                     promptProductContext += "[End of Instruction Products]\n";
                 }
@@ -2844,8 +2886,22 @@ STRICT RULES:
                         let priceDisplay = numericPrice > 0 ? `${numericPrice} ${product.currency || 'BDT'}` : "Ask for Price";
                         const description = product.description || "No description available.";
 
+                        // Build variants display
+                        let variantsDisplay = '';
+                        if (product.variants && Array.isArray(product.variants) && product.variants.length > 0) {
+                            const availableVariants = product.variants.filter(v => v.available !== false);
+                            if (availableVariants.length > 0) {
+                                variantsDisplay = '\n📋 Available Options:';
+                                availableVariants.forEach((v, idx) => {
+                                    const variantPrice = parsePrice(v.price);
+                                    const variantPriceDisplay = variantPrice > 0 ? `${variantPrice} ${v.currency || product.currency || 'BDT'}` : "Ask for Price";
+                                    variantsDisplay += `\n   ${idx + 1}. ${v.name || `Option ${idx + 1}`}: ${variantPriceDisplay}`;
+                                });
+                            }
+                        }
+
                         // Prepare replacement text
-                        const replacementText = `\n\n🛍️ *${product.name}*\n💰 Price: ${priceDisplay}\n📝 Details: ${description}`;
+                        const replacementText = `\n\n🛍️ *${product.name}*\n💰 Price: ${priceDisplay}\n📝 Details: ${description}${variantsDisplay}`;
                         
                         // Replace all occurrences of this exact tag string
                         replyText = replyText.split(fullTag).join(replacementText);
