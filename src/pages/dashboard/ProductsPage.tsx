@@ -21,6 +21,8 @@ interface Variant {
     price: string;
     currency: string;
     available: boolean;
+    image_url?: string | null;
+    video_url?: string | null;
 }
 
 interface Product {
@@ -1750,49 +1752,66 @@ export default function ProductsPage() {
                                         <div>
                                             <Label className="text-sm">Variants (Price Options)</Label>
                                             <p className="text-[10px] text-muted-foreground mt-1">
-                                                যেমন: Small - ৳500, Medium - ৳700, Large - ৳1000
+                                                প্রতিটি অপশনের আলাদা ছবি/ভিডিও দিতে পারবেন
                                             </p>
                                         </div>
-                                        <Button variant="outline" size="sm" onClick={() => setVariants([...variants, { name: `Option ${variants.length + 1}`, price: productPrice, currency: productCurrency, available: true }])}>
+                                        <Button variant="outline" size="sm" onClick={() => setVariants([...variants, { name: `Option ${variants.length + 1}`, price: productPrice, currency: productCurrency, available: true, image_url: null, video_url: null }])}>
                                             <Plus className="w-3 h-3 mr-1" />
                                             Add Option
                                         </Button>
                                     </div>
-                                    <div className="border rounded-md overflow-hidden">
-                                        <Table>
-                                            <TableHeader>
-                                                <TableRow>
-                                                    <TableHead className="w-[40px] text-center">#</TableHead>
-                                                    <TableHead>Option Name</TableHead>
-                                                    <TableHead className="w-[120px]">Price</TableHead>
-                                                    <TableHead className="w-[90px]">Currency</TableHead>
-                                                    <TableHead className="w-[80px]">Available</TableHead>
-                                                    <TableHead className="w-[50px]"></TableHead>
-                                                </TableRow>
-                                            </TableHeader>
-                                            <TableBody>
-                                                {variants.map((variant, index) => (
-                                                    <TableRow key={index}>
-                                                        <TableCell className="text-center text-muted-foreground text-sm">
-                                                            {index + 1}
-                                                        </TableCell>
-                                                        <TableCell>
+                                    <div className="space-y-4">
+                                        {variants.map((variant, index) => (
+                                            <Card key={index} className="border border-white/10 bg-black/30">
+                                                <CardContent className="p-4">
+                                                    <div className="flex items-center justify-between mb-3">
+                                                        <div className="flex items-center gap-3">
+                                                            <span className="w-6 h-6 rounded-full bg-[#00ff88]/20 text-[#00ff88] flex items-center justify-center text-xs font-bold">
+                                                                {index + 1}
+                                                            </span>
+                                                            <span className="font-medium text-sm">Variant Option</span>
+                                                        </div>
+                                                        <Button 
+                                                            variant="ghost" 
+                                                            size="icon" 
+                                                            className="h-8 w-8 text-destructive" 
+                                                            onClick={() => {
+                                                                if (variants.length > 1) {
+                                                                    const newV = [...variants];
+                                                                    newV.splice(index, 1);
+                                                                    setVariants(newV);
+                                                                } else {
+                                                                    toast.error("কমপক্ষে 1টি variant থাকতে হবে!");
+                                                                }
+                                                            }}
+                                                        >
+                                                            <Trash2 className="w-4 h-4" />
+                                                        </Button>
+                                                    </div>
+                                                    
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                                                        {/* Option Name */}
+                                                        <div className="space-y-2">
+                                                            <Label className="text-xs text-muted-foreground">Option Name</Label>
                                                             <Input 
                                                                 value={variant.name} 
-                                                                className="h-8"
-                                                                placeholder="যেমন: Small, Red, 500ml"
+                                                                className="h-8 bg-black/40"
+                                                                placeholder="যেমন: Small, Red"
                                                                 onChange={(e) => {
                                                                     const newV = [...variants];
                                                                     newV[index].name = e.target.value;
                                                                     setVariants(newV);
                                                                 }}
                                                             />
-                                                        </TableCell>
-                                                        <TableCell>
+                                                        </div>
+                                                        
+                                                        {/* Price */}
+                                                        <div className="space-y-2">
+                                                            <Label className="text-xs text-muted-foreground">Price</Label>
                                                             <Input 
                                                                 type="number" 
                                                                 value={variant.price} 
-                                                                className="h-8"
+                                                                className="h-8 bg-black/40"
                                                                 placeholder="0"
                                                                 onChange={(e) => {
                                                                     const newV = [...variants];
@@ -1800,8 +1819,11 @@ export default function ProductsPage() {
                                                                     setVariants(newV);
                                                                 }}
                                                             />
-                                                        </TableCell>
-                                                        <TableCell>
+                                                        </div>
+                                                        
+                                                        {/* Currency */}
+                                                        <div className="space-y-2">
+                                                            <Label className="text-xs text-muted-foreground">Currency</Label>
                                                             <Select 
                                                                 value={variant.currency} 
                                                                 onValueChange={(val) => {
@@ -1810,7 +1832,7 @@ export default function ProductsPage() {
                                                                     setVariants(newV);
                                                                 }}
                                                             >
-                                                                <SelectTrigger className="h-8">
+                                                                <SelectTrigger className="h-8 bg-black/40">
                                                                     <SelectValue />
                                                                 </SelectTrigger>
                                                                 <SelectContent>
@@ -1822,40 +1844,181 @@ export default function ProductsPage() {
                                                                     <SelectItem value="PKR">PKR</SelectItem>
                                                                 </SelectContent>
                                                             </Select>
-                                                        </TableCell>
-                                                        <TableCell className="text-center">
-                                                            <Switch 
-                                                                checked={variant.available} 
-                                                                onCheckedChange={(c) => {
-                                                                    const newV = [...variants];
-                                                                    newV[index].available = c;
-                                                                    setVariants(newV);
-                                                                }}
-                                                                className="data-[state=checked]:bg-[#00ff88]"
-                                                            />
-                                                        </TableCell>
-                                                        <TableCell>
-                                                            <Button 
-                                                                variant="ghost" 
-                                                                size="icon" 
-                                                                className="h-8 w-8 text-destructive" 
-                                                                onClick={() => {
-                                                                    if (variants.length > 1) {
+                                                        </div>
+                                                        
+                                                        {/* Available */}
+                                                        <div className="space-y-2">
+                                                            <Label className="text-xs text-muted-foreground">Available</Label>
+                                                            <div className="h-8 flex items-center">
+                                                                <Switch 
+                                                                    checked={variant.available} 
+                                                                    onCheckedChange={(c) => {
                                                                         const newV = [...variants];
-                                                                        newV.splice(index, 1);
+                                                                        newV[index].available = c;
                                                                         setVariants(newV);
-                                                                    } else {
-                                                                        toast.error("কমপক্ষে 1টি variant থাকতে হবে!");
-                                                                    }
-                                                                }}
-                                                            >
-                                                                <Trash2 className="w-4 h-4" />
-                                                            </Button>
-                                                        </TableCell>
-                                                    </TableRow>
-                                                ))}
-                                            </TableBody>
-                                        </Table>
+                                                                    }}
+                                                                    className="data-[state=checked]:bg-[#00ff88]"
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    {/* Media Upload */}
+                                                    <div className="mt-4 pt-4 border-t border-white/10">
+                                                        <Label className="text-xs text-muted-foreground mb-2 block">Variant Media (Optional)</Label>
+                                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                            {/* Image Upload */}
+                                                            <div className="space-y-2">
+                                                                <Label className="text-xs">Image</Label>
+                                                                <div className="flex gap-2">
+                                                                    <input
+                                                                        type="file"
+                                                                        accept="image/*"
+                                                                        className="hidden"
+                                                                        ref={(el) => {
+                                                                            // Store ref for each variant
+                                                                            if (!window['variantImageRefs']) window['variantImageRefs'] = {};
+                                                                            window['variantImageRefs'][index] = el;
+                                                                        }}
+                                                                        onChange={async (e) => {
+                                                                            const file = e.target.files?.[0];
+                                                                            if (file && userId) {
+                                                                                try {
+                                                                                    const formData = new FormData();
+                                                                                    formData.append('image', file);
+                                                                                    formData.append('user_id', userId);
+                                                                                    
+                                                                                    const token = localStorage.getItem('auth_token');
+                                                                                    const res = await fetch(`${BACKEND_URL}/api/upload/image`, {
+                                                                                        method: 'POST',
+                                                                                        headers: token ? { Authorization: `Bearer ${token}` } : {},
+                                                                                        body: formData
+                                                                                    });
+                                                                                    
+                                                                                    if (res.ok) {
+                                                                                        const data = await res.json();
+                                                                                        const newV = [...variants];
+                                                                                        newV[index].image_url = data.url;
+                                                                                        setVariants(newV);
+                                                                                        toast.success('Variant image uploaded!');
+                                                                                    }
+                                                                                } catch (err) {
+                                                                                    toast.error('Image upload failed');
+                                                                                }
+                                                                            }
+                                                                        }}
+                                                                    />
+                                                                    {variant.image_url ? (
+                                                                        <div className="relative w-20 h-20 rounded border border-white/20 overflow-hidden">
+                                                                            <img src={variant.image_url} alt="Variant" className="w-full h-full object-cover" />
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => {
+                                                                                    const newV = [...variants];
+                                                                                    newV[index].image_url = null;
+                                                                                    setVariants(newV);
+                                                                                }}
+                                                                                className="absolute top-1 right-1 bg-black/70 text-white text-[10px] px-1.5 py-0.5 rounded"
+                                                                            >
+                                                                                ×
+                                                                            </button>
+                                                                        </div>
+                                                                    ) : (
+                                                                        <Button
+                                                                            type="button"
+                                                                            variant="outline"
+                                                                            size="sm"
+                                                                            className="h-20 w-20 border-dashed flex flex-col gap-1"
+                                                                            onClick={() => {
+                                                                                window['variantImageRefs']?.[index]?.click();
+                                                                            }}
+                                                                        >
+                                                                            <ImageIcon className="w-4 h-4" />
+                                                                            <span className="text-[10px]">Add Image</span>
+                                                                        </Button>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                            
+                                                            {/* Video Upload */}
+                                                            <div className="space-y-2">
+                                                                <Label className="text-xs">Video</Label>
+                                                                <div className="flex gap-2">
+                                                                    <input
+                                                                        type="file"
+                                                                        accept="video/*"
+                                                                        className="hidden"
+                                                                        ref={(el) => {
+                                                                            // Store ref for each variant
+                                                                            if (!window['variantVideoRefs']) window['variantVideoRefs'] = {};
+                                                                            window['variantVideoRefs'][index] = el;
+                                                                        }}
+                                                                        onChange={async (e) => {
+                                                                            const file = e.target.files?.[0];
+                                                                            if (file && userId) {
+                                                                                try {
+                                                                                    const formData = new FormData();
+                                                                                    formData.append('video', file);
+                                                                                    formData.append('user_id', userId);
+                                                                                    
+                                                                                    const token = localStorage.getItem('auth_token');
+                                                                                    const res = await fetch(`${BACKEND_URL}/api/upload/video`, {
+                                                                                        method: 'POST',
+                                                                                        headers: token ? { Authorization: `Bearer ${token}` } : {},
+                                                                                        body: formData
+                                                                                    });
+                                                                                    
+                                                                                    if (res.ok) {
+                                                                                        const data = await res.json();
+                                                                                        const newV = [...variants];
+                                                                                        newV[index].video_url = data.url;
+                                                                                        setVariants(newV);
+                                                                                        toast.success('Variant video uploaded!');
+                                                                                    }
+                                                                                } catch (err) {
+                                                                                    toast.error('Video upload failed');
+                                                                                }
+                                                                            }
+                                                                        }}
+                                                                    />
+                                                                    {variant.video_url ? (
+                                                                        <div className="relative w-20 h-20 rounded border border-white/20 overflow-hidden bg-black/50">
+                                                                            <div className="w-full h-full flex items-center justify-center">
+                                                                                <Video className="w-6 h-6 text-white/50" />
+                                                                            </div>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => {
+                                                                                    const newV = [...variants];
+                                                                                    newV[index].video_url = null;
+                                                                                    setVariants(newV);
+                                                                                }}
+                                                                                className="absolute top-1 right-1 bg-black/70 text-white text-[10px] px-1.5 py-0.5 rounded"
+                                                                            >
+                                                                                ×
+                                                                            </button>
+                                                                        </div>
+                                                                    ) : (
+                                                                        <Button
+                                                                            type="button"
+                                                                            variant="outline"
+                                                                            size="sm"
+                                                                            className="h-20 w-20 border-dashed flex flex-col gap-1"
+                                                                            onClick={() => {
+                                                                                window['variantVideoRefs']?.[index]?.click();
+                                                                            }}
+                                                                        >
+                                                                            <Video className="w-4 h-4" />
+                                                                            <span className="text-[10px]">Add Video</span>
+                                                                        </Button>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </CardContent>
+                                            </Card>
+                                        ))}
                                     </div>
                                 </div>
                             )}

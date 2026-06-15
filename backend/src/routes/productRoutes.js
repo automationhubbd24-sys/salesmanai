@@ -20,4 +20,8 @@ router.delete('/:id', productController.deleteProduct);
 // WooCommerce Import
 router.post('/import-woocommerce', productController.importWooCommerce);
 
+// Standalone Upload Endpoints for Variant Media
+router.post('/upload/image', productController.uploadVariantImage);
+router.post('/upload/video', productController.uploadVariantVideo);
+
 module.exports = router;

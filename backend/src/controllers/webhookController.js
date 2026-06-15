@@ -1251,6 +1251,8 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
 
                     // Build variants display
                     let variantsDisplay = '';
+                    const variantImages = [];
+                    const variantVideos = [];
                     if (product.variants && Array.isArray(product.variants) && product.variants.length > 0) {
                         const availableVariants = product.variants.filter(v => v.available !== false);
                         if (availableVariants.length > 0) {
@@ -1259,6 +1261,13 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
                                 const variantPrice = parsePrice(v.price);
                                 const variantPriceDisplay = variantPrice > 0 ? `${variantPrice} ${v.currency || product.currency || 'BDT'}` : "Ask for Price";
                                 variantsDisplay += `\n   ${idx + 1}. ${v.name || `Option ${idx + 1}`}: ${variantPriceDisplay}`;
+                                
+                                if (v.image_url) {
+                                    variantImages.push(v.image_url);
+                                }
+                                if (v.video_url) {
+                                    variantVideos.push(v.video_url);
+                                }
                             });
                         }
                     }
@@ -1271,28 +1280,63 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
 
                     // Image attachment logic
                     const historyText = getHistoryText(recentRawHistory);
-                    const imageAlreadySent = historyText.includes(product.image_url);
                     const userWantsPhoto = hasPhotoIntent(recentRawHistory);
+                    
+                    // Track all sent media to avoid duplicates
+                    const sentMediaUrls = new Set();
+                    if (aiResponse.images) {
+                        aiResponse.images.forEach(img => sentMediaUrls.add(img.url));
+                    }
+                    if (aiResponse.videos) {
+                        aiResponse.videos.forEach(vid => sentMediaUrls.add(vid.url));
+                    }
 
-                    if ((!imageAlreadySent || userWantsPhoto) && product.image_url) {
+                    // Attach main product image
+                    if ((!sentMediaUrls.has(product.image_url) || userWantsPhoto) && product.image_url) {
                         if (!aiResponse.images) aiResponse.images = [];
-                        if (!aiResponse.images.some(img => img.url === product.image_url)) {
+                        aiResponse.images.push({
+                            url: product.image_url,
+                            title: product.name,
+                            description: description
+                        });
+                        sentMediaUrls.add(product.image_url);
+                    }
+                    
+                    // Attach main product video
+                    if ((!sentMediaUrls.has(product.video_url) || userWantsPhoto) && product.video_url) {
+                        if (!aiResponse.videos) aiResponse.videos = [];
+                        aiResponse.videos.push({
+                            url: normalizeImageUrl(product.video_url),
+                            title: product.name,
+                            description: description
+                        });
+                        sentMediaUrls.add(product.video_url);
+                    }
+                    
+                    // Attach variant images
+                    for (const variantImageUrl of variantImages) {
+                        if (!sentMediaUrls.has(variantImageUrl)) {
+                            if (!aiResponse.images) aiResponse.images = [];
                             aiResponse.images.push({
-                                url: product.image_url,
+                                url: variantImageUrl,
                                 title: product.name,
                                 description: description
                             });
+                            sentMediaUrls.add(variantImageUrl);
                         }
                     }
                     
-                    if ((!imageAlreadySent || userWantsPhoto) && product.video_url) {
-                        if (!aiResponse.videos) aiResponse.videos = [];
-                        if (!aiResponse.videos.some(vid => vid.url === product.video_url)) {
+                    // Attach variant videos
+                    for (const variantVideoUrl of variantVideos) {
+                        const normalizedVideoUrl = normalizeImageUrl(variantVideoUrl);
+                        if (!sentMediaUrls.has(normalizedVideoUrl)) {
+                            if (!aiResponse.videos) aiResponse.videos = [];
                             aiResponse.videos.push({
-                                url: normalizeImageUrl(product.video_url),
+                                url: normalizedVideoUrl,
                                 title: product.name,
                                 description: description
                             });
+                            sentMediaUrls.add(normalizedVideoUrl);
                         }
                     }
 
@@ -2888,6 +2932,8 @@ STRICT RULES:
 
                         // Build variants display
                         let variantsDisplay = '';
+                        const variantImages = [];
+                        const variantVideos = [];
                         if (product.variants && Array.isArray(product.variants) && product.variants.length > 0) {
                             const availableVariants = product.variants.filter(v => v.available !== false);
                             if (availableVariants.length > 0) {
@@ -2896,6 +2942,13 @@ STRICT RULES:
                                     const variantPrice = parsePrice(v.price);
                                     const variantPriceDisplay = variantPrice > 0 ? `${variantPrice} ${v.currency || product.currency || 'BDT'}` : "Ask for Price";
                                     variantsDisplay += `\n   ${idx + 1}. ${v.name || `Option ${idx + 1}`}: ${variantPriceDisplay}`;
+                                    
+                                    if (v.image_url) {
+                                        variantImages.push(v.image_url);
+                                    }
+                                    if (v.video_url) {
+                                        variantVideos.push(v.video_url);
+                                    }
                                 });
                             }
                         }
@@ -2908,17 +2961,63 @@ STRICT RULES:
 
                         // Image attachment logic
                         const historyText = getHistoryText(effectiveHistory);
-                        const imageAlreadySent = historyText.includes(product.image_url);
                         const userWantsPhoto = hasPhotoIntent(effectiveHistory);
+                        
+                        // Track all sent media to avoid duplicates
+                        const sentMediaUrls = new Set();
+                        if (aiResponse.images) {
+                            aiResponse.images.forEach(img => sentMediaUrls.add(img.url));
+                        }
+                        if (aiResponse.videos) {
+                            aiResponse.videos.forEach(vid => sentMediaUrls.add(vid.url));
+                        }
 
-                        if ((!imageAlreadySent || userWantsPhoto) && product.image_url) {
+                        // Attach main product image
+                        if ((!sentMediaUrls.has(product.image_url) || userWantsPhoto) && product.image_url) {
                             if (!aiResponse.images) aiResponse.images = [];
-                            if (!aiResponse.images.some(img => img.url === product.image_url)) {
+                            aiResponse.images.push({
+                                url: product.image_url,
+                                title: product.name,
+                                description: description
+                            });
+                            sentMediaUrls.add(product.image_url);
+                        }
+                        
+                        // Attach main product video
+                        if ((!sentMediaUrls.has(product.video_url) || userWantsPhoto) && product.video_url) {
+                            if (!aiResponse.videos) aiResponse.videos = [];
+                            aiResponse.videos.push({
+                                url: normalizeImageUrl(product.video_url),
+                                title: product.name,
+                                description: description
+                            });
+                            sentMediaUrls.add(product.video_url);
+                        }
+                        
+                        // Attach variant images
+                        for (const variantImageUrl of variantImages) {
+                            if (!sentMediaUrls.has(variantImageUrl)) {
+                                if (!aiResponse.images) aiResponse.images = [];
                                 aiResponse.images.push({
-                                    url: product.image_url,
+                                    url: variantImageUrl,
                                     title: product.name,
                                     description: description
                                 });
+                                sentMediaUrls.add(variantImageUrl);
+                            }
+                        }
+                        
+                        // Attach variant videos
+                        for (const variantVideoUrl of variantVideos) {
+                            const normalizedVideoUrl = normalizeImageUrl(variantVideoUrl);
+                            if (!sentMediaUrls.has(normalizedVideoUrl)) {
+                                if (!aiResponse.videos) aiResponse.videos = [];
+                                aiResponse.videos.push({
+                                    url: normalizedVideoUrl,
+                                    title: product.name,
+                                    description: description
+                                });
+                                sentMediaUrls.add(normalizedVideoUrl);
                             }
                         }
                     } else {

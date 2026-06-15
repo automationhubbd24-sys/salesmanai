@@ -1100,3 +1100,79 @@ exports.importWooCommerce = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+
+// Standalone Upload Endpoints for Variant Media
+const singleImageUpload = upload.single('image');
+const singleVideoUpload = upload.single('video');
+
+exports.uploadVariantImage = async (req, res) => {
+    singleImageUpload(req, res, async (error) => {
+        if (error) {
+            if (error instanceof multer.MulterError) {
+                if (error.code === 'LIMIT_FILE_SIZE') {
+                    return res.status(400).json({ error: 'Image must be 16 MB or smaller.' });
+                }
+            }
+            return res.status(400).json({ error: error.message });
+        }
+
+        try {
+            if (!req.file) {
+                return res.status(400).json({ error: 'No image file provided.' });
+            }
+
+            const userId = req.body.user_id || req.query.user_id;
+            if (!userId) {
+                return res.status(400).json({ error: 'user_id is required.' });
+            }
+
+            const envBaseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL;
+            const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+            const host = req.get('host');
+            const reqBaseUrl = `${protocol}://${host}`;
+            const baseUrl = envBaseUrl || reqBaseUrl;
+
+            const url = await imageService.uploadProductImage(req.file.buffer, req.file.mimetype, userId, baseUrl);
+            res.json({ success: true, url });
+        } catch (err) {
+            console.error('[Variant Upload] Image Error:', err);
+            res.status(500).json({ error: err.message });
+        }
+    });
+};
+
+exports.uploadVariantVideo = async (req, res) => {
+    singleVideoUpload(req, res, async (error) => {
+        if (error) {
+            if (error instanceof multer.MulterError) {
+                if (error.code === 'LIMIT_FILE_SIZE') {
+                    return res.status(400).json({ error: 'Video must be 16 MB or smaller.' });
+                }
+            }
+            return res.status(400).json({ error: error.message });
+        }
+
+        try {
+            if (!req.file) {
+                return res.status(400).json({ error: 'No video file provided.' });
+            }
+
+            const userId = req.body.user_id || req.query.user_id;
+            if (!userId) {
+                return res.status(400).json({ error: 'user_id is required.' });
+            }
+
+            const envBaseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL;
+            const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+            const host = req.get('host');
+            const reqBaseUrl = `${protocol}://${host}`;
+            const baseUrl = envBaseUrl || reqBaseUrl;
+
+            const url = await imageService.uploadProductVideo(req.file.buffer, req.file.mimetype, userId, baseUrl);
+            res.json({ success: true, url });
+        } catch (err) {
+            console.error('[Variant Upload] Video Error:', err);
+            res.status(500).json({ error: err.message });
+        }
+    });
+};
