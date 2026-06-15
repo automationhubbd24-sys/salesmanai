@@ -763,11 +763,6 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         });
     }
 
-    if (latestIncomingMessageId && resolvedPhoneNumberId && config.cloud_access_token) {
-        whatsappCloudService.sendSeen(resolvedPhoneNumberId, config.cloud_access_token, latestIncomingMessageId)
-            .catch((err) => console.warn(`[WhatsApp Webhook] Failed to mark seen: ${err.message}`));
-    }
-
     // --- FEATURE FLAGS CHECK (WhatsApp Cloud API) ---
     const hasReplyTo = bufferedMessages.some(m => m.context?.message_id);
     const isSwipeEnabled = controlConfig.swipe_reply !== false && controlConfig.swipe_reply !== 'false' && controlConfig.swipe_reply !== 0 && controlConfig.swipe_reply !== '0';
@@ -780,6 +775,12 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     if (!hasReplyTo && !isReplyEnabled) {
         console.log(`[WhatsApp Webhook] Reply Message disabled for ${senderId}. Ignoring.`);
         return;
+    }
+
+    // --- ONLY MARK SEEN IF BOT IS ACTIVE ---
+    if (latestIncomingMessageId && resolvedPhoneNumberId && config.cloud_access_token) {
+        whatsappCloudService.sendSeen(resolvedPhoneNumberId, config.cloud_access_token, latestIncomingMessageId)
+            .catch((err) => console.warn(`[WhatsApp Webhook] Failed to mark seen: ${err.message}`));
     }
 
     console.log(`[WhatsApp Batch] Processing ${bufferedMessages.length} message(s) for ${senderId}`);
