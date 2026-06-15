@@ -51,12 +51,12 @@ async function setUserPassword(email, password, fullName, phone) {
     );
     const row = inserted.rows[0];
 
-    // Add 100 free credits for new user
+    // Add 100 free credits for new user (only if user_config doesn't exist)
     try {
         await query(
             `INSERT INTO user_configs (user_id, email, message_credit, balance)
              VALUES ($1, $2, 100, 0)
-             ON CONFLICT (user_id) DO UPDATE SET message_credit = user_configs.message_credit + 100`,
+             ON CONFLICT (user_id) DO NOTHING`,
             [row.id, row.email]
         );
     } catch (err) {

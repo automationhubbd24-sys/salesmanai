@@ -221,10 +221,11 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
                     if (userConfig.rowCount > 0) {
                         const targetUserId = String(userConfig.rows[0].user_id);
                         
-                        await pgClient.query(
-                            'UPDATE user_configs SET message_credit = message_credit + 100 WHERE user_id::text = $1',
-                            [targetUserId]
-                        );
+                        // --- FREE CREDITS REMOVED ---
+                        // await pgClient.query(
+                        //     'UPDATE user_configs SET message_credit = message_credit + 100 WHERE user_id::text = $1',
+                        //     [targetUserId]
+                        // );
                         
                         // Mark as granted permanently
                         await pgClient.query(

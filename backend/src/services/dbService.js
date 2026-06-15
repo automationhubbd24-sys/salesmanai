@@ -1337,10 +1337,11 @@ async function createWhatsAppEntry(sessionName, userId, planDays = 30, initialSt
             );
 
             if (alreadyGranted.rowCount === 0) {
-                await query(
-                    'UPDATE user_configs SET message_credit = message_credit + 100 WHERE user_id::text = $1::text OR email = $2',
-                    [String(userId), userEmail]
-                );
+                // --- FREE CREDITS REMOVED ---
+            // await query(
+            //     'UPDATE user_configs SET message_credit = message_credit + 100 WHERE user_id::text = $1::text OR email = $2',
+            //     [String(userId), userEmail]
+            // );
                 
                 // Mark as granted permanently
                 await query(
