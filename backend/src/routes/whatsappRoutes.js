@@ -455,7 +455,7 @@ router.get('/orders', authMiddleware, async (req, res) => {
             SELECT o.id, o.product_name, o.number, o.location, o.product_quantity, o.price, o.created_at, o.sender_id, o.status, COALESCE(o.customer_name, c.name) AS customer_name
             FROM whatsapp_order_tracking o
             LEFT JOIN whatsapp_contacts c ON o.session_name = c.session_name AND o.sender_id = c.phone_number
-            WHERE ${where.replace(/session_name/g, 'o.session_name').replace(/created_at/g, 'o.created_at')}
+            WHERE o.${where.replace(/session_name/g, 'session_name').replace(/created_at/g, 'o.created_at')}
             ORDER BY o.created_at DESC
         `;
 
