@@ -552,6 +552,7 @@ export default function WhatsAppConversionPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Time</TableHead>
+                <TableHead>Contacts</TableHead>
                 <TableHead>Message</TableHead>
                 <TableHead>Reply By</TableHead>
                 <TableHead>Tokens</TableHead>
@@ -562,11 +563,11 @@ export default function WhatsAppConversionPage() {
             <TableBody>
               {loading && messages.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center">Loading...</TableCell>
+                  <TableCell colSpan={7} className="text-center">Loading...</TableCell>
                 </TableRow>
               ) : messages.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center">No messages found for this session</TableCell>
+                  <TableCell colSpan={7} className="text-center">No messages found for this session</TableCell>
                 </TableRow>
               ) : (
                 messages.map((msg) => (

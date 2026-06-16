@@ -33,6 +33,7 @@ interface Order {
   price: string | number;
   location: string;
   number: string;
+  customer_name?: string;
   status: string;
   sender_id: string;
   created_at: string;
@@ -355,7 +356,9 @@ Phone: ${order.number || 'N/A'}`;
                                       </PopoverContent>
                                     </Popover>
                                   </TableCell>
-                                  <TableCell>{order.number}</TableCell>
+                                  <TableCell>
+                                    {order.customer_name || order.number}
+                                  </TableCell>
                                   <TableCell>
                                     <Select 
                                       value={order.status || 'ongoing'} 

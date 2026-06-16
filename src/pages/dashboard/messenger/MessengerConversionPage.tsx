@@ -439,6 +439,7 @@ export default function MessengerConversionPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Time</TableHead>
+                <TableHead>Contacts</TableHead>
                 <TableHead>Message</TableHead>
                 <TableHead>Reply By</TableHead>
                 <TableHead>Tokens</TableHead>
@@ -449,11 +450,11 @@ export default function MessengerConversionPage() {
             <TableBody>
               {loading && messages.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center">Loading...</TableCell>
+                  <TableCell colSpan={7} className="text-center">Loading...</TableCell>
                 </TableRow>
               ) : messages.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center">No messages found for this page</TableCell>
+                  <TableCell colSpan={7} className="text-center">No messages found for this page</TableCell>
                 </TableRow>
               ) : (
                 messages.map((msg) => (
@@ -500,6 +501,8 @@ export default function MessengerConversionPage() {
                       >
                         {msg.status}
                       </span>
+                    </TableCell>
+                    <TableCell className="text-right">
                     </TableCell>
                   </TableRow>
                 ))
