@@ -845,7 +845,7 @@ router.get('/orders', authMiddleware, async (req, res) => {
             SELECT o.id, o.product_name, o.number, o.location, o.product_quantity, o.price, o.created_at, o.sender_id, o.status, o.is_locked, COALESCE(o.customer_name, c.first_name || ' ' || c.last_name, c.name) AS customer_name
             FROM fb_order_tracking o
             LEFT JOIN fb_contacts c ON o.page_id = c.page_id AND o.sender_id = c.sender_id
-            WHERE o.${where.replace(/page_id/g, 'page_id').replace(/created_at/g, 'o.created_at')}
+            WHERE ${where.replace(/page_id/g, 'o.page_id').replace(/created_at/g, 'o.created_at')}
             ORDER BY o.created_at DESC
         `;
 
