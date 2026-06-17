@@ -1,6 +1,6 @@
 <!--
  * File: ui/app/pages/AuthPage.vue
- * Description: VNC-based authentication page for adding new Google AI Studio accounts
+ * Description: VNC-based authentication page for adding new accounts
  *
  * Author: Ellinav, iBenzene, bbbugg
 -->

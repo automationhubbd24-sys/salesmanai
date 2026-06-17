@@ -1,8 +1,7 @@
 <svg fill="currentColor" fill-rule="evenodd" height="1em" style="flex:none;line-height:1"
     viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg">
-    <title>Google AI Studio</title>
+    <title>SalesmanChatbot AI</title>
     <rect width="100%" height="100%" fill="#000" />
-    <!-- Scale the main body by 66% and keep it centered, which is consistent with Google AI Studio. -->
     <g transform="translate(12 12) scale(0.66) translate(-12 -12)">
         <path fill="#fff"
             d="M9.921 4.196H6.328A2.705 2.705 0 003.623 6.9v11.362a2.705 2.705 0 002.705 2.705h11.363a2.705 2.705 0 002.705-2.705v-4.756l1.623-1.113v5.87a4.329 4.329 0 01-4.328 4.328H6.328A4.329 4.329 0 012 18.263V6.901a4.328 4.328 0 014.328-4.329h4.545l-.952 1.624z"></path>

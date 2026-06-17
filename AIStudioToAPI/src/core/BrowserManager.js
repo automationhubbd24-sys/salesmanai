@@ -765,7 +765,7 @@ class BrowserManager {
 
         if (pageTitle.includes("Available regions") || pageTitle.includes("not available")) {
             throw new Error(
-                "🚨 The current IP does not support access to Google AI Studio. Please change the IP and restart!"
+                "🚨 The current IP does not support access. Please change the IP and restart!"
             );
         }
 
