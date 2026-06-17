@@ -28,6 +28,11 @@ const PRO_PLUS_FALLBACK_MODELS = [
     'gemini-flash-lite-latest',
     'gemini-3.1-flash-lite'
 ];
+const NO_MISS_PRIMARY_MODEL = 'gemini-3.5-flash';
+const NO_MISS_PRIMARY_ATTEMPTS = 3;
+const NO_MISS_PRO_ATTEMPTS = 2;
+const NO_MISS_PRO_PLUS_ATTEMPTS = 2;
+const NO_MISS_MAX_CYCLES = 2;
 
 function getCachedEmbedding(text) {
     const key = text.trim().toLowerCase();
@@ -155,6 +160,17 @@ function isTruthyFlag(value) {
 function isProPlusMode(config = {}) {
     const isProPlusModel = config.chat_model === 'salesmanchatbot-pro-plus' || config.chatmodel === 'salesmanchatbot-pro-plus';
     return config && config.cheap_engine !== false && (isTruthyFlag(config.pro_plus_mode) || isProPlusModel);
+}
+
+function createProFallbackConfig(config = {}, reason = '') {
+    return {
+        ...config,
+        chat_model: 'salesmanchatbot-pro',
+        chatmodel: 'salesmanchatbot-pro',
+        display_model: `${PRO_PLUS_BRANDED_MODEL} -> salesmanchatbot-pro`,
+        pro_plus_mode: false,
+        __pro_plus_fallback_reason: reason || null
+    };
 }
 
 function getProPlusBaseUrl() {
@@ -1845,6 +1861,238 @@ async function runProPlusChatChain({ messages, pageConfig, totalTokenUsage, user
     throw lastError || new Error('All Pro Plus models failed.');
 }
 
+function getProviderBaseUrl(provider) {
+    if (provider === 'openrouter') return 'https://openrouter.ai/api/v1';
+    if (provider === 'groq') return 'https://api.groq.com/openai/v1';
+    if (provider === 'openai') return 'https://api.openai.com/v1';
+    if (provider === 'mistral') return 'https://api.mistral.ai/v1';
+    if (provider === 'xai') return 'https://api.x.ai/v1';
+    if (provider === 'google' || provider === 'gemini') return 'https://generativelanguage.googleapis.com/v1beta/openai/';
+    return 'https://generativelanguage.googleapis.com/v1beta/openai/';
+}
+
+function getNoMissFallbackReply(pageConfig = {}) {
+    const platform = String(pageConfig.platform || '').toLowerCase();
+    if (platform === 'messenger' || platform === 'whatsapp') {
+        return 'Dukkhito, ekhon temporary technical issue hocche. Apnar message amra peyechi, ektu por abar message din.';
+    }
+    return null;
+}
+
+async function runManagedModelAttempts({
+    label,
+    provider,
+    model,
+    messages,
+    tools,
+    pageConfig,
+    totalTokenUsage,
+    userId,
+    pageId,
+    temperature = 0.2,
+    topP = 0.9,
+    maxAttempts = 1,
+    modality = 'text',
+    proxyEngineName = null
+}) {
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        let apiKey = null;
+
+        try {
+            let keyData = await keyService.getSmartKey(provider, model, modality);
+            if (!keyData || !keyData.key) {
+                keyData = await keyService.getSmartKey(provider, 'default', modality);
+            }
+
+            if (!keyData || !keyData.key) {
+                throw new Error(`No active API key available for ${provider}/${model}`);
+            }
+
+            apiKey = keyData.key;
+
+            let proxyAgent = null;
+            const isBrandedEngine = proxyEngineName && BRANDED_MODELS.includes(proxyEngineName);
+            if (isBrandedEngine) {
+                if (provider === 'google' || provider === 'gemini') {
+                    proxyAgent = getGeminiProxyAgent(getProviderBaseUrl(provider), true, proxyEngineName);
+                } else if (provider === 'groq') {
+                    proxyAgent = getGroqProxyAgent(true, proxyEngineName);
+                } else {
+                    const proxy = getProxyUrl(proxyEngineName);
+                    proxyAgent = createProxyAgent(proxy);
+                }
+            }
+
+            const result = await runAgentLoop({
+                apiKey,
+                baseURL: getProviderBaseUrl(provider),
+                model,
+                messages,
+                tools,
+                pageConfig,
+                proxyAgent,
+                totalTokenUsage,
+                foundProducts: [],
+                userId,
+                temperature,
+                top_p: topP,
+                pageId
+            });
+
+            let tokensToRecord = result.token_usage || 0;
+            if (tokensToRecord === 0 && result.reply) {
+                tokensToRecord = estimateTokenUsage(messages, result.reply, 0);
+            }
+
+            if (apiKey && tokensToRecord > 0) {
+                keyService.recordKeyUsage(apiKey, tokensToRecord, model).catch(e => {
+                    console.error(`[AI] Token recording failed:`, e.message);
+                });
+            }
+
+            return {
+                ...result,
+                token_usage: tokensToRecord,
+                model
+            };
+        } catch (err) {
+            const errorMsg = String(err.message || '').toLowerCase();
+            const statusCode = err.status || (err.response ? err.response.status : null);
+            lastError = err;
+
+            console.error(`[AI Rescue Loop] ${label} | Model: ${model} | Attempt ${attempt} Failed with Key ${apiKey ? apiKey.substring(0, 8) : 'NONE'}... | Status: ${statusCode} | Msg: ${errorMsg}`);
+
+            if (apiKey) {
+                await handleAiError(err, apiKey, model, modality);
+            }
+
+            const estimatedInputTokens = estimateTokenUsage(messages, '', 0);
+            try {
+                await dbService.saveAIUsageLog({
+                    user_id: pageConfig.user_id,
+                    model: model || 'unknown',
+                    tokens: estimatedInputTokens,
+                    cost: 0,
+                    context: `failed_attempt_${label}_${model}_retry_${attempt}`
+                });
+            } catch (e) {}
+
+            const isRetryable = statusCode === 429 || statusCode === 401 || statusCode >= 500 ||
+                errorMsg.includes('limit') || errorMsg.includes('quota') ||
+                errorMsg.includes('key') || errorMsg.includes('timeout') ||
+                errorMsg.includes('network') || errorMsg.includes('temporar') ||
+                errorMsg.includes('overloaded') || errorMsg.includes('exhausted');
+
+            if (isRetryable && attempt < maxAttempts) {
+                await new Promise(resolve => setTimeout(resolve, 250));
+                continue;
+            }
+
+            break;
+        }
+    }
+
+    throw lastError || new Error(`All attempts failed for ${provider}/${model}`);
+}
+
+async function runLimitedProPlusChatAttempts({
+    messages,
+    pageConfig,
+    totalTokenUsage,
+    userId,
+    pageId,
+    temperature = 0.2,
+    topP = 0.9,
+    maxAttempts = 2,
+    model = NO_MISS_PRIMARY_MODEL
+}) {
+    const apiKeys = getProPlusApiKeys();
+    if (apiKeys.length === 0) {
+        throw new Error('AISTUDIOAPIKEY/AISTUDIOAPIEKEY env is missing for Pro Plus mode.');
+    }
+
+    const baseURL = getProPlusBaseUrl();
+    let lastError = null;
+    let keyIndex = 0;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        let apiKey = null;
+
+        try {
+            let selected = null;
+            for (let offset = 0; offset < apiKeys.length; offset++) {
+                const candidateIndex = (keyIndex + offset) % apiKeys.length;
+                const candidateKey = apiKeys[candidateIndex];
+                if (!keyService.isModelLocked(model, candidateKey)) {
+                    selected = { apiKey: candidateKey, nextIndex: (candidateIndex + 1) % apiKeys.length };
+                    break;
+                }
+            }
+
+            if (!selected) {
+                throw new Error(`No active Pro Plus API key available for ${model}`);
+            }
+
+            apiKey = selected.apiKey;
+            keyIndex = selected.nextIndex;
+
+            const result = await runAgentLoop({
+                apiKey,
+                baseURL,
+                model,
+                messages: [...messages],
+                tools: [],
+                pageConfig,
+                proxyAgent: null,
+                totalTokenUsage,
+                foundProducts: [],
+                userId,
+                temperature,
+                top_p: topP,
+                pageId
+            });
+
+            let tokensToRecord = result.token_usage || 0;
+            if (tokensToRecord === 0 && result.reply) {
+                tokensToRecord = estimateTokenUsage(messages, result.reply, 0);
+            }
+
+            return {
+                ...result,
+                token_usage: tokensToRecord,
+                model
+            };
+        } catch (err) {
+            lastError = err;
+            if (apiKey) {
+                await handleAiError(err, apiKey, model, 'text');
+            }
+
+            const decision = getProPlusErrorDecision(err);
+            if (decision.hardFail) {
+                throw err;
+            }
+            if (decision.skipModel) {
+                if (shouldRememberProPlusModelLimit(err) && keyService.lockGlobalModel) {
+                    await keyService.lockGlobalModel(model, undefined, 'pro_plus_model_limit_reached');
+                }
+                break;
+            }
+
+            if (isRetryableManagedError(err) && attempt < maxAttempts) {
+                await new Promise(resolve => setTimeout(resolve, 250));
+                continue;
+            }
+
+            break;
+        }
+    }
+
+    throw lastError || new Error(`All Pro Plus rescue attempts failed for ${model}.`);
+}
+
 // Step 2: Business Logic / AI Brain
 async function generateReply(userMessage, pageConfig, pagePrompts, history = [], senderName = 'Customer', ownerName = 'Automation Hub BD', senderGender = null, imageUrls = [], audioUrls = [], extraTokenUsage = 0, userId = null, pageId = null) {
     // --- SAFETY FIX: Ensure names are not null ---
@@ -2622,27 +2870,102 @@ ${productContext || "No specific product context provided yet."}
     }
 
     if (isProPlusMode(pageConfig)) {
-        try {
-            primaryModel = getProPlusModelChain()[0] || pageConfig.chat_model || PRO_PLUS_BRANDED_MODEL;
-            const result = await runProPlusChatChain({
-                messages,
-                pageConfig,
-                totalTokenUsage,
-                userId,
-                pageId,
-                temperature: (pageConfig.temperature !== undefined && pageConfig.temperature !== null ? Number(pageConfig.temperature) : (pageConfig.is_external_api ? 0.7 : 0.2)),
-                topP: (pageConfig.top_p !== undefined && pageConfig.top_p !== null ? Number(pageConfig.top_p) : 0.9)
-            });
-            return finalize({ ...result, sentiment: 'neutral' });
-        } catch (err) {
-            const branded = formatBrandedError(err);
+        const temperature = (pageConfig.temperature !== undefined && pageConfig.temperature !== null ? Number(pageConfig.temperature) : (pageConfig.is_external_api ? 0.7 : 0.2));
+        const topP = (pageConfig.top_p !== undefined && pageConfig.top_p !== null ? Number(pageConfig.top_p) : 0.9);
+        const proFallbackConfig = createProFallbackConfig(pageConfig, 'no_miss_retry_chain');
+        const proResolved = await resolveSalesmanchatbotEngine(proFallbackConfig, 'salesmanchatbot', 'salesmanchatbot-pro', isVision, isAudio);
+        let noMissLastError = null;
+
+        for (let cycle = 1; cycle <= NO_MISS_MAX_CYCLES; cycle++) {
+            try {
+                primaryModel = NO_MISS_PRIMARY_MODEL;
+                console.log(`[AI No-Miss Chain] Cycle ${cycle}: trying ${NO_MISS_PRIMARY_MODEL} (${NO_MISS_PRIMARY_ATTEMPTS} attempts).`);
+                const directGeminiResult = await runManagedModelAttempts({
+                    label: `cycle_${cycle}_gemini_primary`,
+                    provider: 'google',
+                    model: NO_MISS_PRIMARY_MODEL,
+                    messages,
+                    tools,
+                    pageConfig,
+                    totalTokenUsage,
+                    userId,
+                    pageId,
+                    temperature,
+                    topP,
+                    maxAttempts: NO_MISS_PRIMARY_ATTEMPTS,
+                    modality: 'text'
+                });
+                return finalize({ ...directGeminiResult, sentiment: 'neutral' });
+            } catch (err) {
+                noMissLastError = err;
+                console.warn(`[AI No-Miss Chain] Cycle ${cycle}: ${NO_MISS_PRIMARY_MODEL} failed. ${err.message}`);
+            }
+
+            try {
+                primaryModel = proResolved.finalModel;
+                console.log(`[AI No-Miss Chain] Cycle ${cycle}: trying default salesmanchatbot-pro -> ${proResolved.finalProvider}/${proResolved.finalModel} (${NO_MISS_PRO_ATTEMPTS} attempts).`);
+                const proResult = await runManagedModelAttempts({
+                    label: `cycle_${cycle}_salesmanchatbot_pro`,
+                    provider: proResolved.finalProvider,
+                    model: proResolved.finalModel,
+                    messages,
+                    tools,
+                    pageConfig: proFallbackConfig,
+                    totalTokenUsage,
+                    userId,
+                    pageId,
+                    temperature,
+                    topP,
+                    maxAttempts: NO_MISS_PRO_ATTEMPTS,
+                    modality: proResolved.modality || 'text',
+                    proxyEngineName: proResolved.targetEngineName
+                });
+                return finalize({ ...proResult, sentiment: 'neutral' });
+            } catch (err) {
+                noMissLastError = err;
+                console.warn(`[AI No-Miss Chain] Cycle ${cycle}: salesmanchatbot-pro fallback failed. ${err.message}`);
+            }
+
+            try {
+                primaryModel = PRO_PLUS_BRANDED_MODEL;
+                console.log(`[AI No-Miss Chain] Cycle ${cycle}: retrying Pro Plus (${NO_MISS_PRO_PLUS_ATTEMPTS} attempts).`);
+                const proPlusRescueResult = await runLimitedProPlusChatAttempts({
+                    messages,
+                    pageConfig,
+                    totalTokenUsage,
+                    userId,
+                    pageId,
+                    temperature,
+                    topP,
+                    maxAttempts: NO_MISS_PRO_PLUS_ATTEMPTS,
+                    model: NO_MISS_PRIMARY_MODEL
+                });
+                return finalize({ ...proPlusRescueResult, sentiment: 'neutral' });
+            } catch (err) {
+                noMissLastError = err;
+                console.warn(`[AI No-Miss Chain] Cycle ${cycle}: Pro Plus rescue failed. ${err.message}`);
+            }
+        }
+
+        const fallbackReply = getNoMissFallbackReply(pageConfig);
+        if (fallbackReply) {
+            console.warn(`[AI No-Miss Chain] All rescue cycles failed. Sending safe fallback reply instead of silent null.`);
             return finalize({
-                reply: null,
-                error: branded.message,
+                reply: fallbackReply,
                 token_usage: 0,
-                model: PRO_PLUS_BRANDED_MODEL
+                model: primaryModel || NO_MISS_PRIMARY_MODEL,
+                sentiment: 'neutral'
             });
         }
+
+        const branded = formatBrandedError(noMissLastError, 'SalesmanChatbot Pro Plus');
+        return finalize({
+            reply: null,
+            error: branded.message,
+            token_usage: 0,
+            model: primaryModel || NO_MISS_PRIMARY_MODEL,
+            sentiment: 'neutral'
+        });
     }
 
     // --- FALLBACK & RETRY LOGIC FOR SYSTEM ENGINES (SMART MULTI-MODEL FALLBACK) ---
@@ -2783,6 +3106,17 @@ ${productContext || "No specific product context provided yet."}
     }
 
     // If we are here, all retries failed
+    const fallbackReply = getNoMissFallbackReply(pageConfig);
+    if (fallbackReply) {
+        console.warn(`[AI] All retries failed. Returning safe fallback reply for ${pageConfig.platform || 'chat'} instead of silent null.`);
+        return finalize({
+            reply: fallbackReply,
+            token_usage: 0,
+            model: primaryModel || defaultModel,
+            sentiment: 'neutral'
+        });
+    }
+
     const branded = formatBrandedError(lastError);
     return finalize({ 
         reply: null, 
