@@ -28,11 +28,6 @@ const PRO_PLUS_FALLBACK_MODELS = [
     'gemini-flash-lite-latest',
     'gemini-3.1-flash-lite'
 ];
-const NO_MISS_PRIMARY_MODEL = 'gemini-3.5-flash';
-const NO_MISS_PRIMARY_ATTEMPTS = 3;
-const NO_MISS_PRO_ATTEMPTS = 2;
-const NO_MISS_PRO_PLUS_ATTEMPTS = 2;
-const NO_MISS_MAX_CYCLES = 2;
 
 function getCachedEmbedding(text) {
     const key = text.trim().toLowerCase();
@@ -1861,152 +1856,16 @@ async function runProPlusChatChain({ messages, pageConfig, totalTokenUsage, user
     throw lastError || new Error('All Pro Plus models failed.');
 }
 
-function getProviderBaseUrl(provider) {
-    if (provider === 'openrouter') return 'https://openrouter.ai/api/v1';
-    if (provider === 'groq') return 'https://api.groq.com/openai/v1';
-    if (provider === 'openai') return 'https://api.openai.com/v1';
-    if (provider === 'mistral') return 'https://api.mistral.ai/v1';
-    if (provider === 'xai') return 'https://api.x.ai/v1';
-    if (provider === 'google' || provider === 'gemini') return 'https://generativelanguage.googleapis.com/v1beta/openai/';
-    return 'https://generativelanguage.googleapis.com/v1beta/openai/';
-}
-
-function getNoMissFallbackReply(pageConfig = {}) {
-    const platform = String(pageConfig.platform || '').toLowerCase();
-    if (platform === 'messenger' || platform === 'whatsapp') {
-        return 'Dukkhito, ekhon temporary technical issue hocche. Apnar message amra peyechi, ektu por abar message din.';
-    }
-    return null;
-}
-
-async function runManagedModelAttempts({
-    label,
-    provider,
+async function runPinnedProPlusModelWithRetries({
     model,
     messages,
-    tools,
     pageConfig,
     totalTokenUsage,
     userId,
     pageId,
     temperature = 0.2,
     topP = 0.9,
-    maxAttempts = 1,
-    modality = 'text',
-    proxyEngineName = null
-}) {
-    let lastError = null;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        let apiKey = null;
-
-        try {
-            let keyData = await keyService.getSmartKey(provider, model, modality);
-            if (!keyData || !keyData.key) {
-                keyData = await keyService.getSmartKey(provider, 'default', modality);
-            }
-
-            if (!keyData || !keyData.key) {
-                throw new Error(`No active API key available for ${provider}/${model}`);
-            }
-
-            apiKey = keyData.key;
-
-            let proxyAgent = null;
-            const isBrandedEngine = proxyEngineName && BRANDED_MODELS.includes(proxyEngineName);
-            if (isBrandedEngine) {
-                if (provider === 'google' || provider === 'gemini') {
-                    proxyAgent = getGeminiProxyAgent(getProviderBaseUrl(provider), true, proxyEngineName);
-                } else if (provider === 'groq') {
-                    proxyAgent = getGroqProxyAgent(true, proxyEngineName);
-                } else {
-                    const proxy = getProxyUrl(proxyEngineName);
-                    proxyAgent = createProxyAgent(proxy);
-                }
-            }
-
-            const result = await runAgentLoop({
-                apiKey,
-                baseURL: getProviderBaseUrl(provider),
-                model,
-                messages,
-                tools,
-                pageConfig,
-                proxyAgent,
-                totalTokenUsage,
-                foundProducts: [],
-                userId,
-                temperature,
-                top_p: topP,
-                pageId
-            });
-
-            let tokensToRecord = result.token_usage || 0;
-            if (tokensToRecord === 0 && result.reply) {
-                tokensToRecord = estimateTokenUsage(messages, result.reply, 0);
-            }
-
-            if (apiKey && tokensToRecord > 0) {
-                keyService.recordKeyUsage(apiKey, tokensToRecord, model).catch(e => {
-                    console.error(`[AI] Token recording failed:`, e.message);
-                });
-            }
-
-            return {
-                ...result,
-                token_usage: tokensToRecord,
-                model
-            };
-        } catch (err) {
-            const errorMsg = String(err.message || '').toLowerCase();
-            const statusCode = err.status || (err.response ? err.response.status : null);
-            lastError = err;
-
-            console.error(`[AI Rescue Loop] ${label} | Model: ${model} | Attempt ${attempt} Failed with Key ${apiKey ? apiKey.substring(0, 8) : 'NONE'}... | Status: ${statusCode} | Msg: ${errorMsg}`);
-
-            if (apiKey) {
-                await handleAiError(err, apiKey, model, modality);
-            }
-
-            const estimatedInputTokens = estimateTokenUsage(messages, '', 0);
-            try {
-                await dbService.saveAIUsageLog({
-                    user_id: pageConfig.user_id,
-                    model: model || 'unknown',
-                    tokens: estimatedInputTokens,
-                    cost: 0,
-                    context: `failed_attempt_${label}_${model}_retry_${attempt}`
-                });
-            } catch (e) {}
-
-            const isRetryable = statusCode === 429 || statusCode === 401 || statusCode >= 500 ||
-                errorMsg.includes('limit') || errorMsg.includes('quota') ||
-                errorMsg.includes('key') || errorMsg.includes('timeout') ||
-                errorMsg.includes('network') || errorMsg.includes('temporar') ||
-                errorMsg.includes('overloaded') || errorMsg.includes('exhausted');
-
-            if (isRetryable && attempt < maxAttempts) {
-                await new Promise(resolve => setTimeout(resolve, 250));
-                continue;
-            }
-
-            break;
-        }
-    }
-
-    throw lastError || new Error(`All attempts failed for ${provider}/${model}`);
-}
-
-async function runLimitedProPlusChatAttempts({
-    messages,
-    pageConfig,
-    totalTokenUsage,
-    userId,
-    pageId,
-    temperature = 0.2,
-    topP = 0.9,
-    maxAttempts = 2,
-    model = NO_MISS_PRIMARY_MODEL
+    maxAttempts = 4
 }) {
     const apiKeys = getProPlusApiKeys();
     if (apiKeys.length === 0) {
@@ -2015,82 +1874,68 @@ async function runLimitedProPlusChatAttempts({
 
     const baseURL = getProPlusBaseUrl();
     let lastError = null;
-    let keyIndex = 0;
+    let attemptCount = 0;
 
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        let apiKey = null;
+    while (attemptCount < maxAttempts) {
+        let attemptedWithAvailableKey = false;
 
-        try {
-            let selected = null;
-            for (let offset = 0; offset < apiKeys.length; offset++) {
-                const candidateIndex = (keyIndex + offset) % apiKeys.length;
-                const candidateKey = apiKeys[candidateIndex];
-                if (!keyService.isModelLocked(model, candidateKey)) {
-                    selected = { apiKey: candidateKey, nextIndex: (candidateIndex + 1) % apiKeys.length };
-                    break;
-                }
-            }
-
-            if (!selected) {
-                throw new Error(`No active Pro Plus API key available for ${model}`);
-            }
-
-            apiKey = selected.apiKey;
-            keyIndex = selected.nextIndex;
-
-            const result = await runAgentLoop({
-                apiKey,
-                baseURL,
-                model,
-                messages: [...messages],
-                tools: [],
-                pageConfig,
-                proxyAgent: null,
-                totalTokenUsage,
-                foundProducts: [],
-                userId,
-                temperature,
-                top_p: topP,
-                pageId
-            });
-
-            let tokensToRecord = result.token_usage || 0;
-            if (tokensToRecord === 0 && result.reply) {
-                tokensToRecord = estimateTokenUsage(messages, result.reply, 0);
-            }
-
-            return {
-                ...result,
-                token_usage: tokensToRecord,
-                model
-            };
-        } catch (err) {
-            lastError = err;
-            if (apiKey) {
-                await handleAiError(err, apiKey, model, 'text');
-            }
-
-            const decision = getProPlusErrorDecision(err);
-            if (decision.hardFail) {
-                throw err;
-            }
-            if (decision.skipModel) {
-                if (shouldRememberProPlusModelLimit(err) && keyService.lockGlobalModel) {
-                    await keyService.lockGlobalModel(model, undefined, 'pro_plus_model_limit_reached');
-                }
-                break;
-            }
-
-            if (isRetryableManagedError(err) && attempt < maxAttempts) {
-                await new Promise(resolve => setTimeout(resolve, 250));
+        for (const apiKey of apiKeys) {
+            if (attemptCount >= maxAttempts) break;
+            if (keyService.isModelLocked(model, apiKey)) {
                 continue;
             }
 
+            attemptedWithAvailableKey = true;
+            attemptCount++;
+            console.log(`[Pro Plus] Trying pinned model ${model}, attempt ${attemptCount}/${maxAttempts}`);
+
+            try {
+                const result = await runAgentLoop({
+                    apiKey,
+                    baseURL,
+                    model,
+                    messages: [...messages],
+                    tools: [],
+                    pageConfig,
+                    proxyAgent: null,
+                    totalTokenUsage,
+                    foundProducts: [],
+                    userId,
+                    temperature,
+                    top_p: topP,
+                    pageId
+                });
+
+                let tokensToRecord = result.token_usage || 0;
+                if (tokensToRecord === 0 && result.reply) {
+                    tokensToRecord = estimateTokenUsage(messages, result.reply, 0);
+                }
+
+                return {
+                    ...result,
+                    token_usage: tokensToRecord,
+                    model
+                };
+            } catch (err) {
+                lastError = err;
+                await handleAiError(err, apiKey, model, 'text');
+                const decision = getProPlusErrorDecision(err);
+                if (decision.hardFail) {
+                    throw err;
+                }
+            }
+        }
+
+        if (!attemptedWithAvailableKey) {
             break;
+        }
+
+        if (attemptCount < maxAttempts) {
+            await new Promise(resolve => setTimeout(resolve, 200));
         }
     }
 
-    throw lastError || new Error(`All Pro Plus rescue attempts failed for ${model}.`);
+    throw lastError || new Error(`Pinned Pro Plus model ${model} failed after ${maxAttempts} attempts.`);
 }
 
 // Step 2: Business Logic / AI Brain
@@ -2869,261 +2714,187 @@ ${productContext || "No specific product context provided yet."}
         });
     }
 
-    if (isProPlusMode(pageConfig)) {
-        const temperature = (pageConfig.temperature !== undefined && pageConfig.temperature !== null ? Number(pageConfig.temperature) : (pageConfig.is_external_api ? 0.7 : 0.2));
-        const topP = (pageConfig.top_p !== undefined && pageConfig.top_p !== null ? Number(pageConfig.top_p) : 0.9);
-        const proFallbackConfig = createProFallbackConfig(pageConfig, 'no_miss_retry_chain');
-        const proResolved = await resolveSalesmanchatbotEngine(proFallbackConfig, 'salesmanchatbot', 'salesmanchatbot-pro', isVision, isAudio);
-        let noMissLastError = null;
+    const startedInProPlusMode = isProPlusMode(pageConfig);
+    const originalProPlusConfig = startedInProPlusMode ? { ...pageConfig } : null;
 
-        for (let cycle = 1; cycle <= NO_MISS_MAX_CYCLES; cycle++) {
+    while (true) {
+        if (isProPlusMode(pageConfig)) {
             try {
-                primaryModel = NO_MISS_PRIMARY_MODEL;
-                console.log(`[AI No-Miss Chain] Cycle ${cycle}: trying ${NO_MISS_PRIMARY_MODEL} (${NO_MISS_PRIMARY_ATTEMPTS} attempts).`);
-                const directGeminiResult = await runManagedModelAttempts({
-                    label: `cycle_${cycle}_gemini_primary`,
-                    provider: 'google',
-                    model: NO_MISS_PRIMARY_MODEL,
-                    messages,
-                    tools,
-                    pageConfig,
-                    totalTokenUsage,
-                    userId,
-                    pageId,
-                    temperature,
-                    topP,
-                    maxAttempts: NO_MISS_PRIMARY_ATTEMPTS,
-                    modality: 'text'
-                });
-                return finalize({ ...directGeminiResult, sentiment: 'neutral' });
-            } catch (err) {
-                noMissLastError = err;
-                console.warn(`[AI No-Miss Chain] Cycle ${cycle}: ${NO_MISS_PRIMARY_MODEL} failed. ${err.message}`);
-            }
-
-            try {
-                primaryModel = proResolved.finalModel;
-                console.log(`[AI No-Miss Chain] Cycle ${cycle}: trying default salesmanchatbot-pro -> ${proResolved.finalProvider}/${proResolved.finalModel} (${NO_MISS_PRO_ATTEMPTS} attempts).`);
-                const proResult = await runManagedModelAttempts({
-                    label: `cycle_${cycle}_salesmanchatbot_pro`,
-                    provider: proResolved.finalProvider,
-                    model: proResolved.finalModel,
-                    messages,
-                    tools,
-                    pageConfig: proFallbackConfig,
-                    totalTokenUsage,
-                    userId,
-                    pageId,
-                    temperature,
-                    topP,
-                    maxAttempts: NO_MISS_PRO_ATTEMPTS,
-                    modality: proResolved.modality || 'text',
-                    proxyEngineName: proResolved.targetEngineName
-                });
-                return finalize({ ...proResult, sentiment: 'neutral' });
-            } catch (err) {
-                noMissLastError = err;
-                console.warn(`[AI No-Miss Chain] Cycle ${cycle}: salesmanchatbot-pro fallback failed. ${err.message}`);
-            }
-
-            try {
-                primaryModel = PRO_PLUS_BRANDED_MODEL;
-                console.log(`[AI No-Miss Chain] Cycle ${cycle}: retrying Pro Plus (${NO_MISS_PRO_PLUS_ATTEMPTS} attempts).`);
-                const proPlusRescueResult = await runLimitedProPlusChatAttempts({
+                primaryModel = getProPlusModelChain()[0] || pageConfig.chat_model || PRO_PLUS_BRANDED_MODEL;
+                const result = await runPinnedProPlusModelWithRetries({
+                    model: primaryModel,
                     messages,
                     pageConfig,
                     totalTokenUsage,
                     userId,
                     pageId,
-                    temperature,
-                    topP,
-                    maxAttempts: NO_MISS_PRO_PLUS_ATTEMPTS,
-                    model: NO_MISS_PRIMARY_MODEL
+                    temperature: (pageConfig.temperature !== undefined && pageConfig.temperature !== null ? Number(pageConfig.temperature) : (pageConfig.is_external_api ? 0.7 : 0.2)),
+                    topP: (pageConfig.top_p !== undefined && pageConfig.top_p !== null ? Number(pageConfig.top_p) : 0.9),
+                    maxAttempts: 4
                 });
-                return finalize({ ...proPlusRescueResult, sentiment: 'neutral' });
+                return finalize({ ...result, sentiment: 'neutral' });
             } catch (err) {
-                noMissLastError = err;
-                console.warn(`[AI No-Miss Chain] Cycle ${cycle}: Pro Plus rescue failed. ${err.message}`);
+                const branded = formatBrandedError(err, 'SalesmanChatbot Pro Plus');
+                console.warn(`[AI] Pro Plus failed after 4 attempts. Falling back to salesmanchatbot-pro. Reason: ${branded.message}`);
+                pageConfig = createProFallbackConfig(pageConfig, branded.message);
+                defaultProvider = 'salesmanchatbot';
+                defaultModel = 'salesmanchatbot-pro';
+                primaryModel = 'salesmanchatbot-pro';
             }
         }
 
-        const fallbackReply = getNoMissFallbackReply(pageConfig);
-        if (fallbackReply) {
-            console.warn(`[AI No-Miss Chain] All rescue cycles failed. Sending safe fallback reply instead of silent null.`);
-            return finalize({
-                reply: fallbackReply,
-                token_usage: 0,
-                model: primaryModel || NO_MISS_PRIMARY_MODEL,
-                sentiment: 'neutral'
-            });
-        }
+        // --- FALLBACK & RETRY LOGIC FOR SYSTEM ENGINES (SMART MULTI-MODEL FALLBACK) ---
+        let retryCount = 0;
+        const MAX_RETRIES_PER_MODEL = startedInProPlusMode ? 4 : 3;
+        let lastError = null;
+        let attemptedKeys = new Set();
+        let modality = 'text'; 
 
-        const branded = formatBrandedError(noMissLastError, 'SalesmanChatbot Pro Plus');
-        return finalize({
-            reply: null,
-            error: branded.message,
-            token_usage: 0,
-            model: primaryModel || NO_MISS_PRIMARY_MODEL,
-            sentiment: 'neutral'
-        });
-    }
+        // Resolve Modality and Fallback Models once
+        let resolved = await resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio);
+        
+        primaryModel = resolved.finalModel;
+        const finalProvider = resolved.finalProvider;
+        modality = resolved.modality || (isVision ? 'vision' : (isAudio ? 'voice' : 'text'));
 
-    // --- FALLBACK & RETRY LOGIC FOR SYSTEM ENGINES (SMART MULTI-MODEL FALLBACK) ---
-    let retryCount = 0;
-    const MAX_RETRIES_PER_MODEL = 3; // User Request: 3 attempts per model
-    let lastError = null;
-    let attemptedKeys = new Set();
-    let modality = 'text'; 
+        // Models to try in order
+        const modelsToTry = [primaryModel];
 
-    // Resolve Modality and Fallback Models once
-    let resolved = await resolveSalesmanchatbotEngine(pageConfig, defaultProvider, defaultModel, isVision, isAudio);
-    
-    primaryModel = resolved.finalModel;
-    const fallbackModel = resolved.fallbackModel;
-    const finalProvider = resolved.finalProvider;
-    modality = resolved.modality || (isVision ? 'vision' : (isAudio ? 'voice' : 'text'));
+        for (const currentModel of modelsToTry) {
+            console.log(`[AI Retry Loop] 🚀 Starting attempts for model: ${currentModel} (${modality})`);
+            let modelRetryCount = 0;
 
-    // Models to try in order
-    const modelsToTry = [primaryModel];
-    if (fallbackModel && fallbackModel !== primaryModel) {
-        modelsToTry.push(fallbackModel);
-    }
+            while (modelRetryCount < MAX_RETRIES_PER_MODEL) {
+                let apiKey = null;
 
-    for (const currentModel of modelsToTry) {
-        console.log(`[AI Retry Loop] 🚀 Starting attempts for model: ${currentModel} (${modality})`);
-        let modelRetryCount = 0;
+                try {
+                    // 1. Get Next Smart Key (Round-Robin)
+                    let keyData = await keyService.getSmartKey(finalProvider, currentModel, modality);
+                    
+                    // If no model-specific key, try default pool
+                    if (!keyData || !keyData.key || attemptedKeys.has(keyData.key)) {
+                        keyData = await keyService.getSmartKey(finalProvider, 'default', modality);
+                    }
 
-        while (modelRetryCount < MAX_RETRIES_PER_MODEL) {
-            let apiKey = null;
+                    // If we still have no key or it's one we already tried, move to next model
+                    if (!keyData || !keyData.key || attemptedKeys.has(keyData.key)) {
+                        console.warn(`[AI] Pool ${finalProvider}/${currentModel} exhausted after ${modelRetryCount} attempts.`);
+                        break; // Exit inner while, move to next model
+                    }
 
-            try {
-                // 1. Get Next Smart Key (Round-Robin)
-                let keyData = await keyService.getSmartKey(finalProvider, currentModel, modality);
-                
-                // If no model-specific key, try default pool
-                if (!keyData || !keyData.key || attemptedKeys.has(keyData.key)) {
-                    keyData = await keyService.getSmartKey(finalProvider, 'default', modality);
-                }
+                    apiKey = keyData.key;
+                    attemptedKeys.add(apiKey);
 
-                // If we still have no key or it's one we already tried, move to next model
-                if (!keyData || !keyData.key || attemptedKeys.has(keyData.key)) {
-                    console.warn(`[AI] Pool ${finalProvider}/${currentModel} exhausted after ${modelRetryCount} attempts.`);
-                    break; // Exit inner while, move to next model
-                }
+                    let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
+                    if (finalProvider === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
+                    else if (finalProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
+                    else if (finalProvider === 'openai') baseURL = 'https://api.openai.com/v1';
+                    else if (finalProvider === 'mistral') baseURL = 'https://api.mistral.ai/v1';
+                    else if (finalProvider === 'xai') baseURL = 'https://api.x.ai/v1';
+                    else if (finalProvider === 'google' || finalProvider === 'gemini') baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
+                    
+                    const isBrandedEngine = BRANDED_MODELS.includes(resolved.targetEngineName);
+                    
+                    let proxyAgent = null;
+                    if (isBrandedEngine) {
+                        if (finalProvider === 'google' || finalProvider === 'gemini') {
+                            proxyAgent = getGeminiProxyAgent(baseURL, true, resolved.targetEngineName);
+                        } else if (finalProvider === 'groq') {
+                            proxyAgent = getGroqProxyAgent(true, resolved.targetEngineName);
+                        } else {
+                            const proxy = getProxyUrl(resolved.targetEngineName);
+                            proxyAgent = createProxyAgent(proxy);
+                        }
+                    }
 
-                apiKey = keyData.key;
-                attemptedKeys.add(apiKey);
+                    const result = await runAgentLoop({
+                        apiKey: apiKey,
+                        baseURL: baseURL,
+                        model: currentModel,
+                        messages: messages,
+                        tools: tools,
+                        pageConfig: pageConfig,
+                        proxyAgent: proxyAgent,
+                        totalTokenUsage: totalTokenUsage,
+                        foundProducts: [],
+                        userId: userId,
+                        temperature: (pageConfig.temperature !== undefined && pageConfig.temperature !== null ? Number(pageConfig.temperature) : (pageConfig.is_external_api ? 0.7 : 0.2)),
+                        top_p: (pageConfig.top_p !== undefined && pageConfig.top_p !== null ? Number(pageConfig.top_p) : 0.9),
+                        pageId: pageId 
+                    });
 
-                let baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
-                if (finalProvider === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
-                else if (finalProvider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
-                else if (finalProvider === 'openai') baseURL = 'https://api.openai.com/v1';
-                else if (finalProvider === 'mistral') baseURL = 'https://api.mistral.ai/v1';
-                else if (finalProvider === 'xai') baseURL = 'https://api.x.ai/v1';
-                else if (finalProvider === 'google' || finalProvider === 'gemini') baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
-                
-                const isBrandedEngine = BRANDED_MODELS.includes(resolved.targetEngineName);
-                
-                let proxyAgent = null;
-                if (isBrandedEngine) {
-                    if (finalProvider === 'google' || finalProvider === 'gemini') {
-                        proxyAgent = getGeminiProxyAgent(baseURL, true, resolved.targetEngineName);
-                    } else if (finalProvider === 'groq') {
-                        proxyAgent = getGroqProxyAgent(true, resolved.targetEngineName);
+                    // --- RECORD SUCCESSFUL USAGE ---
+                    let tokensToRecord = result.token_usage || 0;
+                    if (tokensToRecord === 0 && result.reply) {
+                        tokensToRecord = estimateTokenUsage(messages, result.reply, 0);
+                    }
+
+                    if (apiKey && tokensToRecord > 0) {
+                        keyService.recordKeyUsage(apiKey, tokensToRecord, currentModel).catch(e => {
+                            console.error(`[AI] Token recording failed:`, e.message);
+                        });
+                    }
+
+                    return finalize({ ...result, token_usage: tokensToRecord, sentiment: 'neutral' });
+
+                } catch (err) {
+                    const errorMsg = (err.message || '').toLowerCase();
+                    const statusCode = err.status || (err.response ? err.response.status : null);
+                    
+                    console.error(`[AI Retry Loop] Model: ${currentModel} | Attempt ${modelRetryCount + 1} Failed with Key ${apiKey ? apiKey.substring(0,8) : 'NONE'}... | Status: ${statusCode} | Msg: ${errorMsg}`);
+                    lastError = err;
+                    
+                    if (apiKey) {
+                        await handleAiError(err, apiKey, currentModel, modality);
+                        const estimatedInputTokens = estimateTokenUsage(messages, '', 0);
+                        try {
+                            await dbService.saveAIUsageLog({
+                                user_id: pageConfig.user_id,
+                                model: currentModel || 'unknown',
+                                tokens: estimatedInputTokens,
+                                cost: 0, 
+                                context: `failed_attempt_p2_model_${currentModel}_retry_${modelRetryCount}`
+                            });
+                        } catch(e) {}
+                    }
+
+                    const isRetryable = statusCode === 429 || statusCode === 401 || statusCode >= 500 || 
+                                        errorMsg.includes('limit') || errorMsg.includes('quota') || 
+                                        errorMsg.includes('key') || errorMsg.includes('timeout') || 
+                                        errorMsg.includes('network');
+
+                    if (isRetryable) {
+                        modelRetryCount++;
+                        retryCount++; // Global total count
+                        await new Promise(resolve => setTimeout(resolve, 200)); 
+                        continue;
                     } else {
-                        const proxy = getProxyUrl(resolved.targetEngineName);
-                        proxyAgent = createProxyAgent(proxy);
+                        break; // Non-retryable error, exit inner while, try next model if available
                     }
                 }
-
-                const result = await runAgentLoop({
-                    apiKey: apiKey,
-                    baseURL: baseURL,
-                    model: currentModel,
-                    messages: messages,
-                    tools: tools,
-                    pageConfig: pageConfig,
-                    proxyAgent: proxyAgent,
-                    totalTokenUsage: totalTokenUsage,
-                    foundProducts: [],
-                    userId: userId,
-                    temperature: (pageConfig.temperature !== undefined && pageConfig.temperature !== null ? Number(pageConfig.temperature) : (pageConfig.is_external_api ? 0.7 : 0.2)),
-                    top_p: (pageConfig.top_p !== undefined && pageConfig.top_p !== null ? Number(pageConfig.top_p) : 0.9),
-                    pageId: pageId 
-                });
-
-                // --- RECORD SUCCESSFUL USAGE ---
-                let tokensToRecord = result.token_usage || 0;
-                if (tokensToRecord === 0 && result.reply) {
-                    tokensToRecord = estimateTokenUsage(messages, result.reply, 0);
-                }
-
-                if (apiKey && tokensToRecord > 0) {
-                    keyService.recordKeyUsage(apiKey, tokensToRecord, currentModel).catch(e => {
-                        console.error(`[AI] Token recording failed:`, e.message);
-                    });
-                }
-
-                return finalize({ ...result, token_usage: tokensToRecord, sentiment: 'neutral' });
-
-            } catch (err) {
-                const errorMsg = (err.message || '').toLowerCase();
-                const statusCode = err.status || (err.response ? err.response.status : null);
-                
-                console.error(`[AI Retry Loop] Model: ${currentModel} | Attempt ${modelRetryCount + 1} Failed with Key ${apiKey ? apiKey.substring(0,8) : 'NONE'}... | Status: ${statusCode} | Msg: ${errorMsg}`);
-                lastError = err;
-                
-                if (apiKey) {
-                    await handleAiError(err, apiKey, currentModel, modality);
-                    const estimatedInputTokens = estimateTokenUsage(messages, '', 0);
-                    try {
-                        await dbService.saveAIUsageLog({
-                            user_id: pageConfig.user_id,
-                            model: currentModel || 'unknown',
-                            tokens: estimatedInputTokens,
-                            cost: 0, 
-                            context: `failed_attempt_p2_model_${currentModel}_retry_${modelRetryCount}`
-                        });
-                    } catch(e) {}
-                }
-
-                const isRetryable = statusCode === 429 || statusCode === 401 || statusCode >= 500 || 
-                                    errorMsg.includes('limit') || errorMsg.includes('quota') || 
-                                    errorMsg.includes('key') || errorMsg.includes('timeout') || 
-                                    errorMsg.includes('network');
-
-                if (isRetryable) {
-                    modelRetryCount++;
-                    retryCount++; // Global total count
-                    await new Promise(resolve => setTimeout(resolve, 200)); 
-                    continue;
-                } else {
-                    break; // Non-retryable error, exit inner while, try next model if available
-                }
             }
+            console.warn(`[AI Retry Loop] ⚠️ Primary model ${currentModel} failed after ${modelRetryCount} attempts.`);
         }
-        console.warn(`[AI Retry Loop] ⚠️ Primary model ${currentModel} failed after ${modelRetryCount} attempts. Checking fallback...`);
-    }
 
-    // If we are here, all retries failed
-    const fallbackReply = getNoMissFallbackReply(pageConfig);
-    if (fallbackReply) {
-        console.warn(`[AI] All retries failed. Returning safe fallback reply for ${pageConfig.platform || 'chat'} instead of silent null.`);
-        return finalize({
-            reply: fallbackReply,
+        if (startedInProPlusMode && originalProPlusConfig && !isProPlusMode(pageConfig)) {
+            console.warn(`[AI] salesmanchatbot-pro failed after 4 attempts. Switching back to salesmanchatbot-pro-plus loop.`);
+            pageConfig = { ...originalProPlusConfig };
+            defaultProvider = 'salesmanchatbot';
+            defaultModel = PRO_PLUS_BRANDED_MODEL;
+            primaryModel = getProPlusModelChain()[0] || pageConfig.chat_model || PRO_PLUS_BRANDED_MODEL;
+            await new Promise(resolve => setTimeout(resolve, 200));
+            continue;
+        }
+
+        // If we are here, all retries failed
+        const branded = formatBrandedError(lastError);
+        return finalize({ 
+            reply: null, 
+            error: branded.message,
             token_usage: 0,
-            model: primaryModel || defaultModel,
-            sentiment: 'neutral'
+            model: defaultModel
         });
     }
-
-    const branded = formatBrandedError(lastError);
-    return finalize({ 
-        reply: null, 
-        error: branded.message,
-        token_usage: 0,
-        model: defaultModel
-    });
 }
 
 const WAHA_BASE_URL = process.env.WAHA_BASE_URL || 'https://wahubbd.salesmanchatbot.online';
