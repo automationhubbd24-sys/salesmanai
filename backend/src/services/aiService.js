@@ -1072,6 +1072,41 @@ function extractImagesFromText(text) {
     };
 }
 
+async function getImageEmbedding(imageUrl, customApiKey = null) {
+    if (!imageUrl) return null;
+    
+    // We reuse the text embedding pipeline by first describing the image
+    // since pure image embedding models are expensive/hard to host directly.
+    try {
+        console.log(`[AI Image Embedding] Extracting visual features for embedding: ${imageUrl}`);
+        
+        // 1. Get detailed structured description of the image
+        const prompt = `Describe this image in extreme detail for a search index. Include:
+1. Category and Sub-category
+2. Dominant colors and accent colors
+3. Textures, fabrics, or materials
+4. Patterns, prints, logos, or texts (OCR)
+5. Shape, cut, and structural design details
+6. Background context or environment
+Be highly objective and specific. Output only the description.`;
+
+        const description = await processImageWithVision(imageUrl, null, { prompt, max_tokens: 300 });
+        
+        if (!description || description.trim() === "") {
+             console.warn("[AI Image Embedding] Failed to extract visual features.");
+             return null;
+        }
+
+        // 2. Generate vector embedding from the description
+        console.log(`[AI Image Embedding] Generating vector for extracted features...`);
+        return await getEmbedding(description, customApiKey);
+
+    } catch (e) {
+        console.error(`[AI Image Embedding] Failed: ${e.message}`);
+        return null;
+    }
+}
+
 async function getEmbedding(text, customApiKey = null) {
     if (!text) return null;
     

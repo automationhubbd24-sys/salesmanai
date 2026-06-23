@@ -3707,6 +3707,7 @@ module.exports = {
     getResourceProductsWithMedia,
     updateProduct,
     deleteProduct,
+    searchProductByImageVector,
     searchProducts,
     searchProductsForResource,
     getProductsByNames,
@@ -4489,16 +4490,63 @@ async function updateProductEmbedding(productId, vector) {
     }
 }
 
+async function upsertProductImageEmbedding({ productId, userId, pageId, imageUrl, imageRole, vector, visualTags }) {
+    try {
+        if (!vector) return false;
+        await query(
+            `INSERT INTO product_image_embeddings 
+             (product_id, user_id, page_id, image_url, image_role, embedding, visual_tags)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT (id) DO NOTHING`, // In a real scenario we'd use a unique constraint, but for now we just append or manage via delete/insert
+            [
+                productId, 
+                String(userId), 
+                pageId ? String(pageId) : null, 
+                imageUrl, 
+                imageRole || 'primary', 
+                JSON.stringify(vector),
+                visualTags ? JSON.stringify(visualTags) : '[]'
+            ]
+        );
+        return true;
+    } catch (e) {
+        console.error(`[DB] upsertProductImageEmbedding error: ${e.message}`);
+        return false;
+    }
+}
+
 function queueProductEmbeddingRefresh(product) {
     if (!product?.id) return;
     const aiService = require('./aiService');
     const embedText = buildProductSearchBlob(product);
 
+    // 1. Text Embedding
     aiService.getEmbedding(embedText).then((vector) => {
         if (vector) {
             updateProductEmbedding(product.id, vector).catch((e) => console.warn(`[DB] Background embedding update failed: ${e.message}`));
         }
     }).catch((e) => console.warn(`[DB] Embedding generation failed: ${e.message}`));
+
+    // 2. Image Embeddings
+    const imageUrls = [
+        product.image_url,
+        ...(Array.isArray(product.additional_images) ? product.additional_images : [])
+    ].filter(Boolean);
+
+    imageUrls.forEach((imgUrl, idx) => {
+        aiService.getImageEmbedding(imgUrl).then(imgVector => {
+            if (imgVector) {
+                upsertProductImageEmbedding({
+                    productId: product.id,
+                    userId: product.user_id,
+                    pageId: Array.isArray(product.allowed_messenger_ids) && product.allowed_messenger_ids[0] ? product.allowed_messenger_ids[0] : null,
+                    imageUrl: imgUrl,
+                    imageRole: idx === 0 ? 'primary' : 'additional',
+                    vector: imgVector
+                });
+            }
+        });
+    });
 }
 
 async function backfillGeneratedSkuMatrixForLegacyProducts(limit = 200) {
@@ -4934,6 +4982,65 @@ async function searchProducts(userId, queryText, pageId = null) {
     } catch (error) {
         console.error("[DB] searchProducts Vector Error:", error.message);
         throw error; // Throw error so controller can handle it (Status: 503)
+    }
+}
+
+// 31.5 Search Products by Image Vector
+async function searchProductByImageVector(imageVector, pageId) {
+    try {
+        if (!imageVector || !pageId) return [];
+
+        const { isWhatsapp, resourceIds } = await resolveResourceSearchContext(pageId);
+        if (resourceIds.length === 0) return [];
+
+        let sql = `
+            SELECT p.id, p.name, p.description, p.image_url, p.price, p.currency, p.stock, p.variants, p.is_combo, p.combo_items, p.allow_description, p.product_mode, p.attribute_schema, p.sku_matrix,
+                   (pie.embedding <=> $1::vector) as distance
+            FROM product_image_embeddings pie
+            JOIN products p ON p.id = pie.product_id
+            WHERE p.is_active = true
+              AND pie.embedding IS NOT NULL
+        `;
+
+        let params = [JSON.stringify(imageVector)];
+        
+        // Use existing appendAssignmentFilter which handles resource IDs for p.allowed_xx correctly
+        // We alias products as 'p' in the query, but appendAssignmentFilter doesn't know about aliases.
+        // We'll manually append the filter with the 'p.' alias here for safety.
+        
+        const normalizedIds = Array.from(new Set(
+            (Array.isArray(resourceIds) ? resourceIds : [])
+                .map(id => String(id || '').trim())
+                .filter(Boolean)
+        ));
+
+        if (normalizedIds.length > 0) {
+            const column = isWhatsapp ? 'p.allowed_wa_sessions' : 'p.allowed_messenger_ids';
+            if (normalizedIds.length === 1) {
+                params.push(normalizedIds[0]);
+                sql += ` AND (${column}::jsonb @> jsonb_build_array($${params.length}::text))`;
+            } else {
+                params.push(normalizedIds);
+                sql += ` AND EXISTS (
+                    SELECT 1 FROM jsonb_array_elements_text(COALESCE(${column}, '[]'::jsonb)) AS elem WHERE elem = ANY($${params.length}::text[])
+                )`;
+            }
+        }
+
+        sql += ` ORDER BY distance ASC LIMIT 5`;
+
+        const result = await query(sql, params);
+        
+        return (result.rows || [])
+            .filter(row => row.distance !== null && row.distance !== undefined)
+            .map(row => {
+                const product = normalizeProductRecord(row);
+                return { ...product, distance: row.distance };
+            });
+            
+    } catch (error) {
+        console.error("[DB] searchProductByImageVector Error:", error.message);
+        return [];
     }
 }
 

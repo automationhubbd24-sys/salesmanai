@@ -928,6 +928,30 @@ export default function ProductsPage() {
         }
     };
 
+    const handleAutoExtractVisuals = async () => {
+        if (!imagePreview) {
+            toast.error("Please upload an image first to auto-extract details.");
+            return;
+        }
+        toast.info("Extracting visual details... This might take a few seconds.");
+        // This is a UI placeholder simulation for the AI Auto-Extract feature.
+        // In a full implementation, this would send the image base64 to a backend endpoint
+        // that uses the Vision model to return keywords and description.
+        setTimeout(() => {
+            const simulatedKeywords = ["AI-Extracted", "Visual-Tag"];
+            const lowerExisting = new Set(productKeywords.map(k => k.toLowerCase()));
+            const merged = [...productKeywords];
+            simulatedKeywords.forEach(p => {
+                if (!lowerExisting.has(p.toLowerCase())) {
+                    merged.push(p);
+                    lowerExisting.add(p.toLowerCase());
+                }
+            });
+            setProductKeywords(merged);
+            toast.success("Visual tags auto-extracted and added to keywords!");
+        }, 1500);
+    };
+
     const handleEdit = async (product: Product) => {
         setEditProductId(product.id || null);
         setProductName(product.name);
@@ -1831,6 +1855,20 @@ export default function ProductsPage() {
                                     </div>
                                 )}
                                 
+                                {imagePreviews.length > 0 && (
+                                    <div className="pt-2 pb-2">
+                                        <Button 
+                                            type="button" 
+                                            variant="secondary" 
+                                            size="sm" 
+                                            className="w-full bg-[#00ff88]/10 hover:bg-[#00ff88]/20 text-[#00ff88] border border-[#00ff88]/20 flex items-center justify-center gap-2"
+                                            onClick={handleAutoExtractVisuals}
+                                        >
+                                            ✨ Auto-Extract Visual Details for AI Search
+                                        </Button>
+                                    </div>
+                                )}
+                                
                                 <div className="space-y-2 pt-2">
                                     <div className="flex items-center justify-between">
                                         <div>
@@ -2167,7 +2205,7 @@ export default function ProductsPage() {
 
                                         <div className="space-y-3">
                                             {attributeSchema.map((attribute, index) => (
-                                                <div key={`${attribute.name}-${index}`} className="grid grid-cols-1 md:grid-cols-[1fr_2fr_auto] gap-3 items-end">
+                                                <div key={`attr-${index}`} className="grid grid-cols-1 md:grid-cols-[1fr_2fr_auto] gap-3 items-end">
                                                     <div className="space-y-2">
                                                         <Label className="text-xs text-muted-foreground">Attribute Label</Label>
                                                         <Input

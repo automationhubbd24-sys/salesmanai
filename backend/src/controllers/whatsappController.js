@@ -2014,17 +2014,17 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
         if (!imageDetectionEnabled) {
             imageAnalyzeText = `[System Note: User sent ${allImages.length} images. Image detection is disabled, so they were not analyzed. Ask the user to describe what they want.]`;
         } else {
-         let productAnalysisPrompt = `Analyze this image with 100% precision. 
+         let productAnalysisPrompt = `Analyze this image with extreme precision for a strict visual search. 
 STRICT RULES:
 1. FOCUS ONLY on the main products in the foreground (e.g., being held in hand or placed at the front). 
-2. IGNORE the background products on shelves or blurred items.
-3. READ the actual text printed on each foreground product carefully. 
-4. Identify the brand and full product name.
-5. Output EXACTLY in this Bengali format:
-এই ছবিতে মোট **[সংখ্যা]টি** প্রোডাক্ট রয়েছে। প্রোডাক্টগুলোর নাম নিচে দেওয়া হলো:
-১. **[প্রোডাক্টের পুরো নাম]** ([পজিশন ও ছোট ভিজ্যুয়াল বিবরণ])
-২. ...
-এটি মূলত একটি **"[কম্বো বা অফার নাম]"** হিসেবে সাজানো হয়েছে। [একটি ছোট বাক্যে সারসংক্ষেপ]`;
+2. Describe the EXACT visual characteristics: color, shape, pattern, print, fabric texture, sleeve/collar type, design cut.
+3. Check for specific environment details: hanger type, table, floor texture, mannequin, background wall color.
+4. READ the actual text printed or logos on the product carefully. 
+5. Output EXACTLY in this format:
+- Category: [Item Type]
+- Visual Features: [Colors, Prints, Patterns, Shapes]
+- Text/Logo: [Visible OCR or Brands]
+- Background/Environment: [Brief description of where the product is placed]`;
 
         try {
             // Use WhatsApp Config which includes page_prompts
@@ -2113,8 +2113,21 @@ STRICT RULES:
     if (imageAnalyzeText && imageAnalyzeText.trim() !== "") {
         if (finalOutput) finalOutput += "\n\n";
         // Always use standard tag for consistency
-        // Unified single block for AI - ENHANCED FOCUS
-        finalOutput += `\n\n[NEW VISUAL CONTEXT - IMPORTANT]:\nThe user has just sent the following image(s). This is the CURRENT FOCUS of the conversation. If the user asks "eta ase?" or "price koto?", they are referring to the product(s) described below, NOT anything from the previous history.\n\nDescription of New Image(s):\n${imageAnalyzeText.trim()}\n[END OF NEW VISUAL CONTEXT]`;
+        // Unified single block for AI - ENHANCED FOCUS with Exact Verification strictness
+        finalOutput += `\n\n[NEW VISUAL CONTEXT - IMPORTANT]:
+The user has just sent the following image(s). This is the CURRENT FOCUS of the conversation. 
+If the user asks "eta ase?" or "price koto?", they are referring to the product(s) described below.
+
+Description of New Image(s):
+${imageAnalyzeText.trim()}
+
+[CRITICAL RULE FOR IMAGES]: 
+1. DO NOT say "Yes we have this" just because the category matches. 
+2. You MUST use the 'resolve_product' tool with this visual description to check if we have the EXACT same design, color, print, and style in our catalog.
+3. If the tool returns a High Match (Score >= 88), say "Yes, we have this exact product."
+4. If Medium Match (70-87), say "It looks like a [Category], but it is slightly different from our catalog (e.g., different print/design). Here is our original product..."
+5. If Low Match (< 70) or Not Found, say "We do not have this exact item in our catalog."
+[END OF NEW VISUAL CONTEXT]`;
     }
 
     // 3. Audio Transcripts (Critical for Voice Notes)
