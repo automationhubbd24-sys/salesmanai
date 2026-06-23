@@ -52,11 +52,10 @@ export default function WhatsAppOfficialIntegration() {
   const isMobile = useIsMobile();
   const { refreshSessions, sessions, currentSession, setCurrentSession } = useWhatsApp();
   const [loading, setLoading] = useState(false);
-  const [repairing, setRepairing] = useState(false);
-  const [disconnecting, setDisconnecting] = useState(false);
+  const [repairing, setRepairing] = useState<string | null>(null);
+  const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [sdkReady, setSdkReady] = useState(false);
   const [connected, setConnected] = useState(false);
-  const [wabaInfo, setWabaInfo] = useState<EmbeddedSignupMeta | null>(null);
   const embeddedSignupMetaRef = useRef<EmbeddedSignupMeta>({});
   const metaResolverRef = useRef<((meta: EmbeddedSignupMeta | null) => void) | null>(null);
   const metaTimeoutRef = useRef<number | null>(null);
@@ -66,9 +65,10 @@ export default function WhatsAppOfficialIntegration() {
   const mobileCallbackProcessedRef = useRef(false);
   const mobileBrowserFallbackStartedRef = useRef(false);
 
-  const officialSession = (currentSession?.provider_type === "official" ? currentSession : null)
-    || sessions.find((session) => session.provider_type === "official" || String(session.name || "").startsWith("official_"))
-    || null;
+  // Get all official sessions
+  const officialSessions = sessions.filter((session) => 
+    session.provider_type === "official" || String(session.name || "").startsWith("official_")
+  );
   const trimmedBackendUrl = BACKEND_URL.replace(/\/$/, "");
   const officialWebhookUrl = `${trimmedBackendUrl}/webhook/whatsapp`;
   const usesLocalBackend = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(trimmedBackendUrl);
@@ -258,36 +258,36 @@ export default function WhatsAppOfficialIntegration() {
                     clearFlowState(WHATSAPP_MOBILE_FLOW_STATE_KEY); 
                 }
             }
-        } catch (e) {
+        } catch {
             // Silent poll error
         }
     };
 
     if (isMobile) {
-        pollInterval = window.setInterval(runPoll, 2000); // Increased frequency for WhatsApp
-        
-        // ACCELERATE POLLING ON FOCUS
-        const handleFocus = () => {
-            console.log("WhatsApp window focused, accelerating poll...");
-            void runPoll();
-        };
-        window.addEventListener("focus", handleFocus);
-        window.addEventListener("visibilitychange", handleFocus);
-        window.addEventListener("pageshow", handleFocus); // Added pageshow for iOS safari back button support
-        
-        return () => {
-            clearSignupPoll();
-            if (pollInterval) window.clearInterval(pollInterval);
-            window.removeEventListener("focus", handleFocus);
-            window.removeEventListener("visibilitychange", handleFocus);
-            window.removeEventListener("pageshow", handleFocus);
-            if (metaTimeoutRef.current) {
-                window.clearTimeout(metaTimeoutRef.current);
-            }
-            metaResolverRef.current = null;
-            window.removeEventListener("message", sessionInfoListener);
-            window.removeEventListener("message", mobileCallbackListener);
-        };
+      pollInterval = window.setInterval(runPoll, 2000); // Increased frequency for WhatsApp
+      
+      // ACCELERATE POLLING ON FOCUS
+      const handleFocus = () => {
+        console.log("WhatsApp window focused, accelerating poll...");
+        void runPoll();
+      };
+      window.addEventListener("focus", handleFocus);
+      window.addEventListener("visibilitychange", handleFocus);
+      window.addEventListener("pageshow", handleFocus); // Added pageshow for iOS safari back button support
+      
+      return () => {
+        clearSignupPoll();
+        if (pollInterval) window.clearInterval(pollInterval);
+        window.removeEventListener("focus", handleFocus);
+        window.removeEventListener("visibilitychange", handleFocus);
+        window.removeEventListener("pageshow", handleFocus);
+        if (metaTimeoutRef.current) {
+          window.clearTimeout(metaTimeoutRef.current);
+        }
+        metaResolverRef.current = null;
+        window.removeEventListener("message", sessionInfoListener);
+        window.removeEventListener("message", mobileCallbackListener);
+      };
     }
 
     return () => {
@@ -303,37 +303,22 @@ export default function WhatsAppOfficialIntegration() {
   }, []);
 
   useEffect(() => {
-    if (!officialSession) {
-      setConnected(false);
-      setWabaInfo(null);
-      return;
-    }
+    setConnected(officialSessions.length > 0);
+  }, [officialSessions]);
 
-    setConnected(true);
-    setWabaInfo({
-      wabaId: officialSession.waba_id,
-      phoneNumberId: officialSession.phone_number_id,
-    });
-  }, [officialSession]);
-
-  const handleDisconnect = async () => {
-    if (!officialSession?.name) {
-      toast.error("Connected WhatsApp session not found.");
-      return;
-    }
-
-    if (!window.confirm(`Are you sure you want to disconnect ${officialSession.name}?`)) {
+  const handleDisconnect = async (sessionName: string) => {
+    if (!window.confirm(`Are you sure you want to disconnect ${sessionName}?`)) {
       return;
     }
 
     try {
-      setDisconnecting(true);
+      setDisconnecting(sessionName);
       const token = localStorage.getItem("auth_token");
       if (!token) {
         throw new Error("Please login again and retry.");
       }
 
-      const response = await fetch(`${BACKEND_URL}/api/whatsapp/official/${encodeURIComponent(officialSession.name)}`, {
+      const response = await fetch(`${BACKEND_URL}/api/whatsapp/official/${encodeURIComponent(sessionName)}`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -345,39 +330,38 @@ export default function WhatsAppOfficialIntegration() {
         throw new Error(data.error || "Failed to disconnect WhatsApp.");
       }
 
-      if (currentSession?.name === officialSession.name) {
+      if (currentSession?.name === sessionName) {
         localStorage.removeItem("active_wa_session_id");
         localStorage.removeItem("active_wp_db_id");
-        setCurrentSession(null);
+        const remainingSessions = officialSessions.filter(s => s.name !== sessionName);
+        setCurrentSession(remainingSessions.length > 0 ? remainingSessions[0] : null);
       }
 
-      setConnected(false);
-      setWabaInfo(null);
       await refreshSessions();
       toast.success("WhatsApp disconnected successfully.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to disconnect WhatsApp.";
       toast.error(message);
     } finally {
-      setDisconnecting(false);
+      setDisconnecting(null);
     }
   };
 
-  const handleRepairWebhook = async () => {
-    if (!officialSession?.name) {
+  const handleRepairWebhook = async (session: any) => {
+    if (!session?.name) {
       toast.error("Connected WhatsApp session not found.");
       return;
     }
 
     try {
-      setRepairing(true);
+      setRepairing(session.name);
       const token = localStorage.getItem("auth_token");
       if (!token) {
         throw new Error("Please login again and retry.");
       }
 
       const response = await fetch(
-        `${BACKEND_URL}/api/whatsapp/official/${encodeURIComponent(officialSession.name)}/repair-webhook`,
+        `${BACKEND_URL}/api/whatsapp/official/${encodeURIComponent(session.name)}/repair-webhook`,
         {
           method: "POST",
           headers: {
@@ -397,7 +381,7 @@ export default function WhatsAppOfficialIntegration() {
       const message = error instanceof Error ? error.message : "Failed to repair WhatsApp webhook.";
       toast.error(message);
     } finally {
-      setRepairing(false);
+      setRepairing(null);
     }
   };
 
@@ -455,7 +439,6 @@ export default function WhatsAppOfficialIntegration() {
         throw new Error(data.error || "Failed to complete official WhatsApp connection.");
       }
 
-      setWabaInfo(data.data || meta);
       if (data.data?.sessionName) {
         localStorage.setItem("active_wa_session_id", data.data.sessionName);
       }
@@ -660,6 +643,7 @@ export default function WhatsAppOfficialIntegration() {
     <div className="space-y-4">
       {connected ? (
         <div className="space-y-4">
+          {/* Header Section */}
           <div className="rounded-[28px] border border-white/5 bg-[#121212] p-5 text-white">
             <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
               <div className="space-y-3">
@@ -669,21 +653,21 @@ export default function WhatsAppOfficialIntegration() {
                     Meta Connected
                   </Badge>
                   <Badge variant="outline" className="border-primary/20 bg-primary/5 text-primary">
-                    Coexistence Ready
+                    {officialSessions.length} Connected Account{officialSessions.length !== 1 ? 's' : ''}
                   </Badge>
                 </div>
                 <div>
-                  <p className="text-xl font-semibold">Official WhatsApp Business number connected</p>
+                  <p className="text-xl font-semibold">Official WhatsApp Business Accounts</p>
                   <p className="mt-1 text-sm text-slate-400">
-                    Your mobile app and Cloud API chatbot will work simultaneously with the same number. You can reconnect or disconnect your session here.
+                    Manage all your connected WhatsApp Business numbers. Each number can run the AI chatbot simultaneously.
                   </p>
                 </div>
               </div>
 
               <div className="flex flex-col gap-3">
                 <div className="rounded-2xl border border-white/10 bg-[#0a0a0a] px-4 py-3 text-sm text-white min-w-[200px]">
-                  <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Active Session</p>
-                  <p className="mt-1 break-all font-medium">{officialSession?.name || "official_session"}</p>
+                  <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Active Integration</p>
+                  <p className="mt-1 break-all font-medium">{currentSession?.name || 'Select a session'}</p>
                 </div>
                 <Button 
                   onClick={() => launchWhatsAppSignup(true)}
@@ -698,89 +682,100 @@ export default function WhatsAppOfficialIntegration() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-3 text-sm">
-            <div className="rounded-3xl border border-white/10 bg-[#121212] p-4">
-              <p className="mb-2 text-xs uppercase tracking-[0.2em] text-slate-400">Connection</p>
-              <p className="font-semibold text-primary">Live</p>
-              <p className="mt-1 text-xs text-slate-400">Webhook, token, and session linked.</p>
-            </div>
-            <div className="rounded-3xl border border-white/10 bg-[#121212] p-4">
-              <p className="mb-2 text-xs uppercase tracking-[0.2em] text-slate-400">Phone ID</p>
-              <p className="font-mono break-all text-white">{wabaInfo?.phoneNumberId || "Pending sync"}</p>
-            </div>
-            <div className="rounded-3xl border border-white/10 bg-[#121212] p-4">
-              <p className="mb-2 text-xs uppercase tracking-[0.2em] text-slate-400">WABA ID</p>
-              <p className="font-mono break-all text-white">{wabaInfo?.wabaId || "Pending sync"}</p>
-            </div>
-          </div>
+          {/* All Sessions List */}
+          <div className="space-y-3">
+            {officialSessions.map((session) => (
+              <div key={session.name} className="rounded-[28px] border border-white/5 bg-[#121212] p-5 text-white">
+                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                  <div className="space-y-3 flex-1">
+                    <div className="flex items-center gap-3">
+                      <div className={`h-3 w-3 rounded-full ${currentSession?.name === session.name ? 'bg-primary' : 'bg-slate-500'}`} />
+                      <h3 className="text-lg font-semibold">{session.name}</h3>
+                      {currentSession?.name === session.name && (
+                        <Badge className="bg-primary/20 text-primary text-xs">Active</Badge>
+                      )}
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Phone ID</p>
+                        <p className="font-mono break-all text-white">{session.phone_number_id || 'N/A'}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-400">WABA ID</p>
+                        <p className="font-mono break-all text-white">{session.waba_id || 'N/A'}</p>
+                      </div>
+                    </div>
+                  </div>
 
-          <div className="grid gap-3 md:grid-cols-3">
-            <div className="rounded-3xl border border-white/10 bg-[#121212] p-4">
-              <div className="flex items-center gap-2 text-sm font-medium text-white">
-                <MessageSquare className="h-4 w-4 text-primary" />
-                Chatbot Control
+                  <div className="flex flex-col gap-2 w-full md:w-auto">
+                    {currentSession?.name !== session.name && (
+                      <Button
+                        onClick={() => {
+                          setCurrentSession(session);
+                          toast.success(`Switched to ${session.name}`);
+                        }}
+                        className="w-full rounded-xl bg-primary/20 text-primary hover:bg-primary/30"
+                      >
+                        <MessageSquare className="mr-2 h-4 w-4" />
+                        Set as Active
+                      </Button>
+                    )}
+                    
+                    {currentSession?.name === session.name && (
+                      <>
+                        <Button onClick={() => navigate("/dashboard/whatsapp/control")} className="w-full bg-primary text-black hover:bg-primary/90 rounded-xl">
+                          <MessageSquare className="mr-2 h-4 w-4" />
+                          Manage Chatbot
+                        </Button>
+                        <Button onClick={() => navigate("/dashboard/whatsapp/settings")} variant="outline" className="w-full border-white/10 hover:bg-white/5 text-white rounded-xl">
+                          <Settings2 className="mr-2 h-4 w-4" />
+                          AI Settings
+                        </Button>
+                      </>
+                    )}
+                    
+                    <Button
+                      onClick={() => handleRepairWebhook(session)}
+                      disabled={repairing === session.name || loading || disconnecting === session.name}
+                      variant="outline"
+                      className="w-full rounded-xl border-white/10 hover:bg-white/5 text-white"
+                    >
+                      {repairing === session.name ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4" />}
+                      {repairing === session.name ? "Repairing..." : "Repair Webhook"}
+                    </Button>
+                    
+                    <Button
+                      onClick={() => launchWhatsAppSignup()}
+                      disabled={loading || (!isMobile && !sdkReady) || disconnecting === session.name || repairing === session.name}
+                      className="w-full rounded-xl bg-primary text-black hover:bg-primary/90"
+                    >
+                      {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
+                      {loading ? "Opening..." : "Reconnect"}
+                    </Button>
+                    
+                    <Button
+                      onClick={() => handleDisconnect(session.name)}
+                      disabled={disconnecting === session.name || loading || repairing === session.name}
+                      variant="destructive"
+                      className="w-full rounded-xl"
+                    >
+                      {disconnecting === session.name ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+                      {disconnecting === session.name ? "Disconnecting..." : "Disconnect"}
+                    </Button>
+                  </div>
+                </div>
               </div>
-              <p className="mt-2 text-xs text-slate-400">Manage reply behavior, live bot, orders, and prompts.</p>
-              <Button onClick={() => navigate("/dashboard/whatsapp/control")} className="mt-4 w-full bg-primary text-black hover:bg-primary/90">
-                Manage Chatbot
-              </Button>
-            </div>
-
-            <div className="rounded-3xl border border-white/10 bg-[#121212] p-4">
-              <div className="flex items-center gap-2 text-sm font-medium text-white">
-                <Settings2 className="h-4 w-4 text-primary" />
-                AI Setup
-              </div>
-              <p className="mt-2 text-xs text-slate-400">Update prompts, models, delay, order email, and memory limits.</p>
-              <Button onClick={() => navigate("/dashboard/whatsapp/settings")} variant="outline" className="mt-4 w-full border-white/10 hover:bg-white/5 text-white">
-                Open Settings
-              </Button>
-            </div>
-
-            <div className="rounded-3xl border border-white/10 bg-[#121212] p-4">
-              <div className="flex items-center gap-2 text-sm font-medium text-white">
-                <Link2 className="h-4 w-4 text-primary" />
-                Connection Actions
-              </div>
-              <p className="mt-2 text-xs text-slate-400">Repair webhook issues, reconnect if the mobile app disconnects, or perform a clean disconnect.</p>
-              <div className="mt-4 grid gap-2">
-                <Button
-                  onClick={handleRepairWebhook}
-                  disabled={repairing || loading || disconnecting}
-                  variant="outline"
-                  className="w-full rounded-xl border-white/10 hover:bg-white/5 text-white"
-                >
-                  {repairing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4" />}
-                  {repairing ? "Repairing..." : "Repair Webhook"}
-                </Button>
-                <Button
-                  onClick={() => launchWhatsAppSignup()}
-                  disabled={loading || (!isMobile && !sdkReady) || disconnecting || repairing}
-                  className="w-full rounded-xl bg-primary text-black hover:bg-primary/90"
-                >
-                  {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
-                  {loading ? "Opening..." : "Reconnect"}
-                </Button>
-                <Button
-                  onClick={handleDisconnect}
-                  disabled={disconnecting || loading || repairing}
-                  variant="destructive"
-                  className="w-full rounded-xl"
-                >
-                  {disconnecting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
-                  {disconnecting ? "Disconnecting..." : "Disconnect"}
-                </Button>
-              </div>
-            </div>
+            ))}
           </div>
 
           <div className="rounded-3xl border border-white/10 bg-primary/5 p-4">
             <div className="flex items-start gap-3">
               <ShieldCheck className="mt-0.5 h-5 w-5 text-primary" />
               <div className="space-y-1 text-sm text-slate-400">
-                <p className="font-medium text-white">Coexistence note</p>
-                <p>By selecting an existing WhatsApp Business App number in the Meta popup, you can use the app and the bot simultaneously on the same number.</p>
-                <p>If the number becomes unlinked from Meta, simply complete the connection flow again to refresh the session.</p>
+                <p className="font-medium text-white">Multiple Accounts Support</p>
+                <p>You can connect multiple WhatsApp Business numbers. Each number will have its own independent chatbot, settings, and message database.</p>
+                <p>Use the session selector in the sidebar to switch between different accounts.</p>
               </div>
             </div>
           </div>
@@ -816,7 +811,7 @@ export default function WhatsAppOfficialIntegration() {
                 </p>
                 {isMobile && (
                   <p className="rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-slate-200">
-                    Use Chrome or your phone&apos;s main browser. If Facebook opens its app, finish login there and return to this browser tab so we can finish the WhatsApp connection.
+                    Use Chrome or your phone's main browser. If Facebook opens its app, finish login there and return to this browser tab so we can finish the WhatsApp connection.
                   </p>
                 )}
               </div>
