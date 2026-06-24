@@ -3911,6 +3911,7 @@ module.exports = {
     generateReply,
     generateResponse,
     getEmbedding,
+    getImageEmbedding,
     handleAiError,
     formatBrandedError,
     fetchOgImage,
