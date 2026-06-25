@@ -111,7 +111,7 @@ router.use(async (req, res, next) => {
 
     // Skip strict check for key management if it's an internal dashboard request (JWT)
     // The individual routes will handle specific JWT or Admin auth
-    if (req.path.startsWith('/keys')) {
+    if (req.path.startsWith('/keys') || req.path.startsWith('/config')) {
         return next();
     }
 

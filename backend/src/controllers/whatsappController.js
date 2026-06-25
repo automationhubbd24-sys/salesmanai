@@ -2092,6 +2092,24 @@ STRICT RULES:
         imageAnalyzeText = collectedTexts.join("\n").trim();
         if (imageAnalyzeText) {
             console.log(`[WA] Image Analysis Result (collected): ${imageAnalyzeText.substring(0,50)}... Total Tokens: ${totalVisionTokens}`);
+            
+            // NEW: Run Vector Search right here using the extracted text
+            try {
+                const imgVector = await aiService.getEmbedding(imageAnalyzeText);
+                if (imgVector) {
+                    const vectorMatches = await dbService.searchProductByImageVector(imgVector, sessionName);
+                    if (vectorMatches && vectorMatches.length > 0) {
+                        const topMatch = vectorMatches[0];
+                        const score = topMatch.distance !== undefined ? ((1 - topMatch.distance) * 100).toFixed(1) : 0;
+                        imageAnalyzeText += `\n\n[VECTOR SEARCH SYSTEM RESULT]:\nFound closest match in catalog: ID ${topMatch.id} (${topMatch.name}) with confidence score ${score}%.`;
+                        console.log(`[WA Vector Search] Found closest match ID ${topMatch.id} with score ${score}%`);
+                    } else {
+                        imageAnalyzeText += `\n\n[VECTOR SEARCH SYSTEM RESULT]:\nNo products found in catalog matching this image.`;
+                    }
+                }
+            } catch (vErr) {
+                console.warn(`[WA Vector Search] Failed: ${vErr.message}`);
+            }
         }
         }
     }
