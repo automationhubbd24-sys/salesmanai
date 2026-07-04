@@ -613,7 +613,7 @@ export default function MessengerIntegrationPage() {
                     } else {
                         reject(new Error('User cancelled login or did not fully authorize.'));
                     }
-                }, {scope: 'email,public_profile,pages_show_list,pages_messaging,pages_read_engagement'});
+                }, {scope: 'email,public_profile,pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata'});
             });
 
             console.log('Successfully logged in, exchanging token...');
@@ -705,13 +705,34 @@ export default function MessengerIntegrationPage() {
             // Use the verified name if provided name is generic
             const finalName = verifyData.name || directPageName;
 
-            const pageObj: FacebookPage = {
-                id: directPageId,
-                name: finalName,
-                access_token: directAccessToken
-            };
+            const token = localStorage.getItem("auth_token");
+            if (!token) {
+                throw new Error("Please login again");
+            }
 
-            await savePagesToBackend([pageObj]);
+            // Directly save to backend WITHOUT attempting to subscribe via Graph API
+            // This acts exactly like n8n, relying on the user's manual Meta Developer App webhook configuration
+            const res = await fetch(`${BACKEND_URL}/api/messenger/pages/manual`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({
+                    page_id: directPageId,
+                    name: finalName,
+                    page_access_token: directAccessToken,
+                    email: userEmail,
+                    user_id: userId,
+                }),
+            });
+
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(body.error || "Failed to save page to database");
+            }
+            
+            toast.success(`${finalName} connected manually! Make sure to set up Webhooks in your Meta Developer App.`);
             
             // Set the active page directly into LocalStorage to immediately show it
             localStorage.setItem("active_fb_page_id", directPageId);
@@ -721,6 +742,7 @@ export default function MessengerIntegrationPage() {
             setDirectPageName("");
             setDirectPageId("");
             setDirectAccessToken("");
+            fetchPages();
             
         } catch (error: any) {
             console.error("Direct Connect Error:", error);
@@ -732,6 +754,7 @@ export default function MessengerIntegrationPage() {
             toast.error(error.message || "Failed to connect page");
         } finally {
             setDirectLoading(false);
+            setIsManualSetupOpen(false);
         }
     };
 
