@@ -4525,6 +4525,7 @@ module.exports = {
     verifyWebhook,
     handleWhatsAppWebhook,
     verifyWhatsAppWebhook,
+    getWebhookLogs,
     clearPageCache,
     clearAllCaches
 };
