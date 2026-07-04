@@ -26,7 +26,8 @@ import {
     Settings, 
     Trash2, 
     Gift,
-    FileText
+    FileText,
+    Terminal
 } from "lucide-react";
 import { BACKEND_URL } from "@/config";
 import { useMessenger } from "@/context/MessengerContext";
@@ -74,6 +75,14 @@ declare global {
 }
 
 // --- Constants ---
+interface ConnectionLog {
+    timestamp: string;
+    type: 'info' | 'success' | 'error' | 'warning';
+    action: string;
+    message: string;
+    details?: any;
+}
+
 
 export default function MessengerIntegrationPage() {
     const navigate = useNavigate();
@@ -100,6 +109,10 @@ export default function MessengerIntegrationPage() {
     const [directLoading, setDirectLoading] = useState(false);
     const [isManualSetupOpen, setIsManualSetupOpen] = useState(false);
     const [isMobileConnectDialogOpen, setIsMobileConnectDialogOpen] = useState(false);
+
+    // Logs State
+    const [connectionLogs, setConnectionLogs] = useState<ConnectionLog[]>([]);
+    const [isLogsOpen, setIsLogsOpen] = useState(false);
 
     // Subscription Modal State - DEPRECATED/REMOVED
     // const [isSubscriptionOpen, setIsSubscriptionOpen] = useState(false);
@@ -157,6 +170,17 @@ export default function MessengerIntegrationPage() {
     const pages = contextPages as PageData[];
 
     // --- Helper Functions ---
+
+    const addLog = (type: ConnectionLog['type'], action: string, message: string, details?: any) => {
+        const newLog: ConnectionLog = {
+            timestamp: new Date().toISOString(),
+            type,
+            action,
+            message,
+            details
+        };
+        setConnectionLogs(prev => [newLog, ...prev].slice(0, 50)); // Keep last 50 logs
+    };
 
     const copyWebhook = () => {
         const webhookUrl = `${BACKEND_URL}/webhook`;
@@ -595,15 +619,19 @@ export default function MessengerIntegrationPage() {
         }
 
         if (!window.FB) {
+            addLog('error', 'SDK Check', 'Facebook SDK not loaded');
             toast.error("Facebook SDK not loaded yet. Please refresh or check your connection.");
             return;
         }
 
         if (!import.meta.env.VITE_FACEBOOK_APP_ID) {
+            addLog('warning', 'Config Check', 'VITE_FACEBOOK_APP_ID is missing');
             toast.warning("Facebook App ID not configured. Please set VITE_FACEBOOK_APP_ID in your environment variables.");
         }
 
         setConnecting(true);
+        setIsLogsOpen(true); // Open logs to show progress
+        addLog('info', 'FB Login', 'Initiating Facebook OAuth Login Popup...');
 
         try {
             const loginResponse: any = await new Promise((resolve, reject) => {
@@ -617,10 +645,13 @@ export default function MessengerIntegrationPage() {
             });
 
             console.log('Successfully logged in, exchanging token...');
+            addLog('success', 'FB Login', 'User authorized app successfully', { scopes: loginResponse.authResponse?.grantedScopes });
+            
             const shortLivedToken = loginResponse.authResponse.accessToken;
             let finalToken = shortLivedToken;
 
             // Exchange for Long-Lived Token via Backend
+            addLog('info', 'Token Exchange', 'Requesting long-lived token from backend...');
             try {
                 const exchangeResponse = await fetch(`${BACKEND_URL}/api/auth/facebook/exchange-token`, {
                     method: 'POST',
@@ -632,13 +663,16 @@ export default function MessengerIntegrationPage() {
                     const exchangeData = await exchangeResponse.json();
                     if (exchangeData.access_token) {
                         console.log('Obtained long-lived token');
+                        addLog('success', 'Token Exchange', 'Successfully received long-lived token');
                         finalToken = exchangeData.access_token;
                     } else {
                         console.warn('Backend returned no token:', exchangeData);
+                        addLog('warning', 'Token Exchange', 'Backend OK but no token in response', { data: exchangeData });
                     }
                 } else {
                     const errorText = await exchangeResponse.text();
                     console.warn('Backend exchange failed:', errorText);
+                    addLog('error', 'Token Exchange', `Exchange failed with status ${exchangeResponse.status}`, { responseText: errorText });
                     try {
                         const errorJson = JSON.parse(errorText);
                         toast.warning(`Token Exchange Failed: ${errorJson.error || 'Unknown Error'}`);
@@ -647,12 +681,14 @@ export default function MessengerIntegrationPage() {
                     }
                 }
 
-            } catch (err) {
+            } catch (err: any) {
                 console.error('Error contacting backend for token exchange:', err);
+                addLog('error', 'Token Exchange', 'Network error reaching backend for token exchange', { error: err.message });
                 toast.warning("Backend connection failed. Using short-lived token.");
             }
 
             // Fetch User's Pages
+            addLog('info', 'FB Graph API', 'Fetching list of accessible pages from /me/accounts');
             const pageResponse: any = await new Promise((resolve, reject) => {
                 window.FB.api('/me/accounts', 'get', { access_token: finalToken }, (response: any) => {
                     if (response && response.data) {
@@ -665,12 +701,19 @@ export default function MessengerIntegrationPage() {
 
             console.log('Pages fetched:', pageResponse);
             if (!pageResponse.data || pageResponse.data.length === 0) {
+                 addLog('warning', 'FB Graph API', 'API returned 0 pages. User might need to grant access in Business Settings');
                  throw new Error("No Facebook pages found. If you are a Business Manager Owner, please assign yourself to the page under Business Settings > Add People.");
             }
+            
+            addLog('success', 'FB Graph API', `Found ${pageResponse.data.length} pages`, { 
+                pages: pageResponse.data.map((p: any) => p.name)
+            });
+            
             await savePagesToBackend(pageResponse.data);
 
         } catch (error: any) {
             console.error("Facebook Connect Error:", error);
+            addLog('error', 'Connection Process', `Process aborted due to error`, { error: error.message });
             logFrontendError({
                 message: `Facebook Connect Error: ${error.message}`,
                 stack: error.stack,
@@ -689,18 +732,29 @@ export default function MessengerIntegrationPage() {
         }
         
         setDirectLoading(true);
+        setIsLogsOpen(true);
+        addLog('info', 'Manual Connect', `Starting manual connection for Page ID: ${directPageId}`);
+        
         try {
             // Verify token validity by calling FB Graph API manually
+            addLog('info', 'FB Graph API', 'Verifying provided access token...');
             const verifyRes = await fetch(`https://graph.facebook.com/v25.0/${directPageId}?fields=name&access_token=${directAccessToken}`);
             const verifyData = await verifyRes.json();
             
             if (verifyData.error) {
+                addLog('error', 'FB Graph API', 'Token verification failed', { error: verifyData.error });
                 throw new Error(`Invalid Token or Page ID: ${verifyData.error.message}`);
             }
             
             if (verifyData.id !== directPageId) {
+                addLog('error', 'Validation', 'Token is valid but belongs to a different Page ID', { 
+                    provided: directPageId, 
+                    found: verifyData.id 
+                });
                 throw new Error("Page ID mismatch");
             }
+
+            addLog('success', 'FB Graph API', `Token verified successfully. Verified Page Name: ${verifyData.name}`);
 
             // Use the verified name if provided name is generic
             const finalName = verifyData.name || directPageName;
@@ -710,6 +764,7 @@ export default function MessengerIntegrationPage() {
                 throw new Error("Please login again");
             }
 
+            addLog('info', 'Backend API', 'Saving credentials to our database (skipping Graph API webhook subscription)');
             // Directly save to backend WITHOUT attempting to subscribe via Graph API
             // This acts exactly like n8n, relying on the user's manual Meta Developer App webhook configuration
             const res = await fetch(`${BACKEND_URL}/api/messenger/pages/manual`, {
@@ -729,9 +784,11 @@ export default function MessengerIntegrationPage() {
 
             const body = await res.json().catch(() => ({}));
             if (!res.ok) {
+                addLog('error', 'Backend API', `Failed to save page to database`, { status: res.status, response: body });
                 throw new Error(body.error || "Failed to save page to database");
             }
             
+            addLog('success', 'Process Completed', `Manual setup successful for ${finalName}`);
             toast.success(`${finalName} connected manually! Make sure to set up Webhooks in your Meta Developer App.`);
             
             // Set the active page directly into LocalStorage to immediately show it
@@ -746,6 +803,7 @@ export default function MessengerIntegrationPage() {
             
         } catch (error: any) {
             console.error("Direct Connect Error:", error);
+            addLog('error', 'Manual Connect', `Process aborted`, { error: error.message });
             logFrontendError({
                 message: `Direct Connect Error: ${error.message}`,
                 stack: error.stack,
@@ -876,6 +934,10 @@ export default function MessengerIntegrationPage() {
                             <FileText className="mr-2 h-4 w-4" />
                             API
                         </Link>
+                    </Button>
+                    <Button variant="outline" onClick={() => setIsLogsOpen(true)} className="w-full sm:w-auto border-gray-700 text-gray-300 hover:text-white">
+                        <Terminal className="mr-2 h-4 w-4" />
+                        Connection Logs
                     </Button>
                     <Button variant="outline" onClick={() => setIsManualSetupOpen(true)} className="w-full sm:w-auto">
                         <Settings className="mr-2 h-4 w-4" />
@@ -1070,6 +1132,79 @@ export default function MessengerIntegrationPage() {
                     )}
                 </CardContent>
             </Card>
+            {/* Logs Dialog */}
+            <AlertDialog open={isLogsOpen} onOpenChange={setIsLogsOpen}>
+                <AlertDialogContent className="max-w-3xl h-[80vh] flex flex-col p-0 overflow-hidden bg-gray-50/50 backdrop-blur-xl border border-gray-200 shadow-2xl">
+                    <div className="p-6 border-b border-gray-200 bg-white flex justify-between items-center">
+                        <div>
+                            <AlertDialogTitle className="text-xl font-bold flex items-center gap-2 text-gray-900">
+                                <Terminal className="w-5 h-5 text-gray-500" />
+                                Connection Activity Logs
+                            </AlertDialogTitle>
+                            <AlertDialogDescription className="text-sm text-gray-500 mt-1">
+                                Real-time logs for debugging Facebook connection and webhook setup issues.
+                            </AlertDialogDescription>
+                        </div>
+                        <button 
+                            onClick={() => setConnectionLogs([])}
+                            className="text-sm text-red-600 hover:text-red-700 font-medium px-3 py-1.5 rounded-md hover:bg-red-50 transition-colors"
+                        >
+                            Clear Logs
+                        </button>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto p-6 bg-gray-950 font-mono text-sm shadow-inner">
+                        {connectionLogs.length === 0 ? (
+                            <div className="h-full flex items-center justify-center text-gray-500 flex-col gap-3">
+                                <Terminal className="w-10 h-10 opacity-20" />
+                                <p>No connection attempts yet.</p>
+                                <p className="text-xs">Click 'Connect Facebook' or 'Manual Setup' to see logs here.</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                {connectionLogs.map((log, index) => (
+                                    <div 
+                                        key={index} 
+                                        className={`rounded border p-3 ${
+                                            log.type === 'error' ? 'bg-red-950/30 border-red-900/50 text-red-400' :
+                                            log.type === 'warning' ? 'bg-yellow-950/30 border-yellow-900/50 text-yellow-400' :
+                                            log.type === 'success' ? 'bg-green-950/30 border-green-900/50 text-green-400' :
+                                            'bg-gray-900/50 border-gray-800 text-gray-300'
+                                        }`}
+                                    >
+                                        <div className="flex items-center justify-between mb-1">
+                                            <span className="font-bold flex items-center gap-2">
+                                                <span className={`w-2 h-2 rounded-full ${
+                                                    log.type === 'error' ? 'bg-red-500' :
+                                                    log.type === 'warning' ? 'bg-yellow-500' :
+                                                    log.type === 'success' ? 'bg-green-500' :
+                                                    'bg-blue-500'
+                                                }`} />
+                                                [{log.action}]
+                                            </span>
+                                            <span className="text-xs opacity-50">
+                                                {new Date(log.timestamp).toLocaleTimeString()}
+                                            </span>
+                                        </div>
+                                        <div className="mb-2">{log.message}</div>
+                                        {log.details && (
+                                            <pre className="text-xs bg-black/40 p-3 rounded overflow-x-auto text-gray-400 mt-2 border border-white/5">
+                                                {JSON.stringify(log.details, null, 2)}
+                                            </pre>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="p-4 border-t border-gray-200 bg-white flex justify-end">
+                        <AlertDialogCancel className="bg-gray-100 hover:bg-gray-200 text-gray-700 border-0 font-medium px-6">
+                            Close
+                        </AlertDialogCancel>
+                    </div>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     );
 }
