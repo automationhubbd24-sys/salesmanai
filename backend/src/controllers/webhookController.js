@@ -15,6 +15,28 @@ let allowedPagesCache = new Set();
 let lastCacheUpdate = 0;
 const CACHE_TTL = 5 * 60 * 1000; // 5 Minutes
 
+// --- WEBHOOK MONITOR CACHE (In-Memory) ---
+// Purpose: Store last 50 webhook payloads for debugging (n8n like interface) without hitting DB
+const recentWebhookLogs = [];
+const MAX_WEBHOOK_LOGS = 50;
+
+function addWebhookLog(payload) {
+    // Only store minimal required data to save RAM
+    const logEntry = {
+        id: Date.now() + Math.random().toString(36).substr(2, 5),
+        timestamp: new Date().toISOString(),
+        object: payload.object,
+        entry_count: payload.entry ? payload.entry.length : 0,
+        payload: payload
+    };
+    
+    recentWebhookLogs.unshift(logEntry); // Add to beginning
+    if (recentWebhookLogs.length > MAX_WEBHOOK_LOGS) {
+        recentWebhookLogs.pop(); // Remove oldest
+    }
+}
+// ------------------------------------------
+
 async function refreshAllowedPages() {
     const now = Date.now();
     if (now - lastCacheUpdate < CACHE_TTL && allowedPagesCache.size > 0) return;
@@ -645,6 +667,14 @@ const verifyWebhook = (req, res) => {
         'salesman_monster_wa_2026_official'
     ].filter(Boolean));
     console.log(`[Webhook] Verification Request: Mode=${req.query['hub.mode']}, Token=${req.query['hub.verify_token']}`);
+
+    // Log verification requests to monitor cache
+    addWebhookLog({
+        object: 'verification',
+        entry: [],
+        type: 'GET',
+        query: req.query
+    });
 
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];

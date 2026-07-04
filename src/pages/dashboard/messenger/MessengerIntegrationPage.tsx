@@ -113,6 +113,11 @@ export default function MessengerIntegrationPage() {
     // Logs State
     const [connectionLogs, setConnectionLogs] = useState<ConnectionLog[]>([]);
     const [isLogsOpen, setIsLogsOpen] = useState(false);
+    
+    // Webhook Monitor State
+    const [webhookLogs, setWebhookLogs] = useState<any[]>([]);
+    const [isWebhookMonitorOpen, setIsWebhookMonitorOpen] = useState(false);
+    const [isFetchingWebhooks, setIsFetchingWebhooks] = useState(false);
 
     // Subscription Modal State - DEPRECATED/REMOVED
     // const [isSubscriptionOpen, setIsSubscriptionOpen] = useState(false);
@@ -192,6 +197,30 @@ export default function MessengerIntegrationPage() {
         // Delegated to MessengerContext
         await refreshPages();
         setLoading(false);
+    };
+
+    const fetchWebhookLogs = async () => {
+        setIsWebhookMonitorOpen(true);
+        setIsFetchingWebhooks(true);
+        try {
+            const token = localStorage.getItem("auth_token");
+            const res = await fetch(`${BACKEND_URL}/api/webhook/monitor`, {
+                headers: {
+                    Authorization: `Bearer ${token}`
+                }
+            });
+            if (res.ok) {
+                const data = await res.json();
+                setWebhookLogs(data.logs || []);
+            } else {
+                toast.error("Failed to fetch webhook logs");
+            }
+        } catch (error) {
+            console.error("Error fetching webhook logs:", error);
+            toast.error("Network error fetching webhooks");
+        } finally {
+            setIsFetchingWebhooks(false);
+        }
     };
 
     const subscribeAppToPage = (pageId: string, accessToken: string, fields: string[] = []) => {
@@ -1202,6 +1231,74 @@ export default function MessengerIntegrationPage() {
                         <AlertDialogCancel className="bg-gray-100 hover:bg-gray-200 text-gray-700 border-0 font-medium px-6">
                             Close
                         </AlertDialogCancel>
+                    </div>
+                </AlertDialogContent>
+            </AlertDialog>
+
+            {/* Webhook Monitor Dialog */}
+            <AlertDialog open={isWebhookMonitorOpen} onOpenChange={setIsWebhookMonitorOpen}>
+                <AlertDialogContent className="max-w-4xl h-[85vh] flex flex-col p-0 overflow-hidden bg-[#0A0A0A] border border-gray-800 shadow-2xl">
+                    <div className="p-4 border-b border-gray-800 bg-[#111] flex justify-between items-center">
+                        <div>
+                            <AlertDialogTitle className="text-xl font-bold flex items-center gap-2 text-indigo-400">
+                                <Database className="w-5 h-5" />
+                                Incoming Webhook Monitor
+                            </AlertDialogTitle>
+                            <AlertDialogDescription className="text-sm text-gray-500 mt-1">
+                                Real-time view of the last 50 payloads received from Meta (Like n8n execution log)
+                            </AlertDialogDescription>
+                        </div>
+                        <div className="flex gap-2">
+                            <button 
+                                onClick={fetchWebhookLogs}
+                                disabled={isFetchingWebhooks}
+                                className="text-sm bg-indigo-900/50 text-indigo-300 hover:text-indigo-200 hover:bg-indigo-800/50 font-medium px-4 py-2 rounded-md transition-colors flex items-center gap-2"
+                            >
+                                {isFetchingWebhooks ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+                                Refresh
+                            </button>
+                            <AlertDialogCancel className="bg-gray-800 hover:bg-gray-700 text-gray-300 border-0 font-medium px-4 py-2">
+                                Close
+                            </AlertDialogCancel>
+                        </div>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto p-4 font-mono text-sm">
+                        {webhookLogs.length === 0 ? (
+                            <div className="h-full flex items-center justify-center text-gray-600 flex-col gap-3">
+                                <Database className="w-12 h-12 opacity-20" />
+                                <p>No webhooks received yet or cache is empty.</p>
+                                <p className="text-xs max-w-md text-center opacity-70">Send a message to your connected Facebook page, then click Refresh to see the incoming payload.</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                {webhookLogs.map((log: any, index: number) => (
+                                    <div key={log.id || index} className="rounded-lg border border-gray-800 bg-[#151515] overflow-hidden">
+                                        <div className="flex items-center justify-between p-3 border-b border-gray-800 bg-[#1A1A1A]">
+                                            <div className="flex items-center gap-3">
+                                                <span className="px-2 py-0.5 rounded text-xs font-bold bg-green-900/50 text-green-400 border border-green-800/50">
+                                                    POST /webhook
+                                                </span>
+                                                <span className="text-gray-400 text-xs">
+                                                    Object: <span className="text-blue-400 font-semibold">{log.object || 'unknown'}</span>
+                                                </span>
+                                                <span className="text-gray-400 text-xs">
+                                                    Entries: <span className="text-yellow-400 font-semibold">{log.entry_count || 0}</span>
+                                                </span>
+                                            </div>
+                                            <span className="text-xs text-gray-500">
+                                                {new Date(log.timestamp).toLocaleString()}
+                                            </span>
+                                        </div>
+                                        <div className="p-4 overflow-x-auto">
+                                            <pre className="text-xs text-gray-300 leading-relaxed">
+                                                {JSON.stringify(log.payload, null, 2)}
+                                            </pre>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 </AlertDialogContent>
             </AlertDialog>

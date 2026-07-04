@@ -14,4 +14,7 @@ router.post('/', webhookController.handleWebhook);
 // WhatsApp Webhook Event Listener (POST)
 router.post('/whatsapp', webhookController.handleWhatsAppWebhook);
 
+// Monitor route for webhook debugging
+router.get('/monitor', webhookController.getWebhookLogs);
+
 module.exports = router;
