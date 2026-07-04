@@ -223,6 +223,29 @@ export default function MessengerIntegrationPage() {
         }
     };
 
+    // Auto-refresh effect for Webhook Monitor
+    useEffect(() => {
+        let interval: NodeJS.Timeout;
+        if (isWebhookMonitorOpen) {
+            interval = setInterval(() => {
+                const token = localStorage.getItem("auth_token");
+                fetch(`${BACKEND_URL}/api/webhook/monitor`, {
+                    headers: {
+                        Authorization: `Bearer ${token}`
+                    }
+                })
+                .then(res => res.json())
+                .then(data => {
+                    setWebhookLogs(data.logs || []);
+                })
+                .catch(err => console.warn("Auto-refresh failed:", err));
+            }, 3000); // 3 seconds interval
+        }
+        return () => {
+            if (interval) clearInterval(interval);
+        };
+    }, [isWebhookMonitorOpen]);
+
     const subscribeAppToPage = (pageId: string, accessToken: string, fields: string[] = []) => {
         return new Promise((resolve) => {
             // Add timeout to prevent hanging
@@ -967,6 +990,10 @@ export default function MessengerIntegrationPage() {
                     <Button variant="outline" onClick={() => setIsLogsOpen(true)} className="w-full sm:w-auto border-gray-700 text-gray-300 hover:text-white">
                         <Terminal className="mr-2 h-4 w-4" />
                         Connection Logs
+                    </Button>
+                    <Button variant="outline" onClick={fetchWebhookLogs} className="w-full sm:w-auto border-indigo-700 text-indigo-300 hover:text-indigo-100 hover:bg-indigo-900/30">
+                        {isFetchingWebhooks ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Database className="mr-2 h-4 w-4" />}
+                        Webhook Monitor
                     </Button>
                     <Button variant="outline" onClick={() => setIsManualSetupOpen(true)} className="w-full sm:w-auto">
                         <Settings className="mr-2 h-4 w-4" />
