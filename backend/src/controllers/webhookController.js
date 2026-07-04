@@ -596,10 +596,21 @@ const handleWebhook = async (req, res) => {
                         }
                     }
 
-                    // 1. Handle Messaging Events (Direct Messages)
+                    // 1. Handle Messaging Events (Direct Messages - Primary Receiver)
                     if (entry.messaging) {
                         for (const webhookEvent of entry.messaging) {
                             if (webhookEvent) {
+                                await queueMessage(webhookEvent, pageId);
+                            }
+                        }
+                    }
+
+                    // 1.5 Handle Standby Events (Direct Messages - Secondary Receiver / Handover Protocol)
+                    if (entry.standby) {
+                        for (const webhookEvent of entry.standby) {
+                            if (webhookEvent) {
+                                // Process standby messages exactly like normal messages
+                                // This is crucial for pages where Meta Business Suite or another app is the Primary Receiver
                                 await queueMessage(webhookEvent, pageId);
                             }
                         }
