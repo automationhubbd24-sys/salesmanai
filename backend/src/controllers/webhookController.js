@@ -1024,6 +1024,8 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
 
                 if (perMsgText) {
                     combinedImageAnalysis += `${perMsgText}\n\n`;
+                    // Note: We deliberately do not perform vector search inline here for WhatsApp Cloud API yet,
+                    // but the vision text alone is sufficient for the agent if it has tools enabled.
                     dbService.saveWhatsAppChat({
                         session_name: effectiveSessionName,
                         sender_id: effectiveSessionName,
@@ -1040,7 +1042,21 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
             });
 
             if (combinedImageAnalysis) {
-                combinedText += `\n\n[NEW VISUAL CONTEXT]:\n${combinedImageAnalysis.trim()}\n[END VISUAL CONTEXT]`;
+                combinedText += `\n\n[NEW VISUAL CONTEXT - IMPORTANT]:
+The user has just sent the following image(s). This is the CURRENT FOCUS of the conversation. 
+If the user asks "eta ase?" or "price koto?", they are referring to the product(s) described below.
+
+Description of New Image(s):
+${combinedImageAnalysis.trim()}
+
+[CRITICAL RULE FOR IMAGES]: 
+1. The description above contains structural visual features extracted from the user's image.
+2. DO NOT say "Yes we have this" just because the category matches. 
+3. You MUST use the 'resolve_product' tool passing the description above as the query to check if we have the EXACT same design, color, print, and style in our catalog.
+4. If the tool returns a High Match (Score >= 80), say "Yes, we have this exact product."
+5. If Medium Match (60-79), say "It looks like a [Category], but it is slightly different from our catalog (e.g., different print/design). Here is our original product..."
+6. If Low Match (< 60) or Not Found, say "We do not have this exact item in our catalog."
+[END OF NEW VISUAL CONTEXT]`;
             }
         }
     }
