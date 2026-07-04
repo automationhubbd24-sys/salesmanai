@@ -1427,7 +1427,9 @@ exports.extractVisuals = async (req, res) => {
             prompt = `Analyze this image with extreme pixel-to-pixel precision for a search database. 
 Focus strictly on the core product design, shape, structural details, material/fabric (e.g. lace, cotton, net), cut (e.g. scalloped edge, thick strap, v-neck), and exact color shades. 
 Ignore all surrounding noise, text, play buttons, UI elements, mannequins, or backgrounds. 
-Extract only the pure visual and structural features.`;
+Extract only the pure visual and structural features.
+DO NOT use sentences. Provide a comma-separated list of visual keywords ONLY. 
+Example format: T-shirt, navy blue, horizontal stripes, short sleeves, crew neck, cotton fabric`;
         }
 
         const analysisResult = await aiService.processImageWithVision(image_url, pageConfig, { prompt, max_tokens: 400 });

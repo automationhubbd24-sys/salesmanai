@@ -843,9 +843,27 @@ const computeCandidateScore = (query, product) => {
     
     if (!q) return 0;
     
+    // Split query into keywords for visual search fallback
+    const qWords = q.split(/[\s,]+/).filter(w => w.length > 2);
+    
     // 1. Exact or very close matches
     if (name === q) return 100;
     if (keywords === q) return 98;
+    
+    // 2. Visual Keyword Matching (If the query looks like visual tags)
+    if (qWords.length > 2 && visual) {
+        const visualWords = visual.split(/[\s,]+/).filter(w => w.length > 2);
+        let matchCount = 0;
+        for (const qw of qWords) {
+            if (visualWords.includes(qw)) matchCount++;
+        }
+        if (matchCount > 0) {
+            const matchRatio = matchCount / Math.max(qWords.length, visualWords.length);
+            if (matchRatio >= 0.8) return 95; // High Match
+            if (matchRatio >= 0.5) return 80; // Solid Match
+            if (matchRatio >= 0.3) return 60; // Partial Match
+        }
+    }
     
     // Partial Match logic (e.g. "Rice Cream" matches "Rice Combo")
     if (name.includes(q) || q.includes(name)) return 95;
@@ -3034,18 +3052,48 @@ async function processImageWithVision(imageUrl, pageConfig = {}, customOptions =
 
     const maxTokens = Number(customOptions?.max_tokens) > 0 ? Number(customOptions.max_tokens) : 10000;
 
-    // Determine System Prompt
+        // Determine System Prompt
     let systemPrompt = typeof customOptions?.prompt === 'string' && customOptions.prompt.trim() !== "" 
         ? customOptions.prompt 
-        : `Extract the exact product name from this image.
-Rules:
-- Output must start with: Product:
-- Include brand + full product name.
-- Include size if visible.
-- Ignore price, offer, discount text.
-- Do not explain anything.
-- Do not add extra words.
-- Single line output only.`;
+        : `Analyze this image with extreme pixel-to-pixel precision for a search database. 
+Focus strictly on the core product design, shape, structural details, material/fabric (e.g. lace, cotton, net), cut (e.g. scalloped edge, thick strap, v-neck), and exact color shades. 
+Ignore all surrounding noise, text, play buttons, UI elements, mannequins, or backgrounds. 
+Extract only the pure visual and structural features.
+DO NOT use sentences. Provide a comma-separated list of visual keywords ONLY. 
+Example format: T-shirt, navy blue, horizontal stripes, short sleeves, crew neck, cotton fabric`;
+
+    // Try fallback to OpenAI/OpenRouter vision format if standard process fails
+    const processDirectVision = async (apiKeyToUse) => {
+        try {
+            await ensureBase64();
+            const payload = {
+                model: 'google/gemini-2.5-flash',
+                messages: [
+                    {
+                        role: "user",
+                        content: [
+                            { type: "text", text: systemPrompt },
+                            { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Image}` } }
+                        ]
+                    }
+                ],
+                max_tokens: maxTokens
+            };
+
+            const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', payload, {
+                headers: {
+                    'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY || ''}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            const text = response.data?.choices?.[0]?.message?.content || "";
+            return { text: text.trim(), usage: response.data?.usage?.total_tokens || 0, model: 'google/gemini-2.5-flash' };
+        } catch (err) {
+            console.error("Direct Vision API Error:", err.message);
+            throw err;
+        }
+    };
 
     const providerHint = pageConfig.ai_provider || pageConfig.ai || pageConfig.operator;
     const modelHint = pageConfig.chat_model || pageConfig.chatmodel;
@@ -3235,6 +3283,15 @@ Rules:
         } else {
             resolved = await resolveSalesmanchatbotEngine(pageConfig, providerHint, modelHint, true, false);
         }
+    }
+    
+    // IF THIS IS A LOCAL TEST, FORCE DIRECT VISION
+    if (pageConfig.cheap_engine === false && pageConfig.api_key) {
+         try {
+             return await processDirectVision();
+         } catch (e) {
+             console.log("Direct vision failed, falling back to standard retry loop");
+         }
     }
     
     const primaryModel = resolved.finalModel;

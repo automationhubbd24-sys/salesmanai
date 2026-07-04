@@ -2244,7 +2244,7 @@ STRICT RULES:
 
     if (imageAnalyzeText && imageAnalyzeText.trim() !== "") {
         if (finalOutput) finalOutput += "\n\n";
-        // Always use standard tag for consistency
+        
         // Unified single block for AI - ENHANCED FOCUS with Exact Verification strictness
         finalOutput += `\n\n[NEW VISUAL CONTEXT - IMPORTANT]:
 The user has just sent the following image(s). This is the CURRENT FOCUS of the conversation. 
@@ -2254,11 +2254,12 @@ Description of New Image(s):
 ${imageAnalyzeText.trim()}
 
 [CRITICAL RULE FOR IMAGES]: 
-1. DO NOT say "Yes we have this" just because the category matches. 
-2. You MUST use the 'resolve_product' tool with this visual description to check if we have the EXACT same design, color, print, and style in our catalog.
-3. If the tool returns a High Match (Score >= 88), say "Yes, we have this exact product."
-4. If Medium Match (70-87), say "It looks like a [Category], but it is slightly different from our catalog (e.g., different print/design). Here is our original product..."
-5. If Low Match (< 70) or Not Found, say "We do not have this exact item in our catalog."
+1. The description above contains structural visual features extracted from the user's image.
+2. DO NOT say "Yes we have this" just because the category matches. 
+3. You MUST use the 'resolve_product' tool passing the description above as the query to check if we have the EXACT same design, color, print, and style in our catalog.
+4. If the tool returns a High Match (Score >= 80), say "Yes, we have this exact product."
+5. If Medium Match (60-79), say "It looks like a [Category], but it is slightly different from our catalog (e.g., different print/design). Here is our original product..."
+6. If Low Match (< 60) or Not Found, say "We do not have this exact item in our catalog."
 [END OF NEW VISUAL CONTEXT]`;
     }
 
