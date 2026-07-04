@@ -1,6 +1,10 @@
 const express = require('express');
-const router = express.Router();
 const webhookController = require('../controllers/webhookController');
+const router = express.Router();
+
+// Monitor route for webhook debugging
+// VERY IMPORTANT: Put this BEFORE dynamic routes to avoid it being caught by a parameter route
+router.get('/monitor', webhookController.getWebhookLogs);
 
 // Facebook Webhook Verification (GET)
 router.get('/', webhookController.verifyWebhook);
@@ -13,8 +17,5 @@ router.post('/', webhookController.handleWebhook);
 
 // WhatsApp Webhook Event Listener (POST)
 router.post('/whatsapp', webhookController.handleWhatsAppWebhook);
-
-// Monitor route for webhook debugging
-router.get('/monitor', webhookController.getWebhookLogs);
 
 module.exports = router;
