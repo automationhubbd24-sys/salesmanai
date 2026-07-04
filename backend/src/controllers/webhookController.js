@@ -4520,6 +4520,11 @@ async function clearAllCaches() {
     console.log(`[Cache] All caches cleared and gatekeeper refreshed.`);
 }
 
+// Endpoint to get recent webhook logs for debugging
+const getWebhookLogs = (req, res) => {
+    res.status(200).json({ logs: recentWebhookLogs });
+};
+
 module.exports = {
     handleWebhook,
     verifyWebhook,
