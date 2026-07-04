@@ -1,0 +1,5 @@
+Updates for salesmanchatbot-08:
+- logic added to show SKU images in gallery even when isolate_sku_images is OFF.
+- Fixed 500 error in updateProduct with migration check.
+- Improved flexibility for product matching and image analysis.
+- UI improvements for SKU-Specific Images toggle.
