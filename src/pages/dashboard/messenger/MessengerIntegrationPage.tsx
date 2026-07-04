@@ -225,7 +225,7 @@ export default function MessengerIntegrationPage() {
 
     // Auto-refresh effect for Webhook Monitor
     useEffect(() => {
-        let interval: NodeJS.Timeout;
+        let interval: any;
         if (isWebhookMonitorOpen) {
             interval = setInterval(() => {
                 const token = localStorage.getItem("auth_token");
