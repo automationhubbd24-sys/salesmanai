@@ -993,7 +993,7 @@ export default function MessengerIntegrationPage() {
                     </Button>
                     <Button variant="outline" onClick={fetchWebhookLogs} className="w-full sm:w-auto border-indigo-700 text-indigo-300 hover:text-indigo-100 hover:bg-indigo-900/30">
                         {isFetchingWebhooks ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Database className="mr-2 h-4 w-4" />}
-                        Webhook Monitor
+                        Live Monitor
                     </Button>
                     <Button variant="outline" onClick={() => setIsManualSetupOpen(true)} className="w-full sm:w-auto">
                         <Settings className="mr-2 h-4 w-4" />
@@ -1269,10 +1269,10 @@ export default function MessengerIntegrationPage() {
                         <div>
                             <AlertDialogTitle className="text-xl font-bold flex items-center gap-2 text-indigo-400">
                                 <Database className="w-5 h-5" />
-                                Incoming Webhook Monitor
+                                Live Incoming Event Monitor
                             </AlertDialogTitle>
                             <AlertDialogDescription className="text-sm text-gray-500 mt-1">
-                                Real-time view of the last 50 payloads received from Meta (Like n8n execution log)
+                                Real-time view of the last 50 payloads received from Meta. (Auto-refreshes every 3 seconds)
                             </AlertDialogDescription>
                         </div>
                         <div className="flex gap-2">
@@ -1294,8 +1294,8 @@ export default function MessengerIntegrationPage() {
                         {webhookLogs.length === 0 ? (
                             <div className="h-full flex items-center justify-center text-gray-600 flex-col gap-3">
                                 <Database className="w-12 h-12 opacity-20" />
-                                <p>No webhooks received yet or cache is empty.</p>
-                                <p className="text-xs max-w-md text-center opacity-70">Send a message to your connected Facebook page, then click Refresh to see the incoming payload.</p>
+                                <p>Waiting for incoming events...</p>
+                                <p className="text-xs max-w-md text-center opacity-70">Send a message to your connected Facebook page to see the real-time payload.</p>
                             </div>
                         ) : (
                             <div className="space-y-4">
