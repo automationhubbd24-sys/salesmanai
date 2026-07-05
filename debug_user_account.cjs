@@ -12,7 +12,16 @@ async function checkUser() {
         const userAuthRes = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
         if (userAuthRes.rows.length === 0) {
             console.log('User not found in users table');
-            process.exit(0);
+            // 4. Check Chat History (Recent Received)
+        const chatRes = await pool.query('SELECT * FROM fb_chats WHERE page_id = $1 ORDER BY timestamp DESC LIMIT 5', [pagesRes.rows[0].page_id]);
+        console.log(`\n--- Recent FB Chats (Received) ---`);
+        if (chatRes.rows.length > 0) {
+            chatRes.rows.forEach(c => {
+                console.log(`Sender: ${c.sender_id} | Status: ${c.status} | Text: ${String(c.text || '').substring(0, 30)}... | Time: ${new Date(Number(c.timestamp)).toISOString()}`);
+            });
+        } else {
+            console.log('No chat history found in fb_chats.');
+        }
         }
         console.log('--- Users Table Columns ---');
         console.log(Object.keys(userAuthRes.rows[0]).join(', '));

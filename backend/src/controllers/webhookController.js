@@ -615,6 +615,10 @@ const handleWebhook = async (req, res) => {
                         if (isActuallyActive) {
                             const hasUserLink = isActuallyActive.user_id !== null && isActuallyActive.user_id !== undefined;
                             const hasCredit = (Number(isActuallyActive.message_credit || 0) > 0 || Number(isActuallyActive.permanent_credit || 0) > 0 || Number(isActuallyActive.bonus_credit || 0) > 0);
+                            
+                            // Check for Starter/Monthly plan credits
+                            const hasMonthlyCredit = (Number(isActuallyActive.monthly_limit || 0) > Number(isActuallyActive.monthly_used || 0));
+                            
                             const hasOwnKey = (isActuallyActive.api_key && isActuallyActive.api_key.length > 5 && isActuallyActive.cheap_engine === false);
                             const isBanned = isActuallyActive.subscription_status === 'banned';
         
@@ -624,10 +628,10 @@ const handleWebhook = async (req, res) => {
                                 continue;
                             }
 
-                            if (!isBanned && (hasCredit || hasOwnKey)) {
+                            if (!isBanned && (hasCredit || hasOwnKey || hasMonthlyCredit)) {
                                 allowedPagesCache.add(pageId); 
                             } else {
-                                console.warn(`[Gatekeeper] BLOCKED unauthorized event for Page ID: ${pageId}. Status: ${isActuallyActive.subscription_status}, Total Credit: ${isActuallyActive.message_credit}, OwnAPI: ${hasOwnKey}, Linked: ${hasUserLink}`);
+                                console.warn(`[Gatekeeper] BLOCKED unauthorized event for Page ID: ${pageId}. Status: ${isActuallyActive.subscription_status}, Total Credit: ${isActuallyActive.message_credit}, Monthly: ${isActuallyActive.monthly_limit}-${isActuallyActive.monthly_used}, OwnAPI: ${hasOwnKey}, Linked: ${hasUserLink}`);
                                 continue; // Skip THIS entry
                             }
                         } else {
