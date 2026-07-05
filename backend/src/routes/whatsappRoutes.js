@@ -1079,4 +1079,10 @@ router.get('/download-conversation', authMiddleware, async (req, res) => {
     }
 });
 
+// Label & List Management
+router.get('/labels/:sessionName', authMiddleware, whatsappController.getLabels);
+router.get('/label-actions/:sessionName', authMiddleware, whatsappController.getLabelActions);
+router.post('/label-actions', authMiddleware, whatsappController.upsertLabelAction);
+router.delete('/label-actions/:id', authMiddleware, whatsappController.deleteLabelAction);
+
 module.exports = router;

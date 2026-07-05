@@ -3602,11 +3602,70 @@ function clearAllCaches() {
     console.log(`[WA Cache] All config caches cleared.`);
 }
 
+// Label & List Management Controllers
+async function getLabels(req, res) {
+    try {
+        const { sessionName } = req.params;
+        if (!sessionName) return res.status(400).json({ error: 'Session name required' });
+        const labels = await whatsappService.getAllLabels(sessionName);
+        res.json(labels || []);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+}
+
+async function getLabelActions(req, res) {
+    try {
+        const { sessionName } = req.params;
+        if (!sessionName) return res.status(400).json({ error: 'Session name required' });
+        const { rows } = await pgClient.query(
+            'SELECT * FROM label_actions WHERE page_id = $1 ORDER BY created_at DESC',
+            [sessionName]
+        );
+        res.json(rows || []);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+}
+
+async function upsertLabelAction(req, res) {
+    try {
+        const { page_id, label_name, ai_action } = req.body;
+        if (!page_id || !label_name) return res.status(400).json({ error: 'Missing fields' });
+
+        const result = await pgClient.query(
+            `INSERT INTO label_actions (page_id, label_name, ai_action)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (page_id, label_name)
+             DO UPDATE SET ai_action = EXCLUDED.ai_action, created_at = NOW()
+             RETURNING *`,
+            [page_id, label_name, ai_action || 'continue']
+        );
+        res.json(result.rows[0]);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+}
+
+async function deleteLabelAction(req, res) {
+    try {
+        const { id } = req.params;
+        await pgClient.query('DELETE FROM label_actions WHERE id = $1', [id]);
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+}
+
 module.exports = {
     handleWebhook,
     checkAndCleanupExpiredSessions,
     checkAndAutoRepairSessions,
     loadAllSessions: checkAndAutoRepairSessions, // Alias for startup load
     clearPageCache,
-    clearAllCaches
+    clearAllCaches,
+    getLabels,
+    getLabelActions,
+    upsertLabelAction,
+    deleteLabelAction
 };

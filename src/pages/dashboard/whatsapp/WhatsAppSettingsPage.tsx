@@ -6,7 +6,7 @@ import { secureFetch } from "@/lib/api";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { Save, Bot, Sparkles, Key, Check, Image, Clock, Infinity as InfinityIcon, Loader2, Star } from "lucide-react";
+import { Save, Bot, Sparkles, Key, Check, Image, Clock, Infinity as InfinityIcon, Loader2, Star, Tags, Plus, Trash2, ShieldAlert, ZapOff } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -81,6 +81,86 @@ export default function WhatsAppSettingsPage() {
   const [initialTextPrompt, setInitialTextPrompt] = useState("");
   const [initialImagePrompt, setInitialImagePrompt] = useState("");
   const [promptSaving, setPromptSaving] = useState(false);
+
+  // Labels Management
+  const [isLabelDialogOpen, setIsLabelDialogOpen] = useState(false);
+  const [labels, setLabels] = useState<any[]>([]);
+  const [labelActions, setLabelActions] = useState<any[]>([]);
+  const [labelLoading, setLabelLoading] = useState(false);
+  const [isCreatingLabel, setIsLabelCreating] = useState(false);
+  const [newLabelName, setNewLabelName] = useState("");
+  const [newLabelAction, setNewLabelAction] = useState<"continue" | "stop">("continue");
+
+  const fetchLabelsAndActions = useCallback(async () => {
+    if (!currentSession?.name) return;
+    setLabelLoading(true);
+    try {
+      const token = localStorage.getItem("auth_token");
+      const [resL, resA] = await Promise.all([
+        fetch(`${BACKEND_URL}/api/whatsapp/labels/${currentSession.name}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        }),
+        fetch(`${BACKEND_URL}/api/whatsapp/label-actions/${currentSession.name}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+      ]);
+
+      if (resL.ok) setLabels(await resL.json());
+      if (resA.ok) setLabelActions(await resA.json());
+    } catch (e) {
+      console.error("Failed to fetch labels:", e);
+    } finally {
+      setLabelLoading(false);
+    }
+  }, [currentSession]);
+
+  const handleUpsertLabelAction = async (name: string, action: string) => {
+    try {
+      const token = localStorage.getItem("auth_token");
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/label-actions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          page_id: currentSession?.name,
+          label_name: name,
+          ai_action: action
+        })
+      });
+
+      if (res.ok) {
+        toast.success(`Action updated for label: ${name}`);
+        fetchLabelsAndActions();
+      }
+    } catch (e) {
+      toast.error("Failed to update label action");
+    }
+  };
+
+  const handleDeleteLabelAction = async (id: number) => {
+    try {
+      const token = localStorage.getItem("auth_token");
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/label-actions/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (res.ok) {
+        toast.success("Label action removed");
+        fetchLabelsAndActions();
+      }
+    } catch (e) {
+      toast.error("Failed to delete label action");
+    }
+  };
+
+  useEffect(() => {
+    if (isLabelDialogOpen) {
+      fetchLabelsAndActions();
+    }
+  }, [isLabelDialogOpen, fetchLabelsAndActions]);
   
   // Pricing & Credits
   const [selectedPlan, setSelectedPlan] = useState("5000");
@@ -646,6 +726,14 @@ export default function WhatsAppSettingsPage() {
            </p>
         </div>
         <div className="flex gap-2">
+            <Button 
+                onClick={() => setIsLabelDialogOpen(true)} 
+                variant="outline"
+                className="border-primary/30 hover:border-primary hover:bg-primary/5 transition-all shadow-sm"
+            >
+                <Tags className="mr-2 h-4 w-4 text-primary" />
+                Label & List Management
+            </Button>
             <Button 
                 onClick={() => handleOpenPrompt("text")} 
                 variant="outline"
@@ -1375,6 +1463,122 @@ export default function WhatsAppSettingsPage() {
                     </Button>
                 </div>
             </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isLabelDialogOpen} onOpenChange={setIsLabelDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col bg-card border-border">
+          <DialogHeader>
+            <DialogTitle className="text-2xl font-bold flex items-center gap-2">
+              <Tags className="h-6 w-6 text-primary" />
+              WhatsApp Label & Action Management
+            </DialogTitle>
+            <DialogDescription>
+              Configure how the AI should behave when specific WhatsApp labels are applied to a chat.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto py-4 space-y-6">
+            {/* Action Summary/Instruction */}
+            <div className="bg-primary/5 border border-primary/20 p-4 rounded-xl flex gap-4 items-start text-sm">
+              <ShieldAlert className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-primary">How Label Actions Work:</p>
+                <p className="text-muted-foreground mt-1">
+                  When a label is added to a contact (manually or by AI), the system checks these rules. 
+                  If set to <strong>"Stop AI (Handover)"</strong>, the bot will immediately pause for that customer.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Left: Current Labels from WhatsApp */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-bold flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-amber-500" />
+                    WhatsApp Labels
+                  </h4>
+                  <Button variant="ghost" size="sm" onClick={fetchLabelsAndActions} disabled={labelLoading} className="h-8 text-xs">
+                    <RefreshCw className={`mr-1 h-3 w-3 ${labelLoading ? 'animate-spin' : ''}`} />
+                    Refresh
+                  </Button>
+                </div>
+                <div className="border border-border rounded-xl bg-secondary/20 p-4 min-h-[200px] max-h-[400px] overflow-y-auto space-y-2">
+                  {labelLoading ? (
+                    <div className="flex justify-center items-center h-32">
+                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : labels.length === 0 ? (
+                    <div className="text-center py-10 text-muted-foreground italic">
+                      No labels found in your WhatsApp.
+                    </div>
+                  ) : (
+                    labels.map((label) => {
+                      const existingAction = labelActions.find(a => a.label_name.toLowerCase() === label.name.toLowerCase());
+                      return (
+                        <div key={label.id} className="flex items-center justify-between p-3 bg-card border border-border rounded-lg shadow-sm hover:shadow-md transition-all">
+                          <div className="flex items-center gap-3">
+                            <div className="w-3 h-3 rounded-full shadow-[0_0_5px_rgba(0,0,0,0.1)]" style={{ backgroundColor: label.colorHex || '#ccc' }} />
+                            <span className="font-medium">{label.name}</span>
+                          </div>
+                          {existingAction ? (
+                             <Badge variant="outline" className={existingAction.ai_action === 'stop' ? "bg-red-500/10 text-red-500 border-red-500/30" : "bg-green-500/10 text-green-500 border-green-500/30"}>
+                               {existingAction.ai_action === 'stop' ? 'AI Stopped' : 'AI Active'}
+                             </Badge>
+                          ) : (
+                            <Button size="sm" variant="outline" onClick={() => handleUpsertLabelAction(label.name, 'stop')} className="h-7 text-[10px] uppercase font-bold px-2">
+                              Assign Action
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* Right: Label Rules (Actions) */}
+              <div className="space-y-4">
+                <h4 className="font-bold flex items-center gap-2">
+                  <ShieldAlert className="h-4 w-4 text-primary" />
+                  Behavior Rules
+                </h4>
+                <div className="border border-border rounded-xl bg-secondary/10 p-4 min-h-[200px] max-h-[400px] overflow-y-auto space-y-3">
+                  {labelActions.length === 0 ? (
+                    <div className="text-center py-10 text-muted-foreground italic">
+                      Define how AI should react to labels.
+                    </div>
+                  ) : (
+                    labelActions.map((action) => (
+                      <Card key={action.id} className="p-3 border border-border/60 shadow-sm">
+                        <div className="flex justify-between items-start mb-2">
+                          <span className="font-black text-xs uppercase tracking-wider text-primary">{action.label_name}</span>
+                          <Button variant="ghost" size="sm" onClick={() => handleDeleteLabelAction(action.id)} className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                        <div className="flex items-center justify-between gap-4">
+                           <div className="flex items-center gap-2">
+                              {action.ai_action === 'stop' ? <ZapOff className="h-4 w-4 text-red-500" /> : <Bot className="h-4 w-4 text-green-500" />}
+                              <span className="text-xs font-medium">{action.ai_action === 'stop' ? 'Stop AI' : 'Keep AI Active'}</span>
+                           </div>
+                           <Switch 
+                              checked={action.ai_action === 'stop'} 
+                              onCheckedChange={(checked) => handleUpsertLabelAction(action.label_name, checked ? 'stop' : 'continue')}
+                           />
+                        </div>
+                      </Card>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="pt-4 border-t border-border">
+            <Button variant="outline" onClick={() => setIsLabelDialogOpen(false)}>Close Manager</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
