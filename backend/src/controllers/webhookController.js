@@ -21,11 +21,22 @@ const recentWebhookLogs = [];
 const MAX_WEBHOOK_LOGS = 50;
 
 function addWebhookLog(payload) {
+    // Extract Page ID or Phone ID to allow filtering
+    let sourceId = 'unknown';
+    if (payload.object === 'page' && payload.entry?.[0]?.id) {
+        sourceId = String(payload.entry[0].id);
+    } else if (payload.object === 'whatsapp_business_account' && payload.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id) {
+        sourceId = String(payload.entry[0].changes[0].value.metadata.phone_number_id);
+    } else if (payload.object === 'verification' && payload.query?.['hub.verify_token']) {
+        sourceId = 'verification';
+    }
+
     // Only store minimal required data to save RAM
     const logEntry = {
         id: Date.now() + Math.random().toString(36).substr(2, 5),
         timestamp: new Date().toISOString(),
         object: payload.object,
+        sourceId, // Added for filtering
         entry_count: payload.entry ? payload.entry.length : 0,
         payload: payload
     };
@@ -4533,6 +4544,16 @@ async function clearAllCaches() {
 
 // Endpoint to get recent webhook logs for debugging
 const getWebhookLogs = (req, res) => {
+    const { sourceId } = req.query;
+    
+    if (sourceId) {
+        // Filter logs by pageId or phoneId
+        const filteredLogs = recentWebhookLogs.filter(log => 
+            log.sourceId === String(sourceId) || log.sourceId === 'verification'
+        );
+        return res.status(200).json({ logs: filteredLogs });
+    }
+
     res.status(200).json({ logs: recentWebhookLogs });
 };
 

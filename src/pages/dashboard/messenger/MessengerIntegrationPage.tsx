@@ -204,7 +204,14 @@ export default function MessengerIntegrationPage() {
         setIsFetchingWebhooks(true);
         try {
             const token = localStorage.getItem("auth_token");
-            const res = await fetch(`${BACKEND_URL}/api/webhook/monitor`, {
+            const activePageId = localStorage.getItem("active_fb_page_id");
+            
+            let url = `${BACKEND_URL}/api/webhook/monitor`;
+            if (activePageId) {
+                url += `?sourceId=${activePageId}`;
+            }
+
+            const res = await fetch(url, {
                 headers: {
                     Authorization: `Bearer ${token}`
                 }
@@ -229,7 +236,14 @@ export default function MessengerIntegrationPage() {
         if (isWebhookMonitorOpen) {
             interval = setInterval(() => {
                 const token = localStorage.getItem("auth_token");
-                fetch(`${BACKEND_URL}/api/webhook/monitor`, {
+                const activePageId = localStorage.getItem("active_fb_page_id");
+                
+                let url = `${BACKEND_URL}/api/webhook/monitor`;
+                if (activePageId) {
+                    url += `?sourceId=${activePageId}`;
+                }
+
+                fetch(url, {
                     headers: {
                         Authorization: `Bearer ${token}`
                     }
