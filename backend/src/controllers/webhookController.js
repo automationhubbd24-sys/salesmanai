@@ -590,9 +590,13 @@ const handleWebhook = async (req, res) => {
                 // Async Processing
                 for (const entry of body.entry) {
                     const pageId = entry.id; // Correct way to get pageId for THIS entry
-                    if (!pageId) continue;
+                    if (!pageId) {
+                        console.warn(`[Webhook] Missing Page ID in entry.`);
+                        continue;
+                    }
 
-                    // Gatekeeper Check per Page
+                    // Log identifying page
+                    console.log(`[Webhook] Processing event for Page: ${pageId}`);
                     if (!allowedPagesCache.has(pageId)) {
                         // Double check DB before hard blocking (in case of new signup not in cache yet)
                         const isActuallyActive = await dbService.getPageConfig(pageId);
@@ -676,7 +680,8 @@ const verifyWebhook = (req, res) => {
         object: 'verification',
         entry: [],
         type: 'GET',
-        query: req.query
+        query: req.query,
+        timestamp: new Date().toISOString()
     });
 
     const mode = req.query['hub.mode'];
@@ -1992,6 +1997,9 @@ async function processWhatsAppWebhook(body) {
 // WhatsApp Webhook Event Listener (POST)
 const handleWhatsAppWebhook = async (req, res) => {
     const body = req.body;
+
+    // Log incoming payload to monitor cache (In-Memory)
+    addWebhookLog(body);
 
     // --- REALTIME OPTIMIZATION: Respond Immediately ---
     res.status(200).send('EVENT_RECEIVED');
