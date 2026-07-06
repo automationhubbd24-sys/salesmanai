@@ -298,26 +298,31 @@ const SmartInbox = () => {
                           key={idx} 
                           className={cn(
                             "flex gap-3 max-w-[85%] md:max-w-[80%]",
-                            msg.from === 'me' ? "ml-auto flex-row-reverse" : ""
+                            (msg.from === 'me' || isBotImage) ? "ml-auto flex-row-reverse" : ""
                           )}
                         >
-                          {msg.from !== 'me' && (
+                          {(msg.from !== 'me' && !isBotImage) && (
                             <Avatar className="h-8 w-8 mt-auto border border-white/10 shrink-0">
                               <AvatarFallback className="bg-white/5 text-[10px]">US</AvatarFallback>
                             </Avatar>
                           )}
                           <div className={cn(
                             "p-3 rounded-2xl text-sm shadow-sm break-words overflow-hidden",
-                            msg.from === 'me' 
-                              ? "bg-[#00ff88] text-black font-medium rounded-br-none" 
+                            (msg.from === 'me' || isBotImage)
+                              ? "bg-[#00ff88]/90 text-black font-medium rounded-br-none" 
                               : "bg-white/5 border border-white/10 text-white/90 rounded-bl-none"
                           )}>
                             {isBotImage ? (
                               <div className="space-y-2">
-                                <img src={imageUrl} alt="Bot Sent" className="max-w-full rounded-lg border border-white/10 shadow-lg cursor-pointer hover:opacity-90 transition-opacity" onClick={() => window.open(imageUrl, '_blank')} />
-                                {msg.body.includes('bot_image:') ? null : ( // If it's a direct bot_image: cmd, show ONLY image
+                                <img 
+                                  src={imageUrl} 
+                                  alt="Product" 
+                                  className="max-w-[180px] md:max-w-[220px] h-auto rounded-lg border border-black/10 shadow-sm cursor-pointer hover:opacity-90 transition-opacity" 
+                                  onClick={() => window.open(imageUrl, '_blank')} 
+                                />
+                                {msg.body.includes('bot_image:') ? null : (
                                   msg.body.replace(/\[?System Memory:[^\]]+\]?/g, '').replace(/##PRODUCT[^\n]+/, '').replace(/https?:\/\/[^\s]+/, '').trim() && (
-                                    <p className="text-xs opacity-70">{msg.body.replace(/\[?System Memory:[^\]]+\]?/g, '').replace(/##PRODUCT[^\n]+/, '').replace(/https?:\/\/[^\s]+/, '').trim()}</p>
+                                    <p className="text-[11px] opacity-70 leading-tight">{msg.body.replace(/\[?System Memory:[^\]]+\]?/g, '').replace(/##PRODUCT[^\n]+/, '').replace(/https?:\/\/[^\s]+/, '').trim()}</p>
                                   )
                                 )}
                               </div>
