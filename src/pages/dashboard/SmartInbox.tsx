@@ -280,13 +280,13 @@ const SmartInbox = () => {
                     })
                     .map((msg, idx) => {
                       // Extract image URL from bot_image:URL or standard URL patterns
-                      let imageUrl = null;
-                      const botImageMatch = msg.body?.match(/bot_image:\s*(https?://[^\s]+)/i);
+                      let imageUrl = "";
+                      const botImageMatch = msg.body?.match(/bot_image:\s*(https?:\/\/[^\s]+)/i);
                       if (botImageMatch) {
                         imageUrl = botImageMatch[1].replace(/\]$/, '');
                       } else {
-                        const genericMatch = msg.body?.match(/(https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s]*)?)/i);
-                        imageUrl = genericMatch ? genericMatch[0].replace(/\]$/, '') : null;
+                        const genericMatch = msg.body?.match(/(https?:\/\/[^\s]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s]*)?)/i);
+                        imageUrl = genericMatch ? genericMatch[0].replace(/\]$/, '') : "";
                       }
 
                       const isBotImage = imageUrl && (msg.body?.includes('bot_image:') || msg.body?.includes('##PRODUCT') || msg.body?.includes('System Memory: User is viewing Image'));
