@@ -275,7 +275,9 @@ const SmartInbox = () => {
                       const hasImage = msg.body?.match(/https?:\/\/[^\s]+\.(jpg|jpeg|png|gif|webp)/i);
                       const isBotImageCmd = msg.body?.includes('bot_image:');
                       
-                      if (msg.body?.includes('ai_memory') && !hasImage && !isBotImageCmd) return false;
+                      // Filter out any system memory/ai_memory messages that don't have an image to show
+                      if ((msg.body?.toLowerCase().includes('system memory') || msg.body?.includes('ai_memory')) && !hasImage && !isBotImageCmd) return false;
+                      
                       return true;
                     })
                     .map((msg, idx) => {
