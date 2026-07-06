@@ -41,7 +41,19 @@ const SmartInbox = () => {
     setLoading(true);
     try {
       const token = localStorage.getItem("auth_token");
-      const endpoint = platform === 'whatsapp' ? '/api/whatsapp/conversations' : '/api/messenger/conversations';
+      const activeId = platform === 'whatsapp' 
+        ? localStorage.getItem("active_wa_session_id") 
+        : localStorage.getItem("active_fb_page_id");
+      
+      if (!activeId) {
+        setChats([]);
+        return;
+      }
+
+      const endpoint = platform === 'whatsapp' 
+        ? `/api/whatsapp/conversations/${activeId}` 
+        : `/api/messenger/conversations/${activeId}`;
+        
       const res = await fetch(`${BACKEND_URL}${endpoint}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -60,9 +72,14 @@ const SmartInbox = () => {
     setMsgLoading(true);
     try {
       const token = localStorage.getItem("auth_token");
+      const activeId = platform === 'whatsapp' 
+        ? localStorage.getItem("active_wa_session_id") 
+        : localStorage.getItem("active_fb_page_id");
+        
       const endpoint = platform === 'whatsapp' 
-        ? `/api/whatsapp/messages/${chatId}` 
-        : `/api/messenger/messages/${chatId}`;
+        ? `/api/whatsapp/messages/${activeId}/${chatId}` 
+        : `/api/messenger/messages/${activeId}/${chatId}`;
+        
       const res = await fetch(`${BACKEND_URL}${endpoint}`, {
         headers: { Authorization: `Bearer ${token}` }
       });

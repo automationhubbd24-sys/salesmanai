@@ -1085,4 +1085,44 @@ router.get('/label-actions/:sessionName', authMiddleware, whatsappController.get
 router.post('/label-actions', authMiddleware, whatsappController.upsertLabelAction);
 router.delete('/label-actions/:id', authMiddleware, whatsappController.deleteLabelAction);
 
+router.get('/conversations/:sessionName', authMiddleware, async (req, res) => {
+    try {
+        const { sessionName } = req.params;
+        const { rows } = await pgClient.query(
+            `SELECT DISTINCT ON (sender_id) 
+                sender_id as from, 
+                text as body, 
+                timestamp,
+                reply_by
+             FROM whatsapp_chats 
+             WHERE session_name = $1 
+             ORDER BY sender_id, timestamp DESC`,
+            [sessionName]
+        );
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.get('/messages/:sessionName/:senderId', authMiddleware, async (req, res) => {
+    try {
+        const { sessionName, senderId } = req.params;
+        const { rows } = await pgClient.query(
+            `SELECT 
+                CASE WHEN reply_by = 'bot' THEN 'me' WHEN reply_by = 'admin' THEN 'me' ELSE sender_id END as from,
+                text as body,
+                timestamp,
+                (reply_by = 'bot') as is_ai
+             FROM whatsapp_chats 
+             WHERE session_name = $1 AND (sender_id = $2 OR recipient_id = $2)
+             ORDER BY timestamp ASC`,
+            [sessionName, senderId]
+        );
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 module.exports = router;

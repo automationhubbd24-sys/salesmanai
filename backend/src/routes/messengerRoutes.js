@@ -1162,4 +1162,44 @@ router.get('/download-conversation', authMiddleware, async (req, res) => {
     }
 });
 
+router.get('/conversations/:pageId', authMiddleware, async (req, res) => {
+    try {
+        const { pageId } = req.params;
+        const { rows } = await pgClient.query(
+            `SELECT DISTINCT ON (sender_id) 
+                sender_id as from, 
+                text as body, 
+                created_at as timestamp,
+                reply_by
+             FROM fb_chats 
+             WHERE page_id = $1 
+             ORDER BY sender_id, created_at DESC`,
+            [pageId]
+        );
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.get('/messages/:pageId/:senderId', authMiddleware, async (req, res) => {
+    try {
+        const { pageId, senderId } = req.params;
+        const { rows } = await pgClient.query(
+            `SELECT 
+                CASE WHEN reply_by = 'bot' THEN 'me' WHEN reply_by = 'admin' THEN 'me' ELSE sender_id END as from,
+                text as body,
+                created_at as timestamp,
+                (reply_by = 'bot') as is_ai
+             FROM fb_chats 
+             WHERE page_id = $1 AND (sender_id = $2 OR recipient_id = $2)
+             ORDER BY created_at ASC`,
+            [pageId, senderId]
+        );
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 module.exports = router;
