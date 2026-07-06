@@ -335,8 +335,8 @@ const SmartInbox = () => {
                                   <span className="group-open:rotate-90 transition-transform">▶</span>
                                   {msg.body.includes('Analyzed Image:') ? '🖼️ [Analyzed Image]' : '🎤 [Analyzed Voice]'}
                                 </summary>
-                                <div className="mt-3 pt-3 border-t border-white/10 text-xs opacity-80 leading-relaxed whitespace-pre-wrap">
-                                  {msg.body}
+                                <div className="hidden group-open:block mt-3 pt-3 border-t border-white/10 text-xs opacity-80 leading-relaxed whitespace-pre-wrap">
+                                  {msg.body.replace(/\[Analyzed Image\]:?\s*/i, '').replace(/\[Analyzed Voice\]:?\s*/i, '').trim()}
                                 </div>
                               </details>
                             ) : (
