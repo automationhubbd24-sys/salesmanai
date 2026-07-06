@@ -2,6 +2,7 @@ const whatsappService = require('../services/whatsappService');
 const aiService = require('../services/aiService');
 const dbService = require('../services/dbService');
 const orderService = require('../services/orderService');
+const pgClient = require('../services/pgClient');
 const fs = require('fs');
 const path = require('path');
 const { buildResolvedProductMediaContext } = require('../utils/productMediaResolver');
