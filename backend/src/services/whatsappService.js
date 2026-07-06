@@ -470,11 +470,17 @@ async function getContact(session, chatId) {
  */
 async function getAllLabels(session) {
     try {
-        const response = await apiClient.get(`/api/${session}/labels`);
+        const response = await apiClient.get(`/api/labels?session=${session}`);
         return response.data || [];
     } catch (error) {
-        // Silent fail
-        return [];
+        // Fallback for different WAHA versions
+        try {
+            const altResponse = await apiClient.get(`/api/${session}/labels`);
+            return altResponse.data || [];
+        } catch (e) {
+            console.error(`[WAHA] Fetch Labels Error:`, error.message);
+            return [];
+        }
     }
 }
 
@@ -615,6 +621,7 @@ module.exports = {
     getPairingCode,
     getContact,
     getLabels,
+    getAllLabels,
     createLabel,
     addLabel
 };
