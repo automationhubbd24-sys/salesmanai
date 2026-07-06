@@ -48,6 +48,8 @@ import ApiManagementPage from "./pages/dashboard/ApiManagementPage";
 import DeveloperPage from "./pages/dashboard/DeveloperPage";
 import ApiDocsPage from "./pages/dashboard/ApiDocsPage";
 
+import SmartInbox from "./pages/dashboard/SmartInbox";
+
 const queryClient = new QueryClient();
 
 const App = () => (
@@ -91,6 +93,7 @@ const App = () => (
                 {/* WhatsApp Routes */}
                 <Route path="whatsapp" element={<Outlet />}>
                   <Route index element={<DashboardHome />} />
+                  <Route path="smart-inbox" element={<SmartInbox />} />
                   <Route path="sessions" element={<SessionManager />} />
                   <Route path="control" element={<WhatsAppControlPage />} />
                   <Route path="orders" element={<WhatsAppOrderTrackingPage />} />
@@ -107,6 +110,7 @@ const App = () => (
                 {/* Messenger Routes */}
                 <Route path="messenger" element={<Outlet />}>
                   <Route index element={<DashboardHome />} />
+                  <Route path="smart-inbox" element={<SmartInbox />} />
                   <Route path="integration" element={<MessengerIntegrationPage />} />
                   <Route path="control" element={<MessengerControlPage />} />
                   <Route path="orders" element={<MessengerOrderTrackingPage />} />

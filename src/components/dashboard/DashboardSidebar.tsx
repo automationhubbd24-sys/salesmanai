@@ -19,7 +19,8 @@ import {
   MessageSquare,
   Key,
   FileText,
-  Cpu
+  Cpu,
+  Inbox
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -72,6 +73,7 @@ export function DashboardSidebar({ isMobile, onLinkClick }: { isMobile?: boolean
     // Platform Specific Items
     const platformItems = [
       { title: "Dashboard", icon: LayoutDashboard, path: base },
+      { title: "Smart Inbox", icon: Inbox, path: `${base}/smart-inbox` },
       { title: "Integration", icon: Plug, path: platform === 'whatsapp' ? `${base}/sessions` : `${base}/integration` },
       { title: "Database Connect", icon: Database, path: `${base}/database` },
       { title: "Control Page", icon: Settings, path: `${base}/control` },
