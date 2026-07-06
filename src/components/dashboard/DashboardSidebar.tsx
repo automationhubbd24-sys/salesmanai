@@ -73,7 +73,6 @@ export function DashboardSidebar({ isMobile, onLinkClick }: { isMobile?: boolean
     // Platform Specific Items
     const platformItems = [
       { title: "Dashboard", icon: LayoutDashboard, path: base },
-      { title: "Smart Inbox", icon: Inbox, path: `${base}/smart-inbox` },
       { title: "Integration", icon: Plug, path: platform === 'whatsapp' ? `${base}/sessions` : `${base}/integration` },
       { title: "Database Connect", icon: Database, path: `${base}/database` },
       { title: "Control Page", icon: Settings, path: `${base}/control` },
@@ -83,6 +82,7 @@ export function DashboardSidebar({ isMobile, onLinkClick }: { isMobile?: boolean
       platformItems.push({ title: "AI Settings", icon: Sparkles, path: `${base}/settings` });
       platformItems.push({ title: "Order Tracking", icon: ShoppingBag, path: `${base}/orders` });
       platformItems.push({ title: "Conversion", icon: MessageSquare, path: `${base}/conversion` });
+      platformItems.push({ title: "Smart Inbox", icon: Inbox, path: `${base}/smart-inbox` });
     }
 
     const switchItem = { title: "Switch Platform", icon: ArrowLeft, path: "/dashboard" };
