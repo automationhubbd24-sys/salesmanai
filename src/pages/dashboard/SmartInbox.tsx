@@ -271,15 +271,24 @@ const SmartInbox = () => {
                 <div className="flex flex-col gap-4">
                   {messages
                     .filter(msg => {
-                      // Filter out memory messages EXCEPT those containing image URLs we want to preview
+                      // Filter out memory messages EXCEPT those containing image URLs
                       const hasImage = msg.body?.match(/https?:\/\/[^\s]+\.(jpg|jpeg|png|gif|webp)/i);
-                      if (msg.body?.includes('ai_memory') && !hasImage) return false;
-                      // Keep system memory if it has an image (for preview)
+                      const isBotImageCmd = msg.body?.includes('bot_image:');
+                      
+                      if (msg.body?.includes('ai_memory') && !hasImage && !isBotImageCmd) return false;
                       return true;
                     })
                     .map((msg, idx) => {
-                      const imageMatch = msg.body?.match(/(https?:\/\/[^\s]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s]*)?)/i);
-                      const imageUrl = imageMatch ? imageMatch[0].replace(/\]$/, '') : null;
+                      // Extract image URL from bot_image:URL or standard URL patterns
+                      let imageUrl = null;
+                      const botImageMatch = msg.body?.match(/bot_image:\s*(https?://[^\s]+)/i);
+                      if (botImageMatch) {
+                        imageUrl = botImageMatch[1].replace(/\]$/, '');
+                      } else {
+                        const genericMatch = msg.body?.match(/(https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s]*)?)/i);
+                        imageUrl = genericMatch ? genericMatch[0].replace(/\]$/, '') : null;
+                      }
+
                       const isBotImage = imageUrl && (msg.body?.includes('bot_image:') || msg.body?.includes('##PRODUCT') || msg.body?.includes('System Memory: User is viewing Image'));
                        
                       const isAnalyzed = msg.body?.includes('Analyzed Image:') || msg.body?.includes('Analyzed Voice:');
@@ -305,9 +314,11 @@ const SmartInbox = () => {
                           )}>
                             {isBotImage ? (
                               <div className="space-y-2">
-                                <img src={imageUrl} alt="Bot Sent" className="max-w-full rounded-lg border border-white/10 shadow-lg" />
-                                {msg.body.replace(/\[?System Memory:[^\]]+\]?/g, '').replace(/bot_image:[^\s]+/, '').replace(/https?:\/\/[^\s]+/, '').trim() && (
-                                  <p className="text-xs opacity-70">{msg.body.replace(/\[?System Memory:[^\]]+\]?/g, '').replace(/bot_image:[^\s]+/, '').replace(/https?:\/\/[^\s]+/, '').trim()}</p>
+                                <img src={imageUrl} alt="Bot Sent" className="max-w-full rounded-lg border border-white/10 shadow-lg cursor-pointer hover:opacity-90 transition-opacity" onClick={() => window.open(imageUrl, '_blank')} />
+                                {msg.body.includes('bot_image:') ? null : ( // If it's a direct bot_image: cmd, show ONLY image
+                                  msg.body.replace(/\[?System Memory:[^\]]+\]?/g, '').replace(/##PRODUCT[^\n]+/, '').replace(/https?:\/\/[^\s]+/, '').trim() && (
+                                    <p className="text-xs opacity-70">{msg.body.replace(/\[?System Memory:[^\]]+\]?/g, '').replace(/##PRODUCT[^\n]+/, '').replace(/https?:\/\/[^\s]+/, '').trim()}</p>
+                                  )
                                 )}
                               </div>
                             ) : isAnalyzed ? (
