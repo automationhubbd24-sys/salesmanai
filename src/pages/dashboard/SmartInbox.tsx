@@ -11,7 +11,8 @@ import {
   Bot,
   ShieldCheck,
   Smartphone,
-  ChevronLeft
+  ChevronLeft,
+  Inbox
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
