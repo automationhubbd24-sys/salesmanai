@@ -20,25 +20,26 @@ console.log("Supabase Config:", {
 
 let s3Client = null;
 // Only enable S3 if Supabase is NOT the intended primary, or if we want S3 specifically.
-// For now, if Supabase Bucket is set, we PREFER Supabase to fix the user's issue.
-const PREFER_SUPABASE = process.env.SUPABASE_BUCKET && process.env.SUPABASE_URL;
+// For now, we want to prioritize S3/R2 over Supabase for migration
+const PREFER_S3 = process.env.S3_ENDPOINT && process.env.S3_ACCESS_KEY && process.env.S3_SECRET_KEY;
+const PREFER_SUPABASE = !PREFER_S3 && process.env.SUPABASE_BUCKET && process.env.SUPABASE_URL;
 
-if (!PREFER_SUPABASE && process.env.S3_ENDPOINT && process.env.S3_ACCESS_KEY && process.env.S3_SECRET_KEY) {
-    console.log("[ImageService] Initializing S3 Client...");
+if (PREFER_S3) {
+    console.log("[ImageService] Initializing S3 Client (R2/S3 Priority)...");
     s3Client = new S3Client({
-        region: process.env.S3_REGION || 'us-east-1',
+        region: process.env.S3_REGION || 'auto',
         endpoint: process.env.S3_ENDPOINT,
         credentials: {
             accessKeyId: process.env.S3_ACCESS_KEY,
             secretAccessKey: process.env.S3_SECRET_KEY
         },
-        forcePathStyle: true // Required for MinIO/Coolify usually
+        forcePathStyle: true
     });
 }
 
-// Configure Supabase Client (if S3 is not available or Supabase is preferred)
+// Configure Supabase Client (only if S3 is not available)
 let supabase = null;
-if ((!s3Client || PREFER_SUPABASE) && process.env.SUPABASE_URL && process.env.SUPABASE_KEY) {
+if (!s3Client && process.env.SUPABASE_URL && process.env.SUPABASE_KEY) {
     console.log("[ImageService] Initializing Supabase Client...");
     supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 }
@@ -79,7 +80,7 @@ async function uploadProductAsset(finalBuffer, contentType, userId, baseUrl, opt
     const userFolder = String(userId || 'anonymous');
     const fileName = buildUniqueAssetName(extension);
 
-    if (s3Client && process.env.S3_BUCKET && !process.env.SUPABASE_BUCKET) {
+    if (s3Client && process.env.S3_BUCKET) {
         const key = `${folder}/${userFolder}/${fileName}`;
         const command = new PutObjectCommand({
             Bucket: process.env.S3_BUCKET,
@@ -91,7 +92,8 @@ async function uploadProductAsset(finalBuffer, contentType, userId, baseUrl, opt
         await s3Client.send(command);
 
         if (process.env.S3_PUBLIC_URL) {
-            return `${process.env.S3_PUBLIC_URL}/${key}`;
+            const publicUrlBase = process.env.S3_PUBLIC_URL.replace(/\/$/, '');
+            return `${publicUrlBase}/${key}`;
         }
 
         const endpoint = process.env.S3_ENDPOINT.replace(/\/$/, '');
