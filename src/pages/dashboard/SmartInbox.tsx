@@ -270,11 +270,18 @@ const SmartInbox = () => {
               ) : (
                 <div className="flex flex-col gap-4">
                   {messages
-                    .filter(msg => !msg.body?.includes('ai_memory') && !msg.body?.includes('[SYSTEM MEMORY:'))
+                    .filter(msg => {
+                      // Filter out memory messages EXCEPT those containing image URLs we want to preview
+                      const hasImage = msg.body?.match(/https?:\/\/[^\s]+\.(jpg|jpeg|png|gif|webp)/i);
+                      if (msg.body?.includes('ai_memory') && !hasImage) return false;
+                      // Keep system memory if it has an image (for preview)
+                      return true;
+                    })
                     .map((msg, idx) => {
-                      const isBotImage = msg.body?.includes('bot_image:') || msg.body?.includes('##PRODUCT');
-                      const imageUrl = isBotImage ? msg.body.split('bot_image:')[1]?.split(' ')[0] || msg.body.match(/https?:\/\/[^\s]+/)?.[0] : null;
-                      
+                      const imageMatch = msg.body?.match(/(https?:\/\/[^\s]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s]*)?)/i);
+                      const imageUrl = imageMatch ? imageMatch[0].replace(/\]$/, '') : null;
+                      const isBotImage = imageUrl && (msg.body?.includes('bot_image:') || msg.body?.includes('##PRODUCT') || msg.body?.includes('System Memory: User is viewing Image'));
+                       
                       const isAnalyzed = msg.body?.includes('Analyzed Image:') || msg.body?.includes('Analyzed Voice:');
                       
                       return (
@@ -296,19 +303,22 @@ const SmartInbox = () => {
                               ? "bg-[#00ff88] text-black font-medium rounded-br-none" 
                               : "bg-white/5 border border-white/10 text-white/90 rounded-bl-none"
                           )}>
-                            {isBotImage && imageUrl ? (
+                            {isBotImage ? (
                               <div className="space-y-2">
-                                <img src={imageUrl} alt="Bot Sent" className="max-w-full rounded-lg border border-white/10" />
-                                <p className="text-xs opacity-70">{msg.body.replace(/bot_image:[^\s]+/, '').trim()}</p>
+                                <img src={imageUrl} alt="Bot Sent" className="max-w-full rounded-lg border border-white/10 shadow-lg" />
+                                {msg.body.replace(/\[?System Memory:[^\]]+\]?/g, '').replace(/bot_image:[^\s]+/, '').replace(/https?:\/\/[^\s]+/, '').trim() && (
+                                  <p className="text-xs opacity-70">{msg.body.replace(/\[?System Memory:[^\]]+\]?/g, '').replace(/bot_image:[^\s]+/, '').replace(/https?:\/\/[^\s]+/, '').trim()}</p>
+                                )}
                               </div>
                             ) : isAnalyzed ? (
-                              <details className="cursor-pointer">
-                                <summary className="text-xs font-bold text-[#00ff88] mb-1">
-                                  {msg.body.includes('Analyzed Image:') ? '🖼️ Image Analysis' : '🎤 Voice Analysis'} (Click to view)
+                              <details className="group cursor-pointer">
+                                <summary className="text-xs font-bold text-[#00ff88] flex items-center gap-2 list-none">
+                                  <span className="group-open:rotate-90 transition-transform">▶</span>
+                                  {msg.body.includes('Analyzed Image:') ? '🖼️ [Analyzed Image]' : '🎤 [Analyzed Voice]'}
                                 </summary>
-                                <p className="mt-2 text-xs opacity-80 leading-relaxed whitespace-pre-wrap">
+                                <div className="mt-3 pt-3 border-t border-white/10 text-xs opacity-80 leading-relaxed whitespace-pre-wrap">
                                   {msg.body}
-                                </p>
+                                </div>
                               </details>
                             ) : (
                               <p className="whitespace-pre-wrap">{msg.body}</p>
