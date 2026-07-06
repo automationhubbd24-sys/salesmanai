@@ -39,14 +39,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 
 const formSchema = z.object({
   provider: z.string().min(1, "Please select a provider"),
@@ -1540,10 +1533,63 @@ export default function WhatsAppSettingsPage() {
 
               {/* Right: Label Rules (Actions) */}
               <div className="space-y-4">
-                <h4 className="font-bold flex items-center gap-2">
-                  <ShieldAlert className="h-4 w-4 text-primary" />
-                  Behavior Rules
-                </h4>
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-bold flex items-center gap-2">
+                      <ShieldAlert className="h-4 w-4 text-primary" />
+                      Behavior Rules
+                    </h4>
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <Button size="sm" variant="outline" className="h-7 text-[10px] uppercase font-bold">
+                          <Plus className="mr-1 h-3 w-3" />
+                          Manual Add
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="sm:max-w-[425px] bg-card border-border">
+                        <DialogHeader>
+                          <DialogTitle>Add Manual Label</DialogTitle>
+                          <DialogDescription>
+                            Manually add a label name to define its behavior rules.
+                          </DialogDescription>
+                        </DialogHeader>
+                        <div className="grid gap-4 py-4">
+                          <div className="grid gap-2">
+                            <Label htmlFor="labelName">Label Name</Label>
+                            <Input
+                              id="labelName"
+                              placeholder="e.g. Paid Customer"
+                              value={newLabelName}
+                              onChange={(e) => setNewLabelName(e.target.value)}
+                            />
+                          </div>
+                          <div className="flex items-center justify-between rounded-lg border p-3">
+                            <div className="space-y-0.5">
+                              <Label>AI Action</Label>
+                              <div className="text-[11px] text-muted-foreground">
+                                {newLabelAction === 'stop' ? 'Bot will stop for this label' : 'Bot will continue talking'}
+                              </div>
+                            </div>
+                            <Switch
+                              checked={newLabelAction === 'stop'}
+                              onCheckedChange={(checked) => setNewLabelAction(checked ? 'stop' : 'continue')}
+                            />
+                          </div>
+                        </div>
+                        <DialogFooter>
+                          <Button 
+                            disabled={!newLabelName.trim()} 
+                            onClick={() => {
+                              handleUpsertLabelAction(newLabelName, newLabelAction);
+                              setNewLabelName("");
+                              toast.success("Manual label added");
+                            }}
+                          >
+                            Add Rule
+                          </Button>
+                        </DialogFooter>
+                      </DialogContent>
+                    </Dialog>
+                  </div>
                 <div className="border border-border rounded-xl bg-secondary/10 p-4 min-h-[200px] max-h-[400px] overflow-y-auto space-y-3">
                   {labelActions.length === 0 ? (
                     <div className="text-center py-10 text-muted-foreground italic">
