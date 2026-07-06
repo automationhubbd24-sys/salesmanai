@@ -2719,13 +2719,16 @@ ${imageAnalyzeText.trim()}
         }
 
         if (finalReplyText && typeof finalReplyText === 'string') {
+            // Updated extractor to handle our new R2 domain correctly
             const extracted = extractImageUrlsFromText(finalReplyText);
             finalReplyText = sanitizeReplyText(extracted.cleanText);
             if (extracted.urls.length > 0) {
                 if (!aiResponse.images) aiResponse.images = [];
                 extracted.urls.forEach(url => {
-                    pushUniqueMedia(aiResponse.images, { url: url, title: 'Product Image' });
+                    // Important: Ensure the URL is prioritized for file upload rather than text
+                    pushUniqueMedia(aiResponse.images, { url: url, title: 'Product Image', force_upload: true });
                 });
+                console.log(`[WA] Extracted ${extracted.urls.length} images from AI text and set for upload.`);
             }
         }
 
