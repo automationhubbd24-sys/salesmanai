@@ -96,6 +96,14 @@ export default function WhatsAppSettingsPage() {
   const [productLoading, setProductLoading] = useState(false);
   const [productSearch, setProductSearch] = useState("");
 
+  // Labels
+  const [isLabelDialogOpen, setIsLabelDialogOpen] = useState(false);
+  const [labels, setLabels] = useState<any[]>([]);
+  const [labelActions, setLabelActions] = useState<any[]>([]);
+  const [labelLoading, setLabelLoading] = useState(false);
+  const [newLabelName, setNewLabelName] = useState("");
+  const [newLabelAction, setNewLabelAction] = useState<'stop' | 'continue'>('stop');
+
   // Credits (Shared)
   const [messageCredit, setMessageCredit] = useState(0);
   const [planActive, setPlanActive] = useState(false);
@@ -421,6 +429,12 @@ export default function WhatsAppSettingsPage() {
     fetchProductsForPrompt();
   };
 
+  useEffect(() => {
+    if (isLabelDialogOpen) {
+      fetchLabelsAndActions();
+    }
+  }, [isLabelDialogOpen]);
+
   const handleInsertProductIntoPrompt = (product: PromptProduct) => {
     const name = product?.name || "Unnamed Product";
     const line = `\n##PRODUCT "${name}"`;
@@ -527,6 +541,91 @@ export default function WhatsAppSettingsPage() {
     }
   };
 
+  const fetchLabelsAndActions = async () => {
+    const sessionName = String(currentSession?.name || localStorage.getItem("active_wa_session_id") || "");
+    if (!sessionName) return;
+    
+    setLabelLoading(true);
+    try {
+      const token = localStorage.getItem("auth_token");
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/labels/${sessionName}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setLabels(data || []);
+      }
+      
+      if (dbId) {
+        const resConfig = await fetch(`${BACKEND_URL}/api/whatsapp/config/${dbId}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (resConfig.ok) {
+          const config = await resConfig.json();
+          setLabelActions(config.label_actions || []);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to fetch labels", e);
+    } finally {
+      setLabelLoading(false);
+    }
+  };
+
+  const handleUpsertLabelAction = async (labelName: string, action: 'stop' | 'continue') => {
+    if (!dbId) return;
+    try {
+      const token = localStorage.getItem("auth_token");
+      const newActions = [...labelActions];
+      const idx = newActions.findIndex(a => a.label_name.toLowerCase() === labelName.toLowerCase());
+      
+      if (idx > -1) {
+        newActions[idx].ai_action = action;
+      } else {
+        newActions.push({ id: Date.now(), label_name: labelName, ai_action: action });
+      }
+
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${dbId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ label_actions: newActions })
+      });
+
+      if (res.ok) {
+        setLabelActions(newActions);
+        toast.success("Label action updated");
+      }
+    } catch (e) {
+      toast.error("Failed to update label action");
+    }
+  };
+
+  const handleDeleteLabelAction = async (actionId: any) => {
+    if (!dbId) return;
+    try {
+      const token = localStorage.getItem("auth_token");
+      const newActions = labelActions.filter(a => a.id !== actionId);
+
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${dbId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ label_actions: newActions })
+      });
+
+      if (res.ok) {
+        setLabelActions(newActions);
+        toast.success("Label action removed");
+      }
+    } catch (e) {
+      toast.error("Failed to delete label action");
+    }
+  };
 
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
     if (!dbId) return;
