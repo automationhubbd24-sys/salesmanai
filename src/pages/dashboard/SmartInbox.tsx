@@ -279,17 +279,17 @@ const SmartInbox = () => {
                       return true;
                     })
                     .map((msg, idx) => {
-                      // Extract image URL from bot_image:URL or standard URL patterns
-                      let imageUrl = "";
-                      const botImageMatch = msg.body?.match(/bot_image:\s*(https?:\/\/[^\s]+)/i);
-                      if (botImageMatch) {
-                        imageUrl = botImageMatch[1].replace(/\]$/, '');
-                      } else {
-                        const genericMatch = msg.body?.match(/(https?:\/\/[^\s]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s]*)?)/i);
-                        imageUrl = genericMatch ? genericMatch[0].replace(/\]$/, '') : "";
-                      }
-
-                      const isBotImage = imageUrl && (msg.body?.includes('bot_image:') || msg.body?.includes('##PRODUCT') || msg.body?.includes('System Memory: User is viewing Image'));
+                      // Extract image URL using a more robust regex that handles encoded chars and common extensions
+                      const imageRegex = /(https?:\/\/[^\s\]\)]+\.(?:jpg|jpeg|png|gif|webp|bmp)(?:\?[^\s\]\)]*)?)/i;
+                      const imageMatch = msg.body?.match(imageRegex);
+                      const imageUrl = imageMatch ? imageMatch[0] : "";
+                      
+                      const isBotImage = imageUrl && (
+                        msg.body?.includes('bot_image:') || 
+                        msg.body?.includes('##PRODUCT') || 
+                        msg.body?.toLowerCase().includes('system memory: user is viewing image') ||
+                        msg.body?.toLowerCase().includes('sent images to user')
+                      );
                        
                       const isAnalyzed = msg.body?.includes('Analyzed Image:') || msg.body?.includes('Analyzed Voice:');
                       
@@ -317,8 +317,11 @@ const SmartInbox = () => {
                                 <img 
                                   src={imageUrl} 
                                   alt="Product" 
-                                  className="max-w-[180px] md:max-w-[220px] h-auto rounded-lg border border-black/10 shadow-sm cursor-pointer hover:opacity-90 transition-opacity" 
-                                  onClick={() => window.open(imageUrl, '_blank')} 
+                                  className="max-w-[200px] md:max-w-[280px] w-full h-auto rounded-lg border border-white/10 shadow-lg cursor-pointer hover:opacity-90 transition-opacity bg-white/5" 
+                                  onClick={() => window.open(imageUrl, '_blank')}
+                                  onError={(e) => {
+                                    (e.target as HTMLImageElement).src = 'https://placehold.co/400x400?text=Image+Load+Failed';
+                                  }}
                                 />
                                 {msg.body.includes('bot_image:') ? null : (
                                   msg.body.replace(/\[?System Memory:[^\]]+\]?/g, '').replace(/##PRODUCT[^\n]+/, '').replace(/https?:\/\/[^\s]+/, '').trim() && (
