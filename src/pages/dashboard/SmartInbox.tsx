@@ -68,6 +68,23 @@ const SmartInbox = () => {
     }
   }, [platform]);
 
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = useCallback(() => {
+    if (scrollRef.current) {
+      const scrollContainer = scrollRef.current.querySelector('[data-radix-scroll-area-viewport]');
+      if (scrollContainer) {
+        scrollContainer.scrollTop = scrollContainer.scrollHeight;
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (messages.length > 0) {
+      scrollToBottom();
+    }
+  }, [messages, scrollToBottom]);
+
   const fetchMessages = async (chatId: string) => {
     setMsgLoading(true);
     try {
@@ -131,10 +148,10 @@ const SmartInbox = () => {
   };
 
   return (
-    <div className="flex h-[calc(100vh-80px)] overflow-hidden bg-[#0a0a0a] rounded-3xl border border-white/5 shadow-2xl">
+    <div className="flex h-[calc(100vh-64px)] md:h-[calc(100vh-80px)] overflow-hidden bg-[#0a0a0a] md:rounded-3xl border-none md:border md:border-white/5 shadow-2xl">
       {/* Sidebar / Chat List */}
       <div className={cn(
-        "w-full md:w-[350px] border-r border-white/5 flex flex-col transition-all duration-300",
+        "w-full md:w-[350px] border-r border-white/5 flex flex-col transition-all duration-300 bg-[#0a0a0a]",
         !isMobileListVisible && "hidden md:flex"
       )}>
         <div className="p-4 space-y-4">
@@ -186,7 +203,11 @@ const SmartInbox = () => {
                       {chat.timestamp ? new Date(chat.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : ""}
                     </span>
                   </div>
-                  <p className="text-xs text-white/50 truncate mb-1">{chat.last_message || chat.body || "No messages"}</p>
+                  <p className="text-xs text-white/50 truncate mb-1">
+                    {chat.last_message?.includes('bot_image:') ? "📷 Sent an image" : 
+                     chat.last_message?.includes('ai_memory') ? "🧠 AI Thinking..." :
+                     chat.last_message || chat.body || "No messages"}
+                  </p>
                   <div className="flex gap-1">
                     <Badge variant="outline" className="text-[9px] px-1.5 h-4 border-[#00ff88]/30 text-[#00ff88] bg-[#00ff88]/5 uppercase font-bold">
                       {chat.label || "General"}
@@ -206,7 +227,7 @@ const SmartInbox = () => {
 
       {/* Main Chat Area */}
       <div className={cn(
-        "flex-1 flex flex-col bg-black/20",
+        "flex-1 flex flex-col bg-black/20 relative",
         isMobileListVisible && "hidden md:flex"
       )}>
         {selectedChat ? (
@@ -241,48 +262,73 @@ const SmartInbox = () => {
             </div>
 
             {/* Messages Area */}
-            <ScrollArea className="flex-1 p-4">
+            <ScrollArea ref={scrollRef} className="flex-1 p-4">
               {msgLoading ? (
                 <div className="flex items-center justify-center h-full">
                   <Loader2 className="animate-spin text-[#00ff88]" />
                 </div>
               ) : (
                 <div className="flex flex-col gap-4">
-                  {messages.map((msg, idx) => (
-                    <div 
-                      key={idx} 
-                      className={cn(
-                        "flex gap-3 max-w-[80%]",
-                        msg.from === 'me' ? "ml-auto flex-row-reverse" : ""
-                      )}
-                    >
-                      {msg.from !== 'me' && (
-                        <Avatar className="h-8 w-8 mt-auto border border-white/10">
-                          <AvatarFallback className="bg-white/5 text-[10px]">US</AvatarFallback>
-                        </Avatar>
-                      )}
-                      <div className={cn(
-                        "p-3 rounded-2xl text-sm shadow-sm",
-                        msg.from === 'me' 
-                          ? "bg-[#00ff88] text-black font-medium rounded-br-none" 
-                          : "bg-white/5 border border-white/10 text-white/90 rounded-bl-none"
-                      )}>
-                        {msg.body}
-                        <span className={cn(
-                          "block text-[9px] mt-1",
-                          msg.from === 'me' ? "text-black/40 text-right" : "text-white/20"
-                        )}>
-                          {new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                          {msg.is_ai && " • Sent by AI"}
-                        </span>
-                      </div>
-                      {msg.is_ai && (
-                        <div className="mt-auto flex flex-col items-center gap-1">
-                          <Bot size={14} className="text-[#00ff88]" />
+                  {messages
+                    .filter(msg => !msg.body?.includes('ai_memory') && !msg.body?.includes('[SYSTEM MEMORY:'))
+                    .map((msg, idx) => {
+                      const isBotImage = msg.body?.includes('bot_image:') || msg.body?.includes('##PRODUCT');
+                      const imageUrl = isBotImage ? msg.body.split('bot_image:')[1]?.split(' ')[0] || msg.body.match(/https?:\/\/[^\s]+/)?.[0] : null;
+                      
+                      const isAnalyzed = msg.body?.includes('Analyzed Image:') || msg.body?.includes('Analyzed Voice:');
+                      
+                      return (
+                        <div 
+                          key={idx} 
+                          className={cn(
+                            "flex gap-3 max-w-[85%] md:max-w-[80%]",
+                            msg.from === 'me' ? "ml-auto flex-row-reverse" : ""
+                          )}
+                        >
+                          {msg.from !== 'me' && (
+                            <Avatar className="h-8 w-8 mt-auto border border-white/10 shrink-0">
+                              <AvatarFallback className="bg-white/5 text-[10px]">US</AvatarFallback>
+                            </Avatar>
+                          )}
+                          <div className={cn(
+                            "p-3 rounded-2xl text-sm shadow-sm break-words overflow-hidden",
+                            msg.from === 'me' 
+                              ? "bg-[#00ff88] text-black font-medium rounded-br-none" 
+                              : "bg-white/5 border border-white/10 text-white/90 rounded-bl-none"
+                          )}>
+                            {isBotImage && imageUrl ? (
+                              <div className="space-y-2">
+                                <img src={imageUrl} alt="Bot Sent" className="max-w-full rounded-lg border border-white/10" />
+                                <p className="text-xs opacity-70">{msg.body.replace(/bot_image:[^\s]+/, '').trim()}</p>
+                              </div>
+                            ) : isAnalyzed ? (
+                              <details className="cursor-pointer">
+                                <summary className="text-xs font-bold text-[#00ff88] mb-1">
+                                  {msg.body.includes('Analyzed Image:') ? '🖼️ Image Analysis' : '🎤 Voice Analysis'} (Click to view)
+                                </summary>
+                                <p className="mt-2 text-xs opacity-80 leading-relaxed whitespace-pre-wrap">
+                                  {msg.body}
+                                </p>
+                              </details>
+                            ) : (
+                              <p className="whitespace-pre-wrap">{msg.body}</p>
+                            )}
+                            <span className={cn(
+                              "block text-[9px] mt-1",
+                              msg.from === 'me' ? "text-black/40 text-right" : "text-white/20"
+                            )}>
+                              {new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                              {msg.is_ai && " • Sent by AI"}
+                            </span>
+                          </div>
+                          {msg.is_ai && (
+                            <div className="mt-auto flex flex-col items-center gap-1 shrink-0">
+                              <Bot size={14} className="text-[#00ff88]" />
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  ))}
+                      );
+                    })}
                 </div>
               )}
             </ScrollArea>
