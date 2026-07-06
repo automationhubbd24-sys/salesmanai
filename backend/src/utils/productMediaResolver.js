@@ -21,11 +21,28 @@ function productHasVariantDrivenMedia(product) {
     );
 }
 
+function normalizeImageUrl(url) {
+    if (!url || typeof url !== 'string') return url;
+
+    // Auto-fix old Supabase URLs to new R2 domain
+    // Old: https://tbkgipmtrggdykyknfcm.supabase.co/storage/v1/object/public/product-images/path/to/img.jpg
+    // New: https://storage.salesmanchatbot.online/product-images/path/to/img.jpg
+    if (url.includes('supabase.co/storage/v1/object/public/')) {
+        const parts = url.split('/storage/v1/object/public/');
+        if (parts.length > 1 && process.env.S3_PUBLIC_URL) {
+            const publicBase = process.env.S3_PUBLIC_URL.replace(/\/$/, '');
+            return `${publicBase}/${parts[1]}`;
+        }
+    }
+
+    return url;
+}
+
 function buildResolvedProductMediaContext(product, options = {}) {
     const {
         queryText = '',
         preferredSkuKey = null,
-        normalizeImageUrl = (value) => value,
+        normalizeImageUrl: customNormalize = (value) => normalizeImageUrl(value),
         resolveProductSkuSelection
     } = options;
 
