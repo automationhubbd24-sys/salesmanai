@@ -1342,20 +1342,26 @@ ${combinedImageAnalysis.trim()}
         try {
             const adData = await dbService.getAdContext(workflow.adId, effectiveSessionName);
             if (adData) {
-                smartAdContext = `\n[AD REFERRAL DATA: ${adData.description || 'N/A'}`;
+                let contextObj = {
+                    type: 'ad_referral',
+                    description: adData.description || 'N/A',
+                    linked_products: []
+                };
                 if (Array.isArray(adData.linked_product_ids) && adData.linked_product_ids.length > 0) {
-                    const productDetails = [];
                     for (const productId of adData.linked_product_ids) {
                         const product = await dbService.getProductById(productId);
                         if (product) {
-                            productDetails.push(`${product.name} (Price: ${product.price} ${product.currency || 'BDT'})`);
+                            contextObj.linked_products.push({
+                                id: product.id,
+                                name: product.name,
+                                price: product.price,
+                                currency: product.currency || 'BDT',
+                                discount_price: product.discount_price || null
+                            });
                         }
                     }
-                    if (productDetails.length > 0) {
-                        smartAdContext += ` | LINKED PRODUCTS: ${productDetails.join('; ')}`;
-                    }
                 }
-                smartAdContext += `]\n`;
+                smartAdContext = `\n<system_hidden_context>\n${JSON.stringify(contextObj, null, 2)}\nInstruction: The user clicked on this ad. Treat the linked products as current context. If they ask about price/details without specifying a product, assume they mean these linked products.\n</system_hidden_context>\n`;
             }
         } catch (adErr) {
             console.warn(`[WhatsApp Webhook] Failed to load smart ad context for ${workflow.adId}: ${adErr.message}`);
@@ -2775,21 +2781,27 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             try {
                 const adData = await dbService.getAdContext(adId, pageId);
                 if (adData) {
-                    smartAdContext = `\n[AD REFERRAL DATA: ${adData.description || 'N/A'}`;
+                    let contextObj = {
+                        type: 'ad_referral',
+                        description: adData.description || 'N/A',
+                        linked_products: []
+                    };
                     
                     if (adData.linked_product_ids && Array.isArray(adData.linked_product_ids) && adData.linked_product_ids.length > 0) {
-                        const productDetails = [];
                         for (const pId of adData.linked_product_ids) {
                             const p = await dbService.getProductById(pId);
                             if (p) {
-                                productDetails.push(`${p.name} (Price: ${p.price} ${p.currency || 'BDT'})`);
+                                contextObj.linked_products.push({
+                                    id: p.id,
+                                    name: p.name,
+                                    price: p.price,
+                                    currency: p.currency || 'BDT',
+                                    discount_price: p.discount_price || null
+                                });
                             }
                         }
-                        if (productDetails.length > 0) {
-                            smartAdContext += ` | LINKED PRODUCTS: ${productDetails.join('; ')}`;
-                        }
                     }
-                    smartAdContext += `]\n`;
+                    smartAdContext = `\n<system_hidden_context>\n${JSON.stringify(contextObj, null, 2)}\nInstruction: The user clicked on this ad. Treat the linked products as current context. If they ask about price/details without specifying a product, assume they mean these linked products.\n</system_hidden_context>\n`;
                     console.log(`[Ad Library] Injected smart context for Ad ID: ${adId}`);
                 }
             } catch (adErr) {
