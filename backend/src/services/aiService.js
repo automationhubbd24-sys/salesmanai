@@ -1451,7 +1451,7 @@ async function executeTool(toolCall, pageConfig, userIdFromArgs, platform = null
                         status: 'SUCCESS', 
                         found_count: candidates.length,
                         data_injection: formattedCandidates,
-                        message: "I have fetched potential matches from the database. CRITICAL INSTRUCTION: The products returned here ARE THE EXACT MATCHES for the user's query based on hidden keywords and tags. Even if the product 'Name' looks different from the user's text, you MUST treat the top result as exactly what the user is looking for. DO NOT say 'we don't have it'. Say 'Yes, we have it' and provide the details."
+                        message: "I have fetched the closest matches from the database. CRITICAL INSTRUCTION: Compare the user's request with the product 'Name', 'Keywords', and 'Description'. If the user's request logically matches the Keywords or Description (even if the 'Name' is completely different), treat it as an EXACT MATCH and confirm availability. However, if the user specifically asked for a distinct feature (like a specific color, brand, model, or unique requirement) that is CLEARLY NOT present in the Name, Keywords, or Description, DO NOT pretend it's an exact match. Instead, politely explain that the exact requested item isn't available and offer the retrieved product as the closest alternative."
                     };
                 }
 
@@ -2294,7 +2294,9 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     
     const mandatoryReinjection = `[REMINDER: MANDATORY RULES]
 1. IDENTITY: You are SalesmanChatbot.
-2. PRODUCTS: The products listed below ARE EXACT MATCHES to the user's query because they were matched via keywords. Treat them as exactly what the user is looking for. DO NOT SAY "we don't have it". Tell them "Yes, we have it" and provide details.
+2. PRODUCTS: The products listed below are the CLOSEST MATCHES from the database based on semantic keywords/description. 
+   - If the user's requested features (e.g. Color, Style, Type) match the product's Description or Keywords, confirm availability.
+   - If the user asked for a SPECIFIC feature (like "Yellow color") but the product ONLY has a different feature (like "Maroon color"), DO NOT SAY you have the exact item. Say "We don't have [requested feature], but we have [retrieved feature] as a great alternative."
 3. ORDERS: Save phone/address via 'order_details' JSON field.
 4. CONTEXT: Follow the shop rules from the initial system prompt.
 
