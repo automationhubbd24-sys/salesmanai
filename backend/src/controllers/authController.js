@@ -1342,12 +1342,13 @@ exports.redeemCoupon = async (req, res) => {
         if (configResult.rows.length > 0) {
             const currentBalance = Number(configResult.rows[0].balance) || 0;
             const currentCredits = Number(configResult.rows[0].message_credit) || 0;
+            const currentPermanentCredits = Number(configResult.rows[0].permanent_credit) || 0;
             
             if (coupon.type === 'credit') {
-                newMessageCredit = currentCredits + amount;
+                newMessageCredit = currentCredits;
                 await pgClient.query(
-                    'UPDATE user_configs SET message_credit = $1 WHERE user_id = $2::uuid',
-                    [newMessageCredit, userId]
+                    'UPDATE user_configs SET permanent_credit = $1 WHERE user_id = $2::uuid',
+                    [currentPermanentCredits + amount, userId]
                 );
                 newBalance = currentBalance;
             } else {
@@ -1360,11 +1361,11 @@ exports.redeemCoupon = async (req, res) => {
             }
         } else {
             if (coupon.type === 'credit') {
-                newMessageCredit = amount;
+                newMessageCredit = 0;
                 newBalance = 0;
                 await pgClient.query(
-                    'INSERT INTO user_configs (user_id, email, message_credit, balance) VALUES ($1::uuid, $2, $3, $4)',
-                    [userId, email, newMessageCredit, 0]
+                    'INSERT INTO user_configs (user_id, email, permanent_credit, balance) VALUES ($1::uuid, $2, $3, $4)',
+                    [userId, email, amount, 0]
                 );
             } else {
                 newBalance = amount;
