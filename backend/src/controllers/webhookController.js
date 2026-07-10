@@ -3043,24 +3043,24 @@ STRICT RULES:
                     } catch (searchErr) {
                         console.warn("[Messenger] Visual Search failed:", searchErr.message);
                     }
-                    
-                    // Parallel Save (No await)
-                    dbService.saveFbChat({
-                        page_id: pageId,
-                        sender_id: pageId, // Bot (Page) is sender
-                        recipient_id: senderId, // User is recipient
-                        message_id: `img_analysis_${Date.now()}_${idx}`,
-                        text: `[Analyzed Image]:\n${perMsgText}`,
-                        timestamp: Date.now(),
-                        status: 'analyzed',
-                        reply_by: 'bot',
-                        token: totalVisionTokens, // Specific tokens for vision
-                        ai_model: lastModelUsed
-                    }).catch(e => console.error(`[FB] Failed to save per-message analysis:`, e.message));
                 }
             }
 
             if (combinedImageAnalysis) {
+                // Parallel Save the COMBINED analysis instead of per-message
+                dbService.saveFbChat({
+                    page_id: pageId,
+                    sender_id: pageId, // Bot (Page) is sender
+                    recipient_id: senderId, // User is recipient
+                    message_id: `img_analysis_${Date.now()}`,
+                    text: `[Analyzed Image]:\n${combinedImageAnalysis.trim()}`,
+                    timestamp: Date.now(),
+                    status: 'analyzed',
+                    reply_by: 'bot',
+                    token: totalVisionTokens, // Specific tokens for vision
+                    ai_model: 'combined'
+                }).catch(e => console.error(`[FB] Failed to save combined analysis:`, e.message));
+
                 const mergedVisualMatches = Array.from(visualCandidateMatches.values())
                     .sort((a, b) => b.score - a.score)
                     .slice(0, 5);

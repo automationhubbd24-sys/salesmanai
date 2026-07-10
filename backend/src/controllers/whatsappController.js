@@ -2264,22 +2264,6 @@ STRICT RULES:
 
             if (perMsgText) {
                 collectedTexts.push(perMsgText);
-                // Parallel Save (No await)
-                dbService.saveWhatsAppChat({
-                    session_name: sessionName,
-                    sender_id: pageId || sessionName, // Bot (Page) is sender
-                    recipient_id: senderId, // User is recipient
-                    message_id: `analysis_${msg.id}`,
-                    text: `[Visual Data]:\n${perMsgText}`,
-                    timestamp: Date.now(),
-                    status: 'sent',
-                    reply_by: 'bot', // Mark as BOT reply
-                    is_group: isGroup,
-                    group_id: null,
-                    group_name: null,
-                    token: totalVisionTokens, // Specific tokens for vision
-                    ai_model: lastVisionModel
-                }).catch(e => console.error(`[WA] Failed to save per-message analysis:`, e.message));
             }
         });
 
@@ -2287,6 +2271,23 @@ STRICT RULES:
         if (imageAnalyzeText) {
             console.log(`[WA] Image Analysis Result (collected): ${imageAnalyzeText.substring(0,50)}... Total Tokens: ${totalVisionTokens}`);
             
+            // Save COMBINED analysis to DB once
+            dbService.saveWhatsAppChat({
+                session_name: sessionName,
+                sender_id: pageId || sessionName, // Bot (Page) is sender
+                recipient_id: senderId, // User is recipient
+                message_id: `analysis_combined_${Date.now()}`,
+                text: `[Visual Data]:\n${imageAnalyzeText}`,
+                timestamp: Date.now(),
+                status: 'sent',
+                reply_by: 'bot', // Mark as BOT reply
+                is_group: isGroup,
+                group_id: null,
+                group_name: null,
+                token: totalVisionTokens, // Specific tokens for vision
+                ai_model: 'combined'
+            }).catch(e => console.error(`[WA] Failed to save combined image analysis:`, e.message));
+
             for (const analysisText of collectedTexts) {
                 try {
                     const imgVector = await aiService.getEmbedding(analysisText);
