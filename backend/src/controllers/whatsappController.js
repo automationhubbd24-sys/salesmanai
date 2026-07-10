@@ -2269,20 +2269,20 @@ STRICT RULES:
                 perImageTexts.forEach(t => collectedTexts.push(t));
                 
                 const combinedForMsg = perImageTexts.join("\n\n");
-                // Parallel Save (No await) - Fixed bug: hide from user
+                // Parallel Save (No await)
                 dbService.saveWhatsAppChat({
                     session_name: sessionName,
-                    sender_id: pageId || sessionName, 
-                    recipient_id: senderId, 
+                    sender_id: pageId || sessionName, // Bot (Page) is sender
+                    recipient_id: senderId, // User is recipient
                     message_id: `analysis_${msg.id}`,
                     text: `[Visual Data]:\n${combinedForMsg}`,
                     timestamp: Date.now(),
-                    status: 'internal', // Changed from 'sent'
-                    reply_by: 'system', // Changed from 'bot'
+                    status: 'sent',
+                    reply_by: 'bot', // Mark as BOT reply
                     is_group: isGroup,
                     group_id: null,
                     group_name: null,
-                    token: totalVisionTokens,
+                    token: totalVisionTokens, // Specific tokens for vision
                     ai_model: lastVisionModel
                 }).catch(e => console.error(`[WA] Failed to save per-message analysis:`, e.message));
             }
@@ -2350,10 +2350,10 @@ If the user asks "eta ase?" or "price koto?", they are referring to the product(
 Description of New Image(s):
 ${imageAnalyzeText.trim()}
 
-[CRITICAL RULE FOR MULTIPLE IMAGES]: 
-1. IF the user uploaded multiple images and you see multiple products in the [VISION ANALYSIS SEARCH RESULT], you MUST output a SEPARATE 'item' for EACH product using the 'items' array.
-2. In each item, use action: "SEND_BOTH" and include the specific 'product_id'.
-3. DO NOT group all products into a single text block. The user needs to see the photo with the price to know which is which.
+[CRITICAL RULE FOR IMAGES]: 
+1. IF there is a [VISION ANALYSIS SEARCH RESULT] above, you MUST NOT use the 'resolve_product' tool to search again. The system has already searched for you!
+2. Simply use the product details (Name, ID, Price) provided in the SEARCH RESULT to answer the user's question (e.g., if they ask 'Price?', list the prices for ALL products in the SEARCH RESULT).
+3. If NO products were found in the SEARCH RESULT, say "We do not have this exact item in our catalog."
 [END OF NEW VISUAL CONTEXT]`;
     }
 
@@ -2639,11 +2639,10 @@ ${imageAnalyzeText.trim()}
                 `1) IDENTITY: You are a professional human sales representative. Talk naturally.\n` +
                 `2) TOOL-FIRST: If the user asks about product price/details, you MUST call tools. Do NOT invent prices or descriptions.\n` +
                 `3) IMAGE DECISION: If you decide to send a product's image (based on user request or appropriateness), you MUST append [PRODUCT_ID:id] to your reply. Example: "Yes, it is available. [PRODUCT_ID:82]".\n` +
-                `4) MULTIPLE PRODUCTS FORMAT: If there are multiple products in the context (like multiple images), and the user asks a general question like 'price?', you MUST create an array of responses using the "items" array in your JSON output. Do NOT write all prices in a single text block. Example: items: [{reply_text: "Price of Red Shirt is 500", product_id: 101, action: "SEND_BOTH"}, {reply_text: "Price of Blue Jeans is 800", product_id: 105, action: "SEND_BOTH"}].\n` +
-                `5) SYSTEM PROMPT PRIORITY: If your custom instructions (System Prompt) say NOT to send images proactively, you MUST obey that and only use the [PRODUCT_ID:id] tag when the user explicitly asks for a photo.\n` +
-                `6) LISTING PRODUCTS: If asked "What do you sell?", list 3-5 names naturally and ask which one they are interested in.\n` +
-                `7) SKU FLOW: If a product has multiple design/color/size/item options and the customer did not specify enough details, ask the missing attribute instead of guessing.\n` +
-                `8) NO HALLUCINATIONS: Never guess or invent prices. Always use tool data only.\n`;
+                `4) SYSTEM PROMPT PRIORITY: If your custom instructions (System Prompt) say NOT to send images proactively, you MUST obey that and only use the [PRODUCT_ID:id] tag when the user explicitly asks for a photo.\n` +
+                `5) LISTING PRODUCTS: If asked "What do you sell?", list 3-5 names naturally and ask which one they are interested in.\n` +
+                `6) SKU FLOW: If a product has multiple design/color/size/item options and the customer did not specify enough details, ask the missing attribute instead of guessing.\n` +
+                `7) NO HALLUCINATIONS: Never guess or invent prices. Always use tool data only.\n`;
 
         const aiConfig = {
             ...pageConfig,
