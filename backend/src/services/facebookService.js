@@ -58,74 +58,79 @@ async function sendMessage(pageId, recipientId, text, accessToken) {
             }
         };
         
-        // Split message if too long (limit is 2000, we use 1990 for safety check)
+        // Split message if too long (limit is 2000, we use 1990 for safety check) or if it has [SPLIT] tag
         const FB_LIMIT = 2000;
         
-        if (text.length > FB_LIMIT) {
-            console.log(`Message too long (${text.length} chars). Splitting...`);
-            const chunks = [];
-            let currentText = text;
+        if (text.includes('[SPLIT]') || text.length > FB_LIMIT) {
+            console.log(`Message contains [SPLIT] or is too long (${text.length} chars). Splitting...`);
+            let chunks = [];
             
-            while (currentText.length > 0) {
-                let splitIndex = FB_LIMIT;
+            if (text.includes('[SPLIT]')) {
+                // If AI used the [SPLIT] delimiter, use it to separate messages
+                chunks = text.split('[SPLIT]').map(c => c.trim()).filter(c => c.length > 0);
+            } else {
+                // Legacy length-based splitting
+                let currentText = text;
                 
-                if (currentText.length > FB_LIMIT) {
-                    // Smart Split Strategy:
-                    // 1. Priority: "Section Header" (Emoji + Text + Newline) - Best for user experience
-                    // 2. Priority: Double Newline (Paragraph break)
-                    // 3. Priority: Single Newline
+                while (currentText.length > 0) {
+                    let splitIndex = FB_LIMIT;
                     
-                    const chunkSafeLimit = 1950; // Leave buffer
-                    const minChunkSize = 300;    // Allow smaller chunks if it means a clean section break
-                    
-                    const subString = currentText.substring(0, chunkSafeLimit);
-                    
-                    // Regex for Section Headers (e.g., "🌟 Basic Plan", "📦 Pro Plan")
-                    // Looks for Newline + Emoji/Bullet + Text
-                    // Added [IMAGE: and [Link: to split points too
-                    const headerRegex = /\n(?:[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]|IMAGE:|Link:|Sobi:).{1,50}(\n|$)/gu;
-                    
-                    let bestSplit = -1;
-                    let match;
-                    
-                    // Find the last header that fits in the chunk
-                    while ((match = headerRegex.exec(subString)) !== null) {
-                         if (match.index > minChunkSize) {
-                             bestSplit = match.index; // Split BEFORE the header (at the newline)
-                         }
-                    }
+                    if (currentText.length > FB_LIMIT) {
+                        const chunkSafeLimit = 1950; // Leave buffer
+                        const minChunkSize = 300;    // Allow smaller chunks if it means a clean section break
+                        
+                        const subString = currentText.substring(0, chunkSafeLimit);
+                        
+                        const headerRegex = /\n(?:[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]|IMAGE:|Link:|Sobi:).{1,50}(\n|$)/gu;
+                        
+                        let bestSplit = -1;
+                        let match;
+                        
+                        // Find the last header that fits in the chunk
+                        while ((match = headerRegex.exec(subString)) !== null) {
+                             if (match.index > minChunkSize) {
+                                 bestSplit = match.index; // Split BEFORE the header (at the newline)
+                             }
+                        }
 
-                    const lastDoubleNewline = subString.lastIndexOf('\n\n');
-                    const lastNewline = subString.lastIndexOf('\n');
-                    const lastSpace = subString.lastIndexOf(' ');
-                    
-                    if (bestSplit !== -1) {
-                        splitIndex = bestSplit; // Perfect Split: Before a new Section
-                    } else if (lastDoubleNewline > minChunkSize) {
-                        splitIndex = lastDoubleNewline; // Good Split: Paragraph end
-                    } else if (lastNewline > minChunkSize) {
-                        splitIndex = lastNewline; // Okay Split: Line end
-                    } else if (lastSpace > minChunkSize) {
-                        splitIndex = lastSpace; // Fallback: Word end
+                        const lastDoubleNewline = subString.lastIndexOf('\n\n');
+                        const lastNewline = subString.lastIndexOf('\n');
+                        const lastSpace = subString.lastIndexOf(' ');
+                        
+                        if (bestSplit !== -1) {
+                            splitIndex = bestSplit; // Perfect Split: Before a new Section
+                        } else if (lastDoubleNewline > minChunkSize) {
+                            splitIndex = lastDoubleNewline; // Good Split: Paragraph end
+                        } else if (lastNewline > minChunkSize) {
+                            splitIndex = lastNewline; // Okay Split: Line end
+                        } else if (lastSpace > minChunkSize) {
+                            splitIndex = lastSpace; // Fallback: Word end
+                        } else {
+                            splitIndex = chunkSafeLimit; // Hard Split
+                        }
                     } else {
-                        splitIndex = chunkSafeLimit; // Hard Split
+                        splitIndex = currentText.length;
                     }
-                } else {
-                    splitIndex = currentText.length;
+                    
+                    chunks.push(currentText.substring(0, splitIndex));
+                    currentText = currentText.substring(splitIndex).trim();
                 }
-                
-                chunks.push(currentText.substring(0, splitIndex));
-                currentText = currentText.substring(splitIndex).trim();
             }
             
-            // Send chunks sequentially
-            for (const chunk of chunks) {
+            // Send chunks sequentially with smart delay to avoid spam filters and order breaking
+            for (let i = 0; i < chunks.length; i++) {
+                const chunk = chunks[i];
                 if (!chunk) continue;
                 const payload = {
                     recipient: { id: recipientId },
                     message: { text: chunk }
                 };
                 await sendWithRetry(payload);
+                
+                // Add a smart delay between chunks (1.5 seconds) to ensure correct order and avoid rate limits
+                if (i < chunks.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 1500));
+                }
             }
             return { status: 'split_sent', chunks: chunks.length };
         } else {

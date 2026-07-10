@@ -14,13 +14,46 @@ const apiClient = axios.create({
 });
 
 /**
- * Send Text Message via WAHA
+ * Send Text Message via WAHA (with optional splitting)
  * @param {string} session - The WhatsApp Session Name (e.g., 'default')
  * @param {string} chatId - The recipient's Chat ID (e.g., '123456789@c.us')
  * @param {string} text - The message text
  * @param {boolean} replyTo - Optional message ID to reply to
  */
 async function sendMessage(session, chatId, text, replyTo = null) {
+    // Split message logic if AI used [SPLIT] tag
+    if (text && text.includes('[SPLIT]')) {
+        console.log(`[WA SendText] Message contains [SPLIT] tag. Splitting into chunks...`);
+        const chunks = text.split('[SPLIT]').map(c => c.trim()).filter(c => c.length > 0);
+        
+        let lastResult = null;
+        for (let i = 0; i < chunks.length; i++) {
+            const chunk = chunks[i];
+            if (!chunk) continue;
+            
+            const payload = {
+                chatId: chatId,
+                text: chunk,
+                session: session
+            };
+            if (replyTo && i === 0) payload.reply_to = replyTo; // Only reply-to on first chunk
+            
+            try {
+                const response = await apiClient.post('/api/sendText', payload);
+                lastResult = response.data;
+            } catch (err) {
+                console.error(`[WhatsApp] Send Text Chunk Error:`, err.message);
+            }
+            
+            // Add a smart delay between chunks (1.5 seconds) to ensure correct order
+            if (i < chunks.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 1500));
+            }
+        }
+        return lastResult;
+    }
+
+    // Normal Send
     try {
         const payload = {
             chatId: chatId,

@@ -2295,33 +2295,57 @@ STRICT RULES:
             console.log(`[WA] Image Analysis Result (collected): ${imageAnalyzeText.substring(0,50)}... Total Tokens: ${totalVisionTokens}`);
             
             // Loop through EACH image text INDIVIDUALLY to perform the search
+            imageAnalyzeText = "";
             for (const singleImgText of collectedTexts) {
                 try {
                     const imgVector = await aiService.getEmbedding(singleImgText);
+                    let vectorMatches = [];
                     if (imgVector) {
-                        const vectorMatches = await dbService.searchProductByImageVector(imgVector, sessionName);
-                        (vectorMatches || []).slice(0, 5).forEach((match) => mergeVisualCandidate(match, 'analysis_embedding'));
+                        vectorMatches = await dbService.searchProductByImageVector(imgVector, sessionName) || [];
                     }
-                    const textMatches = await dbService.searchProductsForResource(singleImgText, sessionName);
-                    (textMatches || []).slice(0, 5).forEach((match) => mergeVisualCandidate(match, 'resolve_product_search'));
+                    const textMatches = await dbService.searchProductsForResource(singleImgText, sessionName) || [];
+                    
+                    // Combine and sort local matches for THIS image
+                    let combinedForThisImage = [...vectorMatches, ...textMatches];
+                    combinedForThisImage.sort((a, b) => (b.distance !== undefined ? (1-b.distance)*100 : 0) - (a.distance !== undefined ? (1-a.distance)*100 : 0));
+                    
+                    if (combinedForThisImage.length > 0) {
+                        const topMatch = combinedForThisImage[0];
+                        const score = topMatch.distance !== undefined ? Math.max(0, Math.min(100, Number(((1 - Number(topMatch.distance)) * 100).toFixed(1)))) : 0;
+                        
+                        const normalizeUrl = (url) => {
+                            if (!url || url === 'N/A') return 'N/A';
+                            if (url.startsWith('http')) return url;
+                            const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
+                            const cleanPath = url.startsWith('/') ? url : `/${url}`;
+                            return `${baseUrl.replace(/\/$/, '')}${cleanPath}`;
+                        };
+
+                        const additionalImages = Array.isArray(topMatch.additional_images) ? topMatch.additional_images.map(normalizeUrl).join(', ') : 'None';
+                        
+                        imageAnalyzeText += `
+[IMAGE ANALYSIS RESULT]
+Image Description: ${singleImgText}
+Matched Product Details:
+- Product ID: ${topMatch.id}
+- Name: ${topMatch.name}
+- Price: ${topMatch.price || 'Ask for Price'}
+- Primary Image: ${normalizeUrl(topMatch.image_url)}
+- Additional Images: ${additionalImages}
+- Description: ${topMatch.description || 'N/A'}
+- Match Score: ${score}%
+`;
+                    } else {
+                        imageAnalyzeText += `
+[IMAGE ANALYSIS RESULT]
+Image Description: ${singleImgText}
+Matched Product Details: No matching product found in the catalog.
+`;
+                    }
                 } catch (vErr) {
                     console.warn(`[WA Visual Search] Failed: ${vErr.message}`);
                 }
             }
-
-            const mergedVisualMatches = Array.from(visualCandidateMatches.values())
-                .sort((a, b) => b.score - a.score)
-                .slice(0, 5);
-
-            if (mergedVisualMatches.length > 0) {
-                const formattedMatches = mergedVisualMatches
-                    .map((match, index) => `${index + 1}. ID ${match.id} | ${match.name} | Confidence ${match.score.toFixed(1)}% | Source: ${Array.from(match.sources).join(', ')}`)
-                    .join('\n');
-                imageAnalyzeText += `\n\n[VISION ANALYSIS SEARCH RESULT - POSSIBLE MATCHES FROM OUR CATALOG]:\n${formattedMatches}`;
-            } else {
-                imageAnalyzeText += `\n\n[VISION ANALYSIS SEARCH RESULT]:\nNo products found from the saved product vision analyses for this image.`;
-            }
-        }
         }
     }
 
@@ -2345,15 +2369,16 @@ STRICT RULES:
         // Unified single block for AI - ENHANCED FOCUS with Exact Verification strictness
         finalOutput += `\n\n[NEW VISUAL CONTEXT - IMPORTANT]:
 The user has just sent the following image(s). This is the CURRENT FOCUS of the conversation. 
-If the user asks "eta ase?" or "price koto?", they are referring to the product(s) described below.
+If the user asks "eta ase?", "price koto?", or "chobi den", they are referring to the product(s) described below.
 
-Description of New Image(s):
 ${imageAnalyzeText.trim()}
 
-[CRITICAL RULE FOR IMAGES]: 
-1. IF there is a [VISION ANALYSIS SEARCH RESULT] above, you MUST NOT use the 'resolve_product' tool to search again. The system has already searched for you!
-2. Simply use the product details (Name, ID, Price) provided in the SEARCH RESULT to answer the user's question (e.g., if they ask 'Price?', list the prices for ALL products in the SEARCH RESULT).
-3. If NO products were found in the SEARCH RESULT, say "We do not have this exact item in our catalog."
+[CRITICAL RULE FOR IMAGES AND MULTIPLE PRODUCTS]: 
+1. IF there are [IMAGE ANALYSIS RESULT] blocks above, you MUST NOT use the 'resolve_product' tool. The system has already fetched the FULL details for you!
+2. Use the provided details (Name, ID, Price, Description, Images) to answer. For multiple images, answer for ALL matched products individually.
+3. If the user asks for photos ("sobi den", "picture"), YOU MUST use the exact 'Primary Image' or 'Additional Images' URLs provided in the matching block.
+4. When you need to send information about MULTIPLE products (prices, details, or images), YOU MUST NEVER send them all in a single large paragraph.
+5. You MUST insert the exact text \`[SPLIT]\` between each product's details so the system can send them as separate messages (e.g. Product 1 Info \\n[SPLIT]\\n Product 2 Info).
 [END OF NEW VISUAL CONTEXT]`;
     }
 
