@@ -3017,50 +3017,52 @@ STRICT RULES:
                 const msg = analysisPromises[idx].msg;
                 let lastModelUsed = 'unknown';
                 
-                const perMsgText = imageResults.map((result) => {
+                // Process each image INDIVIDUALLY for embedding to avoid hallucination
+                const perImageTexts = imageResults.map((result) => {
                     const text = typeof result === 'object' ? (result.text || '') : String(result || '');
                     const usage = typeof result === 'object' ? (result.usage || 0) : 0;
                     const model = typeof result === 'object' ? (result.model || 'unknown') : 'unknown';
                     totalVisionTokens += usage;
                     lastModelUsed = model;
-                    return text;
-                }).join("\n\n").trim();
+                    return text.trim();
+                }).filter(t => t.length > 0);
                 
-                if (perMsgText) {
-                    combinedImageAnalysis += `${perMsgText}\n\n`;
-                    // #region debug-point A:messenger-image-analysis
-                    (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='messenger-image-match';try{const e=fs.readFileSync('.dbg/messenger-image-match.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'A',location:'webhookController.js:messenger:imageAnalysis',msg:'[DEBUG] messenger image analysis collected',data:{pageId,senderId,messageId:msg.id||null,analysisLength:perMsgText.length,analysisPreview:perMsgText.slice(0,280)},ts:Date.now()})}).catch(()=>{})})();
-                    // #endregion
+                if (perImageTexts.length > 0) {
+                    const combinedForMsg = perImageTexts.join("\n\n");
+                    combinedImageAnalysis += `${combinedForMsg}\n\n`;
                     
-                    try {
-                        const imgVector = await aiService.getEmbedding(perMsgText);
-                        if (imgVector) {
-                            const vectorMatches = await dbService.searchProductByImageVector(imgVector, pageId);
-                            (vectorMatches || []).slice(0, 5).forEach((match) => mergeVisualCandidate(match, 'analysis_embedding'));
+                    // Run vector search for each image separately
+                    for (const singleImgText of perImageTexts) {
+                        try {
+                            const imgVector = await aiService.getEmbedding(singleImgText);
+                            if (imgVector) {
+                                const vectorMatches = await dbService.searchProductByImageVector(imgVector, pageId);
+                                (vectorMatches || []).slice(0, 5).forEach((match) => mergeVisualCandidate(match, 'analysis_embedding'));
+                            }
+                            const textMatches = await dbService.searchProductsForResource(singleImgText, pageId);
+                            (textMatches || []).slice(0, 5).forEach((match) => mergeVisualCandidate(match, 'resolve_product_search'));
+                        } catch (searchErr) {
+                            console.warn("[Messenger] Visual Search failed for single image:", searchErr.message);
                         }
-                        const textMatches = await dbService.searchProductsForResource(perMsgText, pageId);
-                        (textMatches || []).slice(0, 5).forEach((match) => mergeVisualCandidate(match, 'resolve_product_search'));
-                    } catch (searchErr) {
-                        console.warn("[Messenger] Visual Search failed:", searchErr.message);
                     }
+                    
+                    // Parallel Save (No await)
+                    dbService.saveFbChat({
+                        page_id: pageId,
+                        sender_id: pageId, // Bot (Page) is sender
+                        recipient_id: senderId, // User is recipient
+                        message_id: `img_analysis_${Date.now()}_${idx}`,
+                        text: `[Analyzed Image]:\n${combinedForMsg}`,
+                        timestamp: Date.now(),
+                        status: 'analyzed',
+                        reply_by: 'bot',
+                        token: totalVisionTokens, // Specific tokens for vision
+                        ai_model: lastModelUsed
+                    }).catch(e => console.error(`[FB] Failed to save per-message analysis:`, e.message));
                 }
             }
 
             if (combinedImageAnalysis) {
-                // Parallel Save the COMBINED analysis instead of per-message
-                dbService.saveFbChat({
-                    page_id: pageId,
-                    sender_id: pageId, // Bot (Page) is sender
-                    recipient_id: senderId, // User is recipient
-                    message_id: `img_analysis_${Date.now()}`,
-                    text: `[Analyzed Image]:\n${combinedImageAnalysis.trim()}`,
-                    timestamp: Date.now(),
-                    status: 'analyzed',
-                    reply_by: 'bot',
-                    token: totalVisionTokens, // Specific tokens for vision
-                    ai_model: 'combined'
-                }).catch(e => console.error(`[FB] Failed to save combined analysis:`, e.message));
-
                 const mergedVisualMatches = Array.from(visualCandidateMatches.values())
                     .sort((a, b) => b.score - a.score)
                     .slice(0, 5);
@@ -3078,7 +3080,7 @@ STRICT RULES:
                 (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='messenger-image-match';try{const e=fs.readFileSync('.dbg/messenger-image-match.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'B',location:'webhookController.js:messenger:visualContext',msg:'[DEBUG] messenger visual context appended',data:{pageId,senderId,combinedLength:combinedImageAnalysis.length,containsVectorSearchResult:combinedImageAnalysis.includes('[VECTOR SEARCH SYSTEM RESULT]'),combinedPreview:combinedImageAnalysis.slice(0,280)},ts:Date.now()})}).catch(()=>{})})();
                 // #endregion
                 // Unified single block for AI - ENHANCED FOCUS
-                combinedText += `\n\n[NEW VISUAL CONTEXT - IMPORTANT]:\nThe user has just sent the following image(s). This is the CURRENT FOCUS of the conversation. If the user asks "eta ase?" or "price koto?", they are referring to the product(s) described below, NOT anything from the previous history.\n\nDescription of New Image(s):\n${combinedImageAnalysis.trim()}\n\n[CRITICAL RULE FOR IMAGES]:\n1. DO NOT say "Yes we have this" just because the category matches.\n2. You MUST use the 'resolve_product' tool with this visual description to check if we have the EXACT same design, color, print, and style in our catalog.\n3. If the tool returns a High Match (Score >= 88), say "Yes, we have this exact product."\n4. If multiple close products appear, or the same visual description can belong to several products, list the closest options and ask the user which one they mean.\n5. If Medium Match (70-87), say "It looks like a [Category], but it is slightly different from our catalog (e.g., different print/design). Here is our original product..."\n6. If Low Match (< 70) or Not Found, say "We do not have this exact item in our catalog."\n[END OF NEW VISUAL CONTEXT]`;
+                combinedText += `\n\n[NEW VISUAL CONTEXT - IMPORTANT]:\nThe user has just sent the following image(s). This is the CURRENT FOCUS of the conversation. If the user asks "eta ase?" or "price koto?", they are referring to the product(s) described below, NOT anything from the previous history.\n\nDescription of New Image(s):\n${combinedImageAnalysis.trim()}\n\n[CRITICAL RULE FOR IMAGES]:\n1. IF there is a [VISION ANALYSIS SEARCH RESULT] above, you MUST NOT use the 'resolve_product' tool to search again. The system has already searched for you!\n2. Simply use the product details (Name, ID, Price) provided in the SEARCH RESULT to answer the user's question (e.g., if they ask 'Price?', list the prices for ALL products in the SEARCH RESULT).\n3. If NO products were found in the SEARCH RESULT, say "We do not have this exact item in our catalog."\n[END OF NEW VISUAL CONTEXT]`;
             } else {
                 combinedText += `\n[User sent ${allImages.length} images: ${allImages.join(', ')}]`;
             }

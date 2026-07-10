@@ -2253,49 +2253,56 @@ STRICT RULES:
         allAnalysisResults.forEach((perMsgResults, idx) => {
             const msg = analysisPromises[idx].msg;
             let lastVisionModel = 'unknown';
-            const perMsgText = perMsgResults.map((res) => {
+            
+            // Extract text from each individual image result
+            const perImageTexts = perMsgResults.map((res) => {
                 if (typeof res === 'object') {
                     totalVisionTokens += (res.usage || 0);
                     lastVisionModel = res.model || 'unknown';
-                    return res.text;
+                    return res.text ? res.text.trim() : '';
                 }
-                return res;
-            }).join("\n\n").trim();
+                return res ? String(res).trim() : '';
+            }).filter(t => t.length > 0);
 
-            if (perMsgText) {
-                collectedTexts.push(perMsgText);
+            if (perImageTexts.length > 0) {
+                // Save the texts for the individual search later
+                perImageTexts.forEach(t => collectedTexts.push(t));
+                
+                const combinedForMsg = perImageTexts.join("\n\n");
+                // Parallel Save (No await)
+                dbService.saveWhatsAppChat({
+                    session_name: sessionName,
+                    sender_id: pageId || sessionName, // Bot (Page) is sender
+                    recipient_id: senderId, // User is recipient
+                    message_id: `analysis_${msg.id}`,
+                    text: `[Visual Data]:\n${combinedForMsg}`,
+                    timestamp: Date.now(),
+                    status: 'sent',
+                    reply_by: 'bot', // Mark as BOT reply
+                    is_group: isGroup,
+                    group_id: null,
+                    group_name: null,
+                    token: totalVisionTokens, // Specific tokens for vision
+                    ai_model: lastVisionModel
+                }).catch(e => console.error(`[WA] Failed to save per-message analysis:`, e.message));
             }
         });
 
-        imageAnalyzeText = collectedTexts.join("\n").trim();
+        // Create the description to pass to LLM (combine all)
+        imageAnalyzeText = collectedTexts.join("\n\n").trim();
+        
         if (imageAnalyzeText) {
             console.log(`[WA] Image Analysis Result (collected): ${imageAnalyzeText.substring(0,50)}... Total Tokens: ${totalVisionTokens}`);
             
-            // Save COMBINED analysis to DB once
-            dbService.saveWhatsAppChat({
-                session_name: sessionName,
-                sender_id: pageId || sessionName, // Bot (Page) is sender
-                recipient_id: senderId, // User is recipient
-                message_id: `analysis_combined_${Date.now()}`,
-                text: `[Visual Data]:\n${imageAnalyzeText}`,
-                timestamp: Date.now(),
-                status: 'sent',
-                reply_by: 'bot', // Mark as BOT reply
-                is_group: isGroup,
-                group_id: null,
-                group_name: null,
-                token: totalVisionTokens, // Specific tokens for vision
-                ai_model: 'combined'
-            }).catch(e => console.error(`[WA] Failed to save combined image analysis:`, e.message));
-
-            for (const analysisText of collectedTexts) {
+            // Loop through EACH image text INDIVIDUALLY to perform the search
+            for (const singleImgText of collectedTexts) {
                 try {
-                    const imgVector = await aiService.getEmbedding(analysisText);
+                    const imgVector = await aiService.getEmbedding(singleImgText);
                     if (imgVector) {
                         const vectorMatches = await dbService.searchProductByImageVector(imgVector, sessionName);
                         (vectorMatches || []).slice(0, 5).forEach((match) => mergeVisualCandidate(match, 'analysis_embedding'));
                     }
-                    const textMatches = await dbService.searchProductsForResource(analysisText, sessionName);
+                    const textMatches = await dbService.searchProductsForResource(singleImgText, sessionName);
                     (textMatches || []).slice(0, 5).forEach((match) => mergeVisualCandidate(match, 'resolve_product_search'));
                 } catch (vErr) {
                     console.warn(`[WA Visual Search] Failed: ${vErr.message}`);
@@ -2344,13 +2351,9 @@ Description of New Image(s):
 ${imageAnalyzeText.trim()}
 
 [CRITICAL RULE FOR IMAGES]: 
-1. The description above contains structural visual features extracted from the user's image.
-2. DO NOT say "Yes we have this" just because the category matches. 
-3. You MUST use the 'resolve_product' tool passing the description above as the query to check if we have the EXACT same design, color, print, and style in our catalog.
-4. If the tool returns a High Match (Score >= 80), say "Yes, we have this exact product."
-5. If multiple close products appear, or the same visual description can belong to several products, list the closest options and ask the user which one they mean.
-6. If Medium Match (60-79), say "It looks like a [Category], but it is slightly different from our catalog (e.g., different print/design). Here is our original product..."
-7. If Low Match (< 60) or Not Found, say "We do not have this exact item in our catalog."
+1. IF there is a [VISION ANALYSIS SEARCH RESULT] above, you MUST NOT use the 'resolve_product' tool to search again. The system has already searched for you!
+2. Simply use the product details (Name, ID, Price) provided in the SEARCH RESULT to answer the user's question (e.g., if they ask 'Price?', list the prices for ALL products in the SEARCH RESULT).
+3. If NO products were found in the SEARCH RESULT, say "We do not have this exact item in our catalog."
 [END OF NEW VISUAL CONTEXT]`;
     }
 
