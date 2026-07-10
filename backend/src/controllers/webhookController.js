@@ -3046,17 +3046,17 @@ STRICT RULES:
                         }
                     }
                     
-                    // Parallel Save (No await)
+                    // Parallel Save (No await) - Fixed bug: hide from user by setting status 'internal' and reply_by 'system'
                     dbService.saveFbChat({
                         page_id: pageId,
-                        sender_id: pageId, // Bot (Page) is sender
-                        recipient_id: senderId, // User is recipient
+                        sender_id: pageId, 
+                        recipient_id: senderId, 
                         message_id: `img_analysis_${Date.now()}_${idx}`,
                         text: `[Analyzed Image]:\n${combinedForMsg}`,
                         timestamp: Date.now(),
-                        status: 'analyzed',
-                        reply_by: 'bot',
-                        token: totalVisionTokens, // Specific tokens for vision
+                        status: 'internal', // Changed from 'analyzed' so it doesn't show to user
+                        reply_by: 'system', // Changed from 'bot' so it doesn't show in chat UI
+                        token: totalVisionTokens,
                         ai_model: lastModelUsed
                     }).catch(e => console.error(`[FB] Failed to save per-message analysis:`, e.message));
                 }
@@ -3080,7 +3080,7 @@ STRICT RULES:
                 (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='messenger-image-match';try{const e=fs.readFileSync('.dbg/messenger-image-match.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'B',location:'webhookController.js:messenger:visualContext',msg:'[DEBUG] messenger visual context appended',data:{pageId,senderId,combinedLength:combinedImageAnalysis.length,containsVectorSearchResult:combinedImageAnalysis.includes('[VECTOR SEARCH SYSTEM RESULT]'),combinedPreview:combinedImageAnalysis.slice(0,280)},ts:Date.now()})}).catch(()=>{})})();
                 // #endregion
                 // Unified single block for AI - ENHANCED FOCUS
-                combinedText += `\n\n[NEW VISUAL CONTEXT - IMPORTANT]:\nThe user has just sent the following image(s). This is the CURRENT FOCUS of the conversation. If the user asks "eta ase?" or "price koto?", they are referring to the product(s) described below, NOT anything from the previous history.\n\nDescription of New Image(s):\n${combinedImageAnalysis.trim()}\n\n[CRITICAL RULE FOR IMAGES]:\n1. IF there is a [VISION ANALYSIS SEARCH RESULT] above, you MUST NOT use the 'resolve_product' tool to search again. The system has already searched for you!\n2. Simply use the product details (Name, ID, Price) provided in the SEARCH RESULT to answer the user's question.\n3. If NO products were found in the SEARCH RESULT, say "We do not have this exact item in our catalog."\n4. MULTIPLE IMAGES RULE: If the user uploaded multiple images and asks for prices/details, they need to see the photos to know which price is which. You MUST format your response using the 'items' array (one object per product) with action 'SEND_BOTH' and the corresponding 'product_id'. Do not merge them into a single text block.\n[END OF NEW VISUAL CONTEXT]`;
+                combinedText += `\n\n[NEW VISUAL CONTEXT - IMPORTANT]:\nThe user has just sent the following image(s). This is the CURRENT FOCUS of the conversation.\n\nDescription of New Image(s):\n${combinedImageAnalysis.trim()}\n\n[CRITICAL RULE FOR MULTIPLE IMAGES]:\n1. IF the user uploaded multiple images and you see multiple products in the [VISION ANALYSIS SEARCH RESULT], you MUST output a SEPARATE 'item' for EACH product using the 'items' array.\n2. In each item, use action: "SEND_BOTH" and include the specific 'product_id'.\n3. DO NOT group all products into a single text block. The user needs to see the photo with the price to know which is which.\n[END OF NEW VISUAL CONTEXT]`;
             } else {
                 combinedText += `\n[User sent ${allImages.length} images: ${allImages.join(', ')}]`;
             }

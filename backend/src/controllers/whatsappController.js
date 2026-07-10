@@ -2269,20 +2269,20 @@ STRICT RULES:
                 perImageTexts.forEach(t => collectedTexts.push(t));
                 
                 const combinedForMsg = perImageTexts.join("\n\n");
-                // Parallel Save (No await)
+                // Parallel Save (No await) - Fixed bug: hide from user
                 dbService.saveWhatsAppChat({
                     session_name: sessionName,
-                    sender_id: pageId || sessionName, // Bot (Page) is sender
-                    recipient_id: senderId, // User is recipient
+                    sender_id: pageId || sessionName, 
+                    recipient_id: senderId, 
                     message_id: `analysis_${msg.id}`,
                     text: `[Visual Data]:\n${combinedForMsg}`,
                     timestamp: Date.now(),
-                    status: 'sent',
-                    reply_by: 'bot', // Mark as BOT reply
+                    status: 'internal', // Changed from 'sent'
+                    reply_by: 'system', // Changed from 'bot'
                     is_group: isGroup,
                     group_id: null,
                     group_name: null,
-                    token: totalVisionTokens, // Specific tokens for vision
+                    token: totalVisionTokens,
                     ai_model: lastVisionModel
                 }).catch(e => console.error(`[WA] Failed to save per-message analysis:`, e.message));
             }
@@ -2350,11 +2350,10 @@ If the user asks "eta ase?" or "price koto?", they are referring to the product(
 Description of New Image(s):
 ${imageAnalyzeText.trim()}
 
-[CRITICAL RULE FOR IMAGES]: 
-1. IF there is a [VISION ANALYSIS SEARCH RESULT] above, you MUST NOT use the 'resolve_product' tool to search again. The system has already searched for you!
-2. Simply use the product details (Name, ID, Price) provided in the SEARCH RESULT to answer the user's question.
-3. If NO products were found in the SEARCH RESULT, say "We do not have this exact item in our catalog."
-4. MULTIPLE IMAGES RULE: If the user uploaded multiple images and asks for prices/details, they need to see the photos to know which price is which. You MUST format your response using the 'items' array (one object per product) with action 'SEND_BOTH' and the corresponding 'product_id'. Do not merge them into a single text block.
+[CRITICAL RULE FOR MULTIPLE IMAGES]: 
+1. IF the user uploaded multiple images and you see multiple products in the [VISION ANALYSIS SEARCH RESULT], you MUST output a SEPARATE 'item' for EACH product using the 'items' array.
+2. In each item, use action: "SEND_BOTH" and include the specific 'product_id'.
+3. DO NOT group all products into a single text block. The user needs to see the photo with the price to know which is which.
 [END OF NEW VISUAL CONTEXT]`;
     }
 
