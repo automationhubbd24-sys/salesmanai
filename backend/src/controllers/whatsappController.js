@@ -2354,6 +2354,7 @@ ${imageAnalyzeText.trim()}
 1. IF there is a [VISION ANALYSIS SEARCH RESULT] above, you MUST NOT use the 'resolve_product' tool to search again. The system has already searched for you!
 2. Simply use the product details (Name, ID, Price) provided in the SEARCH RESULT to answer the user's question (e.g., if they ask 'Price?', list the prices for ALL products in the SEARCH RESULT).
 3. If NO products were found in the SEARCH RESULT, say "We do not have this exact item in our catalog."
+4. If the user asks for photos of these products, you CAN append [PRODUCT_ID:id] tag in your text using the IDs from the SEARCH RESULT. Our backend will automatically attach the product images.
 [END OF NEW VISUAL CONTEXT]`;
     }
 
