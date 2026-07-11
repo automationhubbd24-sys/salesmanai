@@ -5,10 +5,12 @@ const whatsappCloudController = require('../controllers/whatsappCloudController'
 const webhookController = require('../controllers/webhookController');
 const pgClient = require('../services/pgClient');
 const dbService = require('../services/dbService');
+const whatsappService = require('../services/whatsappService');
 const whatsappCloudService = require('../services/whatsappCloudService');
 const jwt = require('jsonwebtoken');
 const authMiddleware = require('../middleware/authMiddleware');
 const { getOfficialWebhookSubscriptionOptions } = require('../utils/officialWebhookConfig');
+const { getSmartInboxConversations, upsertSmartInboxLabel } = require('../utils/smartInbox');
 
 async function ensureOfficialWhatsAppColumns() {
     await pgClient.query(`
@@ -1088,17 +1090,7 @@ router.delete('/label-actions/:id', authMiddleware, whatsappController.deleteLab
 router.get('/conversations/:sessionName', authMiddleware, async (req, res) => {
     try {
         const { sessionName } = req.params;
-        const { rows } = await pgClient.query(
-            `SELECT DISTINCT ON (sender_id) 
-                sender_id as from, 
-                text as body, 
-                timestamp,
-                reply_by
-             FROM whatsapp_chats 
-             WHERE session_name = $1 
-             ORDER BY sender_id, timestamp DESC`,
-            [sessionName]
-        );
+        const rows = await getSmartInboxConversations(pgClient, 'whatsapp', sessionName);
         res.json(rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1108,19 +1100,95 @@ router.get('/conversations/:sessionName', authMiddleware, async (req, res) => {
 router.get('/messages/:sessionName/:senderId', authMiddleware, async (req, res) => {
     try {
         const { sessionName, senderId } = req.params;
+        const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 120, 20), 300);
         const { rows } = await pgClient.query(
-            `SELECT 
-                CASE WHEN reply_by = 'bot' THEN 'me' WHEN reply_by = 'admin' THEN 'me' ELSE sender_id END as from,
-                text as body,
-                timestamp,
-                (reply_by = 'bot') as is_ai
-             FROM whatsapp_chats 
-             WHERE session_name = $1 AND (sender_id = $2 OR recipient_id = $2)
+            `SELECT *
+             FROM (
+                SELECT
+                    CASE WHEN reply_by = 'bot' THEN 'me' WHEN reply_by = 'admin' THEN 'me' ELSE sender_id END as from,
+                    text as body,
+                    timestamp,
+                    reply_by,
+                    (reply_by = 'bot') as is_ai
+                FROM whatsapp_chats
+                WHERE session_name = $1 AND (sender_id = $2 OR recipient_id = $2)
+                ORDER BY timestamp DESC
+                LIMIT $3
+             ) recent_messages
              ORDER BY timestamp ASC`,
-            [sessionName, senderId]
+            [sessionName, senderId, limit]
         );
         res.json(rows);
     } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.patch('/conversations/:sessionName/:senderId/labels', authMiddleware, async (req, res) => {
+    try {
+        const { sessionName, senderId } = req.params;
+        const { labelKey, active } = req.body || {};
+
+        if (typeof active !== 'boolean' || !labelKey) {
+            return res.status(400).json({ error: 'labelKey and boolean active are required' });
+        }
+
+        const updatedConversation = await upsertSmartInboxLabel(pgClient, {
+            platform: 'whatsapp',
+            resourceId: sessionName,
+            senderId,
+            labelKey,
+            isActive: active
+        });
+
+        res.json({
+            success: true,
+            conversation: updatedConversation
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.post('/send', authMiddleware, async (req, res) => {
+    try {
+        const { sessionName, to, message } = req.body || {};
+
+        if (!sessionName || !to || !String(message || '').trim()) {
+            return res.status(400).json({ error: 'sessionName, to and message are required' });
+        }
+
+        const allowed = await hasSessionAccess(String(sessionName), req.user.id, req.user.email);
+        if (!allowed) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
+
+        const response = await whatsappService.sendMessage(String(sessionName), String(to), String(message).trim());
+        const messageId = response?.id || response?.messageId || `smart_inbox_admin_${Date.now()}`;
+
+        await dbService.saveWhatsAppChat({
+            session_name: String(sessionName),
+            sender_id: String(sessionName),
+            recipient_id: String(to),
+            message_id: String(messageId),
+            text: String(message).trim(),
+            timestamp: Date.now(),
+            status: 'sent',
+            reply_by: 'admin'
+        });
+
+        res.json({
+            success: true,
+            message: {
+                from: 'me',
+                body: String(message).trim(),
+                timestamp: Date.now(),
+                reply_by: 'admin',
+                is_ai: false
+            }
+        });
+    } catch (err) {
+        console.error('Error sending WhatsApp smart inbox message:', err);
         res.status(500).json({ error: err.message });
     }
 });

@@ -2,11 +2,13 @@ const express = require('express');
 const router = express.Router();
 const axios = require('axios');
 const dbService = require('../services/dbService');
+const facebookService = require('../services/facebookService');
 const pgClient = require('../services/pgClient');
 const jwt = require('jsonwebtoken');
 const authMiddleware = require('../middleware/authMiddleware');
 
 const webhookController = require('../controllers/webhookController');
+const { getSmartInboxConversations, upsertSmartInboxLabel } = require('../utils/smartInbox');
 const FACEBOOK_GRAPH_VERSION = process.env.FACEBOOK_GRAPH_VERSION || 'v25.0';
 
 async function ensureMessengerPageColumns() {
@@ -1181,17 +1183,7 @@ router.get('/download-conversation', authMiddleware, async (req, res) => {
 router.get('/conversations/:pageId', authMiddleware, async (req, res) => {
     try {
         const { pageId } = req.params;
-        const { rows } = await pgClient.query(
-            `SELECT DISTINCT ON (sender_id) 
-                sender_id as from, 
-                text as body, 
-                created_at as timestamp,
-                reply_by
-             FROM fb_chats 
-             WHERE page_id = $1 
-             ORDER BY sender_id, created_at DESC`,
-            [pageId]
-        );
+        const rows = await getSmartInboxConversations(pgClient, 'messenger', pageId);
         res.json(rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1201,19 +1193,100 @@ router.get('/conversations/:pageId', authMiddleware, async (req, res) => {
 router.get('/messages/:pageId/:senderId', authMiddleware, async (req, res) => {
     try {
         const { pageId, senderId } = req.params;
+        const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 120, 20), 300);
         const { rows } = await pgClient.query(
-            `SELECT 
-                CASE WHEN reply_by = 'bot' THEN 'me' WHEN reply_by = 'admin' THEN 'me' ELSE sender_id END as from,
-                text as body,
-                created_at as timestamp,
-                (reply_by = 'bot') as is_ai
-             FROM fb_chats 
-             WHERE page_id = $1 AND (sender_id = $2 OR recipient_id = $2)
-             ORDER BY created_at ASC`,
-            [pageId, senderId]
+            `SELECT *
+             FROM (
+                SELECT
+                    CASE WHEN reply_by = 'bot' THEN 'me' WHEN reply_by = 'admin' THEN 'me' ELSE sender_id END as from,
+                    text as body,
+                    COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000) as timestamp,
+                    reply_by,
+                    (reply_by = 'bot') as is_ai
+                FROM fb_chats
+                WHERE page_id = $1 AND (sender_id = $2 OR recipient_id = $2)
+                ORDER BY COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000) DESC
+                LIMIT $3
+             ) recent_messages
+             ORDER BY timestamp ASC`,
+            [pageId, senderId, limit]
         );
         res.json(rows);
     } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.patch('/conversations/:pageId/:senderId/labels', authMiddleware, async (req, res) => {
+    try {
+        const { pageId, senderId } = req.params;
+        const { labelKey, active } = req.body || {};
+
+        if (typeof active !== 'boolean' || !labelKey) {
+            return res.status(400).json({ error: 'labelKey and boolean active are required' });
+        }
+
+        const updatedConversation = await upsertSmartInboxLabel(pgClient, {
+            platform: 'messenger',
+            resourceId: pageId,
+            senderId,
+            labelKey,
+            isActive: active
+        });
+
+        res.json({
+            success: true,
+            conversation: updatedConversation
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.post('/send', authMiddleware, async (req, res) => {
+    try {
+        const { pageId, to, message } = req.body || {};
+
+        if (!pageId || !to || !String(message || '').trim()) {
+            return res.status(400).json({ error: 'pageId, to and message are required' });
+        }
+
+        const pageConfig = await dbService.getPageConfig(String(pageId));
+        if (!pageConfig?.page_access_token) {
+            return res.status(400).json({ error: 'Messenger page access token not found' });
+        }
+
+        const response = await facebookService.sendMessage(
+            String(pageId),
+            String(to),
+            String(message).trim(),
+            pageConfig.page_access_token
+        );
+        const messageId = response?.message_id || response?.messageId || `smart_inbox_admin_${Date.now()}`;
+
+        await dbService.saveFbChat({
+            page_id: String(pageId),
+            sender_id: String(pageId),
+            recipient_id: String(to),
+            message_id: String(messageId),
+            text: String(message).trim(),
+            timestamp: Date.now(),
+            status: 'sent',
+            reply_by: 'admin'
+        });
+
+        res.json({
+            success: true,
+            message: {
+                from: 'me',
+                body: String(message).trim(),
+                timestamp: Date.now(),
+                reply_by: 'admin',
+                is_ai: false
+            }
+        });
+    } catch (err) {
+        console.error('Error sending Messenger smart inbox message:', err);
         res.status(500).json({ error: err.message });
     }
 });
