@@ -11,6 +11,47 @@ const FACEBOOK_GRAPH_VERSION = process.env.FACEBOOK_GRAPH_VERSION || 'v25.0';
 const DEBUG_SERVER_URL = 'http://10.2.0.2:7777/event';
 const DEBUG_SESSION_ID = 'whatsapp-loading-stuck';
 
+async function invalidateUserRuntimeCaches(userId) {
+    if (!userId) return;
+
+    try {
+        const [waResult, fbResult] = await Promise.all([
+            pgClient.query(
+                `SELECT session_name, waba_id, phone_number_id
+                 FROM whatsapp_message_database
+                 WHERE user_id = $1::uuid`,
+                [userId]
+            ),
+            pgClient.query(
+                `SELECT page_id
+                 FROM page_access_token_message
+                 WHERE user_id = $1::uuid`,
+                [userId]
+            )
+        ]);
+
+        const whatsappController = require('./whatsappController');
+        const webhookController = require('./webhookController');
+
+        waResult.rows.forEach((row) => {
+            [row.session_name, row.waba_id, row.phone_number_id]
+                .filter(Boolean)
+                .forEach((key) => {
+                    whatsappController.clearPageCache(key);
+                    webhookController.clearPageCache(key);
+                });
+        });
+
+        fbResult.rows.forEach((row) => {
+            if (row.page_id) {
+                webhookController.clearPageCache(row.page_id);
+            }
+        });
+    } catch (cacheErr) {
+        console.warn('[Auth] Failed to invalidate runtime caches:', cacheErr.message);
+    }
+}
+
 function getClientIp(req) {
     const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
     return forwarded || req.ip || req.socket?.remoteAddress || 'unknown';
@@ -1479,6 +1520,8 @@ exports.buyCredits = async (req, res) => {
             'SELECT balance, daily_limit, daily_used, monthly_limit, monthly_used, bonus_credit, permanent_credit, message_credit, subscription_plan, monthly_expires_at FROM user_configs WHERE user_id = $1::uuid',
             [userId]
         );
+
+        await invalidateUserRuntimeCaches(userId);
         res.json({ success: true, ...outRes.rows[0] });
     } catch (error) {
         console.error('buyCredits error:', error);
@@ -1551,6 +1594,8 @@ exports.buyPlan = async (req, res) => {
             'SELECT balance, daily_limit, daily_used, monthly_limit, monthly_used, bonus_credit, permanent_credit, message_credit, subscription_plan, monthly_expires_at FROM user_configs WHERE user_id = $1::uuid',
             [userId]
         );
+
+        await invalidateUserRuntimeCaches(userId);
         return res.json({ success: true, ...outRes.rows[0] });
     } catch (error) {
         console.error('buyPlan error:', error);

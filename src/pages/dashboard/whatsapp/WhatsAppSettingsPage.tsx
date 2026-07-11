@@ -137,13 +137,6 @@ export default function WhatsAppSettingsPage() {
   const [purchasing, setPurchasing] = useState(false);
   const [detailedCredits, setDetailedCredits] = useState<any>(null);
   const [isTeamView, setIsTeamView] = useState(false);
-  const dailyRemaining = Math.max(
-    0,
-    Number(detailedCredits?.daily_limit || 0) - Number(detailedCredits?.daily_used || 0)
-  );
-  const bonusCredit = Number(detailedCredits?.bonus_credit || 0);
-  const permanentCredit = Number(detailedCredits?.permanent_credit || 0);
-  const totalRemainingCredits = Math.max(0, messageCredit) + dailyRemaining + bonusCredit + permanentCredit;
   const getSubscriptionExpiryMeta = () => {
     if (!detailedCredits?.monthly_expires_at) return null;
     const expires = new Date(detailedCredits.monthly_expires_at);
@@ -1017,7 +1010,7 @@ export default function WhatsAppSettingsPage() {
                                                 <div className="flex items-center justify-end gap-2">
                                                     <div className="h-1.5 w-1.5 rounded-full bg-[#00ff88] shadow-[0_0_8px_rgba(0,255,136,0.5)] animate-pulse" />
                                                     <span className="text-sm font-black text-[#00ff88]">
-                                                        {totalRemainingCredits.toLocaleString()} <span className="text-[10px] uppercase opacity-60">Credits</span>
+                                                        {messageCredit.toLocaleString()} <span className="text-[10px] uppercase opacity-60">Credits</span>
                                                     </span>
                                                 </div>
                                                 
@@ -1044,11 +1037,6 @@ export default function WhatsAppSettingsPage() {
                                                     {detailedCredits?.permanent_credit > 0 && (
                                                         <div className="px-3 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-[12px] text-emerald-600 dark:text-emerald-500 font-black shadow-sm">
                                                             PERMANENT: {detailedCredits.permanent_credit.toLocaleString()}
-                                                        </div>
-                                                    )}
-                                                    {messageCredit > 0 && (
-                                                        <div className="px-3 py-1 rounded-lg bg-blue-500/10 border border-blue-500/30 text-[12px] text-blue-600 dark:text-blue-500 font-black shadow-sm">
-                                                            FREE: {messageCredit.toLocaleString()}
                                                         </div>
                                                     )}
                                                 </div>

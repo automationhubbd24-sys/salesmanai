@@ -287,8 +287,8 @@ async function getCachedPageData(sessionName) {
     const now = Date.now();
     const cached = configCache.get(sessionName);
     
-    // Refresh cache ONLY if not exists. Persistence is manual.
-    if (!cached) {
+    // Refresh periodically so plan/credit changes don't stay stale in memory forever.
+    if (!cached || (now - cached.timestamp > 10 * 60 * 1000)) {
         try {
             const config = await dbService.getWhatsAppConfig(sessionName);
             if (config) {
