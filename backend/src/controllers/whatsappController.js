@@ -3609,6 +3609,7 @@ ${imageAnalyzeText.trim()}
         });
     }
 }
+}
 
 // Auto-Repair Job
 async function checkAndAutoRepairSessions() {
@@ -3796,4 +3797,3 @@ module.exports = {
     upsertLabelAction,
     deleteLabelAction
 };
-}
