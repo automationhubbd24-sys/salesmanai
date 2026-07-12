@@ -1,5 +1,6 @@
 const axios = require('axios');
 const FormData = require('form-data');
+const imageService = require('./imageService');
 
 // WAHA Configuration
 const WAHA_BASE_URL = process.env.WAHA_BASE_URL || 'https://wahubbd.salesmanchatbot.online';
@@ -82,30 +83,28 @@ async function sendMessage(session, chatId, text, replyTo = null) {
  */
 async function sendImage(session, chatId, imageUrl, caption) {
     try {
-        // 1. Try to download the image first (Binary Upload)
-        // This ensures the image is actually reachable and avoids WAHA URL access issues
-        const imageResponse = await axios.get(imageUrl, { 
-            responseType: 'arraybuffer',
-            timeout: 10000 // 10s timeout
-        });
-        
-        const buffer = Buffer.from(imageResponse.data, 'binary');
-        
-        // Detect MimeType from Headers
-        const contentType = imageResponse.headers['content-type'] || 'image/jpeg';
-        let extension = contentType.split('/')[1] || 'jpg';
-        if (extension === 'jpeg') extension = 'jpg';
-        
-        const filename = `image_${Date.now()}.${extension}`;
+        // First, validate image format (only JPG/PNG allowed!)
+        if (!imageService.validateImageFormat(imageUrl)) {
+            console.warn(`[WhatsApp] Image format not allowed (only JPG/PNG): ${imageUrl}`);
+            return null;
+        }
 
+        // Compress Image!
+        console.log(`[WhatsApp] Compressing image: ${imageUrl}`);
+        const compressed = await imageService.compressImage(imageUrl, {
+            maxWidth: 1200,
+            maxHeight: 1200,
+            quality: 80
+        });
+        console.log(`[WhatsApp] Image compressed: ${(compressed.size / 1024).toFixed(2)}KB`);
+
+        const filename = `image_${Date.now()}.jpg`;
         const form = new FormData();
         form.append('session', session);
         form.append('chatId', chatId);
-        form.append('file', buffer, { filename: filename, contentType: contentType });
+        form.append('file', compressed.buffer, { filename: filename, contentType: compressed.mimeType });
         if (caption) form.append('caption', caption);
 
-        // Send using specific headers for FormData
-        // Note: We use raw axios here to handle FormData headers correctly
         const response = await axios.post(`${WAHA_BASE_URL}/api/sendImage`, form, {
             headers: {
                 ...form.getHeaders(),
@@ -114,35 +113,9 @@ async function sendImage(session, chatId, imageUrl, caption) {
         });
         
         return response.data;
-
     } catch (error) {
-        console.warn(`[WhatsApp] Binary Upload Failed. Falling back to URL method: ${error.message}`);
-        
-        // 2. Fallback: URL Method
-        try {
-            // Auto-detect mimetype from URL extension (Basic)
-            let mimetype = "image/jpeg";
-            if (imageUrl.endsWith(".png")) mimetype = "image/png";
-            else if (imageUrl.endsWith(".webp")) mimetype = "image/webp";
-            else if (imageUrl.endsWith(".gif")) mimetype = "image/gif";
-            
-            const payload = {
-                chatId: chatId,
-                file: {
-                    mimetype: mimetype,
-                    url: imageUrl,
-                    filename: "image" + (imageUrl.split('.').pop() || ".jpg")
-                },
-                caption: caption,
-                session: session
-            };
-
-            const response = await apiClient.post('/api/sendImage', payload);
-            return response.data;
-        } catch (fallbackError) {
-            console.error(`[WhatsApp] Send Image Error (Final):`, fallbackError.message);
-            return null;
-        }
+        console.warn(`[WhatsApp] Binary Upload with Compression Failed: ${error.message}`);
+        return null;
     }
 }
 
