@@ -1181,7 +1181,7 @@ export default function MessengerSettingsPage() {
                                                   <span className="text-amber-500 font-bold">Managed by Owner</span>
                                                 ) : (
                                                   <>
-                                                    {(selectedPlan === '500_free' || (detailedCredits?.daily_limit === 0 && messageCredit <= 100)) && "Free Credits"}
+                                                    {selectedPlan === '500_free' && "Free Credits"}
                                                     {(selectedPlan === '1000' || selectedPlan === 'm1000' || selectedPlan === 'starter') && "Starter Plan"}
                                                     {(selectedPlan === '5000' || selectedPlan === 'm3000' || selectedPlan === 'pro') && (detailedCredits?.daily_limit > 0 ? "Pro Plan" : "Free Credits")}
                                                     {(selectedPlan === '10000' || selectedPlan === 'm7500' || selectedPlan === 'enterprise') && (detailedCredits?.daily_limit > 0 ? "Enterprise Plan" : "Free Credits")}
@@ -1193,6 +1193,9 @@ export default function MessengerSettingsPage() {
                                                     )}
                                                     {(!selectedPlan || selectedPlan === 'none') && detailedCredits?.subscription_plan === 'none' && (detailedCredits?.permanent_credit > 0 || messageCredit > 0) && (
                                                       <span>Permanent Packages</span>
+                                                    )}
+                                                    {(!selectedPlan || selectedPlan === 'none') && detailedCredits?.subscription_plan === 'none' && detailedCredits?.permanent_credit === 0 && messageCredit <= 100 && (
+                                                      <span>Free Credits</span>
                                                     )}
                                                   </>
                                                 )}

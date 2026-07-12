@@ -42,10 +42,6 @@ function setCachedEmbedding(text, vector) {
 
 function normalizeEmbeddingVector(vector, modelName = '') {
     if (!Array.isArray(vector)) return null;
-    const normalizedModelName = String(modelName || '').toLowerCase();
-    if (normalizedModelName.includes('embedding-001') && vector.length === 3072) {
-        return vector.slice(0, 1536);
-    }
     return vector;
 }
 
