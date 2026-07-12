@@ -4,13 +4,59 @@ const { query } = require('./pgClient');
 async function checkAndExpirePlan(userId) {
   try {
     const result = await query(
-      'SELECT subscription_plan, monthly_expires_at FROM user_configs WHERE user_id::text = $1::text LIMIT 1',
+      `SELECT subscription_plan,
+              monthly_expires_at,
+              daily_used,
+              monthly_used,
+              bonus_credit,
+              last_reset_at,
+              last_monthly_reset_at
+       FROM user_configs
+       WHERE user_id::text = $1::text
+       LIMIT 1`,
       [String(userId)]
     );
     if (result.rows.length === 0) return null;
     
     const config = result.rows[0];
     const now = new Date();
+
+    const lastReset = new Date(config.last_reset_at || 0);
+    const lastMonthlyReset = new Date(config.last_monthly_reset_at || 0);
+    const isNewDay = lastReset.toDateString() !== now.toDateString();
+    const isNewMonth =
+      lastMonthlyReset.getMonth() !== now.getMonth() ||
+      lastMonthlyReset.getFullYear() !== now.getFullYear();
+
+    if (isNewMonth) {
+      await query(
+        `UPDATE user_configs
+         SET daily_used = 0,
+             monthly_used = 0,
+             bonus_credit = 0,
+             last_reset_at = NOW(),
+             last_monthly_reset_at = NOW()
+         WHERE user_id::text = $1::text`,
+        [String(userId)]
+      );
+      console.log(`[DB] Auto-reset daily/monthly counters for User ${userId}`);
+      config.daily_used = 0;
+      config.monthly_used = 0;
+      config.bonus_credit = 0;
+      config.last_reset_at = now;
+      config.last_monthly_reset_at = now;
+    } else if (isNewDay) {
+      await query(
+        `UPDATE user_configs
+         SET daily_used = 0,
+             last_reset_at = NOW()
+         WHERE user_id::text = $1::text`,
+        [String(userId)]
+      );
+      console.log(`[DB] Auto-reset daily usage for User ${userId}`);
+      config.daily_used = 0;
+      config.last_reset_at = now;
+    }
     
     if (config.subscription_plan && config.subscription_plan !== 'none' && config.monthly_expires_at) {
       const expiresAt = new Date(config.monthly_expires_at);
@@ -20,6 +66,7 @@ async function checkAndExpirePlan(userId) {
           `UPDATE user_configs 
            SET subscription_plan = 'none', 
                daily_limit = 0, 
+               daily_used = 0,
                bonus_credit = 0, 
                monthly_limit = 0,
                monthly_used = 0
