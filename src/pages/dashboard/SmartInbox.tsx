@@ -602,7 +602,7 @@ const SmartInbox = () => {
         )}
       >
         {/* Header */}
-        <div className="border-b border-white/5 p-5 md:p-6 space-y-5 bg-gradient-to-b from-[#00ff88]/5 to-transparent">
+        <div className="border-b border-white/5 p-5 md:p-6 space-y-5 bg-gradient-to-b from-white/[0.02] to-transparent">
           {/* Premium Header */}
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
@@ -776,7 +776,7 @@ const SmartInbox = () => {
         {selectedChat ? (
           <>
             {/* Chat Header */}
-            <div className="border-b border-white/5 bg-gradient-to-b from-black/30 to-transparent px-4 sm:px-5 py-3.5 sm:py-4 md:px-6">
+            <div className="border-b border-white/5 bg-gradient-to-b from-white/[0.02] to-transparent px-4 sm:px-5 py-3.5 sm:py-4 md:px-6">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
                   <Button
@@ -851,7 +851,7 @@ const SmartInbox = () => {
             </div>
 
             {/* Mobile Label Controls */}
-            <div className="border-b border-white/5 bg-gradient-to-r from-[#00ff88]/3 to-transparent px-4 py-4 md:hidden">
+            <div className="border-b border-white/5 bg-gradient-to-r from-white/[0.015] to-transparent px-4 py-4 md:hidden">
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-2xl border border-white/8 bg-gradient-to-br from-white/[0.04] to-white/[0.02] p-4 hover:from-white/[0.06] hover:to-white/[0.03] transition-all duration-300">
                   <div className="flex items-center justify-between gap-3">
@@ -1065,7 +1065,7 @@ const SmartInbox = () => {
       {selectedChat && (
         <div className="hidden w-[320px] md:w-[340px] lg:w-[360px] xl:w-[380px] border-l border-white/5 bg-gradient-to-b from-[#070a14] to-[#050812] lg:flex lg:flex-col">
           {/* Profile Header */}
-          <div className="border-b border-white/5 p-7 bg-gradient-to-b from-[#00ff88]/5 to-transparent">
+          <div className="border-b border-white/5 p-7 bg-gradient-to-b from-white/[0.02] to-transparent">
             <div className="flex flex-col items-center text-center">
               <Avatar className="h-24 w-24 border-2 border-[#00ff88]/20 shadow-[0_0_30px_rgba(0,255,136,0.15)]">
                 <AvatarFallback className="bg-gradient-to-br from-[#00ff88]/20 to-white/5 text-white/70">
