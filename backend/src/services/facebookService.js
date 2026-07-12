@@ -1,6 +1,5 @@
 const axios = require('axios');
 const dbService = require('./dbService'); // Required for token invalidation
-const imageService = require('./imageService');
 const FACEBOOK_GRAPH_VERSION = process.env.FACEBOOK_GRAPH_VERSION || 'v25.0';
 
 // Helper: Handle Facebook Errors
@@ -200,21 +199,14 @@ const FormData = require('form-data');
 // Upload Image Binary (Bypasses URL reachability issues)
 async function sendImageUpload(pageId, recipientId, imageUrl, accessToken) {
     try {
-        // Validate image format (only JPG/PNG allowed!)
-        if (!imageService.validateImageFormat(imageUrl)) {
-            console.warn(`[Facebook] Image format not allowed (only JPG/PNG): ${imageUrl}`);
-            return null;
-        }
-
-        console.log(`[Facebook] Compressing image: ${imageUrl}`);
-        const compressed = await imageService.compressImage(imageUrl, {
-            maxWidth: 1200,
-            maxHeight: 1200,
-            quality: 80
+        console.log(`Downloading image for upload: ${imageUrl}`);
+        
+        // 1. Download Image
+        const imageResponse = await axios.get(imageUrl, {
+            responseType: 'stream'
         });
-        console.log(`[Facebook] Image compressed: ${(compressed.size / 1024).toFixed(2)}KB`);
 
-        // Prepare Form Data with compressed buffer
+        // 2. Prepare Form Data
         const form = new FormData();
         form.append('recipient', JSON.stringify({ id: recipientId }));
         form.append('message', JSON.stringify({
@@ -225,14 +217,15 @@ async function sendImageUpload(pageId, recipientId, imageUrl, accessToken) {
                 }
             }
         }));
-        form.append('filedata', compressed.buffer, {
-            filename: 'image.jpg',
-            contentType: compressed.mimeType
+        form.append('filedata', imageResponse.data, {
+            filename: 'image.jpg', // Default filename
+            contentType: imageResponse.headers['content-type']
         });
 
+        // 3. Upload to Facebook
         const url = `https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/me/messages?access_token=${accessToken}`;
         
-        console.log(`[Facebook] Uploading compressed image to ${recipientId} from ${pageId}`);
+        console.log(`Uploading image to ${recipientId} from ${pageId}`);
         const response = await axios.post(url, form, {
             headers: {
                 ...form.getHeaders()
@@ -241,25 +234,39 @@ async function sendImageUpload(pageId, recipientId, imageUrl, accessToken) {
         
         return response.data;
     } catch (error) {
+        // SAFE LOGGING: Avoid circular structure issues by logging specific fields
         const errData = error.response ? (error.response.data || 'No data') : error.message;
-        console.error(`[Facebook] Error uploading compressed image for page ${pageId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
-        throw error;
+        console.error(`Error uploading image for page ${pageId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
+        
+        // Fallback to URL method if upload fails (e.g. file too big or 404 on download)
+        console.log('Falling back to URL send method...');
+        return sendImageMessage(pageId, recipientId, imageUrl, accessToken);
     }
 }
 
 async function sendImageMessage(pageId, recipientId, imageUrl, accessToken) {
     try {
-        // Validate image format (only JPG/PNG allowed!)
-        if (!imageService.validateImageFormat(imageUrl)) {
-            console.warn(`[Facebook] Image format not allowed (only JPG/PNG): ${imageUrl}`);
-            return null;
-        }
+        const url = `https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/me/messages?access_token=${accessToken}`;
+        
+        const payload = {
+            recipient: { id: recipientId },
+            message: {
+                attachment: {
+                    type: "image",
+                    payload: { 
+                        url: imageUrl, 
+                        is_reusable: true 
+                    }
+                }
+            }
+        };
 
-        // Let's use compressed upload instead of URL to ensure compression is applied!
-        return sendImageUpload(pageId, recipientId, imageUrl, accessToken);
+        console.log(`Sending Image to ${recipientId} from ${pageId}`);
+        const response = await axios.post(url, payload);
+        return response.data;
     } catch (error) {
         const errData = error.response ? (error.response.data || 'No data') : error.message;
-        console.error(`[Facebook] Error sending image for page ${pageId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
+        console.error(`Error sending image for page ${pageId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
         throw error;
     }
 }

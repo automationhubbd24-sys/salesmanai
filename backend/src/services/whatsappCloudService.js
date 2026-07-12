@@ -1,5 +1,4 @@
 const axios = require('axios');
-const imageService = require('./imageService');
 
 const GRAPH_VERSION = process.env.FACEBOOK_GRAPH_VERSION || 'v22.0';
 
@@ -221,31 +220,7 @@ class WhatsAppCloudService {
 
     async sendImageMessage(phoneNumberId, accessToken, recipientNumber, imageUrl, caption) {
         try {
-            // Validate format first!
-            if (!imageService.validateImageFormat(imageUrl)) {
-                console.warn(`[WhatsApp Cloud] Image format not allowed (only JPG/PNG): ${imageUrl}`);
-                return null;
-            }
-
-            // Compress and upload
-            console.log(`[WhatsApp Cloud] Compressing image: ${imageUrl}`);
-            const compressed = await imageService.compressImage(imageUrl, {
-                maxWidth: 1200,
-                maxHeight: 1200,
-                quality: 80
-            });
-            console.log(`[WhatsApp Cloud] Image compressed: ${(compressed.size / 1024).toFixed(2)}KB`);
-
-            // Upload compressed image to get a public URL (using imageService's upload function)
-            const publicUrl = await imageService.uploadProductAsset(
-                compressed.buffer, 
-                compressed.mimeType, 
-                'whatsapp_cloud', // userId
-                process.env.PUBLIC_BASE_URL,
-                { folder: 'whatsapp_images' }
-            );
-
-            const image = { link: publicUrl };
+            const image = { link: imageUrl };
             if (caption) {
                 image.caption = caption;
             }

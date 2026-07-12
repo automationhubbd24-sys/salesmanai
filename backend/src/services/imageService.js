@@ -2,7 +2,6 @@ const sharp = require('sharp');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const axios = require('axios');
 const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { createClient } = require('@supabase/supabase-js');
 
@@ -69,101 +68,6 @@ function buildUniqueAssetName(extension) {
     const timestamp = Date.now();
     const randomSuffix = crypto.randomBytes(8).toString('hex');
     return `${timestamp}-${randomSuffix}.${extension}`;
-}
-
-// Allowed image formats (JPG/PNG only!)
-const ALLOWED_IMAGE_MIME_TYPES = ['image/jpeg', 'image/jpg', 'image/png'];
-const ALLOWED_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png'];
-
-/**
- * Validate if the image is allowed format (JPG/PNG)
- */
-function validateImageFormat(urlOrBuffer, mimeType = null) {
-    if (mimeType && ALLOWED_IMAGE_MIME_TYPES.includes(mimeType)) {
-        return true;
-    }
-    if (typeof urlOrBuffer === 'string') {
-        try {
-            const url = String(urlOrBuffer);
-            const parsedUrl = new URL(url);
-            const ext = path.extname(parsedUrl.pathname).toLowerCase();
-            if (ALLOWED_IMAGE_EXTENSIONS.includes(ext)) {
-                return true;
-            }
-            // If no extension, maybe it's a data URL or something, but for now, allow if mimeType passes
-            return false;
-        } catch (e) {
-            // If not a valid URL, maybe it's a local path?
-            try {
-                const ext = path.extname(urlOrBuffer).toLowerCase();
-                return ALLOWED_IMAGE_EXTENSIONS.includes(ext);
-            } catch (e2) {
-                return false;
-            }
-        }
-    }
-    return false;
-}
-
-/**
- * Compress an image (from URL or Buffer) for WhatsApp/Messenger
- */
-async function compressImage(input, options = {}) {
-    try {
-        const {
-            maxWidth = 1200, maxHeight = 1200, quality = 80, format = 'jpeg' } = options;
-
-        let buffer;
-        if (typeof input === 'string') {
-            // Download from URL
-            const response = await axios.get(input, { responseType: 'arraybuffer' });
-            buffer = Buffer.from(response.data);
-        } else if (Buffer.isBuffer(input)) {
-            buffer = input;
-        } else {
-            throw new Error('Input must be URL string or Buffer');
-        }
-
-        // Validate image using Sharp
-        const compressedBuffer = await sharp(buffer)
-            .rotate() // Auto-rotate based on EXIF
-            .resize(maxWidth, maxHeight, {
-                fit: 'inside',
-                withoutEnlargement: true,
-            })
-            .jpeg({ quality, mozjpeg: true, progressive: true })
-            .toBuffer();
-
-        return {
-            buffer: compressedBuffer,
-            mimeType: 'image/jpeg',
-            size: compressedBuffer.length
-        };
-    } catch (error) {
-        console.error('[ImageService] Compression failed:', error);
-        throw error;
-    }
-}
-
-/**
- * Compress images from a list of URLs - return compressed buffers
- */
-async function compressImageUrls(urls, options = {}) {
-    const results = [];
-    for (const url of urls) {
-        try {
-            if (!validateImageFormat(url)) {
-                console.warn(`[ImageService] Skipping invalid image format: ${url}`);
-                continue;
-            }
-            const compressed = await compressImage(url, options);
-            results.push({ originalUrl: url, ...compressed });
-        } catch (err) {
-            console.error(`[ImageService] Failed to compress ${url}:`, err);
-            results.push({ originalUrl: url, error: err.message });
-        }
-    }
-    return results;
 }
 
 async function uploadProductAsset(finalBuffer, contentType, userId, baseUrl, options = {}) {
@@ -420,10 +324,5 @@ async function deleteProductAssets(assetUrls = []) {
 module.exports = {
     uploadProductImage,
     uploadProductVideo,
-    deleteProductAssets,
-    compressImage,
-    compressImageUrls,
-    validateImageFormat,
-    ALLOWED_IMAGE_MIME_TYPES,
-    ALLOWED_IMAGE_EXTENSIONS
+    deleteProductAssets
 };
