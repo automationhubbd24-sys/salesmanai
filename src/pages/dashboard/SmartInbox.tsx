@@ -593,12 +593,12 @@ const SmartInbox = () => {
   );
 
   return (
-    <div className="flex h-[calc(100dvh-64px)] md:h-[calc(100vh-80px)] overflow-hidden bg-gradient-to-br from-[#050810] to-[#081020] md:rounded-[2rem] border border-white/5 shadow-2xl">
+    <div className="flex h-[calc(100dvh-64px)] sm:h-[calc(100dvh-70px)] md:h-[calc(100vh-80px)] overflow-hidden bg-gradient-to-br from-[#050810] to-[#081020] md:rounded-[2rem] border border-white/5 shadow-2xl">
       {/* Conversation List */}
       <div
         className={cn(
-          "w-full md:w-[360px] lg:w-[380px] border-r border-white/5 flex flex-col bg-gradient-to-b from-[#070a12] to-[#050810]",
-          !isMobileListVisible && "hidden md:flex"
+          "w-full sm:w-[320px] md:w-[360px] lg:w-[380px] xl:w-[400px] border-r border-white/5 flex flex-col bg-gradient-to-b from-[#070a12] to-[#050810]",
+          !isMobileListVisible && "hidden sm:flex"
         )}
       >
         {/* Header */}
@@ -693,7 +693,7 @@ const SmartInbox = () => {
               </p>
             </div>
           ) : (
-            <div className="p-2 md:p-3 space-y-2">
+            <div className="p-2 sm:p-3 md:p-3.5 space-y-2 sm:space-y-2.5">
               {filteredChats.map((chat) => {
                 const isActive = selectedChat?.id === chat.id;
                 return (
@@ -702,15 +702,15 @@ const SmartInbox = () => {
                     type="button"
                     onClick={() => handleSelectChat(chat)}
                     className={cn(
-                      "w-full rounded-2xl border p-4 text-left transition-all duration-300 group",
+                      "w-full rounded-2xl border p-3.5 sm:p-4 text-left transition-all duration-300 group",
                       isActive
                         ? "border-[#00ff88]/30 bg-gradient-to-r from-[#00ff88]/12 to-[#00ff88]/6 shadow-[0_0_30px_rgba(0,255,136,0.12)]"
                         : "border-white/5 bg-white/[0.02] hover:bg-white/[0.04] hover:border-white/10"
                     )}
                   >
-                    <div className="flex items-start gap-3">
+                    <div className="flex items-start gap-2.5 sm:gap-3">
                       <Avatar className={cn(
-                        "h-12 w-12 border transition-all duration-300",
+                        "h-10 w-10 sm:h-12 sm:w-12 border transition-all duration-300",
                         isActive ? "border-[#00ff88]/30" : "border-white/10 group-hover:border-white/20"
                       )}>
                         <AvatarImage src={undefined} />
@@ -718,36 +718,36 @@ const SmartInbox = () => {
                           "bg-gradient-to-br from-white/10 to-white/5 text-white/60",
                           isActive && "from-[#00ff88]/20 to-[#00ff88]/10"
                         )}>
-                          <UserIcon size={20} />
+                          <UserIcon size={18} className="sm:w-5 sm:h-5" />
                         </AvatarFallback>
                       </Avatar>
 
                       <div className="min-w-0 flex-1">
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
-                            <div className="truncate text-sm font-bold text-white">
+                            <div className="truncate text-sm sm:text-base font-bold text-white">
                               {getDisplayName(chat)}
                             </div>
-                            <div className="mt-0.5 text-[11px] text-white/40">
+                            <div className="mt-0.5 text-[10px] sm:text-[11px] text-white/40">
                               {chat.from}
                             </div>
                           </div>
-                          <div className="shrink-0 text-[11px] text-white/40 font-medium">
+                          <div className="shrink-0 text-[10px] sm:text-[11px] text-white/40 font-medium">
                             {formatListTime(chat.timestamp)}
                           </div>
                         </div>
 
-                        <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-white/65">
+                        <p className="mt-1.5 sm:mt-2 line-clamp-2 text-sm leading-relaxed text-white/65">
                           {getMessagePreview(chat.body)}
                         </p>
 
-                        <div className="mt-3 flex flex-wrap gap-1.5">
+                        <div className="mt-2.5 sm:mt-3 flex flex-wrap gap-1.5">
                           {chat.active_labels.length > 0 ? (
                             chat.active_labels.map((label) => (
                               <Badge
                                 key={`${chat.id}-${label}`}
                                 variant="outline"
-                                className={cn("rounded-full px-3 py-1 text-[10px] font-bold border-opacity-50", LABEL_META[label].className)}
+                                className={cn("rounded-full px-2.5 sm:px-3 py-0.5 sm:py-1 text-[9px] sm:text-[10px] font-bold border-opacity-50", LABEL_META[label].className)}
                               >
                                 {LABEL_META[label].title}
                               </Badge>
@@ -755,7 +755,7 @@ const SmartInbox = () => {
                           ) : (
                             <Badge
                               variant="outline"
-                              className="rounded-full border-white/10 bg-white/[0.03] px-3 py-1 text-[10px] text-white/45"
+                              className="rounded-full border-white/10 bg-white/[0.03] px-2.5 sm:px-3 py-0.5 sm:py-1 text-[9px] sm:text-[10px] text-white/45"
                             >
                               New
                             </Badge>
@@ -772,35 +772,35 @@ const SmartInbox = () => {
       </div>
 
       {/* Chat Area */}
-      <div className={cn("flex flex-1 flex-col bg-[#050810]", isMobileListVisible && "hidden md:flex")}>
+      <div className={cn("flex flex-1 flex-col bg-[#050810]", isMobileListVisible && "hidden sm:flex")}>
         {selectedChat ? (
           <>
             {/* Chat Header */}
-            <div className="border-b border-white/5 bg-gradient-to-b from-black/30 to-transparent px-4 py-4 md:px-6">
+            <div className="border-b border-white/5 bg-gradient-to-b from-black/30 to-transparent px-4 sm:px-5 py-3.5 sm:py-4 md:px-6">
               <div className="flex items-center justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-3">
+                <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="md:hidden text-white/50 hover:text-white hover:bg-white/10"
+                    className="sm:hidden text-white/50 hover:text-white hover:bg-white/10"
                     onClick={() => setIsMobileListVisible(true)}
                   >
-                    <ChevronLeft size={22} />
+                    <ChevronLeft size={20} className="sm:w-5.5 sm:h-5.5" />
                   </Button>
 
-                  <Avatar className="h-12 w-12 border border-white/10">
+                  <Avatar className="h-10 w-10 sm:h-12 sm:w-12 border border-white/10">
                     <AvatarFallback className="bg-gradient-to-br from-white/10 to-white/5 text-white/60">
-                      <UserIcon size={20} />
+                      <UserIcon size={18} className="sm:w-5 sm:h-5" />
                     </AvatarFallback>
                   </Avatar>
 
                   <div className="min-w-0">
-                    <div className="truncate text-base font-bold text-white">
+                    <div className="truncate text-sm sm:text-base font-bold text-white">
                       {getDisplayName(selectedChat)}
                     </div>
-                    <div className="mt-1 flex items-center gap-2 text-[11px] text-white/45">
-                      <span className="inline-flex items-center gap-1.5">
-                        <span className="h-2 w-2 rounded-full bg-[#00ff88] animate-pulse" />
+                    <div className="mt-0.5 sm:mt-1 flex items-center gap-1.5 sm:gap-2 text-[10px] sm:text-[11px] text-white/45">
+                      <span className="inline-flex items-center gap-1 sm:gap-1.5">
+                        <span className="h-1.5 w-1.5 sm:h-2 sm:w-2 rounded-full bg-[#00ff88] animate-pulse" />
                         {selectedChat.reply_by === "bot"
                           ? "Last reply by Agent"
                           : selectedChat.reply_by === "admin"
@@ -820,21 +820,21 @@ const SmartInbox = () => {
                     onClick={() => fetchMessages(selectedChat.id, { silent: true })}
                     className="text-white/40 hover:text-[#00ff88] hover:bg-[#00ff88]/10 transition-all duration-300"
                   >
-                    <RefreshCw size={18} className={cn("transition-transform", refreshingMessages && "animate-spin")} />
+                    <RefreshCw size={16} className={cn("sm:w-4.5 sm:h-4.5 transition-transform", refreshingMessages && "animate-spin")} />
                   </Button>
                   <Button variant="ghost" size="icon" className="text-white/35 hover:text-white hover:bg-white/10 transition-all duration-300">
-                    <ShieldCheck size={18} />
+                    <ShieldCheck size={16} className="sm:w-4.5 sm:h-4.5" />
                   </Button>
                 </div>
               </div>
 
-              <div className="mt-4 flex flex-wrap gap-2">
+              <div className="mt-3.5 sm:mt-4 flex flex-wrap gap-1.5 sm:gap-2">
                 {selectedChat.active_labels.length > 0 ? (
                   selectedChat.active_labels.map((label) => (
                     <Badge
                       key={`header-${label}`}
                       variant="outline"
-                      className={cn("rounded-full px-3 py-1.5 text-[10px] font-bold border-opacity-50", LABEL_META[label].className)}
+                      className={cn("rounded-full px-2.5 sm:px-3 py-1 sm:py-1.5 text-[9px] sm:text-[10px] font-bold border-opacity-50", LABEL_META[label].className)}
                     >
                       {LABEL_META[label].title}
                     </Badge>
@@ -842,7 +842,7 @@ const SmartInbox = () => {
                 ) : (
                   <Badge
                     variant="outline"
-                    className="rounded-full border-white/10 bg-white/[0.03] px-3 py-1.5 text-[10px] text-white/45"
+                    className="rounded-full border-white/10 bg-white/[0.03] px-2.5 sm:px-3 py-1 sm:py-1.5 text-[9px] sm:text-[10px] text-white/45"
                   >
                     New Conversation
                   </Badge>
@@ -1063,7 +1063,7 @@ const SmartInbox = () => {
 
       {/* Desktop Right Panel */}
       {selectedChat && (
-        <div className="hidden w-[350px] border-l border-white/5 bg-gradient-to-b from-[#070a14] to-[#050812] lg:flex lg:flex-col">
+        <div className="hidden w-[320px] md:w-[340px] lg:w-[360px] xl:w-[380px] border-l border-white/5 bg-gradient-to-b from-[#070a14] to-[#050812] lg:flex lg:flex-col">
           {/* Profile Header */}
           <div className="border-b border-white/5 p-7 bg-gradient-to-b from-[#00ff88]/5 to-transparent">
             <div className="flex flex-col items-center text-center">
