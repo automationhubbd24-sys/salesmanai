@@ -851,13 +851,16 @@ const SmartInbox = () => {
             </div>
 
             {/* Mobile Label Controls */}
-            <div className="border-b border-white/5 bg-white/[0.015] px-4 py-3.5 md:hidden">
+            <div className="border-b border-white/5 bg-gradient-to-r from-[#00ff88]/3 to-transparent px-4 py-4 md:hidden">
               <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-2xl border border-white/5 bg-white/[0.025] p-3.5 hover:bg-white/[0.04] transition-colors">
-                  <div className="flex items-center justify-between gap-2">
+                <div className="rounded-2xl border border-white/8 bg-gradient-to-br from-white/[0.04] to-white/[0.02] p-4 hover:from-white/[0.06] hover:to-white/[0.03] transition-all duration-300">
+                  <div className="flex items-center justify-between gap-3">
                     <div>
-                      <div className="text-xs font-bold text-white">Order</div>
-                      <div className="mt-1 text-[11px] text-white/45">Track order conversations</div>
+                      <div className="text-xs font-black text-white flex items-center gap-1.5">
+                        <div className="h-1.5 w-1.5 rounded-full bg-amber-400"></div>
+                        Order
+                      </div>
+                      <div className="mt-1 text-[11px] text-white/50">Track orders</div>
                     </div>
                     <Switch
                       checked={selectedChat.order_selected}
@@ -867,11 +870,14 @@ const SmartInbox = () => {
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-white/5 bg-white/[0.025] p-3.5 hover:bg-white/[0.04] transition-colors">
-                  <div className="flex items-center justify-between gap-2">
+                <div className="rounded-2xl border border-white/8 bg-gradient-to-br from-white/[0.04] to-white/[0.02] p-4 hover:from-white/[0.06] hover:to-white/[0.03] transition-all duration-300">
+                  <div className="flex items-center justify-between gap-3">
                     <div>
-                      <div className="text-xs font-bold text-white">Human Transfer</div>
-                      <div className="mt-1 text-[11px] text-white/45">Unreplied customer queue</div>
+                      <div className="text-xs font-black text-white flex items-center gap-1.5">
+                        <div className="h-1.5 w-1.5 rounded-full bg-fuchsia-400"></div>
+                        Human Transfer
+                      </div>
+                      <div className="mt-1 text-[11px] text-white/50">Human follow-up</div>
                     </div>
                     <Switch
                       checked={selectedChat.human_transfer_selected}
@@ -1057,22 +1063,22 @@ const SmartInbox = () => {
 
       {/* Desktop Right Panel */}
       {selectedChat && (
-        <div className="hidden w-[340px] border-l border-white/5 bg-gradient-to-b from-[#070a12] to-[#050810] lg:flex lg:flex-col">
+        <div className="hidden w-[350px] border-l border-white/5 bg-gradient-to-b from-[#070a14] to-[#050812] lg:flex lg:flex-col">
           {/* Profile Header */}
-          <div className="border-b border-white/5 p-7">
+          <div className="border-b border-white/5 p-7 bg-gradient-to-b from-[#00ff88]/5 to-transparent">
             <div className="flex flex-col items-center text-center">
-              <Avatar className="h-24 w-24 border-2 border-white/10">
-                <AvatarFallback className="bg-gradient-to-br from-white/10 to-white/5 text-white/60">
+              <Avatar className="h-24 w-24 border-2 border-[#00ff88]/20 shadow-[0_0_30px_rgba(0,255,136,0.15)]">
+                <AvatarFallback className="bg-gradient-to-br from-[#00ff88]/20 to-white/5 text-white/70">
                   <UserIcon size={36} />
                 </AvatarFallback>
               </Avatar>
-              <h3 className="mt-5 text-xl font-bold text-white">
+              <h3 className="mt-5 text-xl font-black text-white">
                 {getDisplayName(selectedChat)}
               </h3>
-              <p className="mt-1.5 text-sm text-white/40 font-medium">
+              <p className="mt-1.5 text-sm text-white/50 font-medium">
                 {selectedChat.from}
               </p>
-              <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-4 py-1.5 text-[11px] text-white/55">
+              <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-[#00ff88]/20 bg-gradient-to-r from-[#00ff88]/10 to-white/[0.03] px-4 py-1.5 text-[11px] text-[#8effc4]/80 shadow-sm">
                 <Smartphone size={14} />
                 {getPlatformTitle(platform)}
               </div>
@@ -1080,21 +1086,21 @@ const SmartInbox = () => {
           </div>
 
           {/* Panel Content */}
-          <div className="space-y-7 p-7">
+          <div className="space-y-8 p-7">
             {/* Active Labels */}
-            <div className="space-y-3.5">
-              <div className="text-[11px] font-black uppercase tracking-[0.2em] text-[#8effc4] flex items-center gap-2">
-                <div className="h-0.5 w-4 bg-[#8effc4]/50 rounded-full" />
+            <div className="space-y-4">
+              <div className="text-[11px] font-black uppercase tracking-[0.25em] text-[#8effc4] flex items-center gap-3">
+                <div className="h-0.5 w-6 bg-gradient-to-r from-[#00ff88] to-[#00ff88]/30 rounded-full" />
                 Active Labels
-                <div className="h-0.5 flex-1 bg-[#8effc4]/30 rounded-full" />
+                <div className="h-0.5 flex-1 bg-gradient-to-r from-[#00ff88]/30 to-transparent rounded-full" />
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2.5">
                 {selectedChat.active_labels.length > 0 ? (
                   selectedChat.active_labels.map((label) => (
                     <Badge
                       key={`panel-${label}`}
                       variant="outline"
-                      className={cn("rounded-full px-3.5 py-1.5 text-[10px] font-bold border-opacity-50", LABEL_META[label].className)}
+                      className={cn("rounded-full px-4 py-2 text-[10px] font-black border-opacity-60 shadow-sm", LABEL_META[label].className)}
                     >
                       {LABEL_META[label].title}
                     </Badge>
@@ -1102,7 +1108,7 @@ const SmartInbox = () => {
                 ) : (
                   <Badge
                     variant="outline"
-                    className="rounded-full border-white/10 bg-white/[0.03] px-3.5 py-1.5 text-[10px] text-white/45"
+                    className="rounded-full border-white/10 bg-white/[0.04] px-4 py-2 text-[10px] text-white/50 font-bold"
                   >
                     New Conversation
                   </Badge>
@@ -1111,18 +1117,21 @@ const SmartInbox = () => {
             </div>
 
             {/* Label Controls */}
-            <div className="space-y-3.5">
-              <div className="text-[11px] font-black uppercase tracking-[0.2em] text-[#8effc4] flex items-center gap-2">
-                <div className="h-0.5 w-4 bg-[#8effc4]/50 rounded-full" />
+            <div className="space-y-4">
+              <div className="text-[11px] font-black uppercase tracking-[0.25em] text-[#8effc4] flex items-center gap-3">
+                <div className="h-0.5 w-6 bg-gradient-to-r from-[#00ff88] to-[#00ff88]/30 rounded-full" />
                 Label Controls
-                <div className="h-0.5 flex-1 bg-[#8effc4]/30 rounded-full" />
+                <div className="h-0.5 flex-1 bg-gradient-to-r from-[#00ff88]/30 to-transparent rounded-full" />
               </div>
 
-              <div className="rounded-2xl border border-white/5 bg-white/[0.025] p-5 hover:bg-white/[0.04] transition-colors">
+              <div className="rounded-2xl border border-white/7 bg-gradient-to-br from-white/[0.05] to-white/[0.02] p-5 hover:from-white/[0.07] hover:to-white/[0.03] transition-all duration-300 shadow-sm">
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <div className="text-base font-bold text-white">Order</div>
-                    <p className="mt-2 text-xs leading-relaxed text-white/45">
+                    <div className="text-base font-black text-white flex items-center gap-2">
+                      <div className="h-2 w-2 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.4)]"></div>
+                      Order
+                    </div>
+                    <p className="mt-2 text-xs leading-relaxed text-white/50">
                       Add this conversation to your order follow-up queue.
                     </p>
                   </div>
@@ -1133,18 +1142,21 @@ const SmartInbox = () => {
                   />
                 </div>
                 {selectedChat.order_status && (
-                  <div className="mt-4 flex items-center gap-2 text-[11px] text-amber-200/80 bg-amber-500/10 px-3 py-2 rounded-xl border border-amber-500/20">
-                    <div className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                  <div className="mt-4 flex items-center gap-2.5 text-[11px] text-amber-200/90 bg-gradient-to-r from-amber-500/15 to-amber-500/5 px-3.5 py-2.5 rounded-xl border border-amber-500/25">
+                    <div className="h-2 w-2 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.5)]" />
                     Order status: {selectedChat.order_status}
                   </div>
                 )}
               </div>
 
-              <div className="rounded-2xl border border-white/5 bg-white/[0.025] p-5 hover:bg-white/[0.04] transition-colors">
+              <div className="rounded-2xl border border-white/7 bg-gradient-to-br from-white/[0.05] to-white/[0.02] p-5 hover:from-white/[0.07] hover:to-white/[0.03] transition-all duration-300 shadow-sm">
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <div className="text-base font-bold text-white">Human Transfer</div>
-                    <p className="mt-2 text-xs leading-relaxed text-white/45">
+                    <div className="text-base font-black text-white flex items-center gap-2">
+                      <div className="h-2 w-2 rounded-full bg-fuchsia-400 shadow-[0_0_8px_rgba(244,114,182,0.4)]"></div>
+                      Human Transfer
+                    </div>
+                    <p className="mt-2 text-xs leading-relaxed text-white/50">
                       Mark for human follow-up when you need to personally reply.
                     </p>
                   </div>
@@ -1158,9 +1170,9 @@ const SmartInbox = () => {
             </div>
 
             {/* Info Card */}
-            <div className="rounded-2xl border border-white/5 bg-gradient-to-br from-white/[0.025] to-white/[0.015] p-5 text-xs leading-relaxed text-white/45">
-              <div className="font-bold text-white/80 text-sm mb-3 flex items-center gap-2">
-                <Bot size={14} className="text-[#8effc4]" />
+            <div className="rounded-2xl border border-white/7 bg-gradient-to-br from-[#00ff88]/8 to-white/[0.015] p-5.5 text-xs leading-relaxed text-white/50 shadow-sm">
+              <div className="font-black text-white/85 text-sm mb-4 flex items-center gap-2.5">
+                <Bot size={16} className="text-[#8effc4]" />
                 Smart Rules
               </div>
               <div className="space-y-2.5">
