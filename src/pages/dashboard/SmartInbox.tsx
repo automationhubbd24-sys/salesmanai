@@ -593,79 +593,68 @@ const SmartInbox = () => {
   );
 
   return (
-    <div className="flex h-[calc(100dvh-64px)] md:h-[calc(100vh-80px)] overflow-hidden bg-[#050810] md:rounded-[2rem] border border-white/5 shadow-2xl">
+    <div className="flex h-[calc(100dvh-64px)] md:h-[calc(100vh-80px)] overflow-hidden bg-gradient-to-br from-[#050810] to-[#081020] md:rounded-[2rem] border border-white/5 shadow-2xl">
       {/* Conversation List */}
       <div
         className={cn(
-          "w-full md:w-[360px] lg:w-[380px] border-r border-white/5 flex flex-col bg-[#070a12]",
+          "w-full md:w-[360px] lg:w-[380px] border-r border-white/5 flex flex-col bg-gradient-to-b from-[#070a12] to-[#050810]",
           !isMobileListVisible && "hidden md:flex"
         )}
       >
         {/* Header */}
-        <div className="border-b border-white/5 p-4 md:p-5 space-y-4 bg-gradient-to-b from-black/40 to-transparent">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h1 className="text-xl md:text-2xl font-black tracking-tight text-white">
-                Smart Inbox
-              </h1>
-              <p className="text-xs text-white/40 mt-1">
-                Manage your {getPlatformTitle(platform)} conversations
-              </p>
+        <div className="border-b border-white/5 p-5 md:p-6 space-y-5 bg-gradient-to-b from-[#00ff88]/5 to-transparent">
+          {/* Premium Header */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="h-11 w-11 rounded-2xl bg-gradient-to-br from-[#00ff88] to-[#00cc6a] flex items-center justify-center shadow-[0_0_25px_rgba(0,255,136,0.35)]">
+                <Inbox size={22} className="text-black" />
+              </div>
+              <div>
+                <h1 className="text-xl md:text-2xl font-black tracking-tight text-white">
+                  Smart Inbox
+                </h1>
+                <p className="text-xs text-white/45 mt-0.5">
+                  Manage your {getPlatformTitle(platform)} conversations
+                </p>
+              </div>
             </div>
             <Button
               variant="ghost"
               size="icon"
               onClick={() => fetchChats({ silent: true })}
-              className="text-white/50 hover:text-[#00ff88] hover:bg-[#00ff88]/10 transition-all duration-300"
+              className="h-11 w-11 rounded-2xl border border-white/10 bg-white/[0.02] text-white/50 hover:text-[#00ff88] hover:bg-[#00ff88]/10 hover:border-[#00ff88]/30 transition-all duration-300"
             >
               <RefreshCw size={18} className={cn("transition-transform", refreshingChats && "animate-spin")} />
             </Button>
           </div>
 
-          {/* Stats Grid */}
-          <div className="grid grid-cols-2 gap-2">
-            {FILTER_OPTIONS.slice(1).map((filter) => (
-              <div 
-                key={filter.key} 
-                className="group rounded-2xl border border-white/5 bg-white/[0.02] px-3 py-3 hover:bg-white/[0.04] hover:border-white/10 transition-all duration-300"
-              >
-                <div className="text-[10px] uppercase tracking-[0.16em] text-white/40 group-hover:text-white/60 transition-colors">
-                  {filter.title}
-                </div>
-                <div className="mt-1 text-xl font-black text-white">
-                  {counts[filter.key]}
-                </div>
-              </div>
-            ))}
-          </div>
-
           {/* Search Input */}
-          <div className="relative">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/35" size={18} />
+          <div className="relative group">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-hover:text-[#00ff88]/70 transition-colors" size={19} />
             <Input
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
               placeholder="Search conversations or contacts..."
-              className="pl-11 h-12 rounded-2xl border-white/10 bg-white/[0.04] focus-visible:ring-[#00ff88]/40 focus-visible:border-[#00ff88]/30 placeholder:text-white/30 transition-all duration-300"
+              className="pl-12 h-13 rounded-2xl border border-white/10 bg-white/[0.03] focus-visible:ring-[#00ff88]/50 focus-visible:border-[#00ff88]/40 placeholder:text-white/35 transition-all duration-300 text-sm"
             />
           </div>
 
           {/* Filter Pills */}
-          <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+          <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1">
             {FILTER_OPTIONS.map((filter) => (
               <button
                 key={filter.key}
                 type="button"
                 onClick={() => setActiveFilter(filter.key)}
                 className={cn(
-                  "shrink-0 rounded-full border px-4 py-2 text-xs font-semibold transition-all duration-300",
+                  "shrink-0 rounded-2xl border px-4 py-2.5 text-xs font-bold transition-all duration-300 flex items-center gap-2",
                   activeFilter === filter.key
-                    ? "border-[#00ff88]/40 bg-gradient-to-r from-[#00ff88]/15 to-[#00ff88]/8 text-[#97ffca] shadow-[0_0_15px_rgba(0,255,136,0.1)]"
-                    : "border-white/10 bg-white/[0.02] text-white/60 hover:text-white hover:bg-white/[0.04] hover:border-white/20"
+                    ? "border-[#00ff88]/40 bg-gradient-to-r from-[#00ff88]/20 to-[#00ff88]/10 text-[#97ffca] shadow-[0_0_20px_rgba(0,255,136,0.15)]"
+                    : "border-white/10 bg-white/[0.02] text-white/60 hover:text-white hover:bg-white/[0.05] hover:border-white/20"
                 )}
               >
                 {filter.title}
-                <span className="ml-2 text-[10px] opacity-70">
+                <span className="h-5 min-w-5 rounded-full bg-white/10 flex items-center justify-center text-[10px] font-black">
                   {counts[filter.key]}
                 </span>
               </button>
