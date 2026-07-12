@@ -593,92 +593,114 @@ const SmartInbox = () => {
   );
 
   return (
-    <div className="flex h-[calc(100dvh-64px)] md:h-[calc(100vh-80px)] overflow-hidden bg-[#050505] md:rounded-3xl border border-white/5 shadow-2xl">
+    <div className="flex h-[calc(100dvh-64px)] md:h-[calc(100vh-80px)] overflow-hidden bg-[#050810] md:rounded-[2rem] border border-white/5 shadow-2xl">
+      {/* Conversation List */}
       <div
         className={cn(
-          "w-full md:w-[370px] lg:w-[390px] border-r border-white/5 flex flex-col bg-[#080808]",
+          "w-full md:w-[360px] lg:w-[380px] border-r border-white/5 flex flex-col bg-[#070a12]",
           !isMobileListVisible && "hidden md:flex"
         )}
       >
-        <div className="border-b border-white/5 p-4 md:p-5 space-y-4 bg-black/30">
+        {/* Header */}
+        <div className="border-b border-white/5 p-4 md:p-5 space-y-4 bg-gradient-to-b from-black/40 to-transparent">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h1 className="text-xl font-black tracking-tight text-white">Smart Inbox</h1>
-              <p className="text-xs text-white/40">
-                Mobile-first {getPlatformTitle(platform)} conversations
+              <h1 className="text-xl md:text-2xl font-black tracking-tight text-white">
+                Smart Inbox
+              </h1>
+              <p className="text-xs text-white/40 mt-1">
+                Manage your {getPlatformTitle(platform)} conversations
               </p>
             </div>
             <Button
               variant="ghost"
               size="icon"
               onClick={() => fetchChats({ silent: true })}
-              className="text-white/50 hover:text-[#00ff88]"
+              className="text-white/50 hover:text-[#00ff88] hover:bg-[#00ff88]/10 transition-all duration-300"
             >
-              <RefreshCw size={18} className={refreshingChats ? "animate-spin" : ""} />
+              <RefreshCw size={18} className={cn("transition-transform", refreshingChats && "animate-spin")} />
             </Button>
           </div>
 
+          {/* Stats Grid */}
           <div className="grid grid-cols-2 gap-2">
             {FILTER_OPTIONS.slice(1).map((filter) => (
-              <div key={filter.key} className="rounded-2xl border border-white/5 bg-white/[0.03] px-3 py-2.5">
-                <div className="text-[10px] uppercase tracking-[0.16em] text-white/35">{filter.title}</div>
-                <div className="mt-1 text-lg font-bold text-white">{counts[filter.key]}</div>
+              <div 
+                key={filter.key} 
+                className="group rounded-2xl border border-white/5 bg-white/[0.02] px-3 py-3 hover:bg-white/[0.04] hover:border-white/10 transition-all duration-300"
+              >
+                <div className="text-[10px] uppercase tracking-[0.16em] text-white/40 group-hover:text-white/60 transition-colors">
+                  {filter.title}
+                </div>
+                <div className="mt-1 text-xl font-black text-white">
+                  {counts[filter.key]}
+                </div>
               </div>
             ))}
           </div>
 
+          {/* Search Input */}
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" size={16} />
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/35" size={18} />
             <Input
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder="Search conversations..."
-              className="pl-10 h-11 rounded-2xl border-white/10 bg-white/5 focus-visible:ring-[#00ff88]/30"
+              placeholder="Search conversations or contacts..."
+              className="pl-11 h-12 rounded-2xl border-white/10 bg-white/[0.04] focus-visible:ring-[#00ff88]/40 focus-visible:border-[#00ff88]/30 placeholder:text-white/30 transition-all duration-300"
             />
           </div>
 
-          <div className="flex gap-2 overflow-x-auto pb-1">
+          {/* Filter Pills */}
+          <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
             {FILTER_OPTIONS.map((filter) => (
               <button
                 key={filter.key}
                 type="button"
                 onClick={() => setActiveFilter(filter.key)}
                 className={cn(
-                  "shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition-all",
+                  "shrink-0 rounded-full border px-4 py-2 text-xs font-semibold transition-all duration-300",
                   activeFilter === filter.key
-                    ? "border-[#00ff88]/40 bg-[#00ff88]/10 text-[#97ffca]"
-                    : "border-white/10 bg-white/[0.03] text-white/60 hover:text-white"
+                    ? "border-[#00ff88]/40 bg-gradient-to-r from-[#00ff88]/15 to-[#00ff88]/8 text-[#97ffca] shadow-[0_0_15px_rgba(0,255,136,0.1)]"
+                    : "border-white/10 bg-white/[0.02] text-white/60 hover:text-white hover:bg-white/[0.04] hover:border-white/20"
                 )}
               >
                 {filter.title}
-                <span className="ml-2 text-[10px] opacity-70">{counts[filter.key]}</span>
+                <span className="ml-2 text-[10px] opacity-70">
+                  {counts[filter.key]}
+                </span>
               </button>
             ))}
           </div>
         </div>
 
+        {/* Conversation List */}
         <ScrollArea className="flex-1">
           {loading ? (
             <div className="space-y-3 p-4">
-              {Array.from({ length: 8 }).map((_, index) => (
-                <div key={index} className="rounded-2xl border border-white/5 bg-white/[0.02] p-3">
+              {Array.from({ length: 6 }).map((_, index) => (
+                <div key={index} className="rounded-2xl border border-white/5 bg-white/[0.02] p-4 animate-pulse">
                   <div className="flex items-center gap-3">
                     <Skeleton className="h-12 w-12 rounded-full bg-white/10" />
                     <div className="flex-1 space-y-2">
-                      <Skeleton className="h-4 w-32 bg-white/10" />
-                      <Skeleton className="h-3 w-full bg-white/10" />
-                      <Skeleton className="h-3 w-24 bg-white/10" />
+                      <Skeleton className="h-4 w-28 bg-white/10" />
+                      <Skeleton className="h-3 w-48 bg-white/10" />
                     </div>
                   </div>
                 </div>
               ))}
             </div>
           ) : filteredChats.length === 0 ? (
-            <div className="flex h-full min-h-[320px] flex-col items-center justify-center px-8 text-center">
-              <Inbox className="mb-4 text-white/20" size={34} />
-              <h3 className="text-base font-semibold text-white">No conversations found</h3>
-              <p className="mt-2 text-sm text-white/35">
-                Search, filter, ba active account change kore abar try korun.
+            <div className="flex h-full min-h-[360px] flex-col items-center justify-center px-8 text-center">
+              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-white/[0.03] border border-white/5">
+                <Inbox className="text-white/20" size={32} />
+              </div>
+              <h3 className="text-lg font-semibold text-white">
+                {searchTerm ? "No results found" : "No conversations yet"}
+              </h3>
+              <p className="mt-2 text-sm text-white/40 max-w-[260px]">
+                {searchTerm 
+                  ? "Try adjusting your search or filters to find what you're looking for."
+                  : "Start messaging with your customers to see conversations here."}
               </p>
             </div>
           ) : (
@@ -691,34 +713,42 @@ const SmartInbox = () => {
                     type="button"
                     onClick={() => handleSelectChat(chat)}
                     className={cn(
-                      "w-full rounded-3xl border p-3 text-left transition-all",
+                      "w-full rounded-2xl border p-4 text-left transition-all duration-300 group",
                       isActive
-                        ? "border-[#00ff88]/30 bg-[#00ff88]/8 shadow-[0_0_20px_rgba(0,255,136,0.08)]"
-                        : "border-white/5 bg-white/[0.025] hover:bg-white/[0.05]"
+                        ? "border-[#00ff88]/30 bg-gradient-to-r from-[#00ff88]/12 to-[#00ff88]/6 shadow-[0_0_30px_rgba(0,255,136,0.12)]"
+                        : "border-white/5 bg-white/[0.02] hover:bg-white/[0.04] hover:border-white/10"
                     )}
                   >
                     <div className="flex items-start gap-3">
-                      <Avatar className="h-12 w-12 border border-white/10">
+                      <Avatar className={cn(
+                        "h-12 w-12 border transition-all duration-300",
+                        isActive ? "border-[#00ff88]/30" : "border-white/10 group-hover:border-white/20"
+                      )}>
                         <AvatarImage src={undefined} />
-                        <AvatarFallback className="bg-white/5 text-white/60">
-                          <UserIcon size={18} />
+                        <AvatarFallback className={cn(
+                          "bg-gradient-to-br from-white/10 to-white/5 text-white/60",
+                          isActive && "from-[#00ff88]/20 to-[#00ff88]/10"
+                        )}>
+                          <UserIcon size={20} />
                         </AvatarFallback>
                       </Avatar>
 
                       <div className="min-w-0 flex-1">
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
-                            <div className="truncate text-sm font-semibold text-white">
+                            <div className="truncate text-sm font-bold text-white">
                               {getDisplayName(chat)}
                             </div>
-                            <div className="mt-0.5 text-[11px] text-white/35">{chat.from}</div>
+                            <div className="mt-0.5 text-[11px] text-white/40">
+                              {chat.from}
+                            </div>
                           </div>
-                          <div className="shrink-0 text-[11px] text-white/35">
+                          <div className="shrink-0 text-[11px] text-white/40 font-medium">
                             {formatListTime(chat.timestamp)}
                           </div>
                         </div>
 
-                        <p className="mt-2 line-clamp-2 text-sm leading-5 text-white/60">
+                        <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-white/65">
                           {getMessagePreview(chat.body)}
                         </p>
 
@@ -728,7 +758,7 @@ const SmartInbox = () => {
                               <Badge
                                 key={`${chat.id}-${label}`}
                                 variant="outline"
-                                className={cn("rounded-full px-2.5 py-0.5 text-[10px] font-bold", LABEL_META[label].className)}
+                                className={cn("rounded-full px-3 py-1 text-[10px] font-bold border-opacity-50", LABEL_META[label].className)}
                               >
                                 {LABEL_META[label].title}
                               </Badge>
@@ -736,9 +766,9 @@ const SmartInbox = () => {
                           ) : (
                             <Badge
                               variant="outline"
-                              className="rounded-full border-white/10 bg-white/[0.03] px-2.5 py-0.5 text-[10px] text-white/45"
+                              className="rounded-full border-white/10 bg-white/[0.03] px-3 py-1 text-[10px] text-white/45"
                             >
-                              Open
+                              New
                             </Badge>
                           )}
                         </div>
@@ -752,68 +782,70 @@ const SmartInbox = () => {
         </ScrollArea>
       </div>
 
-      <div className={cn("flex flex-1 flex-col bg-black/20", isMobileListVisible && "hidden md:flex")}>
+      {/* Chat Area */}
+      <div className={cn("flex flex-1 flex-col bg-[#050810]", isMobileListVisible && "hidden md:flex")}>
         {selectedChat ? (
           <>
-            <div className="border-b border-white/5 bg-black/30 px-4 py-3 md:px-5">
+            {/* Chat Header */}
+            <div className="border-b border-white/5 bg-gradient-to-b from-black/30 to-transparent px-4 py-4 md:px-6">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-3">
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="md:hidden text-white/50 hover:text-white"
+                    className="md:hidden text-white/50 hover:text-white hover:bg-white/10"
                     onClick={() => setIsMobileListVisible(true)}
                   >
-                    <ChevronLeft size={20} />
+                    <ChevronLeft size={22} />
                   </Button>
 
-                  <Avatar className="h-11 w-11 border border-white/10">
-                    <AvatarFallback className="bg-white/5 text-white/60">
-                      <UserIcon size={18} />
+                  <Avatar className="h-12 w-12 border border-white/10">
+                    <AvatarFallback className="bg-gradient-to-br from-white/10 to-white/5 text-white/60">
+                      <UserIcon size={20} />
                     </AvatarFallback>
                   </Avatar>
 
                   <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold text-white">
+                    <div className="truncate text-base font-bold text-white">
                       {getDisplayName(selectedChat)}
                     </div>
-                    <div className="mt-1 flex items-center gap-2 text-[11px] text-white/40">
-                      <span className="inline-flex items-center gap-1">
-                        <span className="h-2 w-2 rounded-full bg-[#00ff88]" />
+                    <div className="mt-1 flex items-center gap-2 text-[11px] text-white/45">
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="h-2 w-2 rounded-full bg-[#00ff88] animate-pulse" />
                         {selectedChat.reply_by === "bot"
-                          ? "Last reply by agent"
+                          ? "Last reply by Agent"
                           : selectedChat.reply_by === "admin"
-                            ? "Last reply by human"
-                            : "Waiting for reply"}
+                            ? "Last reply by Admin"
+                            : "Waiting for your reply"}
                       </span>
-                      <span className="text-white/20">|</span>
+                      <span className="text-white/20">•</span>
                       <span>{getPlatformTitle(platform)}</span>
                     </div>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <Button
                     variant="ghost"
                     size="icon"
                     onClick={() => fetchMessages(selectedChat.id, { silent: true })}
-                    className="text-white/40 hover:text-[#00ff88]"
+                    className="text-white/40 hover:text-[#00ff88] hover:bg-[#00ff88]/10 transition-all duration-300"
                   >
-                    <RefreshCw size={16} className={refreshingMessages ? "animate-spin" : ""} />
+                    <RefreshCw size={18} className={cn("transition-transform", refreshingMessages && "animate-spin")} />
                   </Button>
-                  <Button variant="ghost" size="icon" className="text-white/35 hover:text-white">
+                  <Button variant="ghost" size="icon" className="text-white/35 hover:text-white hover:bg-white/10 transition-all duration-300">
                     <ShieldCheck size={18} />
                   </Button>
                 </div>
               </div>
 
-              <div className="mt-3 flex flex-wrap gap-2">
+              <div className="mt-4 flex flex-wrap gap-2">
                 {selectedChat.active_labels.length > 0 ? (
                   selectedChat.active_labels.map((label) => (
                     <Badge
                       key={`header-${label}`}
                       variant="outline"
-                      className={cn("rounded-full px-2.5 py-1 text-[10px] font-bold", LABEL_META[label].className)}
+                      className={cn("rounded-full px-3 py-1.5 text-[10px] font-bold border-opacity-50", LABEL_META[label].className)}
                     >
                       {LABEL_META[label].title}
                     </Badge>
@@ -821,21 +853,22 @@ const SmartInbox = () => {
                 ) : (
                   <Badge
                     variant="outline"
-                    className="rounded-full border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] text-white/45"
+                    className="rounded-full border-white/10 bg-white/[0.03] px-3 py-1.5 text-[10px] text-white/45"
                   >
-                    Open
+                    New Conversation
                   </Badge>
                 )}
               </div>
             </div>
 
-            <div className="border-b border-white/5 bg-white/[0.02] px-4 py-3 md:hidden">
+            {/* Mobile Label Controls */}
+            <div className="border-b border-white/5 bg-white/[0.015] px-4 py-3.5 md:hidden">
               <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-2xl border border-white/5 bg-white/[0.03] p-3">
+                <div className="rounded-2xl border border-white/5 bg-white/[0.025] p-3.5 hover:bg-white/[0.04] transition-colors">
                   <div className="flex items-center justify-between gap-2">
                     <div>
-                      <div className="text-xs font-semibold text-white">Order</div>
-                      <div className="mt-1 text-[11px] text-white/40">Track order conversations</div>
+                      <div className="text-xs font-bold text-white">Order</div>
+                      <div className="mt-1 text-[11px] text-white/45">Track order conversations</div>
                     </div>
                     <Switch
                       checked={selectedChat.order_selected}
@@ -845,11 +878,11 @@ const SmartInbox = () => {
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-white/5 bg-white/[0.03] p-3">
+                <div className="rounded-2xl border border-white/5 bg-white/[0.025] p-3.5 hover:bg-white/[0.04] transition-colors">
                   <div className="flex items-center justify-between gap-2">
                     <div>
-                      <div className="text-xs font-semibold text-white">Human Transfer</div>
-                      <div className="mt-1 text-[11px] text-white/40">Unreplied customer queue</div>
+                      <div className="text-xs font-bold text-white">Human Transfer</div>
+                      <div className="mt-1 text-[11px] text-white/45">Unreplied customer queue</div>
                     </div>
                     <Switch
                       checked={selectedChat.human_transfer_selected}
@@ -861,17 +894,18 @@ const SmartInbox = () => {
               </div>
             </div>
 
-            <ScrollArea ref={scrollRef} className="flex-1">
+            {/* Messages */}
+            <ScrollArea ref={scrollRef} className="flex-1 bg-gradient-to-b from-transparent to-black/10">
               {msgLoading ? (
-                <div className="space-y-4 p-4 md:p-5">
-                  {Array.from({ length: 8 }).map((_, index) => (
+                <div className="space-y-4 p-4 md:p-6">
+                  {Array.from({ length: 5 }).map((_, index) => (
                     <div key={index} className={cn("flex", index % 2 === 0 ? "justify-start" : "justify-end")}>
-                      <Skeleton className="h-16 w-[72%] rounded-3xl bg-white/10" />
+                      <Skeleton className="h-20 w-[65%] md:w-[55%] rounded-3xl bg-white/8 animate-pulse" />
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="space-y-3 p-4 md:p-5">
+                <div className="space-y-4 p-4 md:p-6">
                   {visibleMessages.map((message, index) => {
                     const body = message.body || "";
                     const imageMatch = body.match(
@@ -890,34 +924,36 @@ const SmartInbox = () => {
                     return (
                       <div
                         key={`${normalizeTimestamp(message.timestamp) || index}-${index}`}
-                        className={cn("flex gap-3", isOutgoing ? "justify-end" : "justify-start")}
+                        className={cn("flex gap-3 items-end animate-in fade-in slide-in-from-bottom-2 duration-500", isOutgoing ? "justify-end" : "justify-start")}
                       >
                         {!isOutgoing && (
-                          <Avatar className="mt-auto h-8 w-8 border border-white/10">
-                            <AvatarFallback className="bg-white/5 text-[10px] text-white/60">US</AvatarFallback>
+                          <Avatar className="h-9 w-9 border border-white/10 shrink-0">
+                            <AvatarFallback className="bg-white/5 text-[11px] text-white/60 font-bold">
+                              {getDisplayName(selectedChat).substring(0, 2).toUpperCase()}
+                            </AvatarFallback>
                           </Avatar>
                         )}
 
                         <div
                           className={cn(
-                            "max-w-[88%] rounded-[1.35rem] px-3.5 py-3 text-sm shadow-sm md:max-w-[75%]",
+                            "max-w-[88%] rounded-[1.5rem] px-4 py-3.5 text-sm md:max-w-[70%] lg:max-w-[60%] shadow-lg transition-all duration-200 hover:shadow-xl",
                             isOutgoing
                               ? isBot
-                                ? "rounded-br-md bg-[#00ff88] text-black"
-                                : "rounded-br-md border border-[#00ff88]/15 bg-[#153126] text-white"
-                              : "rounded-bl-md border border-white/10 bg-white/[0.05] text-white/90"
+                                ? "rounded-br-md bg-gradient-to-br from-[#00ff88] to-[#00cc6a] text-black shadow-[0_4px_20px_rgba(0,255,136,0.25)]"
+                                : "rounded-br-md border border-[#00ff88]/20 bg-gradient-to-br from-[#1a3a28] to-[#0f291d] text-white shadow-[0_4px_20px_rgba(0,255,136,0.08)]"
+                              : "rounded-bl-md border border-white/10 bg-gradient-to-br from-white/[0.07] to-white/[0.04] text-white/95 shadow-[0_4px_20px_rgba(0,0,0,0.3)]"
                           )}
                         >
                           {isBotImage ? (
-                            <div className="space-y-2">
+                            <div className="space-y-3">
                               <img
                                 src={imageUrl}
                                 alt="Conversation media"
-                                className="w-full max-w-[240px] rounded-2xl border border-black/10 object-cover"
+                                className="w-full max-w-[260px] rounded-2xl border border-black/10 object-cover cursor-pointer hover:scale-[1.02] transition-transform duration-300"
                                 onClick={() => window.open(imageUrl, "_blank")}
                                 onError={(event) => {
                                   (event.target as HTMLImageElement).src =
-                                    "https://placehold.co/400x400?text=Image+Load+Failed";
+                                    "https://placehold.co/400x400/1a1a2e/ffffff?text=Image+Not+Available";
                                 }}
                               />
                               {body
@@ -925,7 +961,7 @@ const SmartInbox = () => {
                                 .replace(/##PRODUCT[^\n]+/g, "")
                                 .replace(/https?:\/\/[^\s]+/g, "")
                                 .trim() && (
-                                <p className={cn("text-[11px] leading-5", isOutgoing ? "text-black/70" : "text-white/70")}>
+                                <p className={cn("text-xs leading-relaxed", isOutgoing ? "text-black/70" : "text-white/70")}>
                                   {body
                                     .replace(/\[?System Memory:[^\]]+\]?/g, "")
                                     .replace(/##PRODUCT[^\n]+/g, "")
@@ -936,10 +972,10 @@ const SmartInbox = () => {
                             </div>
                           ) : body.includes("Analyzed Image:") || body.includes("Analyzed Voice:") ? (
                             <details className="group">
-                              <summary className={cn("cursor-pointer list-none text-xs font-semibold", isOutgoing ? "text-black/80" : "text-[#8effc4]")}>
-                                {body.includes("Analyzed Image:") ? "Analyzed image details" : "Analyzed voice details"}
+                              <summary className={cn("cursor-pointer list-none text-xs font-bold", isOutgoing ? "text-black/80" : "text-[#8effc4]")}>
+                                {body.includes("Analyzed Image:") ? "📷 Analyzed image details" : "🎤 Analyzed voice details"}
                               </summary>
-                              <p className={cn("mt-3 whitespace-pre-wrap text-xs leading-5", isOutgoing ? "text-black/75" : "text-white/75")}>
+                              <p className={cn("mt-3 whitespace-pre-wrap text-xs leading-relaxed", isOutgoing ? "text-black/75" : "text-white/75")}>
                                 {body
                                   .replace(/\[Analyzed Image\]:?\s*/i, "")
                                   .replace(/\[Analyzed Voice\]:?\s*/i, "")
@@ -949,24 +985,28 @@ const SmartInbox = () => {
                               </p>
                             </details>
                           ) : (
-                            <p className="whitespace-pre-wrap break-words leading-6">{body}</p>
+                            <p className="whitespace-pre-wrap break-words leading-relaxed text-[14px]">
+                              {body}
+                            </p>
                           )}
 
                           <div
                             className={cn(
-                              "mt-2 flex items-center gap-2 text-[10px]",
-                              isOutgoing ? "justify-end text-black/55" : "text-white/35"
+                              "mt-2.5 flex items-center gap-2 text-[10px]",
+                              isOutgoing ? "justify-end text-black/55" : "text-white/40"
                             )}
                           >
-                            <span>{formatClock(message.timestamp)}</span>
-                            <span className="opacity-60">|</span>
-                            <span>{isBot ? "Agent" : message.reply_by === "admin" ? "Admin" : "Customer"}</span>
+                            <span className="font-medium">{formatClock(message.timestamp)}</span>
+                            <span className="opacity-50">•</span>
+                            <span className="font-bold">
+                              {isBot ? "Agent" : message.reply_by === "admin" ? "Admin" : "Customer"}
+                            </span>
                           </div>
                         </div>
 
                         {isBot && (
-                          <div className="mt-auto shrink-0 text-[#00ff88]">
-                            <Bot size={14} />
+                          <div className="shrink-0 text-[#00ff88] mb-1">
+                            <Bot size={16} className="drop-shadow-[0_0_8px_rgba(0,255,136,0.5)]" />
                           </div>
                         )}
                       </div>
@@ -974,16 +1014,20 @@ const SmartInbox = () => {
                   })}
 
                   {!msgLoading && visibleMessages.length >= MESSAGE_LIMIT && (
-                    <div className="pt-2 text-center text-[11px] text-white/35">
-                      Recent {MESSAGE_LIMIT} messages show korchi jate mobile smooth thake.
+                    <div className="pt-4 text-center">
+                      <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-4 py-2 text-[11px] text-white/40">
+                        <div className="h-1.5 w-1.5 rounded-full bg-[#00ff88]/50" />
+                        Showing recent {MESSAGE_LIMIT} messages
+                      </div>
                     </div>
                   )}
                 </div>
               )}
             </ScrollArea>
 
-            <div className="border-t border-white/5 bg-black/30 px-3 py-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] md:px-5">
-              <div className="flex items-end gap-2 rounded-[1.4rem] border border-white/10 bg-white/[0.04] p-2">
+            {/* Input Area */}
+            <div className="border-t border-white/5 bg-gradient-to-t from-black/40 to-transparent px-3 py-3.5 pb-[calc(env(safe-area-inset-bottom)+0.875rem)] md:px-6 md:py-4">
+              <div className="flex items-end gap-2.5 rounded-[1.5rem] border border-white/10 bg-white/[0.03] p-2.5 backdrop-blur-sm">
                 <Input
                   value={newMessage}
                   onChange={(event) => setNewMessage(event.target.value)}
@@ -993,53 +1037,67 @@ const SmartInbox = () => {
                       handleSendMessage();
                     }
                   }}
-                  placeholder="Type a message..."
-                  className="h-11 border-none bg-transparent text-sm text-white placeholder:text-white/25 focus-visible:ring-0"
+                  placeholder="Type your message..."
+                  className="h-12 border-none bg-transparent text-sm text-white placeholder:text-white/30 focus-visible:ring-0 resize-none"
                 />
                 <Button
                   size="icon"
                   onClick={handleSendMessage}
                   disabled={!newMessage.trim() || sending}
-                  className="h-11 w-11 rounded-2xl bg-[#00ff88] text-black hover:bg-[#00ff88]/85"
+                  className="h-12 w-12 rounded-2xl bg-gradient-to-br from-[#00ff88] to-[#00cc6a] text-black hover:from-[#00ff88]/90 hover:to-[#00cc6a]/90 transition-all duration-300 shadow-[0_4px_20px_rgba(0,255,136,0.3)] hover:shadow-[0_6px_25px_rgba(0,255,136,0.4)] hover:scale-105 active:scale-95 disabled:hover:scale-100 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={17} />}
+                  {sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={19} />}
                 </Button>
               </div>
             </div>
           </>
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center px-8 text-center">
-            <div className="mb-5 flex h-20 w-20 items-center justify-center rounded-full border border-[#00ff88]/15 bg-[#00ff88]/5">
-              <Inbox size={38} className="text-[#00ff88]" />
+            <div className="mb-6 flex h-24 w-24 items-center justify-center rounded-full border border-[#00ff88]/20 bg-gradient-to-br from-[#00ff88]/10 to-[#00ff88]/3">
+              <Inbox size={44} className="text-[#00ff88] drop-shadow-[0_0_20px_rgba(0,255,136,0.3)]" />
             </div>
-            <h2 className="text-2xl font-black tracking-tight text-white">{emptyStateTitle}</h2>
-            <p className="mt-3 max-w-[360px] text-sm leading-6 text-white/45">{emptyStateDescription}</p>
+            <h2 className="text-2xl md:text-3xl font-black tracking-tight text-white">
+              {emptyStateTitle}
+            </h2>
+            <p className="mt-4 max-w-[420px] text-sm md:text-base leading-relaxed text-white/50">
+              {emptyStateDescription}
+            </p>
           </div>
         )}
       </div>
 
+      {/* Desktop Right Panel */}
       {selectedChat && (
-        <div className="hidden w-[320px] border-l border-white/5 bg-white/[0.02] lg:flex lg:flex-col">
-          <div className="border-b border-white/5 p-6">
+        <div className="hidden w-[340px] border-l border-white/5 bg-gradient-to-b from-[#070a12] to-[#050810] lg:flex lg:flex-col">
+          {/* Profile Header */}
+          <div className="border-b border-white/5 p-7">
             <div className="flex flex-col items-center text-center">
-              <Avatar className="h-20 w-20 border border-white/10">
-                <AvatarFallback className="bg-white/5 text-white/60">
-                  <UserIcon size={28} />
+              <Avatar className="h-24 w-24 border-2 border-white/10">
+                <AvatarFallback className="bg-gradient-to-br from-white/10 to-white/5 text-white/60">
+                  <UserIcon size={36} />
                 </AvatarFallback>
               </Avatar>
-              <h3 className="mt-4 text-lg font-semibold text-white">{getDisplayName(selectedChat)}</h3>
-              <p className="mt-1 text-xs text-white/35">{selectedChat.from}</p>
-              <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[11px] text-white/55">
-                <Smartphone size={13} />
+              <h3 className="mt-5 text-xl font-bold text-white">
+                {getDisplayName(selectedChat)}
+              </h3>
+              <p className="mt-1.5 text-sm text-white/40 font-medium">
+                {selectedChat.from}
+              </p>
+              <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-4 py-1.5 text-[11px] text-white/55">
+                <Smartphone size={14} />
                 {getPlatformTitle(platform)}
               </div>
             </div>
           </div>
 
-          <div className="space-y-6 p-6">
-            <div className="space-y-3">
-              <div className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8effc4]">
+          {/* Panel Content */}
+          <div className="space-y-7 p-7">
+            {/* Active Labels */}
+            <div className="space-y-3.5">
+              <div className="text-[11px] font-black uppercase tracking-[0.2em] text-[#8effc4] flex items-center gap-2">
+                <div className="h-0.5 w-4 bg-[#8effc4]/50 rounded-full" />
                 Active Labels
+                <div className="h-0.5 flex-1 bg-[#8effc4]/30 rounded-full" />
               </div>
               <div className="flex flex-wrap gap-2">
                 {selectedChat.active_labels.length > 0 ? (
@@ -1047,7 +1105,7 @@ const SmartInbox = () => {
                     <Badge
                       key={`panel-${label}`}
                       variant="outline"
-                      className={cn("rounded-full px-2.5 py-1 text-[10px] font-bold", LABEL_META[label].className)}
+                      className={cn("rounded-full px-3.5 py-1.5 text-[10px] font-bold border-opacity-50", LABEL_META[label].className)}
                     >
                       {LABEL_META[label].title}
                     </Badge>
@@ -1055,25 +1113,28 @@ const SmartInbox = () => {
                 ) : (
                   <Badge
                     variant="outline"
-                    className="rounded-full border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] text-white/45"
+                    className="rounded-full border-white/10 bg-white/[0.03] px-3.5 py-1.5 text-[10px] text-white/45"
                   >
-                    Open
+                    New Conversation
                   </Badge>
                 )}
               </div>
             </div>
 
-            <div className="space-y-3">
-              <div className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8effc4]">
+            {/* Label Controls */}
+            <div className="space-y-3.5">
+              <div className="text-[11px] font-black uppercase tracking-[0.2em] text-[#8effc4] flex items-center gap-2">
+                <div className="h-0.5 w-4 bg-[#8effc4]/50 rounded-full" />
                 Label Controls
+                <div className="h-0.5 flex-1 bg-[#8effc4]/30 rounded-full" />
               </div>
 
-              <div className="rounded-3xl border border-white/5 bg-white/[0.03] p-4">
-                <div className="flex items-start justify-between gap-3">
+              <div className="rounded-2xl border border-white/5 bg-white/[0.025] p-5 hover:bg-white/[0.04] transition-colors">
+                <div className="flex items-start justify-between gap-4">
                   <div>
-                    <div className="text-sm font-semibold text-white">Order</div>
-                    <p className="mt-1 text-xs leading-5 text-white/40">
-                      Customer order follow-up queue te conversation rakhe.
+                    <div className="text-base font-bold text-white">Order</div>
+                    <p className="mt-2 text-xs leading-relaxed text-white/45">
+                      Add this conversation to your order follow-up queue.
                     </p>
                   </div>
                   <Switch
@@ -1083,18 +1144,19 @@ const SmartInbox = () => {
                   />
                 </div>
                 {selectedChat.order_status && (
-                  <div className="mt-3 text-[11px] text-amber-200/80">
+                  <div className="mt-4 flex items-center gap-2 text-[11px] text-amber-200/80 bg-amber-500/10 px-3 py-2 rounded-xl border border-amber-500/20">
+                    <div className="h-1.5 w-1.5 rounded-full bg-amber-400" />
                     Order status: {selectedChat.order_status}
                   </div>
                 )}
               </div>
 
-              <div className="rounded-3xl border border-white/5 bg-white/[0.03] p-4">
-                <div className="flex items-start justify-between gap-3">
+              <div className="rounded-2xl border border-white/5 bg-white/[0.025] p-5 hover:bg-white/[0.04] transition-colors">
+                <div className="flex items-start justify-between gap-4">
                   <div>
-                    <div className="text-sm font-semibold text-white">Human Transfer</div>
-                    <p className="mt-1 text-xs leading-5 text-white/40">
-                      Jekhane customer message dise kintu agent/admin ekhono reply dey nai.
+                    <div className="text-base font-bold text-white">Human Transfer</div>
+                    <p className="mt-2 text-xs leading-relaxed text-white/45">
+                      Mark for human follow-up when you need to personally reply.
                     </p>
                   </div>
                   <Switch
@@ -1106,11 +1168,26 @@ const SmartInbox = () => {
               </div>
             </div>
 
-            <div className="rounded-3xl border border-white/5 bg-white/[0.03] p-4 text-xs leading-6 text-white/45">
-              <div className="font-semibold text-white/80">Auto rules</div>
-              <p className="mt-2">Last reply bot hole conversation Agent-e thakbe.</p>
-              <p>Last reply admin hole conversation Human-e chole jabe.</p>
-              <p>Order ar Human Transfer manual toggle diye on/off kora jabe.</p>
+            {/* Info Card */}
+            <div className="rounded-2xl border border-white/5 bg-gradient-to-br from-white/[0.025] to-white/[0.015] p-5 text-xs leading-relaxed text-white/45">
+              <div className="font-bold text-white/80 text-sm mb-3 flex items-center gap-2">
+                <Bot size={14} className="text-[#8effc4]" />
+                Smart Rules
+              </div>
+              <div className="space-y-2.5">
+                <p className="flex items-start gap-2">
+                  <span className="mt-1 h-1.5 w-1.5 rounded-full bg-[#8effc4]/60 shrink-0" />
+                  Last reply by bot → Agent label
+                </p>
+                <p className="flex items-start gap-2">
+                  <span className="mt-1 h-1.5 w-1.5 rounded-full bg-sky-400/60 shrink-0" />
+                  Last reply by admin → Human label
+                </p>
+                <p className="flex items-start gap-2">
+                  <span className="mt-1 h-1.5 w-1.5 rounded-full bg-white/40 shrink-0" />
+                  Toggle labels manually as needed
+                </p>
+              </div>
             </div>
           </div>
         </div>
