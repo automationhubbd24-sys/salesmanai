@@ -3103,7 +3103,7 @@ ${imageAnalyzeText.trim()}
                             matchedAdditionalCount: Array.isArray(matched?.additional_images) ? matched.additional_images.length : (typeof matched?.additional_images === 'string' && matched.additional_images.trim() ? 1 : 0)
                         });
                         // #endregion
-                        if (matched && !productHasVariantMedia(matched)) {
+                        if (matched) {
                             let additional = [];
                             if (Array.isArray(matched.additional_images)) additional = matched.additional_images;
                             else if (typeof matched.additional_images === 'string') {
@@ -3292,7 +3292,12 @@ ${imageAnalyzeText.trim()}
              }
         }
 
-        // Check if admin replied after last user message
+        // First mark the message as seen and show typing (like Messenger)
+        await whatsappService.sendSeen(sessionName, senderId);
+        await whatsappService.sendTyping(sessionName, senderId);
+        await new Promise(resolve => setTimeout(resolve, 600));
+
+        // Then check if admin replied after last user message
         const lastUserTs = await dbService.getLastWhatsAppUserMessageTimestamp(sessionName, effectiveSenderId);
         const checkTs = lastUserTs || triggerTimestamp;
         const hasAdminReplied = await dbService.hasWhatsAppAdminReplySince(sessionName, effectiveSenderId, checkTs);
@@ -3312,10 +3317,6 @@ ${imageAnalyzeText.trim()}
             });
             return;
         }
-
-        await whatsappService.sendSeen(sessionName, senderId);
-        await whatsappService.sendTyping(sessionName, senderId);
-        await new Promise(resolve => setTimeout(resolve, 600));
 
         let modelLabel = aiResponse.model;
         if (!hasOwnKey) {
