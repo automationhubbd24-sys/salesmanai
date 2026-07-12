@@ -4658,7 +4658,7 @@ async function getResourceProductsWithMedia(pageId) {
             console.warn("[DB] products migration failed:", e.message);
         }
 
-        const { isWhatsapp, resourceIds } = await resolveResourceSearchContext(pageId);
+        const { isWhatsapp, resourceIds, ownerUserId } = await resolveResourceSearchContext(pageId);
         if (resourceIds.length === 0) return [];
 
         let sql = `
@@ -4667,7 +4667,7 @@ async function getResourceProductsWithMedia(pageId) {
             WHERE is_active = true
         `;
         let params = [];
-        ({ sql, params } = appendAssignmentFilter(sql, params, isWhatsapp, resourceIds));
+        ({ sql, params } = appendAssignmentFilter(sql, params, isWhatsapp, resourceIds, ownerUserId));
         sql += ` ORDER BY id DESC`;
 
         const result = await query(sql, params);
@@ -5049,7 +5049,7 @@ async function getProductsByNames(userId, productNames, pageId = null) {
 
 async function resolveResourceSearchContext(pageId) {
     if (!pageId) {
-        return { contextType: null, isWhatsapp: false, resourceIds: [] };
+        return { contextType: null, isWhatsapp: false, resourceIds: [], ownerUserId: null };
     }
 
     const resourceId = String(pageId);
@@ -5057,12 +5057,26 @@ async function resolveResourceSearchContext(pageId) {
     const isWhatsapp = contextType === 'whatsapp';
 
     if (!isWhatsapp) {
-        return { contextType, isWhatsapp, resourceIds: [resourceId] };
+        try {
+            const ownerRes = await query(
+                'SELECT user_id FROM page_access_token_message WHERE page_id = $1 LIMIT 1',
+                [resourceId]
+            );
+            return {
+                contextType,
+                isWhatsapp,
+                resourceIds: [resourceId],
+                ownerUserId: ownerRes.rows[0]?.user_id ? String(ownerRes.rows[0].user_id) : null
+            };
+        } catch (err) {
+            console.warn(`[DB] Failed to resolve messenger owner for ${resourceId}: ${err.message}`);
+            return { contextType, isWhatsapp, resourceIds: [resourceId], ownerUserId: null };
+        }
     }
 
     try {
         const result = await query(
-            `SELECT session_name, waba_id, phone_number_id
+            `SELECT session_name, waba_id, phone_number_id, user_id
              FROM whatsapp_message_database
              WHERE session_name = $1 OR waba_id = $1 OR phone_number_id = $1
              ORDER BY
@@ -5083,14 +5097,24 @@ async function resolveResourceSearchContext(pageId) {
                 .filter(Boolean)
         ));
 
-        return { contextType, isWhatsapp, resourceIds };
+        let ownerUserId = row?.user_id ? String(row.user_id) : null;
+
+        if (!ownerUserId) {
+            const waSessionRes = await query(
+                'SELECT user_id FROM whatsapp_sessions WHERE session_name = $1 LIMIT 1',
+                [resourceId]
+            );
+            ownerUserId = waSessionRes.rows[0]?.user_id ? String(waSessionRes.rows[0].user_id) : null;
+        }
+
+        return { contextType, isWhatsapp, resourceIds, ownerUserId };
     } catch (err) {
         console.warn(`[DB] resolveResourceSearchContext failed for ${resourceId}: ${err.message}`);
-        return { contextType, isWhatsapp, resourceIds: [resourceId] };
+        return { contextType, isWhatsapp, resourceIds: [resourceId], ownerUserId: null };
     }
 }
 
-function appendAssignmentFilter(sql, params, isWhatsapp, resourceIds) {
+function appendAssignmentFilter(sql, params, isWhatsapp, resourceIds, ownerUserId = null, tableAlias = '') {
     const normalizedIds = Array.from(new Set(
         (Array.isArray(resourceIds) ? resourceIds : [])
             .map(id => String(id || '').trim())
@@ -5101,22 +5125,27 @@ function appendAssignmentFilter(sql, params, isWhatsapp, resourceIds) {
         return { sql, params };
     }
 
-    const column = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_messenger_ids';
+    const prefix = tableAlias || '';
+    const column = `${prefix}${isWhatsapp ? 'allowed_wa_sessions' : 'allowed_messenger_ids'}`;
 
     if (normalizedIds.length === 1) {
         params.push(normalizedIds[0]);
         const pIdx = params.length;
         sql += ` AND (${column}::jsonb @> jsonb_build_array($${pIdx}::text))`;
-        return { sql, params };
+    } else {
+        params.push(normalizedIds);
+        const pIdx = params.length;
+        sql += ` AND EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements_text(COALESCE(${column}, '[]'::jsonb)) AS elem
+            WHERE elem = ANY($${pIdx}::text[])
+        )`;
     }
 
-    params.push(normalizedIds);
-    const pIdx = params.length;
-    sql += ` AND EXISTS (
-        SELECT 1
-        FROM jsonb_array_elements_text(COALESCE(${column}, '[]'::jsonb)) AS elem
-        WHERE elem = ANY($${pIdx}::text[])
-    )`;
+    if (ownerUserId) {
+        params.push(String(ownerUserId));
+        sql += ` AND ${prefix}user_id::text = $${params.length}::text`;
+    }
 
     return { sql, params };
 }
@@ -5125,7 +5154,7 @@ async function searchProductsForResource(queryText, pageId = null) {
     try {
         if (!pageId) return [];
 
-        const { isWhatsapp, resourceIds } = await resolveResourceSearchContext(pageId);
+        const { isWhatsapp, resourceIds, ownerUserId } = await resolveResourceSearchContext(pageId);
         if (resourceIds.length === 0) return [];
 
         const cleanQuery = (queryText || '').trim();
@@ -5154,7 +5183,7 @@ async function searchProductsForResource(queryText, pageId = null) {
                 WHERE is_active = true
             `;
             let fallbackParams = [];
-            ({ sql: fallbackSql, params: fallbackParams } = appendAssignmentFilter(fallbackSql, fallbackParams, isWhatsapp, resourceIds));
+        ({ sql: fallbackSql, params: fallbackParams } = appendAssignmentFilter(fallbackSql, fallbackParams, isWhatsapp, resourceIds, ownerUserId));
             fallbackSql += ` ORDER BY id DESC LIMIT 100`;
 
             const fallbackRes = await query(fallbackSql, fallbackParams);
@@ -5213,7 +5242,7 @@ async function searchProductsForResource(queryText, pageId = null) {
         if (!cleanQuery) {
             let sql = `SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, additional_images, product_mode, attribute_schema, sku_matrix, searchable_text, 0 as distance FROM products WHERE is_active = true`;
             let params = [];
-            ({ sql, params } = appendAssignmentFilter(sql, params, isWhatsapp, resourceIds));
+            ({ sql, params } = appendAssignmentFilter(sql, params, isWhatsapp, resourceIds, ownerUserId));
             sql += ` ORDER BY id DESC LIMIT 5`;
             const res = await query(sql, params);
             return (res.rows || []).map(normalizeProductRecord);
@@ -5240,7 +5269,7 @@ async function searchProductsForResource(queryText, pageId = null) {
         `;
 
         let params = [JSON.stringify(queryVector)];
-        ({ sql, params } = appendAssignmentFilter(sql, params, isWhatsapp, resourceIds));
+        ({ sql, params } = appendAssignmentFilter(sql, params, isWhatsapp, resourceIds, ownerUserId));
         sql += ` ORDER BY distance ASC LIMIT 5`;
 
         const start = Date.now();
@@ -5287,7 +5316,7 @@ async function searchProductsForResource(queryText, pageId = null) {
                 console.log(`[DB] No semantic matches but query is generic. Fetching latest 5 products as fallback.`);
                 let fallbackSql = `SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, additional_images, product_mode, attribute_schema, sku_matrix, searchable_text, 0.5 as distance FROM products WHERE is_active = true`;
                 let fallbackParams = [];
-                ({ sql: fallbackSql, params: fallbackParams } = appendAssignmentFilter(fallbackSql, fallbackParams, isWhatsapp, resourceIds));
+                ({ sql: fallbackSql, params: fallbackParams } = appendAssignmentFilter(fallbackSql, fallbackParams, isWhatsapp, resourceIds, ownerUserId));
                 fallbackSql += ` ORDER BY id DESC LIMIT 5`;
                 const fallbackRes = await query(fallbackSql, fallbackParams);
                 return (fallbackRes.rows || []).map(normalizeProductRecord);
@@ -5387,7 +5416,7 @@ async function searchProductByImageVector(imageVector, pageId) {
     try {
         if (!imageVector || !pageId) return [];
 
-        const { isWhatsapp, resourceIds } = await resolveResourceSearchContext(pageId);
+        const { isWhatsapp, resourceIds, ownerUserId } = await resolveResourceSearchContext(pageId);
         // #region debug-point D:image-vector-search-input
         (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='image-match-stability';try{const e=fs.readFileSync('.dbg/image-match-stability.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'D',location:'dbService.js:searchProductByImageVector:start',msg:'[DEBUG] image vector search invoked',data:{pageId,isWhatsapp,resourceIds,hasVector:Boolean(imageVector),vectorLength:Array.isArray(imageVector)?imageVector.length:0},ts:Date.now()})}).catch(()=>{})})();
         // #endregion
@@ -5406,28 +5435,7 @@ async function searchProductByImageVector(imageVector, pageId) {
 
         let params = [JSON.stringify(imageVector)];
         
-        // Use existing appendAssignmentFilter which handles resource IDs for p.allowed_xx correctly
-        // We alias products as 'p' in the query, but appendAssignmentFilter doesn't know about aliases.
-        // We'll manually append the filter with the 'p.' alias here for safety.
-        
-        const normalizedIds = Array.from(new Set(
-            (Array.isArray(resourceIds) ? resourceIds : [])
-                .map(id => String(id || '').trim())
-                .filter(Boolean)
-        ));
-
-        if (normalizedIds.length > 0) {
-            const column = isWhatsapp ? 'p.allowed_wa_sessions' : 'p.allowed_messenger_ids';
-            if (normalizedIds.length === 1) {
-                params.push(normalizedIds[0]);
-                sql += ` AND (${column}::jsonb @> jsonb_build_array($${params.length}::text))`;
-            } else {
-                params.push(normalizedIds);
-                sql += ` AND EXISTS (
-                    SELECT 1 FROM jsonb_array_elements_text(COALESCE(${column}, '[]'::jsonb)) AS elem WHERE elem = ANY($${params.length}::text[])
-                )`;
-            }
-        }
+        ({ sql, params } = appendAssignmentFilter(sql, params, isWhatsapp, resourceIds, ownerUserId, 'p.'));
 
         sql += `
             ),
