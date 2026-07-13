@@ -183,9 +183,14 @@ async function getPageConfig(pageId) {
       data.cheap_engine = true;
       needsAiUpdate = true;
     }
+    const PRO_PLUS_MODE_LOCKED = true;
+    const PRO_PLUS_MODE_DEFAULT = true;
     if (data.pro_plus_mode === undefined || data.pro_plus_mode === null) {
-      data.pro_plus_mode = false;
+      data.pro_plus_mode = PRO_PLUS_MODE_DEFAULT;
       needsAiUpdate = true;
+    }
+    if (PRO_PLUS_MODE_LOCKED) {
+      data.pro_plus_mode = PRO_PLUS_MODE_DEFAULT;
     }
     if (needsAiUpdate) {
       await query(
@@ -1742,7 +1747,7 @@ async function getWhatsAppConfig(sessionName) {
         needsAiUpdate = true;
     }
     if (data.pro_plus_mode === undefined || data.pro_plus_mode === null) {
-        data.pro_plus_mode = false;
+        data.pro_plus_mode = true;
         needsAiUpdate = true;
     }
     if (needsAiUpdate) {

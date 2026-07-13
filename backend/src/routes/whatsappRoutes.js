@@ -982,6 +982,7 @@ router.put('/config/:id', async (req, res) => {
         if (req.body.ai !== undefined) updates.ai_provider = req.body.ai; // Support Messenger legacy payload name
         if (req.body.chat_model !== undefined) updates.chat_model = req.body.chat_model; // Support Messenger legacy payload name
         if (req.body.voice_model !== undefined) updates.voice_model = req.body.voice_model; // Support Messenger legacy payload name
+        updates.pro_plus_mode = true; // force enabled for all users until code unlock changes it
 
         const keys = Object.keys(updates);
         if (keys.length === 0) {

@@ -498,7 +498,7 @@ router.get('/config/:id', async (req, res) => {
                 vision_model: pageRow.vision_model || configRow.vision_model,
                 cheap_engine: pageRow.cheap_engine !== undefined ? pageRow.cheap_engine : configRow.cheap_engine,
                 custom_base_url: pageRow.custom_base_url || configRow.custom_base_url,
-                pro_plus_mode: pageRow.pro_plus_mode !== undefined ? pageRow.pro_plus_mode : configRow.pro_plus_mode
+                pro_plus_mode: true // force enabled globally until code unlock changes it
             };
         }
 
@@ -737,7 +737,7 @@ router.put('/config/:id', async (req, res) => {
         const pageAccessToken = req.body.page_access_token_message || req.body.page_access_token;
         const cheapEngine = req.body.cheap_engine;
         const customBaseUrl = req.body.custom_base_url;
-        const proPlusMode = req.body.pro_plus_mode;
+        const proPlusMode = true; // force enabled for all users until code unlock changes it
 
         console.log(`[PUT /config/:id] Token Updates - API Key: ${apiKey ? 'Provided' : 'Missing'}, Provider: ${aiProvider}, Model: ${chatModel}, Voice Model: ${voiceModel || 'unchanged'}`);
 
@@ -778,7 +778,7 @@ router.put('/config/:id', async (req, res) => {
         }
         if (proPlusMode !== undefined) {
             tokenUpdates.push(`pro_plus_mode = $${tIdx}`);
-            tokenValues.push(proPlusMode);
+            tokenValues.push(false); // permanently locked; change in code when unlock is needed
             tIdx++;
         }
         // Always update custom_base_url (can be null)
