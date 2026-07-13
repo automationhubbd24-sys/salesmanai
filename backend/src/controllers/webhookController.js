@@ -517,27 +517,11 @@ function toImageMatchSummary(product) {
 
 async function analyzeAndMatchIncomingImage({ platform, pageId, senderId, imageUrl, imageIndex, batchId, pageConfig, prompt, maxTokens = 2000 }) {
     const imageHash = await buildImageHash(imageUrl);
-    const cached = await dbService.getIncomingImageAnalysis({ platform, pageId, senderId, imageUrl, imageHash });
-    if (cached?.analysis_text) {
-        const cachedMatches = Array.isArray(cached.matched_products) ? cached.matched_products : [];
-        return {
-            imageIndex,
-            imageUrl,
-            imageHash,
-            analysisText: cached.analysis_text,
-            matchedProducts: cachedMatches,
-            topMatch: cachedMatches[0] || null,
-            matchScore: cached.match_score === null || cached.match_score === undefined ? null : Number(cached.match_score),
-            usage: 0,
-            model: 'image-analysis-cache',
-            fromCache: true
-        };
-    }
-
     const visionResult = await aiService.processImageWithVision(imageUrl, pageConfig, { prompt: prompt || '', max_tokens: maxTokens });
     const analysisText = typeof visionResult === 'object' ? String(visionResult.text || '').trim() : String(visionResult || '').trim();
     const usage = typeof visionResult === 'object' ? (visionResult.usage || 0) : 0;
     const model = typeof visionResult === 'object' ? (visionResult.model || 'unknown') : 'unknown';
+    const fromCache = false;
 
     let matchedProducts = [];
     if (analysisText && !analysisText.startsWith('[Vision Analysis Failed]')) {
@@ -587,7 +571,7 @@ async function analyzeAndMatchIncomingImage({ platform, pageId, senderId, imageU
         matchScore: topMatch?.match_score ?? null,
         usage,
         model,
-        fromCache: false
+        fromCache
     };
 }
 
