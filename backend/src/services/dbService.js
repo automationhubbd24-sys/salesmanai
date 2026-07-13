@@ -854,6 +854,7 @@ async function initTables() {
                 matched_product_id TEXT,
                 match_score NUMERIC,
                 matched_products JSONB DEFAULT '[]'::jsonb,
+                visual_fingerprint JSONB DEFAULT '{}'::jsonb,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
             );
@@ -864,6 +865,7 @@ async function initTables() {
             ALTER TABLE incoming_image_analysis ADD COLUMN IF NOT EXISTS matched_product_id TEXT;
             ALTER TABLE incoming_image_analysis ADD COLUMN IF NOT EXISTS match_score NUMERIC;
             ALTER TABLE incoming_image_analysis ADD COLUMN IF NOT EXISTS matched_products JSONB DEFAULT '[]'::jsonb;
+            ALTER TABLE incoming_image_analysis ADD COLUMN IF NOT EXISTS visual_fingerprint JSONB DEFAULT '{}'::jsonb;
             ALTER TABLE incoming_image_analysis ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
             DELETE FROM incoming_image_analysis a
             USING incoming_image_analysis b
@@ -1044,6 +1046,11 @@ async function initTables() {
         await query(`UPDATE products SET attribute_schema = '[]'::jsonb WHERE attribute_schema IS NULL`);
         await query(`UPDATE products SET sku_matrix = '[]'::jsonb WHERE sku_matrix IS NULL`);
         await query(`UPDATE products SET visual_tags = '[]'::jsonb WHERE visual_tags IS NULL`);
+        await query(`
+            ALTER TABLE IF EXISTS products ADD COLUMN IF NOT EXISTS visual_fingerprint JSONB DEFAULT '{}'::jsonb;
+            ALTER TABLE IF EXISTS product_image_embeddings ADD COLUMN IF NOT EXISTS visual_fingerprint JSONB DEFAULT '{}'::jsonb;
+            ALTER TABLE IF EXISTS incoming_image_analysis ADD COLUMN IF NOT EXISTS visual_fingerprint JSONB DEFAULT '{}'::jsonb;
+        `);
         await backfillGeneratedSkuMatrixForLegacyProducts();
         console.log("[DB] 'products.allowed_wa_sessions' column checked.");
 
@@ -4381,6 +4388,7 @@ function normalizeProductRecord(rawProduct) {
     product.allowed_messenger_ids = safeParseJson(product.allowed_messenger_ids, []);
     product.allowed_wa_sessions = safeParseJson(product.allowed_wa_sessions, []);
     product.visual_tags = normalizeVisualAnalysisEntries(product.visual_tags);
+    product.visual_fingerprint = safeParseJson(product.visual_fingerprint, {});
     product.attribute_schema = normalizeAttributeSchema(product.attribute_schema, safeParseJson(product.sku_matrix, []));
     product.sku_matrix = normalizeSkuMatrix(product.sku_matrix, product, product.attribute_schema);
     product.variants = buildLegacyVariantsFromProduct(product);
@@ -4497,6 +4505,7 @@ async function createProduct(productData) {
         'platform',
         'keywords',
         'visual_tags',
+        'visual_fingerprint',
         'is_combo',
         'combo_items',
         'allow_description',
@@ -4517,7 +4526,7 @@ async function createProduct(productData) {
         let val = normalizedProduct[field];
         
         // --- CLEAN PLAN: Ensure JSON/Array fields are strings for DB safety ---
-        const jsonFields = ['variants', 'allowed_messenger_ids', 'allowed_wa_sessions', 'combo_items', 'additional_images', 'attribute_schema', 'sku_matrix', 'visual_tags'];
+        const jsonFields = ['variants', 'allowed_messenger_ids', 'allowed_wa_sessions', 'combo_items', 'additional_images', 'attribute_schema', 'sku_matrix', 'visual_tags', 'visual_fingerprint'];
         if (jsonFields.includes(field)) {
             if (val && typeof val === 'object') {
                 val = JSON.stringify(val);
@@ -4778,7 +4787,7 @@ async function updateProduct(id, userId, updates) {
         setFragments.push(`${key} = $${idx}`);
         
         let val = normalizedUpdates[key];
-        const jsonFields = ['variants', 'allowed_messenger_ids', 'allowed_wa_sessions', 'combo_items', 'additional_images', 'attribute_schema', 'sku_matrix', 'visual_tags'];
+        const jsonFields = ['variants', 'allowed_messenger_ids', 'allowed_wa_sessions', 'combo_items', 'additional_images', 'attribute_schema', 'sku_matrix', 'visual_tags', 'visual_fingerprint'];
         if (jsonFields.includes(key) && val !== undefined) {
             // Ensure JSONB fields are strings for Postgres
             if (typeof val === 'object') {
@@ -4841,7 +4850,7 @@ async function updateProductEmbedding(productId, vector) {
     }
 }
 
-async function upsertProductImageEmbedding({ productId, userId, pageId, imageUrl, imageRole, vector, visualTags }) {
+async function upsertProductImageEmbedding({ productId, userId, pageId, imageUrl, imageRole, vector, visualTags, visualFingerprint }) {
     try {
         if (!vector) return false;
         // #region debug-point C:upsert-entry
@@ -4855,8 +4864,8 @@ async function upsertProductImageEmbedding({ productId, userId, pageId, imageUrl
         // Then insert the new one
         await query(
             `INSERT INTO product_image_embeddings 
-             (product_id, user_id, page_id, image_url, image_role, embedding, visual_tags)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+             (product_id, user_id, page_id, image_url, image_role, embedding, visual_tags, visual_fingerprint)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
             [
                 productId, 
                 String(userId), 
@@ -4864,7 +4873,8 @@ async function upsertProductImageEmbedding({ productId, userId, pageId, imageUrl
                 imageUrl, 
                 imageRole || 'primary', 
                 JSON.stringify(vector),
-                visualTags ? JSON.stringify(visualTags) : '[]'
+                visualTags ? JSON.stringify(visualTags) : '[]',
+                visualFingerprint ? JSON.stringify(visualFingerprint) : '{}'
             ]
         );
         // #region debug-point C:upsert-success
@@ -4913,10 +4923,11 @@ async function getIncomingImageAnalysis({ platform, pageId, senderId, imageUrl, 
 async function upsertIncomingImageAnalysis(data) {
     try {
         const matchedProducts = Array.isArray(data.matched_products) ? data.matched_products : [];
+        const visualFingerprint = data.visual_fingerprint && typeof data.visual_fingerprint === 'object' ? data.visual_fingerprint : {};
         const result = await query(
             `INSERT INTO incoming_image_analysis
-             (platform, page_id, sender_id, image_url, image_hash, image_index, batch_id, analysis_text, matched_product_id, match_score, matched_products, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, NOW())
+             (platform, page_id, sender_id, image_url, image_hash, image_index, batch_id, analysis_text, matched_product_id, match_score, matched_products, visual_fingerprint, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, NOW())
              ON CONFLICT (platform, page_id, sender_id, image_url)
              DO UPDATE SET
                 image_hash = COALESCE(EXCLUDED.image_hash, incoming_image_analysis.image_hash),
@@ -4925,8 +4936,9 @@ async function upsertIncomingImageAnalysis(data) {
                 analysis_text = EXCLUDED.analysis_text,
                 matched_product_id = EXCLUDED.matched_product_id,
                 match_score = EXCLUDED.match_score,
-                matched_products = EXCLUDED.matched_products,
-                updated_at = NOW()
+               matched_products = EXCLUDED.matched_products,
+               visual_fingerprint = EXCLUDED.visual_fingerprint,
+               updated_at = NOW()
              RETURNING *`,
             [
                 data.platform,
@@ -4939,7 +4951,8 @@ async function upsertIncomingImageAnalysis(data) {
                 data.analysis_text || null,
                 data.matched_product_id || null,
                 data.match_score === undefined || data.match_score === null ? null : Number(data.match_score),
-                JSON.stringify(matchedProducts)
+                JSON.stringify(matchedProducts),
+                JSON.stringify(visualFingerprint)
             ]
         );
         return result.rows[0] || null;
@@ -5575,7 +5588,7 @@ async function searchProductByImageVector(imageVector, pageId) {
         let sql = `
             WITH ranked_matches AS (
                 SELECT p.id, p.name, p.description, p.image_url, p.price, p.currency, p.variants, p.is_combo, p.combo_items, p.allow_description, p.product_mode, p.attribute_schema, p.sku_matrix,
-                       pie.image_role, pie.visual_tags,
+                       pie.image_role, pie.visual_tags, pie.visual_fingerprint,
                        (pie.embedding <=> $1::vector) as distance
                 FROM product_image_embeddings pie
                 JOIN products p ON p.id = pie.product_id

@@ -498,6 +498,99 @@ function normalizePublicMediaUrl(url) {
     return `${baseUrl.replace(/\/$/, '')}${cleanPath}`;
 }
 
+function safeJsonParse(value, fallback = null) {
+    if (!value) return fallback;
+    if (typeof value === 'object') return value;
+    try { return JSON.parse(value); } catch { return fallback; }
+}
+
+function normalizeFingerprintValue(value) {
+    if (Array.isArray(value)) return value.map(normalizeFingerprintValue).flat().filter(Boolean);
+    if (value && typeof value === 'object') return Object.values(value).map(normalizeFingerprintValue).flat().filter(Boolean);
+    return String(value || '').toLowerCase().trim();
+}
+
+function extractFingerprintTerms(fingerprint) {
+    const parsed = typeof fingerprint === 'string'
+        ? safeJsonParse(fingerprint, fingerprint)
+        : safeJsonParse(fingerprint, {});
+    const values = normalizeFingerprintValue(parsed);
+    const terms = new Set();
+    values.forEach((value) => {
+        String(value || '')
+            .split(/[^a-z0-9]+/i)
+            .map(token => token.toLowerCase().trim())
+            .filter(token => token.length > 2 && !['unknown', 'none', 'product', 'design', 'color', 'type', 'with', 'and', 'the'].includes(token))
+            .forEach(token => terms.add(token));
+    });
+    return terms;
+}
+
+function extractStructuredVisualFingerprint(analysisText) {
+    const text = String(analysisText || '');
+    const getField = (label) => {
+        const pattern = new RegExp(`${label}\\s*:\\s*([\\s\\S]*?)(?=\\n[A-Z][A-Za-z /]+\\s*:|$)`, 'i');
+        const match = text.match(pattern);
+        return match ? match[1].trim().replace(/\s+/g, ' ') : '';
+    };
+    const splitList = (value) => String(value || '')
+        .split(/[,;|\n]+/)
+        .map(item => item.trim())
+        .filter(Boolean)
+        .slice(0, 30);
+    const getAnyField = (...labels) => labels.map(getField).find(Boolean) || '';
+
+    return {
+        product_type: getAnyField('Product Category', 'Product Type', 'Item Type'),
+        structural_model: getAnyField('Structural Model', 'Shape / Structure', 'Form Factor'),
+        material: splitList(getAnyField('Main Material', 'Material', 'Visible Material')),
+        primary_color: getAnyField('Primary Color', 'Main Color'),
+        accent_colors: splitList(getAnyField('Accent Colors', 'Secondary Colors')),
+        pattern: splitList(getAnyField('Pattern / Print', 'Pattern', 'Print')),
+        texture: getAnyField('Texture', 'Surface Texture'),
+        construction: getAnyField('Construction', 'Build Type', 'Structure'),
+        attachment_features: getAnyField('Attachment Features', 'Handle Type', 'Shoulder Strap', 'Strap Type', 'Connector Type'),
+        visible_design_features: getAnyField('Visible Design Features', 'Front Design', 'Main Visible Design', 'Exterior Design'),
+        unique_features: splitList(getAnyField('Unique Design Features', 'Unique Features', 'Distinctive Features')),
+        distinguishing_characteristics: getAnyField('Distinguishing Characteristics', 'Variant Differentiators'),
+        search_keywords: splitList(getAnyField('Search Keywords', 'Keywords')),
+        stable_visual_fingerprint: splitList(getAnyField('Stable Visual Fingerprint', 'Visual Fingerprint'))
+    };
+}
+
+function getFingerprintRerankScore(queryFingerprint, candidate) {
+    const queryTerms = extractFingerprintTerms(queryFingerprint);
+    const candidateFingerprint = candidate.visual_fingerprint || candidate.visualFingerprint || null;
+    const candidateTerms = extractFingerprintTerms(candidateFingerprint);
+    if (candidateTerms.size === 0) {
+        extractFingerprintTerms(candidate.visual_tags || []).forEach(term => candidateTerms.add(term));
+        extractFingerprintTerms(candidate.searchable_text || '').forEach(term => candidateTerms.add(term));
+        extractFingerprintTerms(candidate.keywords || '').forEach(term => candidateTerms.add(term));
+        extractFingerprintTerms(candidate.name || '').forEach(term => candidateTerms.add(term));
+    }
+
+    let hits = [];
+    for (const term of queryTerms) {
+        if (candidateTerms.has(term)) hits.push(term);
+    }
+
+    const importantFields = [
+        ['product_type', 12], ['structural_model', 10], ['primary_color', 8], ['accent_colors', 6],
+        ['material', 8], ['pattern', 6], ['texture', 6], ['construction', 6],
+        ['attachment_features', 6], ['visible_design_features', 10], ['unique_features', 10],
+        ['distinguishing_characteristics', 10], ['stable_visual_fingerprint', 12]
+    ];
+    let bonus = Math.min(20, hits.length * 1.2);
+    const candidateText = [candidate.name, candidate.description, candidate.searchable_text, candidate.keywords, JSON.stringify(candidate.visual_tags || []), JSON.stringify(candidateFingerprint || {})].join(' ').toLowerCase();
+    for (const [field, weight] of importantFields) {
+        const value = queryFingerprint?.[field];
+        const terms = [...extractFingerprintTerms(value)];
+        if (terms.length && terms.some(term => candidateText.includes(term))) bonus += weight;
+    }
+
+    return { bonus: Number(Math.min(45, bonus).toFixed(2)), hits: hits.slice(0, 25) };
+}
+
 function toImageMatchSummary(product) {
     if (!product || !product.id) return null;
     const score = product.distance !== undefined && product.distance !== null
@@ -511,19 +604,81 @@ function toImageMatchSummary(product) {
         description: product.description || null,
         image_url: normalizePublicMediaUrl(product.image_url),
         additional_images: Array.isArray(product.additional_images) ? product.additional_images.map(normalizePublicMediaUrl).filter(Boolean) : [],
-        match_score: score
+        match_score: score,
+        base_match_score: score,
+        visual_fingerprint: safeJsonParse(product.visual_fingerprint, {}),
+        visual_tags: product.visual_tags || [],
+        searchable_text: product.searchable_text || '',
+        keywords: product.keywords || ''
     };
+}
+
+function rerankMatchesWithFingerprint(matches, fingerprint) {
+    return (matches || []).map(match => {
+        const rerank = getFingerprintRerankScore(fingerprint, match);
+        return {
+            ...match,
+            base_match_score: Number(match.base_match_score ?? match.match_score ?? 0),
+            fingerprint_bonus: rerank.bonus,
+            fingerprint_hits: rerank.hits,
+            match_score: Number((Number(match.base_match_score ?? match.match_score ?? 0) + rerank.bonus).toFixed(1))
+        };
+    }).sort((a, b) => Number(b.match_score || 0) - Number(a.match_score || 0));
+}
+
+function buildVisualMatchDecision(matches) {
+    const top = matches?.[0] || null;
+    if (!top) return { status: 'NO_MATCH', confidence: 'low', reason: 'no_candidate', options: [] };
+    const second = matches[1] || null;
+    const topScore = Number(top.match_score || 0);
+    const secondScore = Number(second?.match_score || 0);
+    const gap = second ? Number((topScore - secondScore).toFixed(1)) : 100;
+    const options = matches.slice(0, 3).map(match => ({
+        product_id: match.product_id,
+        name: match.name,
+        price: match.price,
+        currency: match.currency || 'BDT',
+        match_score: match.match_score,
+        base_match_score: match.base_match_score ?? match.match_score,
+        fingerprint_bonus: match.fingerprint_bonus || 0
+    }));
+    if (topScore < 70) return { status: 'NO_MATCH', confidence: 'low', reason: 'top_score_below_threshold', score_gap: gap, options };
+    if (second && gap < 3) return { status: 'AMBIGUOUS_MATCH', confidence: 'medium', reason: 'top_candidates_too_close', score_gap: gap, options };
+    return { status: 'CONFIDENT_MATCH', confidence: topScore >= 85 ? 'high' : 'medium', reason: 'fingerprint_reranked_top_candidate', score_gap: gap, options };
 }
 
 async function analyzeAndMatchIncomingImage({ platform, pageId, senderId, imageUrl, imageIndex, batchId, pageConfig, prompt, maxTokens = 2000 }) {
     const imageHash = await buildImageHash(imageUrl);
+    const cached = await dbService.getIncomingImageAnalysis({ platform, pageId, senderId, imageUrl, imageHash });
+    if (cached?.analysis_text) {
+        const cachedMatches = Array.isArray(cached.matched_products) ? cached.matched_products : [];
+        const cachedDecision = buildVisualMatchDecision(cachedMatches);
+        return {
+            imageIndex,
+            imageUrl,
+            imageHash,
+            analysisText: cached.analysis_text,
+            matchedProducts: cachedMatches,
+            topMatch: cachedDecision.status === 'CONFIDENT_MATCH' ? (cachedMatches[0] || null) : null,
+            matchDecision: cachedDecision,
+            matchScore: cached.match_score === null || cached.match_score === undefined ? null : Number(cached.match_score),
+            visualFingerprint: safeJsonParse(cached.visual_fingerprint, {}),
+            usage: 0,
+            model: 'image-analysis-cache',
+            fromCache: true
+        };
+    }
+
     const visionResult = await aiService.processImageWithVision(imageUrl, pageConfig, { prompt: prompt || '', max_tokens: maxTokens });
     const analysisText = typeof visionResult === 'object' ? String(visionResult.text || '').trim() : String(visionResult || '').trim();
     const usage = typeof visionResult === 'object' ? (visionResult.usage || 0) : 0;
     const model = typeof visionResult === 'object' ? (visionResult.model || 'unknown') : 'unknown';
-    const fromCache = false;
 
+    const visualFingerprint = analysisText && !analysisText.startsWith('[Vision Analysis Failed]')
+        ? extractStructuredVisualFingerprint(analysisText)
+        : {};
     let matchedProducts = [];
+    let matchDecision = { status: 'NO_MATCH', confidence: 'low', reason: 'not_analyzed', options: [] };
     if (analysisText && !analysisText.startsWith('[Vision Analysis Failed]')) {
         try {
             const imgVector = await aiService.getEmbedding(analysisText);
@@ -538,15 +693,14 @@ async function analyzeAndMatchIncomingImage({ platform, pageId, senderId, imageU
                     merged.set(summary.product_id, summary);
                 }
             });
-            matchedProducts = Array.from(merged.values())
-                .sort((a, b) => Number(b.match_score || 0) - Number(a.match_score || 0))
-                .slice(0, 5);
+            matchedProducts = rerankMatchesWithFingerprint(Array.from(merged.values()), visualFingerprint).slice(0, 5);
+            matchDecision = buildVisualMatchDecision(matchedProducts);
         } catch (matchErr) {
             console.warn(`[${platform}] Image product matching failed: ${matchErr.message}`);
         }
     }
 
-    const topMatch = matchedProducts[0] || null;
+    const topMatch = matchDecision.status === 'CONFIDENT_MATCH' ? (matchedProducts[0] || null) : null;
     await dbService.upsertIncomingImageAnalysis({
         platform,
         page_id: pageId,
@@ -558,7 +712,8 @@ async function analyzeAndMatchIncomingImage({ platform, pageId, senderId, imageU
         analysis_text: analysisText,
         matched_product_id: topMatch?.product_id || null,
         match_score: topMatch?.match_score ?? null,
-        matched_products: matchedProducts
+        matched_products: matchedProducts,
+        visual_fingerprint: visualFingerprint
     });
 
     return {
@@ -566,33 +721,41 @@ async function analyzeAndMatchIncomingImage({ platform, pageId, senderId, imageU
         imageUrl,
         imageHash,
         analysisText,
+        visualFingerprint,
+        matchDecision,
         matchedProducts,
         topMatch,
         matchScore: topMatch?.match_score ?? null,
         usage,
         model,
-        fromCache
+        fromCache: false
     };
 }
 
 function formatImageAnalysisBlock(result) {
     const label = `IMAGE ${result.imageIndex}`;
+    const decision = result.matchDecision || buildVisualMatchDecision(result.matchedProducts || []);
+    const options = (decision.options || []).map((option, idx) => `${idx + 1}. ${option.name || 'Unknown'} - ${option.price || 'Ask'} ${option.currency || 'BDT'} (score ${option.match_score || 0})`).join('\n') || 'None';
     if (!result.topMatch) {
-        return `[${label} ANALYSIS RESULT]\nOriginal Image URL: ${result.imageUrl}\nImage Description: ${result.analysisText || 'N/A'}\nMatched Product Details: No matching product found in the catalog.`;
+        return `[${label} ANALYSIS RESULT]\nOriginal Image URL: ${result.imageUrl}\nImage Description: ${result.analysisText || 'N/A'}\nMatch Decision: ${decision.status}\nConfidence: ${decision.confidence || 'low'}\nReason: ${decision.reason || 'N/A'}\nCandidate Options:\n${options}\nMatched Product Details: No confident matching product found in the catalog.`;
     }
     const match = result.topMatch;
-    return `[${label} ANALYSIS RESULT]\nOriginal Image URL: ${result.imageUrl}\nImage Description: ${result.analysisText || 'N/A'}\nMatched Product Details:\n- Product ID: ${match.product_id}\n- Name: ${match.name || 'N/A'}\n- Price: ${match.price || 'Ask for Price'} ${match.currency || 'BDT'}\n- Primary Image: ${match.image_url || 'N/A'}\n- Additional Images: ${(match.additional_images || []).join(', ') || 'None'}\n- Description: ${match.description || 'N/A'}\n- Match Score: ${match.match_score || 0}%`;
+    return `[${label} ANALYSIS RESULT]\nOriginal Image URL: ${result.imageUrl}\nImage Description: ${result.analysisText || 'N/A'}\nMatch Decision: ${decision.status}\nConfidence: ${decision.confidence || 'medium'}\nReason: ${decision.reason || 'N/A'}\nCandidate Options:\n${options}\nMatched Product Details:\n- Product ID: ${match.product_id}\n- Name: ${match.name || 'N/A'}\n- Price: ${match.price || 'Ask for Price'} ${match.currency || 'BDT'}\n- Primary Image: ${match.image_url || 'N/A'}\n- Additional Images: ${(match.additional_images || []).join(', ') || 'None'}\n- Description: ${match.description || 'N/A'}\n- Match Score: ${match.match_score || 0}%\n- Base Score: ${match.base_match_score || match.match_score || 0}%\n- Fingerprint Bonus: ${match.fingerprint_bonus || 0}`;
 }
 
 function buildLastImageMap(results) {
     return results.reduce((map, result) => {
-        if (result.topMatch) {
+        const options = result.matchDecision?.options || [];
+        const primary = result.topMatch || options[0] || null;
+        if (primary || options.length > 0) {
             map[String(result.imageIndex)] = {
-                product_id: result.topMatch.product_id,
-                name: result.topMatch.name,
-                price: result.topMatch.price,
-                currency: result.topMatch.currency || 'BDT',
-                match_score: result.topMatch.match_score,
+                product_id: primary?.product_id || null,
+                name: primary?.name || null,
+                price: primary?.price || null,
+                currency: primary?.currency || 'BDT',
+                match_score: primary?.match_score || null,
+                match_decision: result.matchDecision?.status || 'UNKNOWN',
+                candidate_options: options,
                 image_url: result.imageUrl
             };
         }

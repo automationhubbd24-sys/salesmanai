@@ -1,5 +1,42 @@
 const multer = require('multer');
 const dbService = require('../services/dbService');
+
+function safeJsonParse(value, fallback = null) {
+    if (!value) return fallback;
+    if (typeof value === 'object') return value;
+    try { return JSON.parse(value); } catch { return fallback; }
+}
+
+function extractStructuredVisualFingerprint(analysisText) {
+    const text = String(analysisText || '');
+    const getField = (label) => {
+        const pattern = new RegExp(`${label}\\s*:\\s*([\\s\\S]*?)(?=\\n[A-Z][A-Za-z /]+\\s*:|$)`, 'i');
+        const match = text.match(pattern);
+        return match ? match[1].trim().replace(/\s+/g, ' ') : '';
+    };
+    const splitList = (value) => String(value || '')
+        .split(/[,;|\n]+/)
+        .map(item => item.trim())
+        .filter(Boolean)
+        .slice(0, 30);
+    const getAnyField = (...labels) => labels.map(getField).find(Boolean) || '';
+    return {
+        product_type: getAnyField('Product Category', 'Product Type', 'Item Type'),
+        structural_model: getAnyField('Structural Model', 'Shape / Structure', 'Form Factor'),
+        material: splitList(getAnyField('Main Material', 'Material', 'Visible Material')),
+        primary_color: getAnyField('Primary Color', 'Main Color'),
+        accent_colors: splitList(getAnyField('Accent Colors', 'Secondary Colors')),
+        pattern: splitList(getAnyField('Pattern / Print', 'Pattern', 'Print')),
+        texture: getAnyField('Texture', 'Surface Texture'),
+        construction: getAnyField('Construction', 'Build Type', 'Structure'),
+        attachment_features: getAnyField('Attachment Features', 'Handle Type', 'Shoulder Strap', 'Strap Type', 'Connector Type'),
+        visible_design_features: getAnyField('Visible Design Features', 'Front Design', 'Main Visible Design', 'Exterior Design'),
+        unique_features: splitList(getAnyField('Unique Design Features', 'Unique Features', 'Distinctive Features')),
+        distinguishing_characteristics: getAnyField('Distinguishing Characteristics', 'Variant Differentiators'),
+        search_keywords: splitList(getAnyField('Search Keywords', 'Keywords')),
+        stable_visual_fingerprint: splitList(getAnyField('Stable Visual Fingerprint', 'Visual Fingerprint'))
+    };
+}
 const woocommerceService = require('../services/woocommerceService');
 const imageService = require('../services/imageService');
 
@@ -1444,6 +1481,8 @@ Example format: T-shirt, navy blue, horizontal stripes, short sleeves, crew neck
             return res.status(500).json({ error: cleanError || "Failed to analyze image with Vision API. Check backend logs." });
         }
 
+        const visualFingerprint = extractStructuredVisualFingerprint(tagsText.trim());
+
         // Generate vector embedding for the visual description
         const vector = await aiService.getEmbedding(tagsText.trim());
         // #region debug-point B:embedding-generated
@@ -1461,7 +1500,8 @@ Example format: T-shirt, navy blue, horizontal stripes, short sleeves, crew neck
             imageUrl: image_url,
             imageRole: 'primary',
             vector: vector,
-            visualTags: [tagsText.trim()]
+            visualTags: [tagsText.trim()],
+            visualFingerprint
         });
         // #region debug-point C:upsert-finished
         (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='auto-extract-500';try{const e=fs.readFileSync('.dbg/auto-extract-500.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'C',location:'productController.js:extractVisuals:afterUpsert',msg:'[DEBUG] image embedding upsert completed',data:{productId:product_id,userId:effectiveUserId,pageId:page_id||null,imageUrlLength:String(image_url||'').length},ts:Date.now()})}).catch(()=>{})})();
@@ -1472,8 +1512,10 @@ Example format: T-shirt, navy blue, horizontal stripes, short sleeves, crew neck
         const newVisualTagsSet = new Set([...currentVisualTagsArray, tagsText.trim()]);
         const newVisualTagsArray = [...newVisualTagsSet];
 
+        const existingFingerprint = safeJsonParse(product.visual_fingerprint, {});
         await dbService.updateProduct(product_id, effectiveUserId, {
-            visual_tags: serializeKeywordEntries(newVisualTagsArray)
+            visual_tags: serializeKeywordEntries(newVisualTagsArray),
+            visual_fingerprint: { ...existingFingerprint, primary: visualFingerprint }
         });
         // #region debug-point D:update-product-finished
         (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='auto-extract-500';try{const e=fs.readFileSync('.dbg/auto-extract-500.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'D',location:'productController.js:extractVisuals:afterUpdateProduct',msg:'[DEBUG] product visual tags update completed',data:{productId:product_id,userId:effectiveUserId,visualTagCount:newVisualTagsArray.length,visualTagStringLength:serializeKeywordEntries(newVisualTagsArray).length},ts:Date.now()})}).catch(()=>{})})();

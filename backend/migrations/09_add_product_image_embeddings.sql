@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS product_image_embeddings (
     embedding vector(4096), -- OpenRouter qwen/qwen3-embedding-8b dimensions
     ocr_text TEXT,
     visual_tags JSONB DEFAULT '[]'::jsonb,
+    visual_fingerprint JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
