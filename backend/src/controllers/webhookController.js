@@ -649,24 +649,27 @@ function buildVisualMatchDecision(matches) {
 
 async function analyzeAndMatchIncomingImage({ platform, pageId, senderId, imageUrl, imageIndex, batchId, pageConfig, prompt, maxTokens = 2000 }) {
     const imageHash = await buildImageHash(imageUrl);
-    const cached = await dbService.getIncomingImageAnalysis({ platform, pageId, senderId, imageUrl, imageHash });
-    if (cached?.analysis_text) {
-        const cachedMatches = Array.isArray(cached.matched_products) ? cached.matched_products : [];
-        const cachedDecision = buildVisualMatchDecision(cachedMatches);
-        return {
-            imageIndex,
-            imageUrl,
-            imageHash,
-            analysisText: cached.analysis_text,
-            matchedProducts: cachedMatches,
-            topMatch: cachedDecision.status === 'CONFIDENT_MATCH' ? (cachedMatches[0] || null) : null,
-            matchDecision: cachedDecision,
-            matchScore: cached.match_score === null || cached.match_score === undefined ? null : Number(cached.match_score),
-            visualFingerprint: safeJsonParse(cached.visual_fingerprint, {}),
-            usage: 0,
-            model: 'image-analysis-cache',
-            fromCache: true
-        };
+    const useIncomingImageCache = false;
+    if (useIncomingImageCache) {
+        const cached = await dbService.getIncomingImageAnalysis({ platform, pageId, senderId, imageUrl, imageHash });
+        if (cached?.analysis_text) {
+            const cachedMatches = Array.isArray(cached.matched_products) ? cached.matched_products : [];
+            const cachedDecision = buildVisualMatchDecision(cachedMatches);
+            return {
+                imageIndex,
+                imageUrl,
+                imageHash,
+                analysisText: cached.analysis_text,
+                matchedProducts: cachedMatches,
+                topMatch: cachedDecision.status === 'CONFIDENT_MATCH' ? (cachedMatches[0] || null) : null,
+                matchDecision: cachedDecision,
+                matchScore: cached.match_score === null || cached.match_score === undefined ? null : Number(cached.match_score),
+                visualFingerprint: safeJsonParse(cached.visual_fingerprint, {}),
+                usage: 0,
+                model: 'image-analysis-cache',
+                fromCache: true
+            };
+        }
     }
 
     const visionResult = await aiService.processImageWithVision(imageUrl, pageConfig, { prompt: prompt || '', max_tokens: maxTokens });
