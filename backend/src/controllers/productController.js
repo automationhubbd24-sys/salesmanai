@@ -1472,7 +1472,7 @@ DO NOT use sentences. Provide a comma-separated list of visual keywords ONLY.
 Example format: T-shirt, navy blue, horizontal stripes, short sleeves, crew neck, cotton fabric`;
         }
 
-        const analysisResult = await aiService.processImageWithVision(image_url, pageConfig, { prompt, max_tokens: 400 });
+        const analysisResult = await aiService.processImageWithVision(image_url, pageConfig, { prompt });
         
         let tagsText = typeof analysisResult === 'string' ? analysisResult : (analysisResult.text || '');
         if (tagsText.startsWith('[Vision Analysis Failed]')) {

@@ -2241,7 +2241,7 @@ STRICT RULES:
             if (msg.images && msg.images.length > 0) {
                 const imagesToAnalyze = msg.images.slice(0, 100);
                 const imagePromises = imagesToAnalyze.map(img =>
-                    aiService.processImageWithVision(img, pageConfig, { prompt: productAnalysisPrompt || "", max_tokens: 10000 })
+                    aiService.processImageWithVision(img, pageConfig, { prompt: productAnalysisPrompt || "" })
                 );
                 analysisPromises.push({ msg, promise: Promise.all(imagePromises) });
             }

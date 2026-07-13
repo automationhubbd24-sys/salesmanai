@@ -1242,7 +1242,7 @@ async function getImageEmbedding(imageUrl, customApiKey = null, pageConfig = {})
 Be highly objective and specific. Output only the description.`;
 
         const safePageConfig = pageConfig && typeof pageConfig === 'object' ? pageConfig : {};
-        const descriptionResult = await processImageWithVision(imageUrl, safePageConfig, { prompt, max_tokens: 300 });
+        const descriptionResult = await processImageWithVision(imageUrl, safePageConfig, { prompt });
         const description = typeof descriptionResult === 'string'
             ? descriptionResult
             : (typeof descriptionResult?.text === 'string' ? descriptionResult.text : '');
@@ -3179,8 +3179,6 @@ async function processImageWithVision(imageUrl, pageConfig = {}, customOptions =
         }
     };
 
-    const maxTokens = Number(customOptions?.max_tokens) > 0 ? Number(customOptions.max_tokens) : 10000;
-
         // Determine System Prompt
     let systemPrompt = typeof customOptions?.prompt === 'string' && customOptions.prompt.trim() !== "" 
         ? customOptions.prompt 
@@ -3205,8 +3203,7 @@ Example format: T-shirt, navy blue, horizontal stripes, short sleeves, crew neck
                             { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Image}` } }
                         ]
                     }
-                ],
-                max_tokens: maxTokens
+                ]
             };
 
             const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', payload, {
@@ -3244,7 +3241,6 @@ Example format: T-shirt, navy blue, horizontal stripes, short sleeves, crew neck
                 try {
                     const payload = {
                         model: currentModel,
-                        max_tokens: maxTokens,
                         messages: [
                                 {
                                     role: "user",
@@ -3310,7 +3306,6 @@ Example format: T-shirt, navy blue, horizontal stripes, short sleeves, crew neck
 
             const payload = {
                 model: model,
-                max_tokens: maxTokens,
                 messages: [
                     { 
                         role: "user", 
@@ -3498,7 +3493,6 @@ Example format: T-shirt, navy blue, horizontal stripes, short sleeves, crew neck
                                 { inline_data: { mime_type: mimeType, data: base64Image } }
                             ]
                         }],
-                        generationConfig: { maxOutputTokens: maxTokens },
                         safetySettings: getGeminiSafetySettings()
                     };
                     const res = await axios.post(url, payload, {
@@ -3523,7 +3517,6 @@ Example format: T-shirt, navy blue, horizontal stripes, short sleeves, crew neck
 
                     const payload = {
                         model: modelToUse,
-                        max_tokens: maxTokens,
                         messages: [
                             { 
                                 role: "user", 

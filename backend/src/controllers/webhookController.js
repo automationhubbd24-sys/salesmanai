@@ -2,6 +2,7 @@ const dbService = require('../services/dbService');
 const orderService = require('../services/orderService');
 const { query } = require('../services/pgClient');
 const aiService = require('../services/aiService');
+const visualBrainService = require('../services/visualBrainService');
 const facebookService = require('../services/facebookService');
 const { runMessengerWorkflow } = require('../services/messenger_workflow');
 const { runWhatsAppWorkflow } = require('../services/whatsapp_workflow');
@@ -643,12 +644,13 @@ function buildVisualMatchDecision(matches) {
         base_match_score: match.base_match_score ?? match.match_score,
         fingerprint_bonus: match.fingerprint_bonus || 0
     }));
-    if (topScore < 70) return { status: 'NO_MATCH', confidence: 'low', reason: 'top_score_below_threshold', score_gap: gap, options };
+    if (topScore < 80) return { status: 'NO_MATCH', confidence: 'low', reason: 'top_score_below_threshold', score_gap: gap, options };
+    if (topScore < 85 && second && gap < 10) return { status: 'AMBIGUOUS_MATCH', confidence: 'medium', reason: 'moderate_score_with_close_candidates', score_gap: gap, options };
     if (second && gap < 3) return { status: 'AMBIGUOUS_MATCH', confidence: 'medium', reason: 'top_candidates_too_close', score_gap: gap, options };
     return { status: 'CONFIDENT_MATCH', confidence: topScore >= 85 ? 'high' : 'medium', reason: 'fingerprint_reranked_top_candidate', score_gap: gap, options };
 }
 
-async function analyzeAndMatchIncomingImage({ platform, pageId, senderId, imageUrl, imageIndex, batchId, pageConfig, prompt, maxTokens = 2000 }) {
+async function analyzeAndMatchIncomingImage({ platform, pageId, senderId, imageUrl, imageIndex, batchId, pageConfig, prompt }) {
     const imageHash = await buildImageHash(imageUrl);
     const useIncomingImageCache = false;
     if (useIncomingImageCache) {
@@ -673,7 +675,7 @@ async function analyzeAndMatchIncomingImage({ platform, pageId, senderId, imageU
         }
     }
 
-    const visionResult = await aiService.processImageWithVision(imageUrl, pageConfig, { prompt: prompt || '', max_tokens: maxTokens });
+    const visionResult = await aiService.processImageWithVision(imageUrl, pageConfig, { prompt: prompt || '' });
     const analysisText = typeof visionResult === 'object' ? String(visionResult.text || '').trim() : String(visionResult || '').trim();
     const usage = typeof visionResult === 'object' ? (visionResult.usage || 0) : 0;
     const model = typeof visionResult === 'object' ? (visionResult.model || 'unknown') : 'unknown';
@@ -710,13 +712,26 @@ async function analyzeAndMatchIncomingImage({ platform, pageId, senderId, imageU
                 merged.set(summary.product_id, summary);
             });
             matchedProducts = rerankMatchesWithFingerprint(Array.from(merged.values()), visualFingerprint).slice(0, 5);
-            matchDecision = buildVisualMatchDecision(matchedProducts);
+            matchDecision = await visualBrainService.judgeVisualMatch({
+                analysisText,
+                candidates: matchedProducts,
+                apiKey: process.env.VISUAL_BRAIN_API_KEY,
+                baseURL: process.env.VISUAL_BRAIN_BASE_URL,
+                model: process.env.VISUAL_BRAIN_MODEL
+            });
+            matchDecision.options = (matchDecision.options || []).map((option) => {
+                const product = matchedProducts.find(candidate => String(candidate.product_id) === String(option.product_id));
+                return product ? { ...product, ...option, match_score: option.match_score ?? product.match_score } : option;
+            });
         } catch (matchErr) {
             console.warn(`[${platform}] Image product matching failed: ${matchErr.message}`);
         }
     }
 
-    const topMatch = matchDecision.status === 'CONFIDENT_MATCH' ? (matchedProducts[0] || null) : null;
+    const selectedProductId = matchDecision.selected_product_id ? String(matchDecision.selected_product_id) : null;
+    const topMatch = matchDecision.status === 'EXACT_MATCH'
+        ? (matchedProducts.find(product => String(product.product_id) === selectedProductId) || matchedProducts[0] || null)
+        : null;
     await dbService.upsertIncomingImageAnalysis({
         platform,
         page_id: pageId,
@@ -753,7 +768,12 @@ function formatImageAnalysisBlock(result) {
     const decision = result.matchDecision || buildVisualMatchDecision(result.matchedProducts || []);
     const options = (decision.options || []).map((option, idx) => `${idx + 1}. ${option.name || 'Unknown'} - ${option.price || 'Ask'} ${option.currency || 'BDT'} (score ${option.match_score || 0})`).join('\n') || 'None';
     if (!result.topMatch) {
-        return `[${label} ANALYSIS RESULT]\nOriginal Image URL: ${result.imageUrl}\nImage Description: ${result.analysisText || 'N/A'}\nMatch Decision: ${decision.status}\nConfidence: ${decision.confidence || 'low'}\nReason: ${decision.reason || 'N/A'}\nCandidate Options:\n${options}\nMatched Product Details: No confident matching product found in the catalog.`;
+        const responseGuidance = decision.status === 'SIMILAR_ALTERNATIVE'
+            ? 'Do not say this exact product is available. Say the exact same item was not found, but similar/closest options are available if the customer wants.'
+            : decision.status === 'AMBIGUOUS_MATCH'
+                ? 'Do not confirm one product as exact. Ask the customer to choose from the close options.'
+                : 'Do not confirm availability for this image. Say no confident exact match was found.';
+        return `[${label} ANALYSIS RESULT]\nOriginal Image URL: ${result.imageUrl}\nImage Description: ${result.analysisText || 'N/A'}\nMatch Decision: ${decision.status}\nConfidence: ${decision.confidence || 'low'}\nReason: ${decision.reason || 'N/A'}\nResponse Guidance: ${responseGuidance}\nCandidate Options:\n${options}\nMatched Product Details: No exact matching product confirmed in the catalog.`;
     }
     const match = result.topMatch;
     return `[${label} ANALYSIS RESULT]\nOriginal Image URL: ${result.imageUrl}\nImage Description: ${result.analysisText || 'N/A'}\nMatch Decision: ${decision.status}\nConfidence: ${decision.confidence || 'medium'}\nReason: ${decision.reason || 'N/A'}\nCandidate Options:\n${options}\nMatched Product Details:\n- Product ID: ${match.product_id}\n- Name: ${match.name || 'N/A'}\n- Price: ${match.price || 'Ask for Price'} ${match.currency || 'BDT'}\n- Primary Image: ${match.image_url || 'N/A'}\n- Additional Images: ${(match.additional_images || []).join(', ') || 'None'}\n- Description: ${match.description || 'N/A'}\n- Match Score: ${match.match_score || 0}%\n- Base Score: ${match.base_match_score || match.match_score || 0}%\n- Fingerprint Bonus: ${match.fingerprint_bonus || 0}`;
@@ -1467,9 +1487,9 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
                     imageIndex: job.imageIndex,
                     batchId,
                     pageConfig: config,
-                    prompt: productAnalysisPrompt,
-                    maxTokens: 2000
+                    prompt: productAnalysisPrompt
                 }).catch(error => ({
+
                     imageIndex: job.imageIndex,
                     imageUrl: job.url,
                     analysisText: `[Vision Analysis Failed] ${error.message}`,
@@ -3350,9 +3370,9 @@ STRICT RULES:
                         imageIndex: job.imageIndex,
                         batchId,
                         pageConfig,
-                        prompt: productAnalysisPrompt,
-                        maxTokens: 10000
+                        prompt: productAnalysisPrompt
                     }).catch(error => ({
+
                         imageIndex: job.imageIndex,
                         imageUrl: job.url,
                         analysisText: `[Vision Analysis Failed] ${error.message}`,

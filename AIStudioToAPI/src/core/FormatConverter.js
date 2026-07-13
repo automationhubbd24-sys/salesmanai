@@ -808,7 +808,6 @@ class FormatConverter {
 
         // Generation config
         const generationConfig = {
-            maxOutputTokens: openaiBody.max_tokens,
             stopSequences: openaiBody.stop,
             temperature: openaiBody.temperature,
             topK: openaiBody.top_k,
@@ -2347,7 +2346,6 @@ class FormatConverter {
 
         // Generation config
         const generationConfig = {
-            maxOutputTokens: claudeBody.max_tokens,
             stopSequences: claudeBody.stop_sequences,
             temperature: claudeBody.temperature,
             topK: claudeBody.top_k,
@@ -3157,7 +3155,6 @@ class FormatConverter {
 
         // Generation config
         const generationConfig = {
-            maxOutputTokens: responseBody.max_output_tokens,
             temperature: responseBody.temperature,
             topP: responseBody.top_p,
         };
