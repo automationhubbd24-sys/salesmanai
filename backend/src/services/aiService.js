@@ -2220,9 +2220,17 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     if (userId && pageConfig.page_id) {
         try {
             const state = await dbService.getConversationState(pageConfig.page_id, userId);
+            const contextParts = [];
             if (state && state.last_product_id) {
                 currentContextId = state.last_product_id;
-                lastProductContext = `[CONTEXT: LAST_RESOLVED_PRODUCT_ID: "${state.last_product_id}"] (Note: User is likely referring to this product if they say "it", "this", or "how to use" without naming it.)`;
+                contextParts.push(`[CONTEXT: LAST_RESOLVED_PRODUCT_ID: "${state.last_product_id}"] (Note: User is likely referring to this product if they say "it", "this", or "how to use" without naming it.)`);
+            }
+            if (state && state.last_image_map) {
+                const imageMap = typeof state.last_image_map === 'string' ? state.last_image_map : JSON.stringify(state.last_image_map);
+                contextParts.push(`[CONTEXT: LAST_IMAGE_MAP]\n${imageMap}\nIf the user says "1 number", "2 number", "ছবি ১", "ছবি ২", or similar, resolve it from this map.`);
+            }
+            if (contextParts.length > 0) {
+                lastProductContext = contextParts.join('\n');
             }
         } catch (e) {
             console.warn("[AI Context] Failed to fetch conv state:", e.message);

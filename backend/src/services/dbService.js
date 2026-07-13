@@ -251,16 +251,35 @@ async function getConversationState(pageId, senderId) {
 
 async function setConversationState(pageId, senderId, data) {
     try {
+        const hasField = (field) => Object.prototype.hasOwnProperty.call(data || {}, field);
+        const lastImageMap = hasField('last_image_map')
+            ? JSON.stringify(data.last_image_map || null)
+            : null;
         await query(
-            `INSERT INTO conversation_state (page_id, sender_id, last_product_id, last_variant_key, last_intent, updated_at)
-             VALUES ($1, $2, $3, $4, $5, NOW())
+            `INSERT INTO conversation_state (page_id, sender_id, last_product_id, last_variant_key, last_intent, last_image_map, last_image_batch_id, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, NOW())
              ON CONFLICT (page_id, sender_id) 
              DO UPDATE SET 
-                last_product_id = EXCLUDED.last_product_id,
-                last_variant_key = EXCLUDED.last_variant_key,
-                last_intent = EXCLUDED.last_intent,
+                last_product_id = CASE WHEN $8 THEN EXCLUDED.last_product_id ELSE conversation_state.last_product_id END,
+                last_variant_key = CASE WHEN $9 THEN EXCLUDED.last_variant_key ELSE conversation_state.last_variant_key END,
+                last_intent = CASE WHEN $10 THEN EXCLUDED.last_intent ELSE conversation_state.last_intent END,
+                last_image_map = CASE WHEN $11 THEN EXCLUDED.last_image_map ELSE conversation_state.last_image_map END,
+                last_image_batch_id = CASE WHEN $12 THEN EXCLUDED.last_image_batch_id ELSE conversation_state.last_image_batch_id END,
                 updated_at = NOW()`,
-            [pageId, senderId, data.last_product_id || null, data.last_variant_key || null, data.last_intent || null]
+            [
+                pageId,
+                senderId,
+                hasField('last_product_id') ? (data.last_product_id || null) : null,
+                hasField('last_variant_key') ? (data.last_variant_key || null) : null,
+                hasField('last_intent') ? (data.last_intent || null) : null,
+                lastImageMap,
+                hasField('last_image_batch_id') ? (data.last_image_batch_id || null) : null,
+                hasField('last_product_id'),
+                hasField('last_variant_key'),
+                hasField('last_intent'),
+                hasField('last_image_map'),
+                hasField('last_image_batch_id')
+            ]
         );
         return true;
     } catch (error) {
@@ -805,12 +824,55 @@ async function initTables() {
                 last_product_id TEXT,
                 last_variant_key TEXT,
                 last_intent TEXT,
+                last_image_map JSONB,
+                last_image_batch_id TEXT,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                 PRIMARY KEY (page_id, sender_id)
             );
+            ALTER TABLE conversation_state ADD COLUMN IF NOT EXISTS last_image_map JSONB;
+            ALTER TABLE conversation_state ADD COLUMN IF NOT EXISTS last_image_batch_id TEXT;
             CREATE INDEX IF NOT EXISTS idx_conv_state_updated ON conversation_state(updated_at DESC);
         `);
         console.log("[DB] 'conversation_state' table initialized.");
+
+        await query(`
+            CREATE TABLE IF NOT EXISTS incoming_image_analysis (
+                id BIGSERIAL PRIMARY KEY,
+                platform TEXT NOT NULL,
+                page_id TEXT NOT NULL,
+                sender_id TEXT NOT NULL,
+                image_url TEXT NOT NULL,
+                image_hash TEXT,
+                image_index INT,
+                batch_id TEXT,
+                analysis_text TEXT,
+                matched_product_id TEXT,
+                match_score NUMERIC,
+                matched_products JSONB DEFAULT '[]'::jsonb,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            );
+            ALTER TABLE incoming_image_analysis ADD COLUMN IF NOT EXISTS image_hash TEXT;
+            ALTER TABLE incoming_image_analysis ADD COLUMN IF NOT EXISTS image_index INT;
+            ALTER TABLE incoming_image_analysis ADD COLUMN IF NOT EXISTS batch_id TEXT;
+            ALTER TABLE incoming_image_analysis ADD COLUMN IF NOT EXISTS analysis_text TEXT;
+            ALTER TABLE incoming_image_analysis ADD COLUMN IF NOT EXISTS matched_product_id TEXT;
+            ALTER TABLE incoming_image_analysis ADD COLUMN IF NOT EXISTS match_score NUMERIC;
+            ALTER TABLE incoming_image_analysis ADD COLUMN IF NOT EXISTS matched_products JSONB DEFAULT '[]'::jsonb;
+            ALTER TABLE incoming_image_analysis ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+            DELETE FROM incoming_image_analysis a
+            USING incoming_image_analysis b
+            WHERE a.ctid < b.ctid
+              AND a.platform = b.platform
+              AND a.page_id = b.page_id
+              AND a.sender_id = b.sender_id
+              AND a.image_url = b.image_url;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_incoming_image_analysis_unique ON incoming_image_analysis(platform, page_id, sender_id, image_url);
+            CREATE INDEX IF NOT EXISTS idx_incoming_image_analysis_lookup ON incoming_image_analysis(platform, page_id, sender_id, image_url);
+            CREATE INDEX IF NOT EXISTS idx_incoming_image_analysis_hash ON incoming_image_analysis(image_hash);
+            CREATE INDEX IF NOT EXISTS idx_incoming_image_analysis_batch ON incoming_image_analysis(batch_id);
+        `);
+        console.log("[DB] 'incoming_image_analysis' table initialized.");
 
         // Ensure 'custom_base_url' column exists
         await query(`
@@ -3897,6 +3959,8 @@ module.exports = {
     searchProductByImageVector,
     searchProducts,
     searchProductsForResource,
+    getIncomingImageAnalysis,
+    upsertIncomingImageAnalysis,
     getProductsByNames,
     checkProductFeatureAccess,
     updateProductEmbedding,
@@ -4812,6 +4876,75 @@ async function upsertProductImageEmbedding({ productId, userId, pageId, imageUrl
     }
 }
 
+async function getIncomingImageAnalysis({ platform, pageId, senderId, imageUrl, imageHash }) {
+    try {
+        const conditions = ['platform = $1', 'page_id = $2', 'sender_id = $3'];
+        const params = [platform, pageId, senderId];
+
+        if (imageHash) {
+            params.push(imageHash);
+            conditions.push(`image_hash = $${params.length}`);
+        } else if (imageUrl) {
+            params.push(imageUrl);
+            conditions.push(`image_url = $${params.length}`);
+        } else {
+            return null;
+        }
+
+        const result = await query(
+            `SELECT * FROM incoming_image_analysis
+             WHERE ${conditions.join(' AND ')}
+             ORDER BY updated_at DESC
+             LIMIT 1`,
+            params
+        );
+        return result.rows[0] || null;
+    } catch (e) {
+        if (e.code === '42P01') return null;
+        console.warn(`[DB] getIncomingImageAnalysis failed: ${e.message}`);
+        return null;
+    }
+}
+
+async function upsertIncomingImageAnalysis(data) {
+    try {
+        const matchedProducts = Array.isArray(data.matched_products) ? data.matched_products : [];
+        const result = await query(
+            `INSERT INTO incoming_image_analysis
+             (platform, page_id, sender_id, image_url, image_hash, image_index, batch_id, analysis_text, matched_product_id, match_score, matched_products, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, NOW())
+             ON CONFLICT (platform, page_id, sender_id, image_url)
+             DO UPDATE SET
+                image_hash = COALESCE(EXCLUDED.image_hash, incoming_image_analysis.image_hash),
+                image_index = EXCLUDED.image_index,
+                batch_id = EXCLUDED.batch_id,
+                analysis_text = EXCLUDED.analysis_text,
+                matched_product_id = EXCLUDED.matched_product_id,
+                match_score = EXCLUDED.match_score,
+                matched_products = EXCLUDED.matched_products,
+                updated_at = NOW()
+             RETURNING *`,
+            [
+                data.platform,
+                data.page_id,
+                data.sender_id,
+                data.image_url,
+                data.image_hash || null,
+                data.image_index ?? null,
+                data.batch_id || null,
+                data.analysis_text || null,
+                data.matched_product_id || null,
+                data.match_score === undefined || data.match_score === null ? null : Number(data.match_score),
+                JSON.stringify(matchedProducts)
+            ]
+        );
+        return result.rows[0] || null;
+    } catch (e) {
+        console.warn(`[DB] upsertIncomingImageAnalysis failed: ${e.message}`);
+        return null;
+    }
+}
+
 function buildProductVisualAnalysisKey(productId, entryIndex) {
     return `analysis://product/${productId}/visual/${entryIndex + 1}`;
 }
@@ -4823,7 +4956,7 @@ async function syncProductVisualAnalysisEmbeddings(product, options = {}) {
     const visualEntries = normalizeVisualAnalysisEntries(normalizedProduct.visual_tags);
 
     try {
-        await query(`DELETE FROM product_image_embeddings WHERE product_id = $1`, [normalizedProduct.id]);
+        await query(`DELETE FROM product_image_embeddings WHERE product_id = $1 AND image_role = 'analysis'`, [normalizedProduct.id]);
     } catch (e) {
         console.error(`[DB] syncProductVisualAnalysisEmbeddings cleanup failed for ${normalizedProduct.id}: ${e.message}`);
         return 0;

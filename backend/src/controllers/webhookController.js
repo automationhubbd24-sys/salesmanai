@@ -8,6 +8,7 @@ const { runWhatsAppWorkflow } = require('../services/whatsapp_workflow');
 const { buildResolvedProductMediaContext } = require('../utils/productMediaResolver');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 // --- GATEKEEPER CACHE (In-Memory) ---
 // Purpose: Block unauthorized pages instantly to protect backend resources.
@@ -445,6 +446,151 @@ function hasPhotoIntent(historyList) {
         else if (item.message && typeof item.message.text === 'string') content = item.message.text;
         return typeof content === 'string' && content.includes('[INTENT_DETECTED: USER_REQUESTED_PHOTO]');
     });
+}
+
+async function buildImageHash(imageUrl) {
+    const normalizedUrl = String(imageUrl || '').trim();
+    if (!normalizedUrl) return null;
+
+    try {
+        const response = await fetch(normalizedUrl);
+        if (response.ok) {
+            const arrayBuffer = await response.arrayBuffer();
+            return crypto.createHash('sha256').update(Buffer.from(arrayBuffer)).digest('hex');
+        }
+    } catch (error) {
+        console.warn(`[Image Cache] Failed to hash image bytes, falling back to URL hash: ${error.message}`);
+    }
+
+    return crypto.createHash('sha256').update(normalizedUrl).digest('hex');
+}
+
+function normalizePublicMediaUrl(url) {
+    if (!url || url === 'N/A') return 'N/A';
+    const value = String(url).trim();
+    if (!value) return 'N/A';
+    if (value.startsWith('http')) return value;
+    const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
+    const cleanPath = value.startsWith('/') ? value : `/${value}`;
+    return `${baseUrl.replace(/\/$/, '')}${cleanPath}`;
+}
+
+function toImageMatchSummary(product) {
+    if (!product || !product.id) return null;
+    const score = product.distance !== undefined && product.distance !== null
+        ? Math.max(0, Math.min(100, Number(((1 - Number(product.distance)) * 100).toFixed(1))))
+        : Number(product.match_score || 0);
+    return {
+        product_id: String(product.id),
+        name: product.name || null,
+        price: product.price || null,
+        currency: product.currency || 'BDT',
+        description: product.description || null,
+        image_url: normalizePublicMediaUrl(product.image_url),
+        additional_images: Array.isArray(product.additional_images) ? product.additional_images.map(normalizePublicMediaUrl).filter(Boolean) : [],
+        match_score: score
+    };
+}
+
+async function analyzeAndMatchIncomingImage({ platform, pageId, senderId, imageUrl, imageIndex, batchId, pageConfig, prompt, maxTokens = 2000 }) {
+    const imageHash = await buildImageHash(imageUrl);
+    const cached = await dbService.getIncomingImageAnalysis({ platform, pageId, senderId, imageUrl, imageHash });
+    if (cached?.analysis_text) {
+        const cachedMatches = Array.isArray(cached.matched_products) ? cached.matched_products : [];
+        return {
+            imageIndex,
+            imageUrl,
+            imageHash,
+            analysisText: cached.analysis_text,
+            matchedProducts: cachedMatches,
+            topMatch: cachedMatches[0] || null,
+            matchScore: cached.match_score === null || cached.match_score === undefined ? null : Number(cached.match_score),
+            usage: 0,
+            model: 'image-analysis-cache',
+            fromCache: true
+        };
+    }
+
+    const visionResult = await aiService.processImageWithVision(imageUrl, pageConfig, { prompt: prompt || '', max_tokens: maxTokens });
+    const analysisText = typeof visionResult === 'object' ? String(visionResult.text || '').trim() : String(visionResult || '').trim();
+    const usage = typeof visionResult === 'object' ? (visionResult.usage || 0) : 0;
+    const model = typeof visionResult === 'object' ? (visionResult.model || 'unknown') : 'unknown';
+
+    let matchedProducts = [];
+    if (analysisText && !analysisText.startsWith('[Vision Analysis Failed]')) {
+        try {
+            const imgVector = await aiService.getEmbedding(analysisText);
+            const vectorMatches = imgVector ? await dbService.searchProductByImageVector(imgVector, pageId) || [] : [];
+            const textMatches = await dbService.searchProductsForResource(analysisText, pageId) || [];
+            const merged = new Map();
+            [...vectorMatches, ...textMatches].forEach((product) => {
+                const summary = toImageMatchSummary(product);
+                if (!summary) return;
+                const existing = merged.get(summary.product_id);
+                if (!existing || Number(summary.match_score || 0) > Number(existing.match_score || 0)) {
+                    merged.set(summary.product_id, summary);
+                }
+            });
+            matchedProducts = Array.from(merged.values())
+                .sort((a, b) => Number(b.match_score || 0) - Number(a.match_score || 0))
+                .slice(0, 5);
+        } catch (matchErr) {
+            console.warn(`[${platform}] Image product matching failed: ${matchErr.message}`);
+        }
+    }
+
+    const topMatch = matchedProducts[0] || null;
+    await dbService.upsertIncomingImageAnalysis({
+        platform,
+        page_id: pageId,
+        sender_id: senderId,
+        image_url: imageUrl,
+        image_hash: imageHash,
+        image_index: imageIndex,
+        batch_id: batchId,
+        analysis_text: analysisText,
+        matched_product_id: topMatch?.product_id || null,
+        match_score: topMatch?.match_score ?? null,
+        matched_products: matchedProducts
+    });
+
+    return {
+        imageIndex,
+        imageUrl,
+        imageHash,
+        analysisText,
+        matchedProducts,
+        topMatch,
+        matchScore: topMatch?.match_score ?? null,
+        usage,
+        model,
+        fromCache: false
+    };
+}
+
+function formatImageAnalysisBlock(result) {
+    const label = `IMAGE ${result.imageIndex}`;
+    if (!result.topMatch) {
+        return `[${label} ANALYSIS RESULT]\nOriginal Image URL: ${result.imageUrl}\nImage Description: ${result.analysisText || 'N/A'}\nMatched Product Details: No matching product found in the catalog.`;
+    }
+    const match = result.topMatch;
+    return `[${label} ANALYSIS RESULT]\nOriginal Image URL: ${result.imageUrl}\nImage Description: ${result.analysisText || 'N/A'}\nMatched Product Details:\n- Product ID: ${match.product_id}\n- Name: ${match.name || 'N/A'}\n- Price: ${match.price || 'Ask for Price'} ${match.currency || 'BDT'}\n- Primary Image: ${match.image_url || 'N/A'}\n- Additional Images: ${(match.additional_images || []).join(', ') || 'None'}\n- Description: ${match.description || 'N/A'}\n- Match Score: ${match.match_score || 0}%`;
+}
+
+function buildLastImageMap(results) {
+    return results.reduce((map, result) => {
+        if (result.topMatch) {
+            map[String(result.imageIndex)] = {
+                product_id: result.topMatch.product_id,
+                name: result.topMatch.name,
+                price: result.topMatch.price,
+                currency: result.topMatch.currency || 'BDT',
+                match_score: result.topMatch.match_score,
+                image_url: result.imageUrl
+            };
+        }
+        return map;
+    }, {});
 }
 
 function normalizePhotoDecision(photoDecision) {
@@ -1104,70 +1250,86 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
 
         if (!imageDetectionEnabled) {
             console.log(`[WhatsApp Batch] Image Detection disabled. Skipping.`);
+            await dbService.setConversationState(effectiveSessionName, senderId, {
+                last_image_map: null,
+                last_image_batch_id: `wa_img_skipped_${Date.now()}`,
+                last_intent: 'image_analysis_skipped'
+            });
             combinedText += `\n[System Note: User sent ${allImages.length} images. Image detection is disabled.]`;
         } else {
-            console.log(`[WhatsApp Batch] Analyzing ${allImages.length} images...`);
-            let combinedImageAnalysis = "";
+            console.log(`[WhatsApp Batch] Analyzing and matching ${allImages.length} images...`);
             let productAnalysisPrompt = `Analyze this image with 100% precision. Focus on products and text. Output in Bengali format.`;
             if (controlConfig.image_prompt || controlConfig.vision_prompt) {
                 productAnalysisPrompt = controlConfig.image_prompt || controlConfig.vision_prompt;
             }
 
-            const analysisPromises = [];
+            const batchId = `wa_img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            const imageJobs = [];
+            let imageIndex = 1;
             for (const msg of normalizedMessages) {
-                if (msg.images && msg.images.length > 0) {
-                    const imagePromises = msg.images.map(url =>
-                        aiService.processImageWithVision(url, config, { prompt: productAnalysisPrompt, max_tokens: 2000 })
-                    );
-                    analysisPromises.push({ msg, promise: Promise.all(imagePromises) });
+                for (const url of msg.images || []) {
+                    imageJobs.push({ msg, url, imageIndex: imageIndex++ });
                 }
             }
 
-            const allAnalysisResults = await Promise.all(analysisPromises.map(p => p.promise));
-            allAnalysisResults.forEach((imageResults, idx) => {
-                const msg = analysisPromises[idx].msg;
-                let lastModelUsed = 'unknown';
-                const perMsgText = imageResults.map(result => {
-                    const text = typeof result === 'object' ? (result.text || '') : String(result || '');
-                    totalVisionTokens += (result.usage || 0);
-                    lastModelUsed = result.model || 'unknown';
-                    return text;
-                }).join("\n\n").trim();
+            const imageAnalysisResults = await Promise.all(imageJobs.map(job =>
+                analyzeAndMatchIncomingImage({
+                    platform: 'whatsapp',
+                    pageId: effectiveSessionName,
+                    senderId,
+                    imageUrl: job.url,
+                    imageIndex: job.imageIndex,
+                    batchId,
+                    pageConfig: config,
+                    prompt: productAnalysisPrompt,
+                    maxTokens: 2000
+                }).catch(error => ({
+                    imageIndex: job.imageIndex,
+                    imageUrl: job.url,
+                    analysisText: `[Vision Analysis Failed] ${error.message}`,
+                    matchedProducts: [],
+                    topMatch: null,
+                    usage: 0,
+                    model: 'vision-error'
+                }))
+            ));
 
-                if (perMsgText) {
-                    combinedImageAnalysis += `${perMsgText}\n\n`;
-                    // Note: We deliberately do not perform vector search inline here for WhatsApp Cloud API yet,
-                    // but the vision text alone is sufficient for the agent if it has tools enabled.
-                    dbService.saveWhatsAppChat({
-                        session_name: effectiveSessionName,
-                        sender_id: effectiveSessionName,
-                        recipient_id: senderId,
-                        message_id: `img_analysis_${Date.now()}_${idx}`,
-                        text: `[Analyzed Image]:\n${perMsgText}`,
-                        timestamp: Date.now(),
-                        status: 'analyzed',
-                        reply_by: 'bot',
-                        token_usage: totalVisionTokens,
-                        model_used: lastModelUsed
-                    }).catch(e => console.error(`[WhatsApp] Failed to save image analysis:`, e.message));
-                }
+            totalVisionTokens += imageAnalysisResults.reduce((sum, result) => sum + Number(result.usage || 0), 0);
+            const combinedImageAnalysis = imageAnalysisResults.map(formatImageAnalysisBlock).join('\n\n');
+            const lastImageMap = buildLastImageMap(imageAnalysisResults);
+
+            await dbService.setConversationState(effectiveSessionName, senderId, {
+                last_image_map: Object.keys(lastImageMap).length > 0 ? lastImageMap : null,
+                last_image_batch_id: batchId,
+                last_intent: 'multi_image_analysis'
             });
 
             if (combinedImageAnalysis) {
-                combinedText += `\n\n[NEW VISUAL CONTEXT - IMPORTANT]:
-The user has just sent the following image(s). This is the CURRENT FOCUS of the conversation. 
-If the user asks "eta ase?" or "price koto?", they are referring to the product(s) described below.
+                dbService.saveWhatsAppChat({
+                    session_name: effectiveSessionName,
+                    sender_id: effectiveSessionName,
+                    recipient_id: senderId,
+                    message_id: `img_analysis_${batchId}`,
+                    text: `[Analyzed Images]:\n${combinedImageAnalysis}`,
+                    timestamp: Date.now(),
+                    status: 'analyzed',
+                    reply_by: 'bot',
+                    token_usage: totalVisionTokens,
+                    model_used: imageAnalysisResults.find(r => r.model && r.model !== 'image-analysis-cache')?.model || 'image-analysis-cache'
+                }).catch(e => console.error(`[WhatsApp] Failed to save image analysis:`, e.message));
 
-Description of New Image(s):
+                combinedText += `\n\n[NEW VISUAL CONTEXT - IMPORTANT]:
+The user has just sent the following image(s). This is the CURRENT FOCUS of the conversation.
+If the user asks "eta ase?", "price koto?", "chobi den", or refers to "1/2/3 number", they are referring to the numbered image results below.
+
 ${combinedImageAnalysis.trim()}
 
-[CRITICAL RULE FOR IMAGES]: 
-1. The description above contains structural visual features extracted from the user's image.
-2. DO NOT say "Yes we have this" just because the category matches. 
-3. You MUST use the 'resolve_product' tool passing the description above as the query to check if we have the EXACT same design, color, print, and style in our catalog.
-4. If the tool returns a High Match (Score >= 80), say "Yes, we have this exact product."
-5. If Medium Match (60-79), say "It looks like a [Category], but it is slightly different from our catalog (e.g., different print/design). Here is our original product..."
-6. If Low Match (< 60) or Not Found, say "We do not have this exact item in our catalog."
+[CRITICAL RULE FOR IMAGES AND MULTIPLE PRODUCTS]:
+1. Use the exact IMAGE 1 / IMAGE 2 / IMAGE 3 order above when answering.
+2. If matched product details are present, answer from those verified details and do NOT merge all products into one ambiguous paragraph.
+3. For multiple images, list each answer as "ছবি ১", "ছবি ২" etc. with product name and price.
+4. If an image has no matching product, say exact match পাওয়া যায়নি for that specific image.
+5. If user later says "২ নাম্বারটা", use IMAGE 2 from the saved image map.
 [END OF NEW VISUAL CONTEXT]`;
             }
         }
@@ -2947,6 +3109,11 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
 
         if (hasVideo || tooManyImages) {
              console.log(`[Optimization] Skipping Vision Analysis. Video: ${hasVideo}, Images: ${allImages.length}`);
+             await dbService.setConversationState(pageId, senderId, {
+                 last_image_map: null,
+                 last_image_batch_id: `fb_img_skipped_${Date.now()}`,
+                 last_intent: 'image_analysis_skipped'
+             });
              const reason = hasVideo ? "User sent a video." : `User sent ${allImages.length} images.`;
              combinedText += `\n[System Note: ${reason} This is too costly/complex to analyze directly. Instead of analyzing these media files, use the Ad Context (Ref/Title) if available, or ask the user to specify which product they are interested in from the post.]`;
         } else if (allImages.length > 0) {
@@ -2955,12 +3122,15 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
 
             if (!imageDetectionEnabled) {
                 console.log(`[Batch] Image Detection disabled for page ${pageId}. Skipping.`);
+                await dbService.setConversationState(pageId, senderId, {
+                    last_image_map: null,
+                    last_image_batch_id: `fb_img_skipped_${Date.now()}`,
+                    last_intent: 'image_analysis_skipped'
+                });
                 combinedText += `\n[System Note: User sent ${allImages.length} images. Image detection is disabled, so they were not analyzed. Ask the user to describe what they want.]`;
             } else {
-                console.log(`[Batch] Per-message analysis for ${allImages.length} images...`);
-                let combinedImageAnalysis = "";
-
-            let productAnalysisPrompt = `Analyze this image with 100% precision. 
+                console.log(`[Batch] Analyzing and matching ${allImages.length} images...`);
+                let productAnalysisPrompt = `Analyze this image with 100% precision. 
 STRICT RULES:
 1. FOCUS ONLY on the main products in the foreground (e.g., being held in hand or placed at the front). 
 2. IGNORE the background products on shelves or blurred items.
@@ -2972,141 +3142,70 @@ STRICT RULES:
 ২. ...
 এটি মূলত একটি **"[কম্বো বা অফার নাম]"** হিসেবে সাজানো হয়েছে। [একটি ছোট বাক্যে সারসংক্ষেপ]`;
 
-            if (pagePrompts && (pagePrompts.image_prompt || pagePrompts.vision_prompt)) {
-                productAnalysisPrompt = pagePrompts.image_prompt || pagePrompts.vision_prompt;
-            }
-
-            // --- STRICT SYNC: Collect all promises for parallel processing and await them ---
-            const analysisPromises = [];
-            const visualCandidateMatches = new Map();
-            const mergeVisualCandidate = (product, source) => {
-                if (!product || !product.id) return;
-                const score = product.distance !== undefined && product.distance !== null
-                    ? Math.max(0, Math.min(100, Number(((1 - Number(product.distance)) * 100).toFixed(1))))
-                    : 0;
-                const existing = visualCandidateMatches.get(String(product.id));
-                if (existing) {
-                    existing.score = Math.max(existing.score, score);
-                    existing.sources.add(source);
-                    return;
+                if (pagePrompts && (pagePrompts.image_prompt || pagePrompts.vision_prompt)) {
+                    productAnalysisPrompt = pagePrompts.image_prompt || pagePrompts.vision_prompt;
                 }
-                visualCandidateMatches.set(String(product.id), {
-                    id: product.id,
-                    name: product.name,
-                    score,
-                    sources: new Set([source])
-                });
-            };
 
-            for (const msg of messages) {
-                if (msg.images && msg.images.length > 0) {
-                    const imagesToAnalyze = msg.images;
-                    const imagePromises = imagesToAnalyze.map(url =>
-                        aiService.processImageWithVision(url, pageConfig, { prompt: productAnalysisPrompt || "", max_tokens: 10000 })
-                    );
-                    analysisPromises.push({ msg, promise: Promise.all(imagePromises) });
-                }
-            }
-
-            // WAIT for all image analysis to complete before proceeding to LLM
-            const allAnalysisResults = await Promise.all(analysisPromises.map(p => p.promise));
-
-            // Use for...of instead of forEach because we need await inside
-            for (let idx = 0; idx < allAnalysisResults.length; idx++) {
-                const imageResults = allAnalysisResults[idx];
-                const msg = analysisPromises[idx].msg;
-                let lastModelUsed = 'unknown';
-                
-                // Process each image INDIVIDUALLY for embedding to avoid hallucination
-                const perImageTexts = imageResults.map((result) => {
-                    const text = typeof result === 'object' ? (result.text || '') : String(result || '');
-                    const usage = typeof result === 'object' ? (result.usage || 0) : 0;
-                    const model = typeof result === 'object' ? (result.model || 'unknown') : 'unknown';
-                    totalVisionTokens += usage;
-                    lastModelUsed = model;
-                    return text.trim();
-                }).filter(t => t.length > 0);
-                
-                if (perImageTexts.length > 0) {
-                    const combinedForMsg = perImageTexts.join("\n\n");
-                    combinedImageAnalysis += `${combinedForMsg}\n\n`;
-                    
-                    // Run vector search for each image separately
-                    for (const singleImgText of perImageTexts) {
-                        try {
-                            const imgVector = await aiService.getEmbedding(singleImgText);
-                            let vectorMatches = [];
-                            if (imgVector) {
-                                vectorMatches = await dbService.searchProductByImageVector(imgVector, pageId) || [];
-                            }
-                            const textMatches = await dbService.searchProductsForResource(singleImgText, pageId) || [];
-                            
-                            // Combine and sort local matches for THIS image
-                            let combinedForThisImage = [...vectorMatches, ...textMatches];
-                            combinedForThisImage.sort((a, b) => (b.distance !== undefined ? (1-b.distance)*100 : 0) - (a.distance !== undefined ? (1-a.distance)*100 : 0));
-                            
-                            if (combinedForThisImage.length > 0) {
-                                const topMatch = combinedForThisImage[0];
-                                const score = topMatch.distance !== undefined ? Math.max(0, Math.min(100, Number(((1 - Number(topMatch.distance)) * 100).toFixed(1)))) : 0;
-                                
-                                const normalizeUrl = (url) => {
-                                    if (!url || url === 'N/A') return 'N/A';
-                                    if (url.startsWith('http')) return url;
-                                    const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
-                                    const cleanPath = url.startsWith('/') ? url : `/${url}`;
-                                    return `${baseUrl.replace(/\/$/, '')}${cleanPath}`;
-                                };
-
-                                const additionalImages = Array.isArray(topMatch.additional_images) ? topMatch.additional_images.map(normalizeUrl).join(', ') : 'None';
-                                
-                                combinedImageAnalysis += `
-[IMAGE ANALYSIS RESULT]
-Image Description: ${singleImgText}
-Matched Product Details:
-- Product ID: ${topMatch.id}
-- Name: ${topMatch.name}
-- Price: ${topMatch.price || 'Ask for Price'}
-- Primary Image: ${normalizeUrl(topMatch.image_url)}
-- Additional Images: ${additionalImages}
-- Description: ${topMatch.description || 'N/A'}
-- Match Score: ${score}%
-`;
-                            } else {
-                                combinedImageAnalysis += `
-[IMAGE ANALYSIS RESULT]
-Image Description: ${singleImgText}
-Matched Product Details: No matching product found in the catalog.
-`;
-                            }
-                        } catch (searchErr) {
-                            console.warn("[Messenger] Visual Search failed for single image:", searchErr.message);
-                        }
+                const batchId = `fb_img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                const imageJobs = [];
+                let imageIndex = 1;
+                for (const msg of messages) {
+                    for (const url of msg.images || []) {
+                        imageJobs.push({ msg, url, imageIndex: imageIndex++ });
                     }
-                    
-                    // Parallel Save (No await)
+                }
+
+                const imageAnalysisResults = await Promise.all(imageJobs.map(job =>
+                    analyzeAndMatchIncomingImage({
+                        platform: 'messenger',
+                        pageId,
+                        senderId,
+                        imageUrl: job.url,
+                        imageIndex: job.imageIndex,
+                        batchId,
+                        pageConfig,
+                        prompt: productAnalysisPrompt,
+                        maxTokens: 10000
+                    }).catch(error => ({
+                        imageIndex: job.imageIndex,
+                        imageUrl: job.url,
+                        analysisText: `[Vision Analysis Failed] ${error.message}`,
+                        matchedProducts: [],
+                        topMatch: null,
+                        usage: 0,
+                        model: 'vision-error'
+                    }))
+                ));
+
+                totalVisionTokens += imageAnalysisResults.reduce((sum, result) => sum + Number(result.usage || 0), 0);
+                const combinedImageAnalysis = imageAnalysisResults.map(formatImageAnalysisBlock).join('\n\n');
+                const lastImageMap = buildLastImageMap(imageAnalysisResults);
+
+                await dbService.setConversationState(pageId, senderId, {
+                    last_image_map: Object.keys(lastImageMap).length > 0 ? lastImageMap : null,
+                    last_image_batch_id: batchId,
+                    last_intent: 'multi_image_analysis'
+                });
+
+                if (combinedImageAnalysis) {
                     dbService.saveFbChat({
                         page_id: pageId,
-                        sender_id: pageId, // Bot (Page) is sender
-                        recipient_id: senderId, // User is recipient
-                        message_id: `img_analysis_${Date.now()}_${idx}`,
-                        text: `[Analyzed Image]:\n${combinedForMsg}`,
+                        sender_id: pageId,
+                        recipient_id: senderId,
+                        message_id: `img_analysis_${batchId}`,
+                        text: `[Analyzed Images]:\n${combinedImageAnalysis}`,
                         timestamp: Date.now(),
                         status: 'analyzed',
                         reply_by: 'bot',
-                        token: totalVisionTokens, // Specific tokens for vision
-                        ai_model: lastModelUsed
-                    }).catch(e => console.error(`[FB] Failed to save per-message analysis:`, e.message));
-                }
-            }
-
-            // Cleanup legacy visual candidate mapping since we process per-image now
-            if (combinedImageAnalysis) {
+                        token: totalVisionTokens,
+                        ai_model: imageAnalysisResults.find(r => r.model && r.model !== 'image-analysis-cache')?.model || 'image-analysis-cache'
+                    }).catch(e => console.error(`[FB] Failed to save image analysis:`, e.message));
                 // #region debug-point B:messenger-visual-context
                 (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='messenger-image-match';try{const e=fs.readFileSync('.dbg/messenger-image-match.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'B',location:'webhookController.js:messenger:visualContext',msg:'[DEBUG] messenger visual context appended',data:{pageId,senderId,combinedLength:combinedImageAnalysis.length,containsVectorSearchResult:combinedImageAnalysis.includes('[IMAGE ANALYSIS RESULT]'),combinedPreview:combinedImageAnalysis.slice(0,280)},ts:Date.now()})}).catch(()=>{})})();
                 // #endregion
                 
                 // Unified single block for AI - ENHANCED FOCUS
-                combinedText += `\n\n[NEW VISUAL CONTEXT - IMPORTANT]:\nThe user has just sent the following image(s). This is the CURRENT FOCUS of the conversation. If the user asks "eta ase?", "price koto?", or "chobi den", they are referring to the product(s) described below.\n\n${combinedImageAnalysis.trim()}\n\n[CRITICAL RULE FOR IMAGES AND MULTIPLE PRODUCTS]:\n1. IF there are [IMAGE ANALYSIS RESULT] blocks above, you MUST NOT use the 'resolve_product' tool. The system has already fetched the FULL details for you!\n2. Use the provided details (Name, ID, Price, Description, Images) to answer. For multiple images, answer for ALL matched products individually.\n3. If the user asks for photos ("sobi den", "picture"), YOU MUST use the exact 'Primary Image' or 'Additional Images' URLs provided in the matching block.\n4. When you need to send information about MULTIPLE products (prices, details, or images), YOU MUST NEVER send them all in a single large paragraph.\n5. You MUST insert the exact text \`[SPLIT]\` between each product's details so the system can send them as separate messages (e.g. Product 1 Info \\n[SPLIT]\\n Product 2 Info).\n[END OF NEW VISUAL CONTEXT]`;
+                combinedText += `\n\n[NEW VISUAL CONTEXT - IMPORTANT]:\nThe user has just sent the following image(s). This is the CURRENT FOCUS of the conversation. If the user asks "eta ase?", "price koto?", "chobi den", or refers to "1/2/3 number", they are referring to the numbered image results below.\n\n${combinedImageAnalysis.trim()}\n\n[CRITICAL RULE FOR IMAGES AND MULTIPLE PRODUCTS]:\n1. Use the exact IMAGE 1 / IMAGE 2 / IMAGE 3 order above when answering.\n2. If matched product details are present, answer from those verified details and do NOT merge all products into one ambiguous paragraph.\n3. For multiple images, list each answer as "ছবি ১", "ছবি ২" etc. with product name and price.\n4. If the user asks for photos ("sobi den", "picture"), use the exact Primary Image or Additional Images URLs from the matching block.\n5. If an image has no matching product, say exact match পাওয়া যায়নি for that specific image.\n6. If user later says "২ নাম্বারটা", use IMAGE 2 from the saved image map.\n[END OF NEW VISUAL CONTEXT]`;
             } else {
                 combinedText += `\n[User sent ${allImages.length} images: ${allImages.join(', ')}]`;
             }
