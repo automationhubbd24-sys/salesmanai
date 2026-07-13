@@ -876,15 +876,14 @@ async function initTables() {
 
         // Ensure 'custom_base_url' column exists
         await query(`
-            DO $$ 
-            BEGIN 
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='page_access_token_message' AND column_name='custom_base_url') THEN
-                    ALTER TABLE page_access_token_message ADD COLUMN custom_base_url TEXT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='page_access_token_message' AND column_name='pro_plus_mode') THEN
-                    ALTER TABLE page_access_token_message ADD COLUMN pro_plus_mode BOOLEAN DEFAULT FALSE;
-                END IF;
-            END $$;
+            ALTER TABLE IF EXISTS page_access_token_message ADD COLUMN IF NOT EXISTS custom_base_url TEXT;
+            ALTER TABLE IF EXISTS page_access_token_message ADD COLUMN IF NOT EXISTS pro_plus_mode BOOLEAN DEFAULT FALSE;
+            ALTER TABLE IF EXISTS page_access_token_message ADD COLUMN IF NOT EXISTS bonus_credit NUMERIC DEFAULT 0;
+            ALTER TABLE IF EXISTS page_access_token_message ADD COLUMN IF NOT EXISTS permanent_credit NUMERIC DEFAULT 0;
+            ALTER TABLE IF EXISTS page_access_token_message ADD COLUMN IF NOT EXISTS daily_limit NUMERIC DEFAULT 0;
+            ALTER TABLE IF EXISTS page_access_token_message ADD COLUMN IF NOT EXISTS daily_used NUMERIC DEFAULT 0;
+            ALTER TABLE IF EXISTS page_access_token_message ADD COLUMN IF NOT EXISTS monthly_limit NUMERIC DEFAULT 0;
+            ALTER TABLE IF EXISTS page_access_token_message ADD COLUMN IF NOT EXISTS monthly_used NUMERIC DEFAULT 0;
         `);
 
         // Ensure 'is_locked' column exists (for backward compatibility)

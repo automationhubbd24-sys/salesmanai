@@ -448,6 +448,29 @@ function hasPhotoIntent(historyList) {
     });
 }
 
+function getHistoryText(historyList) {
+    if (!Array.isArray(historyList)) return '';
+    return historyList
+        .map(item => {
+            let content = '';
+            if (!item) return '';
+            if (typeof item === 'string') content = item;
+            else if (typeof item.content === 'string') content = item.content;
+            else if (typeof item.text === 'string') content = item.text;
+            else if (item.message && typeof item.message.content === 'string') content = item.message.content;
+            else if (item.message && typeof item.message.text === 'string') content = item.message.text;
+            if (!content) return '';
+            if (content.includes('[SYSTEM MEMORY]') || content.includes('Link: http')) return '';
+            return content
+                .replace(/Image URL: https?:\/\/[^\s|]+/gi, '(Image)')
+                .replace(/Desc: [\s\S]*?(?=\||\[End|$)/gi, '')
+                .replace(/\[Instruction Products\]/gi, '')
+                .trim();
+        })
+        .filter(Boolean)
+        .join('\n');
+}
+
 async function buildImageHash(imageUrl) {
     const normalizedUrl = String(imageUrl || '').trim();
     if (!normalizedUrl) return null;
