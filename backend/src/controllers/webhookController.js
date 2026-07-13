@@ -514,7 +514,8 @@ function extractFingerprintTerms(fingerprint) {
     const parsed = typeof fingerprint === 'string'
         ? safeJsonParse(fingerprint, fingerprint)
         : safeJsonParse(fingerprint, {});
-    const values = normalizeFingerprintValue(parsed);
+    const normalizedValues = normalizeFingerprintValue(parsed);
+    const values = Array.isArray(normalizedValues) ? normalizedValues : [normalizedValues];
     const terms = new Set();
     values.forEach((value) => {
         String(value || '')
