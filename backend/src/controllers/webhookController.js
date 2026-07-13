@@ -689,13 +689,25 @@ async function analyzeAndMatchIncomingImage({ platform, pageId, senderId, imageU
             const vectorMatches = imgVector ? await dbService.searchProductByImageVector(imgVector, pageId) || [] : [];
             const textMatches = await dbService.searchProductsForResource(analysisText, pageId) || [];
             const merged = new Map();
-            [...vectorMatches, ...textMatches].forEach((product) => {
+            vectorMatches.forEach((product) => {
+                const summary = toImageMatchSummary(product);
+                if (!summary) return;
+                summary.match_source = 'image_vector';
+                merged.set(summary.product_id, summary);
+            });
+            textMatches.forEach((product) => {
                 const summary = toImageMatchSummary(product);
                 if (!summary) return;
                 const existing = merged.get(summary.product_id);
-                if (!existing || Number(summary.match_score || 0) > Number(existing.match_score || 0)) {
-                    merged.set(summary.product_id, summary);
+                if (existing) {
+                    existing.text_match_score = summary.match_score;
+                    existing.match_score = Number(Math.min(100, Number(existing.match_score || 0) + Math.min(8, Number(summary.match_score || 0) * 0.08)).toFixed(1));
+                    return;
                 }
+                summary.match_source = 'text_support';
+                summary.base_match_score = Math.min(65, Number(summary.base_match_score || summary.match_score || 0));
+                summary.match_score = summary.base_match_score;
+                merged.set(summary.product_id, summary);
             });
             matchedProducts = rerankMatchesWithFingerprint(Array.from(merged.values()), visualFingerprint).slice(0, 5);
             matchDecision = buildVisualMatchDecision(matchedProducts);
