@@ -85,7 +85,7 @@ const Navbar = () => {
         "mx-auto max-w-7xl flex items-center justify-between gap-2 px-3 sm:px-5 md:px-8 h-14 sm:h-16 md:h-20 rounded-2xl border border-white/10 transition-all duration-500",
         scrolled ? "bg-black/90 backdrop-blur-2xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] border-white/15" : "bg-black/70 backdrop-blur-xl"
       )}>
-        <Link to="/" className="flex items-center group relative z-50 scale-[0.78] sm:scale-90 md:scale-100 origin-left min-w-0">
+        <Link to="/" className="flex items-center group relative z-50 scale-[0.68] min-[380px]:scale-[0.74] sm:scale-90 md:scale-100 origin-left min-w-0">
           <Logo size="md" accentColor={accentColor} />
           {/* Logo Glow */}
           <div
@@ -192,14 +192,16 @@ const Navbar = () => {
         </div>
 
         <div className="flex items-center gap-2 lg:hidden shrink-0">
-          <Button
-            className="h-10 px-4 text-xs sm:text-sm font-black bg-[#00ff88] hover:bg-[#00f07f] text-black rounded-full shadow-[0_10px_30px_rgba(0,255,136,0.25)] active:scale-95"
-            asChild
-          >
-            <Link to={isLoggedIn ? "/dashboard/whatsapp/control" : "/register"}>
-              {isLoggedIn ? t("Dashboard", "ড্যাশবোর্ড") : t("Get", "শুরু")}
-            </Link>
-          </Button>
+          {!isLoggedIn && (
+            <Button
+              className="h-10 px-4 text-xs sm:text-sm font-black bg-[#00ff88] hover:bg-[#00f07f] text-black rounded-full shadow-[0_10px_30px_rgba(0,255,136,0.25)] active:scale-95"
+              asChild
+            >
+              <Link to="/register">
+                {t("Get", "শুরু")}
+              </Link>
+            </Button>
+          )}
 
           {/* Mobile Menu Button */}
           <button

@@ -8,6 +8,7 @@ import { Lock, ArrowLeft, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { BACKEND_URL } from "@/config";
+import SEO from "@/components/SEO";
 
 const ResetPassword = () => {
   const { t } = useLanguage();
@@ -123,6 +124,7 @@ const ResetPassword = () => {
 
   return (
     <div className="flex min-h-screen bg-[#0b0b0b] text-white">
+      <SEO title="Set a new SalesmanChatbot password" noindex />
       <div className="flex flex-1 flex-col justify-center px-4 py-12 sm:px-6 lg:px-20 xl:px-24">
         <div className="mx-auto w-full max-w-md">
           <div className="mb-6">

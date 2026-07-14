@@ -10,23 +10,20 @@ import CaseStudies from "@/components/landing/CaseStudies";
 import PricingSection from "@/components/landing/PricingSection";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { MessageCircle } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
+import SEO from "@/components/SEO";
 
 const Index = () => {
   const { t } = useLanguage();
   const [supportOpen, setSupportOpen] = useState(false);
 
-  useEffect(() => {
-    document.title = "SalesmanChatbot — Automate Sales & Support with AI Agents";
-    const metaDesc = document.querySelector('meta[name="description"]') || document.createElement('meta');
-    metaDesc.setAttribute('name', 'description');
-    metaDesc.setAttribute('content', 'SalesmanChatbot helps business owners automate chat, orders, and growth with modern AI and automation tools.');
-    document.head.appendChild(metaDesc);
-  }, []);
-
   return (
     <div className="min-h-screen bg-[#050505] text-white selection:bg-[#00ff88] selection:text-black relative overflow-x-hidden scroll-smooth">
+      <SEO
+        title="SalesmanChatbot — Automate Sales & Support with AI Agents"
+        description="SalesmanChatbot helps business owners automate chat, orders, and growth with modern AI and automation tools."
+      />
       <Navbar />
 
       <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-10 z-[60]">
