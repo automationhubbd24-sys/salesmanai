@@ -25,7 +25,7 @@ const HeroSection = () => {
   const marqueeItemsRev = [...marqueeItems].reverse();
 
   return (
-    <section className="relative min-h-screen flex flex-col items-center justify-start overflow-hidden pt-32 md:pt-48 pb-20 bg-background">
+    <section className="relative min-h-screen flex flex-col items-center justify-start overflow-hidden pt-24 sm:pt-32 md:pt-48 pb-14 md:pb-20 bg-background">
       {/* LazyChat Style Background */}
       <div className="absolute inset-0 z-0">
         {/* Background Grid */}
@@ -58,7 +58,7 @@ const HeroSection = () => {
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, delay: 0.2 }}
-          className="mb-8 text-4xl font-black tracking-tight text-foreground md:text-6xl lg:text-7xl leading-[1.1] max-w-5xl font-sans"
+          className="mb-5 sm:mb-8 text-[2.45rem] font-black tracking-tight text-foreground sm:text-5xl md:text-6xl lg:text-7xl leading-[1.05] sm:leading-[1.1] max-w-5xl font-sans"
         >
           {t("Your #1 AI Sales Agent on", "আপনার #১ এআই সেলস এজেন্ট")}{" "}
           <span className="text-[#00A3FF]">Facebook</span>,{" "}
@@ -70,7 +70,7 @@ const HeroSection = () => {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, delay: 0.4 }}
-          className="mb-12 max-w-2xl text-base text-muted-foreground md:text-lg leading-relaxed font-medium"
+          className="mb-7 sm:mb-10 max-w-2xl text-base text-muted-foreground md:text-lg leading-relaxed font-medium"
         >
           {t("Let", "সেলসম্যান")} Salesman<span className="text-[#A855F7] font-bold">Chatbot</span> {t("talk to your customers, take orders, and close sales; so you can finally focus on growing your business.", "চ্যাটবটকে আপনার কাস্টমারদের সাথে কথা বলতে দিন, অর্ডার নিতে দিন এবং সেলস ক্লোজ করতে দিন; যাতে আপনি আপনার ব্যবসা বৃদ্ধিতে মনোযোগ দিতে পারেন।")}
         </motion.p>
@@ -78,12 +78,32 @@ const HeroSection = () => {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.55 }}
+          className="mb-10 flex w-full max-w-md flex-col items-center gap-3 sm:max-w-none sm:flex-row sm:justify-center sm:gap-4"
+        >
+          <Button className="h-14 w-full sm:w-auto px-8 rounded-full bg-[#00ff88] hover:bg-[#00f07f] text-black text-base font-black shadow-[0_20px_45px_rgba(0,255,136,0.25)] active:scale-95" asChild>
+            <Link to="/register">
+              {t("Get Started Free", "ফ্রি শুরু করুন")}
+              <ArrowRight className="w-5 h-5" />
+            </Link>
+          </Button>
+          <Button className="h-14 w-full sm:w-auto px-8 rounded-full bg-white/5 hover:bg-white/10 text-white border border-white/10 text-base font-black active:scale-95" asChild>
+            <Link to="/pricing">{t("See Pricing", "প্রাইসিং দেখুন")}</Link>
+          </Button>
+          <div className="text-xs font-bold text-muted-foreground sm:ml-2">
+            {t("No credit card needed", "কার্ড ছাড়াই শুরু করুন")}
+          </div>
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, delay: 0.6 }}
-          className="w-screen mb-16"
+          className="w-screen mb-10 sm:mb-16"
           style={{ marginLeft: "calc(50% - 50vw)", marginRight: "calc(50% - 50vw)" }}
         >
-          <div className="mx-auto" style={{ maxWidth: "min(1950px, calc(120vw - 1rem))" }}>
-            <div className="rounded-3xl border border-border bg-card/50 p-6 md:p-8 shadow-xl">
+          <div className="mx-auto px-3 sm:px-4" style={{ maxWidth: "min(1950px, calc(120vw - 1rem))" }}>
+            <div className="rounded-3xl border border-border bg-card/50 p-4 sm:p-6 md:p-8 shadow-xl">
             <div className="text-center space-y-6">
               <div className="text-xs md:text-sm font-black uppercase tracking-widest text-muted-foreground">
                 {t("Trusted by", "ভরসা করেন")}
@@ -132,7 +152,7 @@ const HeroSection = () => {
           initial={{ opacity: 0, y: 40 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 1, delay: 0.8 }}
-          className="relative w-full max-w-6xl mx-auto px-4"
+          className="relative w-full max-w-6xl mx-auto px-3 sm:px-4"
         >
           <div className="relative group">
           {/* Dashboard Glow */}
@@ -151,39 +171,39 @@ const HeroSection = () => {
           
           <div className="relative bg-card border border-border rounded-3xl overflow-hidden shadow-[0_40px_100px_rgba(0,0,0,0.1)] dark:shadow-[0_40px_100px_rgba(0,0,0,0.4)] backdrop-blur-xl">
             {/* Top Bar */}
-            <div className="h-14 bg-secondary/50 border-b border-border flex items-center px-4 md:px-6 justify-between">
+            <div className="h-14 bg-secondary/50 border-b border-border flex items-center px-3 sm:px-4 md:px-6 justify-between gap-2">
               <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2 bg-background px-3 py-1.5 rounded-lg border border-border">
                   <div className="w-4 h-4 rounded-full bg-purple-500 flex items-center justify-center">
                     <Sparkles className="w-2.5 h-2.5 text-white" />
                   </div>
-                  <span className="text-xs font-bold text-foreground">A Shopping Page</span>
+                  <span className="hidden xs:inline text-xs font-bold text-foreground sm:inline">A Shopping Page</span>
                   <ChevronDown className="w-3 h-3 text-muted-foreground" />
                 </div>
               </div>
               
-              <div className="flex items-center gap-4 md:gap-6">
+              <div className="flex items-center gap-2 sm:gap-4 md:gap-6">
                 <div className="hidden md:flex items-center gap-3">
                   <div className="relative">
                     <Bell className="w-5 h-5 text-muted-foreground" />
                     <div className="absolute -top-1 -right-1 w-4 h-4 bg-purple-600 rounded-full text-[10px] flex items-center justify-center font-bold text-white">48</div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/20 px-3 py-1 rounded-full">
+                <div className="hidden min-[380px]:flex items-center gap-2 bg-green-500/10 border border-green-500/20 px-3 py-1 rounded-full">
                   <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
                   <span className="text-[10px] md:text-xs font-bold text-green-600 dark:text-green-500">Available</span>
                   <ChevronDown className="w-3 h-3 text-green-500/50" />
                 </div>
-                <Button className="h-8 px-4 text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white rounded-lg shadow-sm" asChild>
-                  <Link to="/login">{t("Get Started", "শুরু করুন")}</Link>
+                <Button className="h-8 px-3 sm:px-4 text-[10px] sm:text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white rounded-lg shadow-sm" asChild>
+                  <Link to="/register">{t("Get Started", "শুরু করুন")}</Link>
                 </Button>
               </div>
             </div>
 
             {/* Dashboard Content */}
-            <div className="flex h-[400px] md:h-[600px] bg-background">
+            <div className="flex h-[430px] sm:h-[500px] md:h-[600px] bg-background">
               {/* Left Thin Sidebar */}
-              <div className="w-14 md:w-16 border-r border-border bg-secondary/30 flex flex-col items-center py-6 gap-6">
+              <div className="hidden min-[430px]:flex w-14 md:w-16 border-r border-border bg-secondary/30 flex-col items-center py-6 gap-6">
                 <div className="w-8 h-8 rounded-xl bg-purple-600 flex items-center justify-center shadow-[0_0_15px_rgba(168,85,247,0.4)]">
                   <Sparkles className="w-4 h-4 text-white" />
                 </div>
@@ -292,7 +312,7 @@ const HeroSection = () => {
                   </div>
 
                   {/* Messages Area */}
-                  <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+                  <div className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6 space-y-4 md:space-y-6 custom-scrollbar">
                     <div className="flex flex-col gap-1 max-w-[80%]">
                       <div className="bg-secondary border border-border rounded-2xl p-3 text-xs text-foreground">
                         Sajal, 01894927244, house 117b road 30 gul...
@@ -322,7 +342,7 @@ const HeroSection = () => {
                   </div>
 
                   {/* Input Area */}
-                  <div className="p-4 bg-secondary/30 border-t border-border">
+                  <div className="p-3 sm:p-4 bg-secondary/30 border-t border-border">
                     <div className="bg-background border border-border rounded-2xl flex items-center p-2">
                       <div className="flex items-center gap-2 px-2 border-r border-border mr-2">
                         <Image className="w-5 h-5 text-muted-foreground cursor-pointer hover:text-foreground" />
