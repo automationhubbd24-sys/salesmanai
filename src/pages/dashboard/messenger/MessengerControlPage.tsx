@@ -9,10 +9,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Bot, MessageSquare, Loader2, Save, Image, Sparkles, MessageCircle, Lock, PackageSearch, ReplyAll, LayoutTemplate, Hand, StopCircle, CheckCircle2, RefreshCcw, Edit, Mic, ChevronLeft } from "lucide-react";
 import { toast } from "sonner";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMessenger } from "@/context/MessengerContext";
 
 export default function MessengerControlPage() {
+  const { platform } = useParams();
+  const platformName = platform === 'instagram' ? 'Instagram' : 'Messenger';
+  const channelName = platform === 'instagram' ? 'Instagram' : 'Facebook';
+  const integrationPath = platform === 'instagram' ? '/dashboard/instagram/integration' : '/dashboard/messenger/integration';
   const { currentPage, loading: contextLoading } = useMessenger();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -203,9 +207,9 @@ export default function MessengerControlPage() {
       <div className="flex flex-col items-center justify-center h-[60vh] space-y-4">
         <Bot className="h-16 w-16 text-muted-foreground" />
         <h2 className="text-2xl font-bold">No Page Connected</h2>
-        <p className="text-muted-foreground">Please select a Facebook page to manage.</p>
+        <p className="text-muted-foreground">Please select a {channelName} page to manage.</p>
         <Button asChild>
-            <Link to="/dashboard/messenger/integration">Go to Pages</Link>
+            <Link to={integrationPath}>Go to Pages</Link>
         </Button>
       </div>
     );
@@ -262,9 +266,9 @@ export default function MessengerControlPage() {
     <div className="space-y-8 -m-4 md:-m-6 lg:-m-6 p-4 md:p-6 lg:p-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h2 className="text-3xl font-bold text-foreground tracking-tight">Messenger Bot Control</h2>
+          <h2 className="text-3xl font-bold text-foreground tracking-tight">{platformName} Bot Control</h2>
           <p className="text-muted-foreground mt-1">
-            Manage your Facebook Messenger automation features.
+            Manage your {platformName} automation features.
           </p>
         </div>
         <div className="flex items-center gap-3 w-full sm:w-auto">

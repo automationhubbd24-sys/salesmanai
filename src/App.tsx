@@ -124,6 +124,23 @@ const App = () => (
                   <Route path="payment" element={<PaymentPage />} />
                 </Route>
 
+                {/* Instagram Routes */}
+                <Route path="instagram" element={<Outlet />}>
+                  <Route index element={<DashboardHome />} />
+                  <Route path="smart-inbox" element={<SmartInbox />} />
+                  <Route path="integration" element={<MessengerIntegrationPage />} />
+                  <Route path="control" element={<MessengerControlPage />} />
+                  <Route path="orders" element={<MessengerOrderTrackingPage />} />
+                  <Route path="conversion" element={<MessengerConversionPage />} />
+                  <Route path="database" element={<MessengerDatabasePage />} />
+                  <Route path="settings" element={<MessengerSettingsPage />} />
+                  <Route path="products" element={<ProductsPage />} />
+                  <Route path="ads" element={<AdsPage />} />
+                  <Route path="reseller" element={<ResellerPage />} />
+                  <Route path="profile" element={<ProfilePage />} />
+                  <Route path="payment" element={<PaymentPage />} />
+                </Route>
+
                 {/* Platform Specific Routes (Fallback) */}
                 <Route path=":platform" element={<Outlet />}>
                   <Route index element={<DashboardHome />} />

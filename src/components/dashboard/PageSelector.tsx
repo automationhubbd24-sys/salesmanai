@@ -10,17 +10,23 @@ import {
 import { Facebook, PlusCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-export function PageSelector() {
+interface PageSelectorProps {
+  platform?: 'messenger' | 'instagram';
+}
+
+export function PageSelector({ platform = 'messenger' }: PageSelectorProps) {
   const context = useMessenger();
   const navigate = useNavigate();
   const pages = context?.pages ?? [];
   const currentPage = context?.currentPage ?? null;
   const setCurrentPage = context?.setCurrentPage;
+  const platformLabel = platform === 'instagram' ? 'Instagram' : 'Facebook';
+  const iconClass = platform === 'instagram' ? 'text-pink-500' : 'text-blue-500';
 
   const handleValueChange = (value: string) => {
     if (!setCurrentPage) return;
     if (value === "add_new") {
-      navigate("/dashboard/messenger/integration");
+      navigate(`/dashboard/${platform}/integration`);
       return;
     }
     const selected = pages.find((p) => p.page_id === value);
@@ -56,10 +62,10 @@ export function PageSelector() {
     return (
        <div 
          className="flex items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground cursor-pointer hover:text-foreground transition-colors"
-         onClick={() => navigate("/dashboard/messenger/integration")}
+         onClick={() => navigate(`/dashboard/${platform}/integration`)}
        >
          <PlusCircle size={16} />
-         <span>Connect Page</span>
+         <span>Connect {platformLabel}</span>
        </div>
     );
   }
@@ -67,7 +73,7 @@ export function PageSelector() {
   return (
     <div className="px-2 mb-4">
       <label className="text-xs font-medium text-muted-foreground mb-1.5 block px-1">
-        Active Page
+        Active {platformLabel} Page
       </label>
       <Select
         value={currentPage?.page_id || ""}
@@ -75,8 +81,8 @@ export function PageSelector() {
       >
         <SelectTrigger className="w-full bg-sidebar-accent border-sidebar-border text-sidebar-foreground h-9">
           <div className="flex items-center gap-2 overflow-hidden">
-            <Facebook size={14} className="shrink-0 text-blue-500" />
-            <SelectValue placeholder="Select a page" />
+            <Facebook size={14} className={`shrink-0 ${iconClass}`} />
+            <SelectValue placeholder={`Select ${platformLabel.toLowerCase()} page`} />
           </div>
         </SelectTrigger>
         <SelectContent>

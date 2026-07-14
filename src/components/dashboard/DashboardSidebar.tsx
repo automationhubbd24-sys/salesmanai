@@ -18,8 +18,6 @@ import {
   ShoppingBag,
   MessageSquare,
   Key,
-  FileText,
-  Cpu,
   Inbox
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -78,7 +76,7 @@ export function DashboardSidebar({ isMobile, onLinkClick }: { isMobile?: boolean
       { title: "Control Page", icon: Settings, path: `${base}/control` },
     ];
 
-    if (['whatsapp', 'messenger'].includes(platform)) {
+    if (['whatsapp', 'messenger', 'instagram'].includes(platform)) {
       platformItems.push({ title: "AI Settings", icon: Sparkles, path: `${base}/settings` });
       platformItems.push({ title: "Order Tracking", icon: ShoppingBag, path: `${base}/orders` });
       platformItems.push({ title: "Conversion", icon: MessageSquare, path: `${base}/conversion` });
@@ -164,10 +162,10 @@ export function DashboardSidebar({ isMobile, onLinkClick }: { isMobile?: boolean
                   <SessionSelector />
                 </>
              )}
-             {platform === 'messenger' && (
+             {['messenger', 'instagram'].includes(platform) && (
                 <>
-                  <WorkspaceSwitcher platform="messenger" />
-                  <PageSelector />
+                  <WorkspaceSwitcher platform={platform as 'messenger' | 'instagram'} />
+                  <PageSelector platform={platform as 'messenger' | 'instagram'} />
                 </>
              )}
           </div>

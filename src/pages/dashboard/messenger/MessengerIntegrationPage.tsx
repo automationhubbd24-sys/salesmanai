@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, Link, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -87,6 +87,11 @@ interface ConnectionLog {
 
 export default function MessengerIntegrationPage() {
     const navigate = useNavigate();
+    const { platform } = useParams();
+    const isInstagram = platform === 'instagram';
+    const platformName = isInstagram ? 'Instagram' : 'Messenger';
+    const channelName = isInstagram ? 'Instagram' : 'Facebook';
+    const controlPath = isInstagram ? '/dashboard/instagram/control' : '/dashboard/messenger/control';
     const isMobile = useIsMobile();
     const { 
         refreshPages, 
@@ -961,7 +966,7 @@ export default function MessengerIntegrationPage() {
             localStorage.setItem("active_fb_db_id", String(targetId));
             localStorage.setItem("active_fb_page_id", page.page_id || "");
             toast.success(`Connected to ${page.name}`);
-            navigate("/dashboard/messenger/control");
+            navigate(controlPath);
         } catch (error) {
             console.error("Error connecting to page:", error);
             toast.error("Failed to connect to page database");
@@ -974,11 +979,11 @@ export default function MessengerIntegrationPage() {
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8">
                 <div>
                     <h1 className="text-3xl font-black text-white tracking-tight flex items-center gap-3">
-                        <Facebook className="text-[#0084FF] h-8 w-8" />
-                        Messenger Integration
+                        <Facebook className={isInstagram ? "text-pink-500 h-8 w-8" : "text-[#0084FF] h-8 w-8"} />
+                        {platformName} Integration
                     </h1>
                     <p className="text-gray-400 mt-2 font-medium">
-                        Connect your Facebook Pages to enable AI-powered automated replies.
+                        Connect your {channelName} pages to enable AI-powered automated replies.
                     </p>
                 </div>
                 
@@ -1016,20 +1021,20 @@ export default function MessengerIntegrationPage() {
                     </Button>
                     <Button onClick={handleConnectFacebook} disabled={connecting} className="w-full sm:w-auto">
                         {connecting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Facebook className="mr-2 h-4 w-4" />}
-                        {connecting ? "Connecting..." : "Connect Facebook"}
+                        {connecting ? "Connecting..." : `Connect ${channelName}`}
                     </Button>
                 </div>
             </div>
             {isMobile && (
                 <div className="rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-slate-200">
-                    Use Chrome or your phone's main browser. If Facebook opens its app, finish login there and return to this browser tab so we can complete the Messenger connection.
+                    Use Chrome or your phone's main browser. If Facebook opens its app, finish login there and return to this browser tab so we can complete the {platformName} connection.
                 </div>
             )}
 
             <AlertDialog open={isMobileConnectDialogOpen} onOpenChange={setIsMobileConnectDialogOpen}>
                 <AlertDialogContent>
                     <AlertDialogHeader>
-                        <AlertDialogTitle>Continue Messenger connection in browser</AlertDialogTitle>
+                        <AlertDialogTitle>Continue {platformName} connection in browser</AlertDialogTitle>
                         <AlertDialogDescription>
                             On Android, avoid in-app browsers. Tap continue, sign in with Facebook, then return to this browser tab if Facebook opens its app.
                         </AlertDialogDescription>
@@ -1046,9 +1051,9 @@ export default function MessengerIntegrationPage() {
             <Dialog open={isManualSetupOpen} onOpenChange={setIsManualSetupOpen}>
                 <DialogContent className="max-w-2xl">
                     <DialogHeader>
-                        <DialogTitle>Manual Page Connection</DialogTitle>
+                        <DialogTitle>Manual {channelName} Page Connection</DialogTitle>
                         <DialogDescription>
-                            Use this if the automatic Facebook Login button doesn't work. You'll need your Page ID and Access Token.
+                            Use this if the automatic {channelName} login button doesn't work. You'll need your Page ID and Access Token.
                         </DialogDescription>
                     </DialogHeader>
 
@@ -1104,7 +1109,7 @@ export default function MessengerIntegrationPage() {
 
                     <div className="space-y-4 py-4 border-t">
                         <div className="space-y-2">
-                            <Label>Page Name</Label>
+                            <Label>{channelName} Page Name</Label>
                             <Input 
                                 placeholder="My Business Page" 
                                 value={directPageName}
@@ -1112,7 +1117,7 @@ export default function MessengerIntegrationPage() {
                             />
                         </div>
                         <div className="space-y-2">
-                            <Label>Page ID</Label>
+                            <Label>{channelName} Page ID</Label>
                             <Input 
                                 placeholder="123456789012345" 
                                 value={directPageId}
@@ -1120,7 +1125,7 @@ export default function MessengerIntegrationPage() {
                             />
                         </div>
                         <div className="space-y-2">
-                            <Label>Page Access Token</Label>
+                            <Label>{channelName} Page Access Token</Label>
                             <Input 
                                 type="password"
                                 placeholder="EAA..." 
@@ -1132,7 +1137,7 @@ export default function MessengerIntegrationPage() {
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setIsManualSetupOpen(false)}>Cancel</Button>
                         <Button onClick={handleDirectConnect} disabled={directLoading}>
-                            {directLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Connect Page"}
+                            {directLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : `Connect ${channelName} Page`}
                         </Button>
                     </DialogFooter>
                 </DialogContent>
@@ -1140,9 +1145,9 @@ export default function MessengerIntegrationPage() {
 
             <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
                 <CardHeader>
-                    <CardTitle>Connected Pages</CardTitle>
+                    <CardTitle>Connected {channelName} Pages</CardTitle>
                     <CardDescription>
-                        Pages you have connected to the bot.
+                        {channelName} pages you have connected to the bot.
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -1152,7 +1157,7 @@ export default function MessengerIntegrationPage() {
                         </div>
                     ) : pages.length === 0 ? (
                         <div className="text-center py-8 text-muted-foreground">
-                            No pages connected yet. Click "Connect with Facebook" to get started.
+                            No pages connected yet. Click "Connect {channelName}" to get started.
                         </div>
                     ) : (
                         <div className="overflow-x-auto">
@@ -1170,7 +1175,7 @@ export default function MessengerIntegrationPage() {
                                         <TableRow key={page.page_id}>
                                             <TableCell className="font-medium">
                                                 <div className="flex items-center gap-2">
-                                                    <Facebook className="h-4 w-4 text-blue-600" />
+                                                    <Facebook className={isInstagram ? "h-4 w-4 text-pink-500" : "h-4 w-4 text-blue-600"} />
                                                     <span className="whitespace-nowrap">{page.name}</span>
                                                 </div>
                                             </TableCell>
@@ -1213,7 +1218,7 @@ export default function MessengerIntegrationPage() {
                                 Connection Activity Logs
                             </AlertDialogTitle>
                             <AlertDialogDescription className="text-sm text-gray-500 mt-1">
-                                Real-time logs for debugging Facebook connection and webhook setup issues.
+                                Real-time logs for debugging {channelName} connection and webhook setup issues.
                             </AlertDialogDescription>
                         </div>
                         <button 
@@ -1229,7 +1234,7 @@ export default function MessengerIntegrationPage() {
                             <div className="h-full flex items-center justify-center text-gray-500 flex-col gap-3">
                                 <Terminal className="w-10 h-10 opacity-20" />
                                 <p>No connection attempts yet.</p>
-                                <p className="text-xs">Click 'Connect Facebook' or 'Manual Setup' to see logs here.</p>
+                                <p className="text-xs">Click 'Connect {channelName}' or 'Manual Setup' to see logs here.</p>
                             </div>
                         ) : (
                             <div className="space-y-4">

@@ -31,7 +31,8 @@ export default function DashboardHome() {
   });
 
   const isWhatsApp = platform === 'whatsapp';
-  const platformName = platform ? platform.charAt(0).toUpperCase() + platform.slice(1) : 'Platform';
+  const isInstagram = platform === 'instagram';
+  const platformName = platform ? (isInstagram ? 'Instagram' : platform.charAt(0).toUpperCase() + platform.slice(1)) : 'Platform';
 
   const getPlanLabel = (plan: string) => {
     if (plan === 'm1000' || plan === 'starter') return 'Starter';
@@ -92,7 +93,7 @@ export default function DashboardHome() {
             const mySessions = Array.isArray(data) ? data : [];
             setStats(prev => ({ ...prev, sessions: mySessions.length || 0 }));
           }
-        } else if (platform === 'messenger') {
+        } else if (platform === 'messenger' || platform === 'instagram') {
           const res = await fetch(`${BACKEND_URL}/api/messenger/pages`, {
             headers: {
               Authorization: `Bearer ${token}`,
@@ -133,7 +134,7 @@ export default function DashboardHome() {
         <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-primary uppercase tracking-wider">
-              {isWhatsApp ? 'Total Sessions' : 'Connected Pages'}
+              {isWhatsApp ? 'Total Sessions' : `Connected ${platformName} Pages`}
             </CardTitle>
           </CardHeader>
           <CardContent>
