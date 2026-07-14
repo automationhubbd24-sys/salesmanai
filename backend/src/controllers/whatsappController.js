@@ -6,6 +6,7 @@ const pgClient = require('../services/pgClient');
 const fs = require('fs');
 const path = require('path');
 const { buildResolvedProductMediaContext } = require('../utils/productMediaResolver');
+const visualBrainService = require('../services/visualBrainService');
 const WAHA_BASE_URL = process.env.WAHA_BASE_URL || 'https://wahubbd.salesmanchatbot.online';
 const AI_REQUEST_BUDGET_MS = process.env.AI_REQUEST_BUDGET_MS ? parseInt(process.env.AI_REQUEST_BUDGET_MS) : 180000;
 
@@ -52,6 +53,36 @@ function reportVariantDebug(hypothesisId, location, msg, data = {}) {
     } catch (_) {}
 }
 // #endregion
+
+function normalizeProductMediaUrl(url) {
+    if (!url || url === 'N/A') return 'N/A';
+    if (String(url).startsWith('http')) return url;
+    const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
+    const cleanPath = String(url).startsWith('/') ? String(url) : `/${url}`;
+    return `${baseUrl.replace(/\/$/, '')}${cleanPath}`;
+}
+
+function toWhatsAppImageMatchSummary(product) {
+    if (!product || !product.id) return null;
+    const score = product.distance !== undefined && product.distance !== null
+        ? Math.max(0, Math.min(100, Number(((1 - Number(product.distance)) * 100).toFixed(1))))
+        : Number(product.match_score || 0);
+    return {
+        product_id: String(product.id),
+        name: product.name || null,
+        price: product.price || null,
+        currency: product.currency || 'BDT',
+        description: product.description || null,
+        image_url: normalizeProductMediaUrl(product.image_url),
+        additional_images: Array.isArray(product.additional_images) ? product.additional_images.map(normalizeProductMediaUrl).filter(Boolean) : [],
+        match_score: score,
+        base_match_score: score,
+        visual_fingerprint: product.visual_fingerprint || {},
+        visual_tags: product.visual_tags || [],
+        searchable_text: product.searchable_text || '',
+        keywords: product.keywords || ''
+    };
+}
 
 function normalizeMediaUrl(value) {
     if (!value) return null;
@@ -2298,42 +2329,105 @@ STRICT RULES:
             imageAnalyzeText = "";
             for (const singleImgText of collectedTexts) {
                 try {
-                    const imgVector = await aiService.getEmbedding(singleImgText);
-                    let vectorMatches = [];
-                    if (imgVector) {
-                        vectorMatches = await dbService.searchProductByImageVector(imgVector, sessionName) || [];
-                    }
-                    const textMatches = await dbService.searchProductsForResource(singleImgText, sessionName) || [];
+                    const sourceImageUrl = (messages.find(m => Array.isArray(m.images) && m.images.length > 0)?.images || [])[0] || null;
+                    const [imgVector, directImageVector] = await Promise.all([
+                        aiService.getEmbedding(singleImgText),
+                        sourceImageUrl ? aiService.getDirectImageEmbedding(sourceImageUrl, { log: false }) : Promise.resolve(null)
+                    ]);
+                    const [vectorMatches, directImageMatches, textMatches] = await Promise.all([
+                        imgVector ? dbService.searchProductByImageVector(imgVector, sessionName) : Promise.resolve([]),
+                        directImageVector ? dbService.searchProductByDirectImageVector(directImageVector, sessionName) : Promise.resolve([]),
+                        dbService.searchProductsForResource(singleImgText, sessionName)
+                    ]);
                     
-                    // Combine and sort local matches for THIS image
-                    let combinedForThisImage = [...vectorMatches, ...textMatches];
-                    combinedForThisImage.sort((a, b) => (b.distance !== undefined ? (1-b.distance)*100 : 0) - (a.distance !== undefined ? (1-a.distance)*100 : 0));
+                    const mergedCandidates = new Map();
+                    directImageMatches.forEach((product) => {
+                        const summary = toWhatsAppImageMatchSummary(product);
+                        if (!summary) return;
+                        summary.match_source = 'direct_image_embedding';
+                        summary.direct_image_score = summary.match_score;
+                        mergedCandidates.set(summary.product_id, summary);
+                    });
+                    vectorMatches.forEach((product) => {
+                        const summary = toWhatsAppImageMatchSummary(product);
+                        if (!summary) return;
+                        const existing = mergedCandidates.get(summary.product_id);
+                        if (existing) {
+                            existing.old_vector_score = summary.match_score;
+                            existing.match_score = Number(Math.min(100, Number(existing.match_score || 0) + Math.min(6, Number(summary.match_score || 0) * 0.06)).toFixed(1));
+                            return;
+                        }
+                        summary.match_source = 'old_image_text_embedding';
+                        mergedCandidates.set(summary.product_id, summary);
+                    });
+                    textMatches.forEach((product) => {
+                        const summary = toWhatsAppImageMatchSummary(product);
+                        if (!summary) return;
+                        const existing = mergedCandidates.get(summary.product_id);
+                        if (existing) {
+                            existing.text_match_score = summary.match_score;
+                            existing.match_score = Number(Math.min(100, Number(existing.match_score || 0) + Math.min(8, Number(summary.match_score || 0) * 0.08)).toFixed(1));
+                            return;
+                        }
+                        summary.match_source = 'text_support';
+                        summary.base_match_score = Math.min(65, Number(summary.base_match_score || summary.match_score || 0));
+                        summary.match_score = summary.base_match_score;
+                        mergedCandidates.set(summary.product_id, summary);
+                    });
+
+                    const combinedForThisImage = Array.from(mergedCandidates.values())
+                        .sort((a, b) => Number(b.match_score || 0) - Number(a.match_score || 0))
+                        .slice(0, 5);
                     
                     if (combinedForThisImage.length > 0) {
-                        const topMatch = combinedForThisImage[0];
-                        const score = topMatch.distance !== undefined ? Math.max(0, Math.min(100, Number(((1 - Number(topMatch.distance)) * 100).toFixed(1)))) : 0;
-                        
-                        const normalizeUrl = (url) => {
-                            if (!url || url === 'N/A') return 'N/A';
-                            if (url.startsWith('http')) return url;
-                            const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
-                            const cleanPath = url.startsWith('/') ? url : `/${url}`;
-                            return `${baseUrl.replace(/\/$/, '')}${cleanPath}`;
-                        };
+                        const matchDecision = await visualBrainService.judgeVisualMatch({
+                            analysisText: singleImgText,
+                            candidates: combinedForThisImage,
+                            apiKey: process.env.VISUAL_BRAIN_API_KEY,
+                            baseURL: process.env.VISUAL_BRAIN_BASE_URL,
+                            model: process.env.VISUAL_BRAIN_MODEL
+                        });
+                        const selectedProductId = matchDecision.selected_product_id ? String(matchDecision.selected_product_id) : null;
+                        const topMatch = matchDecision.status === 'EXACT_MATCH'
+                            ? (combinedForThisImage.find(product => String(product.product_id) === selectedProductId) || null)
+                            : null;
+                        const candidateOptions = (matchDecision.options || combinedForThisImage).slice(0, 5).map((option, idx) => {
+                            const product = combinedForThisImage.find(item => String(item.product_id) === String(option.product_id)) || option;
+                            return `${idx + 1}. ${product.name || 'Unknown'} - ${product.price || 'Ask'} ${product.currency || 'BDT'} (score ${option.match_score || product.match_score || 0})`;
+                        }).join('\n');
 
-                        const additionalImages = Array.isArray(topMatch.additional_images) ? topMatch.additional_images.map(normalizeUrl).join(', ') : 'None';
+                        if (!topMatch) {
+                            imageAnalyzeText += `
+[IMAGE ANALYSIS RESULT]
+Image Description: ${singleImgText}
+Match Decision: ${matchDecision.status}
+Confidence: ${matchDecision.confidence || 'low'}
+Reason: ${matchDecision.reason || 'N/A'}
+Candidate Options:
+${candidateOptions || 'None'}
+Matched Product Details: No confident exact matching product confirmed in the catalog.
+`;
+                            continue;
+                        }
+
+                        const additionalImages = Array.isArray(topMatch.additional_images) ? topMatch.additional_images.join(', ') : 'None';
                         
                         imageAnalyzeText += `
 [IMAGE ANALYSIS RESULT]
 Image Description: ${singleImgText}
+Match Decision: ${matchDecision.status}
+Confidence: ${matchDecision.confidence || 'medium'}
+Reason: ${matchDecision.reason || 'N/A'}
+Candidate Options:
+${candidateOptions || 'None'}
 Matched Product Details:
-- Product ID: ${topMatch.id}
+- Product ID: ${topMatch.product_id}
 - Name: ${topMatch.name}
 - Price: ${topMatch.price || 'Ask for Price'}
-- Primary Image: ${normalizeUrl(topMatch.image_url)}
+- Primary Image: ${topMatch.image_url || 'N/A'}
 - Additional Images: ${additionalImages}
 - Description: ${topMatch.description || 'N/A'}
-- Match Score: ${score}%
+- Match Score: ${topMatch.match_score || 0}%
 `;
                     } else {
                         imageAnalyzeText += `

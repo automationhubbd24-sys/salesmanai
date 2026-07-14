@@ -687,14 +687,33 @@ async function analyzeAndMatchIncomingImage({ platform, pageId, senderId, imageU
     let matchDecision = { status: 'NO_MATCH', confidence: 'low', reason: 'not_analyzed', options: [] };
     if (analysisText && !analysisText.startsWith('[Vision Analysis Failed]')) {
         try {
-            const imgVector = await aiService.getEmbedding(analysisText);
-            const vectorMatches = imgVector ? await dbService.searchProductByImageVector(imgVector, pageId) || [] : [];
-            const textMatches = await dbService.searchProductsForResource(analysisText, pageId) || [];
+            const [imgVector, directImageVector] = await Promise.all([
+                aiService.getEmbedding(analysisText),
+                aiService.getDirectImageEmbedding(imageUrl, { log: false })
+            ]);
+            const [vectorMatches, directImageMatches, textMatches] = await Promise.all([
+                imgVector ? dbService.searchProductByImageVector(imgVector, pageId) : Promise.resolve([]),
+                directImageVector ? dbService.searchProductByDirectImageVector(directImageVector, pageId) : Promise.resolve([]),
+                dbService.searchProductsForResource(analysisText, pageId)
+            ]);
             const merged = new Map();
+            directImageMatches.forEach((product) => {
+                const summary = toImageMatchSummary(product);
+                if (!summary) return;
+                summary.match_source = 'direct_image_embedding';
+                summary.direct_image_score = summary.match_score;
+                merged.set(summary.product_id, summary);
+            });
             vectorMatches.forEach((product) => {
                 const summary = toImageMatchSummary(product);
                 if (!summary) return;
-                summary.match_source = 'image_vector';
+                const existing = merged.get(summary.product_id);
+                if (existing) {
+                    existing.old_vector_score = summary.match_score;
+                    existing.match_score = Number(Math.min(100, Number(existing.match_score || 0) + Math.min(6, Number(summary.match_score || 0) * 0.06)).toFixed(1));
+                    return;
+                }
+                summary.match_source = 'old_image_text_embedding';
                 merged.set(summary.product_id, summary);
             });
             textMatches.forEach((product) => {

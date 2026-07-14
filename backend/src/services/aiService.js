@@ -15,7 +15,9 @@ const { spawn } = require('child_process');
 
 // --- Simple In-Memory Embedding Cache (500 items, 1 hour TTL) ---
 const embeddingCache = new Map();
+const imageEmbeddingCache = new Map();
 const EMBED_CACHE_MAX = 500;
+const IMAGE_EMBED_CACHE_MAX = 200;
 const EMBED_CACHE_TTL = 3600 * 1000;
 const PRO_PLUS_BRANDED_MODEL = 'salesmanchatbot-pro-plus';
 const BRANDED_MODELS = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite', PRO_PLUS_BRANDED_MODEL];
@@ -38,6 +40,24 @@ function setCachedEmbedding(text, vector) {
         embeddingCache.delete(firstKey);
     }
     embeddingCache.set(text.trim().toLowerCase(), { vector, timestamp: Date.now() });
+}
+
+function getCachedImageEmbedding(cacheKey) {
+    const key = String(cacheKey || '').trim();
+    if (!key) return null;
+    const entry = imageEmbeddingCache.get(key);
+    if (entry && (Date.now() - entry.timestamp < EMBED_CACHE_TTL)) return entry.vector;
+    return null;
+}
+
+function setCachedImageEmbedding(cacheKey, vector) {
+    const key = String(cacheKey || '').trim();
+    if (!key || !Array.isArray(vector)) return;
+    if (imageEmbeddingCache.size >= IMAGE_EMBED_CACHE_MAX) {
+        const firstKey = imageEmbeddingCache.keys().next().value;
+        imageEmbeddingCache.delete(firstKey);
+    }
+    imageEmbeddingCache.set(key, { vector, timestamp: Date.now() });
 }
 
 function normalizeEmbeddingVector(vector, modelName = '') {
@@ -1221,6 +1241,87 @@ function extractImagesFromText(text) {
         text: cleanText,
         images: images
     };
+}
+
+function isDirectImageEmbeddingEnabled() {
+    return process.env.IMAGE_EMBEDDING_ENABLED === '1' || process.env.IMAGE_EMBEDDING_ENABLED === 'true';
+}
+
+function getImageEmbeddingConfig() {
+    return {
+        provider: (process.env.IMAGE_EMBEDDING_PROVIDER || 'gemini').toLowerCase(),
+        apiKey: process.env.IMAGE_EMBEDDING_API_KEY || process.env.GEMINI_EMBEDDING_API_KEY || process.env.GEMINI_API_KEY,
+        model: process.env.IMAGE_EMBEDDING_MODEL || 'gemini-embedding-2-preview',
+        dimension: Number(process.env.IMAGE_EMBEDDING_DIMENSION || 3072),
+        timeoutMs: Number(process.env.IMAGE_EMBEDDING_TIMEOUT_MS || 12000)
+    };
+}
+
+function normalizeGeminiEmbeddingModel(model) {
+    const raw = String(model || 'gemini-embedding-2-preview').replace(/^google\//i, '').replace(/^models\//i, '');
+    return `models/${raw}`;
+}
+
+async function withTimeout(promise, timeoutMs, label) {
+    let timeout;
+    const timeoutPromise = new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(`${label || 'operation'} timed out after ${timeoutMs}ms`)), timeoutMs);
+    });
+    try {
+        return await Promise.race([promise, timeoutPromise]);
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+async function urlToInlineData(imageUrl) {
+    if (String(imageUrl || '').startsWith('data:')) {
+        const [meta, data] = String(imageUrl).split(',', 2);
+        const mimeType = meta.match(/^data:([^;]+)/)?.[1] || 'image/jpeg';
+        return { mimeType, data };
+    }
+    const response = await fetch(imageUrl);
+    if (!response.ok) throw new Error(`Image download failed ${response.status}: ${imageUrl}`);
+    const arrayBuffer = await response.arrayBuffer();
+    const mimeType = response.headers.get('content-type') || 'image/jpeg';
+    return { mimeType, data: Buffer.from(arrayBuffer).toString('base64') };
+}
+
+async function getDirectImageEmbedding(imageUrl, options = {}) {
+    if (!imageUrl || !isDirectImageEmbeddingEnabled()) return null;
+    const config = getImageEmbeddingConfig();
+    if (!config.apiKey || config.provider !== 'gemini') return null;
+
+    const cacheKey = `${config.provider}:${config.model}:${imageUrl}`;
+    const cached = getCachedImageEmbedding(cacheKey);
+    if (cached) return cached;
+
+    try {
+        const model = normalizeGeminiEmbeddingModel(config.model);
+        const inlineData = await withTimeout(urlToInlineData(imageUrl), Math.min(config.timeoutMs, 8000), 'image fetch');
+        const request = fetch(`https://generativelanguage.googleapis.com/v1beta/${model}:embedContent?key=${config.apiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model,
+                content: { parts: [{ inlineData }] },
+                outputDimensionality: config.dimension
+            })
+        });
+        const res = await withTimeout(request, config.timeoutMs, 'image embedding');
+        const bodyText = await res.text();
+        let json = null;
+        try { json = JSON.parse(bodyText); } catch {}
+        if (!res.ok) throw new Error(json?.error?.message || bodyText);
+        const vector = json?.embedding?.values || json?.embeddings?.[0]?.values || null;
+        if (!Array.isArray(vector)) throw new Error('No direct image embedding vector returned');
+        setCachedImageEmbedding(cacheKey, vector);
+        if (options.log !== false) console.log(`[AI Direct Image Embedding] ${model} dimension=${vector.length}`);
+        return vector;
+    } catch (e) {
+        console.warn(`[AI Direct Image Embedding] skipped: ${e.message}`);
+        return null;
+    }
 }
 
 async function getImageEmbedding(imageUrl, customApiKey = null, pageConfig = {}) {
@@ -4089,6 +4190,7 @@ module.exports = {
     generateResponse,
     getEmbedding,
     getImageEmbedding,
+    getDirectImageEmbedding,
     handleAiError,
     formatBrandedError,
     fetchOgImage,

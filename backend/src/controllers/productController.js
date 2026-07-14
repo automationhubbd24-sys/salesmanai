@@ -1483,8 +1483,11 @@ Example format: T-shirt, navy blue, horizontal stripes, short sleeves, crew neck
 
         const visualFingerprint = extractStructuredVisualFingerprint(tagsText.trim());
 
-        // Generate vector embedding for the visual description
-        const vector = await aiService.getEmbedding(tagsText.trim());
+        // Generate old text/vision vector and optional direct image vector in parallel
+        const [vector, imageVector] = await Promise.all([
+            aiService.getEmbedding(tagsText.trim()),
+            aiService.getDirectImageEmbedding(image_url, { log: false })
+        ]);
         // #region debug-point B:embedding-generated
         (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='auto-extract-500';try{const e=fs.readFileSync('.dbg/auto-extract-500.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'B',location:'productController.js:extractVisuals:embedding',msg:'[DEBUG] visual description and embedding generated',data:{tagsLength:tagsText.trim().length,hasVector:Boolean(vector),vectorLength:Array.isArray(vector)?vector.length:0},ts:Date.now()})}).catch(()=>{})})();
         // #endregion
@@ -1501,7 +1504,9 @@ Example format: T-shirt, navy blue, horizontal stripes, short sleeves, crew neck
             imageRole: 'primary',
             vector: vector,
             visualTags: [tagsText.trim()],
-            visualFingerprint
+            visualFingerprint,
+            imageVector,
+            imageEmbeddingModel: process.env.IMAGE_EMBEDDING_MODEL || 'gemini-embedding-2-preview'
         });
         // #region debug-point C:upsert-finished
         (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='auto-extract-500';try{const e=fs.readFileSync('.dbg/auto-extract-500.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'C',location:'productController.js:extractVisuals:afterUpsert',msg:'[DEBUG] image embedding upsert completed',data:{productId:product_id,userId:effectiveUserId,pageId:page_id||null,imageUrlLength:String(image_url||'').length},ts:Date.now()})}).catch(()=>{})})();

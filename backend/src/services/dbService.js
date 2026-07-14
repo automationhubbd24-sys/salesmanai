@@ -1049,7 +1049,10 @@ async function initTables() {
         await query(`
             ALTER TABLE IF EXISTS products ADD COLUMN IF NOT EXISTS visual_fingerprint JSONB DEFAULT '{}'::jsonb;
             ALTER TABLE IF EXISTS product_image_embeddings ADD COLUMN IF NOT EXISTS visual_fingerprint JSONB DEFAULT '{}'::jsonb;
+            ALTER TABLE IF EXISTS product_image_embeddings ADD COLUMN IF NOT EXISTS image_embedding_3072 vector(3072);
+            ALTER TABLE IF EXISTS product_image_embeddings ADD COLUMN IF NOT EXISTS image_embedding_model TEXT;
             ALTER TABLE IF EXISTS incoming_image_analysis ADD COLUMN IF NOT EXISTS visual_fingerprint JSONB DEFAULT '{}'::jsonb;
+            CREATE INDEX IF NOT EXISTS idx_product_image_embeddings_image_3072 ON product_image_embeddings USING hnsw (image_embedding_3072 vector_cosine_ops);
         `);
         await backfillGeneratedSkuMatrixForLegacyProducts();
         console.log("[DB] 'products.allowed_wa_sessions' column checked.");
@@ -3968,6 +3971,7 @@ module.exports = {
     updateProduct,
     deleteProduct,
     searchProductByImageVector,
+    searchProductByDirectImageVector,
     searchProducts,
     searchProductsForResource,
     getIncomingImageAnalysis,
@@ -4850,9 +4854,9 @@ async function updateProductEmbedding(productId, vector) {
     }
 }
 
-async function upsertProductImageEmbedding({ productId, userId, pageId, imageUrl, imageRole, vector, visualTags, visualFingerprint }) {
+async function upsertProductImageEmbedding({ productId, userId, pageId, imageUrl, imageRole, vector, visualTags, visualFingerprint, imageVector, imageEmbeddingModel }) {
     try {
-        if (!vector) return false;
+        if (!vector && !imageVector) return false;
         // #region debug-point C:upsert-entry
         (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='auto-extract-500';try{const e=fs.readFileSync('.dbg/auto-extract-500.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'C',location:'dbService.js:upsertProductImageEmbedding:entry',msg:'[DEBUG] upsertProductImageEmbedding entered',data:{productId,productIdType:typeof productId,userId,userIdType:typeof userId,pageId:pageId||null,imageRole:imageRole||'primary',imageUrlLength:String(imageUrl||'').length,vectorLength:Array.isArray(vector)?vector.length:0,visualTagsType:Array.isArray(visualTags)?'array':typeof visualTags},ts:Date.now()})}).catch(()=>{})})();
         // #endregion
@@ -4864,17 +4868,19 @@ async function upsertProductImageEmbedding({ productId, userId, pageId, imageUrl
         // Then insert the new one
         await query(
             `INSERT INTO product_image_embeddings 
-             (product_id, user_id, page_id, image_url, image_role, embedding, visual_tags, visual_fingerprint)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+             (product_id, user_id, page_id, image_url, image_role, embedding, visual_tags, visual_fingerprint, image_embedding_3072, image_embedding_model)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
             [
                 productId, 
                 String(userId), 
                 pageId ? String(pageId) : null, 
                 imageUrl, 
                 imageRole || 'primary', 
-                JSON.stringify(vector),
+                vector ? JSON.stringify(vector) : null,
                 visualTags ? JSON.stringify(visualTags) : '[]',
-                visualFingerprint ? JSON.stringify(visualFingerprint) : '{}'
+                visualFingerprint ? JSON.stringify(visualFingerprint) : '{}',
+                imageVector ? JSON.stringify(imageVector) : null,
+                imageEmbeddingModel || null
             ]
         );
         // #region debug-point C:upsert-success
@@ -5575,6 +5581,60 @@ async function searchProducts(userId, queryText, pageId = null) {
 }
 
 // 31.5 Search Products by Image Vector
+async function searchProductByDirectImageVector(imageVector, pageId) {
+    try {
+        if (!imageVector || !pageId) return [];
+        if (!Array.isArray(imageVector) || imageVector.length !== 3072) return [];
+
+        const { isWhatsapp, resourceIds, ownerUserId } = await resolveResourceSearchContext(pageId);
+        if (resourceIds.length === 0) return [];
+
+        let sql = `
+            WITH ranked_matches AS (
+                SELECT p.id, p.name, p.description, p.image_url, p.price, p.currency, p.variants, p.is_combo, p.combo_items, p.allow_description, p.product_mode, p.attribute_schema, p.sku_matrix,
+                       pie.image_role, pie.visual_tags, pie.visual_fingerprint, pie.image_embedding_model,
+                       (pie.image_embedding_3072 <=> $1::vector) as distance
+                FROM product_image_embeddings pie
+                JOIN products p ON p.id = pie.product_id
+                WHERE p.is_active = true
+                  AND pie.image_embedding_3072 IS NOT NULL
+        `;
+        let params = [JSON.stringify(imageVector)];
+        ({ sql, params } = appendAssignmentFilter(sql, params, isWhatsapp, resourceIds, ownerUserId, 'p.'));
+        sql += `
+            ),
+            best_ranked_matches AS (
+                SELECT DISTINCT ON (id) *
+                FROM ranked_matches
+                ORDER BY id, distance ASC
+            )
+            SELECT *
+            FROM best_ranked_matches
+            ORDER BY distance ASC
+            LIMIT 5
+        `;
+
+        const result = await query(sql, params);
+        return (result.rows || [])
+            .filter(row => row.distance !== null && row.distance !== undefined)
+            .map(row => {
+                const product = normalizeProductRecord(row);
+                return { ...product, distance: row.distance, image_embedding_model: row.image_embedding_model, match_layer: 'direct_image_embedding' };
+            });
+    } catch (error) {
+        if (error.code === '42703' || error.code === '42P01') {
+            console.warn(`[DB] Direct image embedding layer not ready. Run DB init/migration first: ${error.message}`);
+            return [];
+        }
+        if (isVectorDimensionMismatchError(error)) {
+            console.warn(`[DB] searchProductByDirectImageVector vector mismatch for page/session "${pageId}". Query vector length: ${Array.isArray(imageVector) ? imageVector.length : 'unknown'}. Error: ${error.message}`);
+            return [];
+        }
+        console.error("[DB] searchProductByDirectImageVector Error:", error.message);
+        return [];
+    }
+}
+
 async function searchProductByImageVector(imageVector, pageId) {
     try {
         if (!imageVector || !pageId) return [];
