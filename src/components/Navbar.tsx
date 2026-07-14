@@ -198,7 +198,7 @@ const Navbar = () => {
               asChild
             >
               <Link to="/register">
-                {t("Get", "শুরু")}
+                {t("Start", "শুরু")}
               </Link>
             </Button>
           )}
