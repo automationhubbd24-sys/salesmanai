@@ -1655,7 +1655,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         sender_id: senderId,
         recipient_id: effectiveSessionName,
         message_id: bufferedMessages[0].id,
-        text: combinedText || inboundLogText,
+        text: inboundLogText || combinedText,
         timestamp: Date.now(),
         status: 'received',
         reply_by: 'user'

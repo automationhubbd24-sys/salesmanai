@@ -2020,7 +2020,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
                     sender_id: senderId,
                     recipient_id: sessionName,
                     message_id: primaryMsgId,
-                    text: combinedText.trim(),
+                    text: inboundLogText || combinedText.trim(),
                     timestamp: Date.now(),
                     status: 'received',
                     reply_by: 'user'
