@@ -1,8 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const axios = require('axios');
+const multer = require('multer');
 const dbService = require('../services/dbService');
 const facebookService = require('../services/facebookService');
+const imageService = require('../services/imageService');
 const pgClient = require('../services/pgClient');
 const jwt = require('jsonwebtoken');
 const authMiddleware = require('../middleware/authMiddleware');
@@ -10,6 +12,14 @@ const authMiddleware = require('../middleware/authMiddleware');
 const webhookController = require('../controllers/webhookController');
 const { getSmartInboxConversations, upsertSmartInboxLabel } = require('../utils/smartInbox');
 const FACEBOOK_GRAPH_VERSION = process.env.FACEBOOK_GRAPH_VERSION || 'v25.0';
+const smartInboxUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 16 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+        if (!file.mimetype || !file.mimetype.startsWith('image/')) return cb(new Error('Only image uploads are supported.'));
+        cb(null, true);
+    }
+});
 
 async function ensureMessengerPageColumns() {
     await pgClient.query(`
@@ -1243,12 +1253,13 @@ router.patch('/conversations/:pageId/:senderId/labels', authMiddleware, async (r
     }
 });
 
-router.post('/send', authMiddleware, async (req, res) => {
+router.post('/send', authMiddleware, smartInboxUpload.single('image'), async (req, res) => {
     try {
-        const { pageId, to, message } = req.body || {};
+        const { pageId, to } = req.body || {};
+        const message = String(req.body?.message || '').trim();
 
-        if (!pageId || !to || !String(message || '').trim()) {
-            return res.status(400).json({ error: 'pageId, to and message are required' });
+        if (!pageId || !to || (!message && !req.file)) {
+            return res.status(400).json({ error: 'pageId, to and message or image are required' });
         }
 
         const pageConfig = await dbService.getPageConfig(String(pageId));
@@ -1256,34 +1267,52 @@ router.post('/send', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'Messenger page access token not found' });
         }
 
-        const response = await facebookService.sendMessage(
-            String(pageId),
-            String(to),
-            String(message).trim(),
-            pageConfig.page_access_token
-        );
-        const messageId = response?.message_id || response?.messageId || `smart_inbox_admin_${Date.now()}`;
+        const sentParts = [];
+        if (req.file) {
+            const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
+            const imageUrl = await imageService.uploadProductImage(req.file.buffer, req.file.mimetype, `smart-inbox/${String(pageId)}`, baseUrl);
+            const imageResponse = await facebookService.sendImageMessage(String(pageId), String(to), imageUrl, pageConfig.page_access_token);
+            const imageMessageId = imageResponse?.message_id || imageResponse?.messageId || `smart_inbox_admin_image_${Date.now()}`;
+            const imageText = `[Image Message]\n[Image URL]: ${imageUrl}${message ? `\n${message}` : ''}`;
+            await dbService.saveFbChat({
+                page_id: String(pageId),
+                sender_id: String(pageId),
+                recipient_id: String(to),
+                message_id: String(imageMessageId),
+                text: imageText,
+                timestamp: Date.now(),
+                status: 'sent',
+                reply_by: 'admin'
+            });
+            sentParts.push({ messageId: imageMessageId, imageUrl, body: imageText });
+        }
 
-        await dbService.saveFbChat({
-            page_id: String(pageId),
-            sender_id: String(pageId),
-            recipient_id: String(to),
-            message_id: String(messageId),
-            text: String(message).trim(),
-            timestamp: Date.now(),
-            status: 'sent',
-            reply_by: 'admin'
-        });
+        if (message) {
+            const response = await facebookService.sendMessage(String(pageId), String(to), message, pageConfig.page_access_token);
+            const messageId = response?.message_id || response?.messageId || `smart_inbox_admin_${Date.now()}`;
+            await dbService.saveFbChat({
+                page_id: String(pageId),
+                sender_id: String(pageId),
+                recipient_id: String(to),
+                message_id: String(messageId),
+                text: message,
+                timestamp: Date.now(),
+                status: 'sent',
+                reply_by: 'admin'
+            });
+            sentParts.push({ messageId, body: message });
+        }
 
         res.json({
             success: true,
             message: {
                 from: 'me',
-                body: String(message).trim(),
+                body: sentParts.map((part) => part.body).filter(Boolean).join('\n\n'),
                 timestamp: Date.now(),
                 reply_by: 'admin',
                 is_ai: false
-            }
+            },
+            sent: sentParts
         });
     } catch (err) {
         console.error('Error sending Messenger smart inbox message:', err);

@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
 const whatsappController = require('../controllers/whatsappController');
 const whatsappCloudController = require('../controllers/whatsappCloudController');
 const webhookController = require('../controllers/webhookController');
@@ -7,10 +8,19 @@ const pgClient = require('../services/pgClient');
 const dbService = require('../services/dbService');
 const whatsappService = require('../services/whatsappService');
 const whatsappCloudService = require('../services/whatsappCloudService');
+const imageService = require('../services/imageService');
 const jwt = require('jsonwebtoken');
 const authMiddleware = require('../middleware/authMiddleware');
 const { getOfficialWebhookSubscriptionOptions } = require('../utils/officialWebhookConfig');
 const { getSmartInboxConversations, upsertSmartInboxLabel } = require('../utils/smartInbox');
+const smartInboxUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 16 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+        if (!file.mimetype || !file.mimetype.startsWith('image/')) return cb(new Error('Only image uploads are supported.'));
+        cb(null, true);
+    }
+});
 
 async function ensureOfficialWhatsAppColumns() {
     await pgClient.query(`
@@ -1108,12 +1118,12 @@ router.get('/messages/:sessionName/:senderId', authMiddleware, async (req, res) 
                 SELECT
                     CASE WHEN reply_by = 'bot' THEN 'me' WHEN reply_by = 'admin' THEN 'me' ELSE sender_id END as from,
                     text as body,
-                    timestamp,
+                    COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000) as timestamp,
                     reply_by,
                     (reply_by = 'bot') as is_ai
                 FROM whatsapp_chats
                 WHERE session_name = $1 AND (sender_id = $2 OR recipient_id = $2)
-                ORDER BY timestamp DESC
+                ORDER BY COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000) DESC
                 LIMIT $3
              ) recent_messages
              ORDER BY timestamp ASC`,
@@ -1151,12 +1161,13 @@ router.patch('/conversations/:sessionName/:senderId/labels', authMiddleware, asy
     }
 });
 
-router.post('/send', authMiddleware, async (req, res) => {
+router.post('/send', authMiddleware, smartInboxUpload.single('image'), async (req, res) => {
     try {
-        const { sessionName, to, message } = req.body || {};
+        const { sessionName, to } = req.body || {};
+        const message = String(req.body?.message || '').trim();
 
-        if (!sessionName || !to || !String(message || '').trim()) {
-            return res.status(400).json({ error: 'sessionName, to and message are required' });
+        if (!sessionName || !to || (!message && !req.file)) {
+            return res.status(400).json({ error: 'sessionName, to and message or image are required' });
         }
 
         const allowed = await hasSessionAccess(String(sessionName), req.user.id, req.user.email);
@@ -1164,29 +1175,66 @@ router.post('/send', authMiddleware, async (req, res) => {
             return res.status(403).json({ error: 'Forbidden' });
         }
 
-        const response = await whatsappService.sendMessage(String(sessionName), String(to), String(message).trim());
-        const messageId = response?.id || response?.messageId || `smart_inbox_admin_${Date.now()}`;
+        const configResult = await pgClient.query(
+            `SELECT session_name, provider_type, phone_number_id, cloud_access_token
+             FROM whatsapp_message_database
+             WHERE session_name = $1
+             LIMIT 1`,
+            [String(sessionName)]
+        );
+        const config = configResult.rows[0] || {};
+        const isOfficial = config.provider_type === 'official' && config.phone_number_id && config.cloud_access_token;
+        const sentParts = [];
 
-        await dbService.saveWhatsAppChat({
-            session_name: String(sessionName),
-            sender_id: String(sessionName),
-            recipient_id: String(to),
-            message_id: String(messageId),
-            text: String(message).trim(),
-            timestamp: Date.now(),
-            status: 'sent',
-            reply_by: 'admin'
-        });
+        if (req.file) {
+            const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
+            const imageUrl = await imageService.uploadProductImage(req.file.buffer, req.file.mimetype, `smart-inbox/${String(sessionName)}`, baseUrl);
+            const imageResponse = isOfficial
+                ? await whatsappCloudService.sendImageMessage(String(config.phone_number_id), String(config.cloud_access_token), String(to), imageUrl, message || undefined)
+                : await whatsappService.sendImage(String(sessionName), String(to), imageUrl, message || undefined);
+            const imageMessageId = imageResponse?.messages?.[0]?.id || imageResponse?.id || imageResponse?.messageId || `smart_inbox_admin_image_${Date.now()}`;
+            const imageText = `[Image Message]\n[Image URL]: ${imageUrl}${message ? `\n${message}` : ''}`;
+            await dbService.saveWhatsAppChat({
+                session_name: String(sessionName),
+                sender_id: String(sessionName),
+                recipient_id: String(to),
+                message_id: String(imageMessageId),
+                text: imageText,
+                timestamp: Date.now(),
+                status: 'sent',
+                reply_by: 'admin'
+            });
+            sentParts.push({ messageId: imageMessageId, imageUrl, body: imageText });
+        }
+
+        if (message && !req.file) {
+            const response = isOfficial
+                ? await whatsappCloudService.sendTextMessage(String(config.phone_number_id), String(config.cloud_access_token), String(to), message)
+                : await whatsappService.sendMessage(String(sessionName), String(to), message);
+            const messageId = response?.messages?.[0]?.id || response?.id || response?.messageId || `smart_inbox_admin_${Date.now()}`;
+            await dbService.saveWhatsAppChat({
+                session_name: String(sessionName),
+                sender_id: String(sessionName),
+                recipient_id: String(to),
+                message_id: String(messageId),
+                text: message,
+                timestamp: Date.now(),
+                status: 'sent',
+                reply_by: 'admin'
+            });
+            sentParts.push({ messageId, body: message });
+        }
 
         res.json({
             success: true,
             message: {
                 from: 'me',
-                body: String(message).trim(),
+                body: sentParts.map((part) => part.body).filter(Boolean).join('\n\n'),
                 timestamp: Date.now(),
                 reply_by: 'admin',
                 is_ai: false
-            }
+            },
+            sent: sentParts
         });
     } catch (err) {
         console.error('Error sending WhatsApp smart inbox message:', err);

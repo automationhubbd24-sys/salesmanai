@@ -4,14 +4,17 @@ import {
   ChevronLeft,
   Inbox,
   Loader2,
+  Image as ImageIcon,
   MessageCircle,
+  Paperclip,
   RefreshCw,
   Search,
   Send,
   ShieldCheck,
   Smartphone,
   Tag,
-  User as UserIcon
+  User as UserIcon,
+  X
 } from "lucide-react";
 import { useLocation } from "react-router-dom";
 import { toast } from "sonner";
@@ -195,11 +198,14 @@ const SmartInbox = () => {
   const [refreshingMessages, setRefreshingMessages] = useState(false);
   const [sending, setSending] = useState(false);
   const [newMessage, setNewMessage] = useState("");
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [selectedImagePreview, setSelectedImagePreview] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [activeFilter, setActiveFilter] = useState<FilterKey>("all");
   const [labelUpdating, setLabelUpdating] = useState<Record<string, boolean>>({});
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const chatsAbortRef = useRef<AbortController | null>(null);
   const messagesAbortRef = useRef<AbortController | null>(null);
   const chatsSignatureRef = useRef("");
@@ -377,6 +383,11 @@ const SmartInbox = () => {
     messagesAbortRef.current?.abort();
     setSelectedChat(null);
     setMessages([]);
+    setSelectedImage(null);
+    setSelectedImagePreview((preview) => {
+      if (preview) URL.revokeObjectURL(preview);
+      return null;
+    });
     setChats([]);
     setIsMobileListVisible(true);
     chatsSignatureRef.current = "";
@@ -550,15 +561,47 @@ const SmartInbox = () => {
     [activeResourceId, fetchChats, platform, selectedChat, upsertConversationLocally]
   );
 
+  const clearSelectedImage = useCallback(() => {
+    setSelectedImage(null);
+    setSelectedImagePreview((preview) => {
+      if (preview) URL.revokeObjectURL(preview);
+      return null;
+    });
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }, []);
+
+  const handleImageSelect = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("শুধু image file select করা যাবে");
+      return;
+    }
+    if (file.size > 16 * 1024 * 1024) {
+      toast.error("Image size 16MB এর কম হতে হবে");
+      return;
+    }
+    setSelectedImagePreview((preview) => {
+      if (preview) URL.revokeObjectURL(preview);
+      return URL.createObjectURL(file);
+    });
+    setSelectedImage(file);
+  }, []);
+
   const handleSendMessage = useCallback(async () => {
-    if (!selectedChat || !activeResourceId || !platform || !newMessage.trim() || sending) {
+    if (!selectedChat || !activeResourceId || !platform || sending) {
       return;
     }
 
     const messageText = newMessage.trim();
+    if (!messageText && !selectedImage) return;
+
+    const optimisticBody = selectedImagePreview
+      ? `[Image Message]\n[Image URL]: ${selectedImagePreview}${messageText ? `\n${messageText}` : ""}`
+      : messageText;
     const optimisticMessage: MessageItem = {
       from: "me",
-      body: messageText,
+      body: optimisticBody,
       timestamp: Date.now(),
       reply_by: "admin",
       is_ai: false
@@ -571,28 +614,32 @@ const SmartInbox = () => {
     try {
       const token = localStorage.getItem("auth_token");
       const endpoint = platform === "whatsapp" ? "/api/whatsapp/send" : "/api/messenger/send";
-      const payload =
-        platform === "whatsapp"
-          ? { sessionName: activeResourceId, to: selectedChat.id, message: messageText }
-          : { pageId: activeResourceId, to: selectedChat.id, message: messageText };
+      const formData = new FormData();
+      formData.append(platform === "whatsapp" ? "sessionName" : "pageId", activeResourceId);
+      formData.append("to", selectedChat.id);
+      formData.append("message", messageText);
+      if (selectedImage) formData.append("image", selectedImage);
+
+      clearSelectedImage();
 
       const response = await fetch(`${BACKEND_URL}${endpoint}`, {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify(payload)
+        body: formData
       });
 
       if (!response.ok) {
         throw new Error("Send failed");
       }
 
+      const data = await response.json().catch(() => null);
+      const deliveredBody = data?.message?.body || optimisticBody;
       const timestamp = Date.now();
       const updatedConversation: Conversation = {
         ...selectedChat,
-        body: messageText,
+        body: deliveredBody,
         timestamp,
         reply_by: "admin",
         primary_label: "human",
@@ -614,7 +661,7 @@ const SmartInbox = () => {
       fetchChats({ silent: true });
     } catch (error) {
       console.error("Failed to send message:", error);
-      toast.error("Message pathate parini");
+      toast.error("Message পাঠাতে পারিনি");
       setNewMessage(messageText);
       fetchMessages(selectedChat.id, { silent: true });
     } finally {
@@ -622,11 +669,14 @@ const SmartInbox = () => {
     }
   }, [
     activeResourceId,
+    clearSelectedImage,
     fetchChats,
     fetchMessages,
     newMessage,
     platform,
     selectedChat,
+    selectedImage,
+    selectedImagePreview,
     sending,
     upsertConversationLocally
   ]);
@@ -651,18 +701,18 @@ const SmartInbox = () => {
         )}
       >
         {/* Header */}
-        <div className="border-b border-white/5 p-5 md:p-6 space-y-5 bg-gradient-to-b from-white/[0.02] to-transparent">
+        <div className="border-b border-white/5 p-3.5 sm:p-5 md:p-6 space-y-3.5 sm:space-y-5 bg-gradient-to-b from-white/[0.02] to-transparent">
           {/* Premium Header */}
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div
-                className="h-11 w-11 rounded-2xl flex items-center justify-center shadow-[0_0_25px_rgba(0,0,0,0.28)] ring-1 ring-white/10"
+                className="h-9 w-9 sm:h-11 sm:w-11 rounded-2xl flex items-center justify-center shadow-[0_0_25px_rgba(0,0,0,0.28)] ring-1 ring-white/10"
                 style={{ background: `linear-gradient(135deg, ${platformTheme.accent}, ${platform === "whatsapp" ? "#128C7E" : "#005bd8"})` }}
               >
                 <PlatformIcon size={22} className="text-white" />
               </div>
               <div>
-                <h1 className="text-xl md:text-2xl font-black tracking-tight text-white">
+                <h1 className="text-lg sm:text-xl md:text-2xl font-black tracking-tight text-white">
                   Smart Inbox
                 </h1>
                 <p className="text-xs text-white/45 mt-0.5">
@@ -674,7 +724,7 @@ const SmartInbox = () => {
               variant="ghost"
               size="icon"
               onClick={() => fetchChats({ silent: true })}
-              className="h-11 w-11 rounded-2xl border border-white/10 bg-white/[0.02] text-white/50 hover:text-[#00ff88] hover:bg-[#00ff88]/10 hover:border-[#00ff88]/30 transition-all duration-300"
+              className="h-9 w-9 sm:h-11 sm:w-11 rounded-2xl border border-white/10 bg-white/[0.02] text-white/50 hover:text-[#00ff88] hover:bg-[#00ff88]/10 hover:border-[#00ff88]/30 transition-all duration-300"
             >
               <RefreshCw size={18} className={cn("transition-transform", refreshingChats && "animate-spin")} />
             </Button>
@@ -687,7 +737,7 @@ const SmartInbox = () => {
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
               placeholder="Search conversations or contacts..."
-              className="pl-12 h-13 rounded-2xl border border-white/10 bg-white/[0.03] focus-visible:ring-[#00ff88]/50 focus-visible:border-[#00ff88]/40 placeholder:text-white/35 transition-all duration-300 text-sm"
+              className="pl-11 sm:pl-12 h-10 sm:h-12 rounded-2xl border border-white/10 bg-white/[0.03] focus-visible:ring-[#00ff88]/50 focus-visible:border-[#00ff88]/40 placeholder:text-white/35 transition-all duration-300 text-sm"
             />
           </div>
 
@@ -699,7 +749,7 @@ const SmartInbox = () => {
                 type="button"
                 onClick={() => setActiveFilter(filter.key)}
                 className={cn(
-                  "shrink-0 rounded-2xl border px-4 py-2.5 text-xs font-bold transition-all duration-300 flex items-center gap-2",
+                  "shrink-0 rounded-2xl border px-3 sm:px-4 py-2 sm:py-2.5 text-[11px] sm:text-xs font-bold transition-all duration-300 flex items-center gap-2",
                   activeFilter === filter.key
                     ? "border-[#00ff88]/40 bg-gradient-to-r from-[#00ff88]/20 to-[#00ff88]/10 text-[#97ffca] shadow-[0_0_20px_rgba(0,255,136,0.15)]"
                     : "border-white/10 bg-white/[0.02] text-white/60 hover:text-white hover:bg-white/[0.05] hover:border-white/20"
@@ -754,7 +804,7 @@ const SmartInbox = () => {
                     type="button"
                     onClick={() => handleSelectChat(chat)}
                     className={cn(
-                      "w-full rounded-2xl border p-3.5 sm:p-4 text-left transition-all duration-300 group",
+                      "w-full rounded-2xl border p-3 sm:p-4 text-left transition-all duration-300 group",
                       isActive
                         ? "border-[#00ff88]/45 bg-gradient-to-r from-[#00ff88]/18 via-[#00ff88]/10 to-sky-500/10 shadow-[inset_4px_0_0_rgba(0,255,136,0.75),0_0_30px_rgba(0,255,136,0.14)]"
                         : "border-white/5 bg-white/[0.02] hover:bg-white/[0.04] hover:border-white/10"
@@ -789,7 +839,7 @@ const SmartInbox = () => {
                               {formatListTime(chat.timestamp)}
                             </div>
                             <span
-                              className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-wide"
+                              className="hidden sm:inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-wide"
                               style={{ borderColor: platformTheme.accentBorder, background: platformTheme.accentSoft, color: platform === "whatsapp" ? "#9fffc4" : "#9dccff" }}
                             >
                               <PlatformIcon size={10} />
@@ -905,7 +955,7 @@ const SmartInbox = () => {
                 </div>
               </div>
 
-              <div className="mt-3.5 sm:mt-4 flex gap-1.5 sm:gap-2 overflow-x-auto pb-1">
+              <div className="mt-3.5 hidden gap-1.5 overflow-x-auto pb-1 sm:flex sm:gap-2">
                 {selectedChat.active_labels.length > 0 ? (
                   selectedChat.active_labels.map((label) => (
                     <Badge
@@ -929,48 +979,37 @@ const SmartInbox = () => {
             </div>
 
             {/* Mobile Label Controls */}
-            <div className="border-b border-white/5 px-4 py-4 md:hidden" style={{ background: `linear-gradient(90deg, ${platformTheme.accentSoft}, transparent)` }}>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-2xl border border-white/8 bg-gradient-to-br from-white/[0.04] to-white/[0.02] p-4 hover:from-white/[0.06] hover:to-white/[0.03] transition-all duration-300">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-xs font-black text-white flex items-center gap-1.5">
-                        <div className="h-1.5 w-1.5 rounded-full bg-amber-400"></div>
-                        Order
-                      </div>
-                      <div className="mt-1 text-[11px] text-white/50">Track orders</div>
-                    </div>
-                    <Switch
-                      checked={selectedChat.order_selected}
-                      disabled={labelUpdating[`${selectedChat.id}:order`]}
-                      onCheckedChange={(checked) => handleToggleLabel("order", checked)}
-                    />
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-white/8 bg-gradient-to-br from-white/[0.04] to-white/[0.02] p-4 hover:from-white/[0.06] hover:to-white/[0.03] transition-all duration-300">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-xs font-black text-white flex items-center gap-1.5">
-                        <div className="h-1.5 w-1.5 rounded-full bg-fuchsia-400"></div>
-                        Human Transfer
-                      </div>
-                      <div className="mt-1 text-[11px] text-white/50">Human follow-up</div>
-                    </div>
-                    <Switch
-                      checked={selectedChat.human_transfer_selected}
-                      disabled={labelUpdating[`${selectedChat.id}:human_transfer`]}
-                      onCheckedChange={(checked) => handleToggleLabel("human_transfer", checked)}
-                    />
-                  </div>
-                </div>
+            <div className="border-b border-white/5 px-3 py-2.5 md:hidden" style={{ background: `linear-gradient(90deg, ${platformTheme.accentSoft}, transparent)` }}>
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                <button
+                  type="button"
+                  disabled={labelUpdating[`${selectedChat.id}:order`]}
+                  onClick={() => handleToggleLabel("order", !selectedChat.order_selected)}
+                  className={cn(
+                    "shrink-0 rounded-full border px-3 py-2 text-[11px] font-black transition-all",
+                    selectedChat.order_selected ? "border-amber-400/40 bg-amber-400/15 text-amber-100" : "border-white/10 bg-white/[0.03] text-white/55"
+                  )}
+                >
+                  Order {selectedChat.order_selected ? "On" : "Off"}
+                </button>
+                <button
+                  type="button"
+                  disabled={labelUpdating[`${selectedChat.id}:human_transfer`]}
+                  onClick={() => handleToggleLabel("human_transfer", !selectedChat.human_transfer_selected)}
+                  className={cn(
+                    "shrink-0 rounded-full border px-3 py-2 text-[11px] font-black transition-all",
+                    selectedChat.human_transfer_selected ? "border-fuchsia-400/40 bg-fuchsia-400/15 text-fuchsia-100" : "border-white/10 bg-white/[0.03] text-white/55"
+                  )}
+                >
+                  Human {selectedChat.human_transfer_selected ? "On" : "Off"}
+                </button>
               </div>
             </div>
 
             {/* Messages */}
             <ScrollArea ref={scrollRef} className="flex-1 bg-gradient-to-b from-transparent to-black/10">
               {msgLoading ? (
-                <div className="space-y-4 p-4 md:p-6">
+                <div className="space-y-3 p-3 sm:p-4 md:p-6">
                   {Array.from({ length: 5 }).map((_, index) => (
                     <div key={index} className={cn("flex", index % 2 === 0 ? "justify-start" : "justify-end")}>
                       <Skeleton className="h-20 w-[65%] md:w-[55%] rounded-3xl bg-white/8 animate-pulse" />
@@ -978,7 +1017,7 @@ const SmartInbox = () => {
                   ))}
                 </div>
               ) : (
-                <div className="space-y-4 p-4 md:p-6">
+                <div className="space-y-3 p-3 sm:p-4 md:p-6">
                   {visibleMessages.length === 0 && (
                     <div className="flex min-h-[320px] items-center justify-center text-center">
                       <div className="max-w-[280px] rounded-3xl border border-white/10 bg-[#202c33]/70 px-6 py-5 shadow-lg backdrop-blur-sm">
@@ -996,12 +1035,14 @@ const SmartInbox = () => {
                       /(https?:\/\/[^\s\]\)]+\.(?:jpg|jpeg|png|gif|webp|bmp)(?:\?[^\s\]\)]*)?)/i
                     );
                     const imageUrl = imageMatch ? imageMatch[0] : "";
+                    const hasMediaImage = Boolean(imageUrl);
                     const isBotImage =
-                      Boolean(imageUrl) &&
+                      hasMediaImage &&
                       (body.includes("bot_image:") ||
                         body.includes("##PRODUCT") ||
                         body.toLowerCase().includes("system memory: user is viewing image") ||
                         body.toLowerCase().includes("sent images to user"));
+                    const isAnalysisMessage = /\[Analyzed Images?\]|\[Analyzed Image\s*\d*\]|Analyzed Image:|Analyzed Voice:/i.test(body);
                     const isOutgoing = message.from === "me" || isBotImage;
                     const isBot = message.reply_by === "bot" || isBotImage;
 
@@ -1011,7 +1052,7 @@ const SmartInbox = () => {
                         className={cn("flex gap-3 items-end animate-in fade-in slide-in-from-bottom-2 duration-500", isOutgoing ? "justify-end" : "justify-start")}
                       >
                         {!isOutgoing && (
-                          <Avatar className="h-9 w-9 border border-white/10 shrink-0">
+                          <Avatar className="hidden sm:flex h-9 w-9 border border-white/10 shrink-0">
                             <AvatarFallback className="bg-white/5 text-[11px] text-white/60 font-bold">
                               {getDisplayName(selectedChat).substring(0, 2).toUpperCase()}
                             </AvatarFallback>
@@ -1020,7 +1061,7 @@ const SmartInbox = () => {
 
                         <div
                           className={cn(
-                            "max-w-[88%] rounded-[1.5rem] px-4 py-3.5 text-sm md:max-w-[70%] lg:max-w-[60%] shadow-lg transition-all duration-200 hover:shadow-xl",
+                            "max-w-[86%] rounded-[1.25rem] px-3 py-2.5 text-sm sm:max-w-[82%] sm:px-3.5 sm:py-3 md:max-w-[72%] lg:max-w-[58%] shadow-lg transition-all duration-200 hover:shadow-xl", 
                             isOutgoing
                               ? isBot
                                 ? platform === "whatsapp"
@@ -1030,12 +1071,12 @@ const SmartInbox = () => {
                               : "rounded-bl-md border border-white/10 bg-gradient-to-br from-[#202c33] to-[#17212b] text-white/95 shadow-[0_4px_20px_rgba(0,0,0,0.28)]"
                           )}
                         >
-                          {isBotImage ? (
+                          {hasMediaImage && !isAnalysisMessage ? (
                             <div className="space-y-3">
                               <img
                                 src={imageUrl}
                                 alt="Conversation media"
-                                className="w-full max-w-[260px] rounded-2xl border border-black/10 object-cover cursor-pointer hover:scale-[1.02] transition-transform duration-300"
+                                className="w-full max-w-[190px] sm:max-w-[260px] max-h-[240px] rounded-2xl border border-black/10 object-cover cursor-pointer hover:scale-[1.02] transition-transform duration-300"
                                 onClick={() => window.open(imageUrl, "_blank")}
                                 onError={(event) => {
                                   (event.target as HTMLImageElement).src =
@@ -1045,25 +1086,32 @@ const SmartInbox = () => {
                               {body
                                 .replace(/\[?System Memory:[^\]]+\]?/g, "")
                                 .replace(/##PRODUCT[^\n]+/g, "")
+                                .replace(/\[Image URLs?\]:\s*/gi, "")
                                 .replace(/https?:\/\/[^\s]+/g, "")
                                 .trim() && (
                                 <p className={cn("text-xs leading-relaxed", isBot ? "text-black/70" : "text-white/70")}>
                                   {body
                                     .replace(/\[?System Memory:[^\]]+\]?/g, "")
                                     .replace(/##PRODUCT[^\n]+/g, "")
+                                    .replace(/\[Image URLs?\]:\s*/gi, "")
                                     .replace(/https?:\/\/[^\s]+/g, "")
                                     .trim()}
                                 </p>
                               )}
                             </div>
-                          ) : body.includes("Analyzed Image:") || body.includes("Analyzed Voice:") ? (
-                            <details className="group">
-                              <summary className={cn("cursor-pointer list-none text-xs font-bold", isBot ? "text-black/80" : isOutgoing ? "text-sky-100" : "text-[#8effc4]")}>
-                                {body.includes("Analyzed Image:") ? "Analyzed image details" : "Analyzed voice details"}
+                          ) : isAnalysisMessage ? (
+                            <details className="group max-w-[220px] sm:max-w-[360px]">
+                              <summary className={cn("cursor-pointer list-none rounded-2xl border px-3 py-2 text-xs font-black transition-colors", isBot ? "border-black/10 bg-black/5 text-black/80" : "border-white/10 bg-white/[0.04] text-[#8effc4]")}>
+                                <span className="flex items-center justify-between gap-3">
+                                  <span>{body.toLowerCase().includes("voice") ? "Voice analysis" : "Image analysis"}</span>
+                                  <span className="text-[10px] opacity-60 group-open:hidden">Expand</span>
+                                  <span className="hidden text-[10px] opacity-60 group-open:inline">Collapse</span>
+                                </span>
                               </summary>
-                              <p className={cn("mt-3 whitespace-pre-wrap text-xs leading-relaxed", isBot ? "text-black/75" : "text-white/75")}>
+                              <p className={cn("mt-3 max-h-[320px] overflow-y-auto whitespace-pre-wrap rounded-2xl p-3 text-xs leading-relaxed", isBot ? "bg-black/5 text-black/75" : "bg-black/20 text-white/75")}>
                                 {body
-                                  .replace(/\[Analyzed Image\]:?\s*/i, "")
+                                  .replace(/\[Analyzed Images?\]:?\s*/i, "")
+                                  .replace(/\[Analyzed Image\s*\d*\]:?\s*/i, "")
                                   .replace(/\[Analyzed Voice\]:?\s*/i, "")
                                   .replace(/Analyzed Image:\s*/i, "")
                                   .replace(/Analyzed Voice:\s*/i, "")
@@ -1112,8 +1160,33 @@ const SmartInbox = () => {
             </ScrollArea>
 
             {/* Input Area */}
-            <div className="border-t border-white/5 bg-gradient-to-t from-black/40 to-transparent px-3 py-3.5 pb-[calc(env(safe-area-inset-bottom)+0.875rem)] md:px-6 md:py-4">
-              <div className="flex items-end gap-2.5 rounded-[1.5rem] border border-white/10 bg-white/[0.03] p-2.5 backdrop-blur-sm">
+            <div className="border-t border-white/5 bg-gradient-to-t from-black/40 to-transparent px-2.5 py-2.5 pb-[calc(env(safe-area-inset-bottom)+0.625rem)] sm:px-3 sm:py-3.5 md:px-6 md:py-4">
+              {selectedImagePreview && (
+                <div className="mb-2 flex items-center gap-2.5 rounded-2xl border border-white/10 bg-white/[0.04] p-2 backdrop-blur-sm">
+                  <img src={selectedImagePreview} alt="Selected upload" className="h-12 w-12 sm:h-16 sm:w-16 rounded-xl object-cover" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 text-xs font-black text-white">
+                      <ImageIcon size={14} />
+                      Image ready to send
+                    </div>
+                    <p className="mt-1 truncate text-[11px] text-white/45">{selectedImage?.name}</p>
+                  </div>
+                  <Button size="icon" variant="ghost" onClick={clearSelectedImage} className="h-9 w-9 rounded-full text-white/60 hover:bg-white/10 hover:text-white">
+                    <X size={16} />
+                  </Button>
+                </div>
+              )}
+              <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageSelect} />
+              <div className="flex items-end gap-2 rounded-[1.35rem] border border-white/10 bg-white/[0.03] p-2 backdrop-blur-sm sm:gap-2.5 sm:rounded-[1.5rem] sm:p-2.5">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={sending}
+                  className="h-10 w-10 sm:h-12 sm:w-12 shrink-0 rounded-2xl text-white/60 hover:bg-white/10 hover:text-white"
+                >
+                  <Paperclip size={19} />
+                </Button>
                 <Input
                   value={newMessage}
                   onChange={(event) => setNewMessage(event.target.value)}
@@ -1123,16 +1196,17 @@ const SmartInbox = () => {
                       handleSendMessage();
                     }
                   }}
-                  placeholder="Type your message..."
-                  className="h-12 border-none bg-transparent text-sm text-white placeholder:text-white/30 focus-visible:ring-0 resize-none"
+                  placeholder="Type message or attach image..."
+                  className="h-10 sm:h-12 border-none bg-transparent text-sm text-white placeholder:text-white/30 focus-visible:ring-0 resize-none"
                 />
                 <Button
                   size="icon"
                   onClick={handleSendMessage}
-                  disabled={!newMessage.trim() || sending}
-                  className="h-12 w-12 rounded-2xl bg-gradient-to-br from-[#00ff88] to-[#00cc6a] text-black hover:from-[#00ff88]/90 hover:to-[#00cc6a]/90 transition-all duration-300 shadow-[0_4px_20px_rgba(0,255,136,0.3)] hover:shadow-[0_6px_25px_rgba(0,255,136,0.4)] hover:scale-105 active:scale-95 disabled:hover:scale-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={(!newMessage.trim() && !selectedImage) || sending}
+                  className="h-10 w-10 sm:h-12 sm:w-12 shrink-0 rounded-2xl text-black transition-all duration-300 hover:scale-105 active:scale-95 disabled:hover:scale-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{ background: `linear-gradient(135deg, ${platformTheme.accent}, ${platform === "whatsapp" ? "#128C7E" : "#005bd8"})` }}
                 >
-                  {sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={19} />}
+                  {sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={19} className="text-white" />}
                 </Button>
               </div>
             </div>
@@ -1154,18 +1228,18 @@ const SmartInbox = () => {
 
       {/* Desktop Right Panel */}
       {selectedChat && (
-        <div className="hidden w-[320px] md:w-[340px] lg:w-[360px] xl:w-[380px] border-l border-white/5 bg-gradient-to-b from-[#070a14] to-[#050812] lg:flex lg:flex-col">
+        <div className="hidden w-[260px] xl:w-[300px] 2xl:w-[330px] border-l border-white/5 bg-gradient-to-b from-[#070a14] to-[#050812] lg:flex lg:flex-col">
           {/* Profile Header */}
-          <div className="border-b border-white/5 p-7 bg-gradient-to-b from-white/[0.02] to-transparent">
+          <div className="border-b border-white/5 p-4 xl:p-5 bg-gradient-to-b from-white/[0.02] to-transparent">
             <div className="flex flex-col items-center text-center">
               <div className="relative">
-                <Avatar className="h-24 w-24 border-2 shadow-[0_0_30px_rgba(0,0,0,0.25)]" style={{ borderColor: platformTheme.accentBorder }}>
+                <Avatar className="h-16 w-16 xl:h-20 xl:w-20 border-2 shadow-[0_0_30px_rgba(0,0,0,0.25)]" style={{ borderColor: platformTheme.accentBorder }}>
                   <AvatarFallback className="bg-gradient-to-br from-white/10 to-white/5 text-white/70">
-                    <UserIcon size={36} />
+                    <UserIcon size={28} />
                   </AvatarFallback>
                 </Avatar>
-                <span className="absolute bottom-1 right-1 flex h-8 w-8 items-center justify-center rounded-full border-2 border-[#070a14] text-white shadow-lg" style={{ background: platformTheme.accent }}>
-                  <PlatformIcon size={16} />
+                <span className="absolute bottom-0 right-0 flex h-6 w-6 items-center justify-center rounded-full border-2 border-[#070a14] text-white shadow-lg" style={{ background: platformTheme.accent }}>
+                  <PlatformIcon size={13} />
                 </span>
               </div>
               <h3 className="mt-5 text-xl font-black text-white">
@@ -1185,7 +1259,7 @@ const SmartInbox = () => {
           </div>
 
           {/* Panel Content */}
-          <div className="space-y-8 p-7">
+          <div className="space-y-5 overflow-y-auto p-4 xl:p-5">
             {/* Active Labels */}
             <div className="space-y-4">
               <div className="text-[11px] font-black uppercase tracking-[0.25em] text-[#8effc4] flex items-center gap-3">
@@ -1223,7 +1297,7 @@ const SmartInbox = () => {
                 <div className="h-0.5 flex-1 bg-gradient-to-r from-[#00ff88]/30 to-transparent rounded-full" />
               </div>
 
-              <div className="rounded-2xl border border-white/7 bg-gradient-to-br from-white/[0.05] to-white/[0.02] p-5 hover:from-white/[0.07] hover:to-white/[0.03] transition-all duration-300 shadow-sm">
+              <div className="rounded-2xl border border-white/7 bg-gradient-to-br from-white/[0.05] to-white/[0.02] p-4 hover:from-white/[0.07] hover:to-white/[0.03] transition-all duration-300 shadow-sm">
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <div className="text-base font-black text-white flex items-center gap-2">
@@ -1248,7 +1322,7 @@ const SmartInbox = () => {
                 )}
               </div>
 
-              <div className="rounded-2xl border border-white/7 bg-gradient-to-br from-white/[0.05] to-white/[0.02] p-5 hover:from-white/[0.07] hover:to-white/[0.03] transition-all duration-300 shadow-sm">
+              <div className="rounded-2xl border border-white/7 bg-gradient-to-br from-white/[0.05] to-white/[0.02] p-4 hover:from-white/[0.07] hover:to-white/[0.03] transition-all duration-300 shadow-sm">
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <div className="text-base font-black text-white flex items-center gap-2">
