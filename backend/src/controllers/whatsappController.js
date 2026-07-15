@@ -1912,6 +1912,8 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
     const primaryMsgId = messages.length > 0 ? messages[0].id : `usr_${Date.now()}`;
     const inboundLogParts = [];
     if (combinedText.trim()) inboundLogParts.push(combinedText.trim());
+    if (allImages.length > 0) inboundLogParts.push(`[Image URLs]: ${allImages.join(', ')}`);
+    if (allAudios.length > 0) inboundLogParts.push(`[Audio URLs]: ${allAudios.join(', ')}`);
     const inboundLogText = inboundLogParts.join('\n\n').trim();
 
     if (inboundLogText) {

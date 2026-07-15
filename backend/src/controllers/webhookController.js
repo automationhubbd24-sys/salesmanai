@@ -1397,6 +1397,8 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     const allAudios = [...audioUrls];
     const inboundLogParts = [];
     if (combinedText) inboundLogParts.push(combinedText);
+    if (allImages.length > 0) inboundLogParts.push(`[Image URLs]: ${allImages.join(', ')}`);
+    if (allAudios.length > 0) inboundLogParts.push(`[Audio URLs]: ${allAudios.join(', ')}`);
     const inboundLogText = inboundLogParts.join('\n\n').trim();
 
     if (inboundLogText) {
