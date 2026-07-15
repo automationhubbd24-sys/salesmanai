@@ -1052,7 +1052,6 @@ async function initTables() {
             ALTER TABLE IF EXISTS product_image_embeddings ADD COLUMN IF NOT EXISTS image_embedding_3072 vector(3072);
             ALTER TABLE IF EXISTS product_image_embeddings ADD COLUMN IF NOT EXISTS image_embedding_model TEXT;
             ALTER TABLE IF EXISTS incoming_image_analysis ADD COLUMN IF NOT EXISTS visual_fingerprint JSONB DEFAULT '{}'::jsonb;
-            CREATE INDEX IF NOT EXISTS idx_product_image_embeddings_image_3072 ON product_image_embeddings USING hnsw (image_embedding_3072 vector_cosine_ops);
         `);
         await backfillGeneratedSkuMatrixForLegacyProducts();
         console.log("[DB] 'products.allowed_wa_sessions' column checked.");
