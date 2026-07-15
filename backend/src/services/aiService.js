@@ -1292,9 +1292,12 @@ async function getDirectImageEmbedding(imageUrl, options = {}) {
     const config = getImageEmbeddingConfig();
     if (!config.apiKey || config.provider !== 'gemini') return null;
 
+    const useCache = options.cache === true;
     const cacheKey = `${config.provider}:${config.model}:${imageUrl}`;
-    const cached = getCachedImageEmbedding(cacheKey);
-    if (cached) return cached;
+    if (useCache) {
+        const cached = getCachedImageEmbedding(cacheKey);
+        if (cached) return cached;
+    }
 
     try {
         const model = normalizeGeminiEmbeddingModel(config.model);
@@ -1315,8 +1318,8 @@ async function getDirectImageEmbedding(imageUrl, options = {}) {
         if (!res.ok) throw new Error(json?.error?.message || bodyText);
         const vector = json?.embedding?.values || json?.embeddings?.[0]?.values || null;
         if (!Array.isArray(vector)) throw new Error('No direct image embedding vector returned');
-        setCachedImageEmbedding(cacheKey, vector);
-        if (options.log !== false) console.log(`[AI Direct Image Embedding] ${model} dimension=${vector.length}`);
+        if (useCache) setCachedImageEmbedding(cacheKey, vector);
+        if (options.log !== false) console.log(`[AI Direct Image Embedding] ${model} dimension=${vector.length}${useCache ? ' cache=enabled' : ' cache=bypassed'}`);
         return vector;
     } catch (e) {
         console.warn(`[AI Direct Image Embedding] skipped: ${e.message}`);
