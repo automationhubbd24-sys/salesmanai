@@ -1583,22 +1583,6 @@ async function queueMessage(session, messagePayload) {
             group_name: groupName
         }).catch(err => console.error("Error saving to whatsapp_chats:", err.message));
 
-        imageUrls.forEach((imageUrl, index) => {
-            dbService.saveWhatsAppChat({
-                session_name: sessionName,
-                sender_id: senderId,
-                recipient_id: messagePayload.to,
-                message_id: `${messageId}_image_${index + 1}`,
-                text: `[Image Message]\n[Image URL]: ${imageUrl}`,
-                timestamp: Date.now(),
-                status: 'received',
-                reply_by: 'user',
-                is_group: isGroup,
-                group_id: groupId,
-                group_name: groupName
-            }).catch(err => console.error("Error saving image URL to whatsapp_chats:", err.message));
-        });
-        
         // Save Contact/Lead (Fire and forget)
         let pushName = messagePayload.pushName || messagePayload._data?.notifyName || messagePayload.notifyName;
         if (!pushName && messagePayload.sender) {
@@ -1928,8 +1912,6 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
     const primaryMsgId = messages.length > 0 ? messages[0].id : `usr_${Date.now()}`;
     const inboundLogParts = [];
     if (combinedText.trim()) inboundLogParts.push(combinedText.trim());
-    if (allImages.length > 0) inboundLogParts.push(`[User sent ${allImages.length} image(s)]\n[Image URLs]: ${allImages.join(', ')}`);
-    if (allAudios.length > 0) inboundLogParts.push(`[User sent ${allAudios.length} audio message(s)]\n[Audio URLs]: ${allAudios.join(', ')}`);
     const inboundLogText = inboundLogParts.join('\n\n').trim();
 
     if (inboundLogText) {
@@ -2484,27 +2466,7 @@ ${imageAnalyzeText.trim()}
 
         // --- FAILURE LOCK CHECK ---
         
-        // SAVE USER MESSAGE (Persistence Guarantee)
-        // User Requirement: Save message to Supabase even if locked (Handover).
-        if (finalOutput && finalOutput.trim() !== "") {
-             try {
-                 await dbService.saveWhatsAppChat({
-                    session_name: sessionName,
-                    sender_id: senderId,
-                    recipient_id: sessionName, // Page is recipient
-                    message_id: `${primaryMsgId}_processed`,
-                    text: finalOutput, // Save the FULL processed text (including image analysis)
-                    timestamp: Date.now(),
-                    status: 'received',
-                    reply_by: 'user',
-                    is_group: isGroup,
-                    group_id: isGroup ? senderId : null
-                });
-             } catch (e) {
-                 console.warn(`[WA] Failed to save user message (Persistence): ${e.message}`);
-             }
-        }
-
+        // Raw user media/text is saved before debounce. Analyzer context is saved separately.
         const isLocked = await dbService.checkWhatsAppLockStatus(sessionName, effectiveSenderId);
         if (isLocked) {
             console.log(`[WA] Conversation with ${senderId} locked due to repeated failures.`);

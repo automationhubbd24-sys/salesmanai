@@ -1397,8 +1397,6 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     const allAudios = [...audioUrls];
     const inboundLogParts = [];
     if (combinedText) inboundLogParts.push(combinedText);
-    if (allImages.length > 0) inboundLogParts.push(`[User sent ${allImages.length} image(s)]\n[Image URLs]: ${allImages.join(', ')}`);
-    if (allAudios.length > 0) inboundLogParts.push(`[User sent ${allAudios.length} audio message(s)]\n[Audio URLs]: ${allAudios.join(', ')}`);
     const inboundLogText = inboundLogParts.join('\n\n').trim();
 
     if (inboundLogText) {
@@ -1413,19 +1411,6 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
             reply_by: 'user'
         });
     }
-
-    allImages.forEach((imageUrl, index) => {
-        dbService.saveWhatsAppChat({
-            session_name: effectiveSessionName,
-            sender_id: senderId,
-            recipient_id: effectiveSessionName,
-            message_id: `${bufferedMessages[0].id}_image_${index + 1}`,
-            text: `[Image Message]\n[Image URL]: ${imageUrl}`,
-            timestamp: Date.now(),
-            status: 'received',
-            reply_by: 'user'
-        }).catch(err => console.error(`[WhatsApp Webhook] Failed to save image URL:`, err.message));
-    });
 
     // --- ALWAYS MARK SEEN FIRST (like Messenger) ---
     if (latestIncomingMessageId && resolvedPhoneNumberId && config.cloud_access_token) {
@@ -1512,20 +1497,6 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
             });
 
             if (combinedImageAnalysis) {
-                imageAnalysisResults.forEach((result) => {
-                    dbService.saveWhatsAppChat({
-                        session_name: effectiveSessionName,
-                        sender_id: effectiveSessionName,
-                        recipient_id: senderId,
-                        message_id: `img_analysis_${batchId}_${result.imageIndex}`,
-                        text: `[Analyzed Image ${result.imageIndex}]:\n${formatImageAnalysisBlock(result)}`,
-                        timestamp: Date.now(),
-                        status: 'analyzed',
-                        reply_by: 'bot',
-                        token_usage: Number(result.usage || 0),
-                        model_used: result.model || 'image-analysis-cache'
-                    }).catch(e => console.error(`[WhatsApp] Failed to save per-image analysis:`, e.message));
-                });
                 dbService.saveWhatsAppChat({
                     session_name: effectiveSessionName,
                     sender_id: effectiveSessionName,
@@ -2780,18 +2751,6 @@ async function queueMessage(event, entryPageId = null) {
         reply_by: 'user'
     }).catch(err => console.error(`Error saving to fb_chats (Page: ${pageId}, Msg: ${messageId}):`, err.message));
 
-    initialImageUrls.forEach((imageUrl, index) => {
-        dbService.saveFbChat({
-            page_id: pageId,
-            sender_id: senderId,
-            recipient_id: pageId,
-            message_id: `${messageId}_image_${index + 1}`,
-            text: `[Image Message]\n[Image URL]: ${imageUrl}`,
-            timestamp: Date.now(),
-            status: 'received',
-            reply_by: 'user'
-        }).catch(err => console.error(`Error saving image URL to fb_chats (Page: ${pageId}, Msg: ${messageId}):`, err.message));
-    });
     // -------------------------------------------------
 
     const sessionId = `${pageId}_${senderId}`;
@@ -3431,20 +3390,6 @@ STRICT RULES:
                 });
 
                 if (combinedImageAnalysis) {
-                    imageAnalysisResults.forEach((result) => {
-                        dbService.saveFbChat({
-                            page_id: pageId,
-                            sender_id: pageId,
-                            recipient_id: senderId,
-                            message_id: `img_analysis_${batchId}_${result.imageIndex}`,
-                            text: `[Analyzed Image ${result.imageIndex}]:\n${formatImageAnalysisBlock(result)}`,
-                            timestamp: Date.now(),
-                            status: 'analyzed',
-                            reply_by: 'bot',
-                            token: Number(result.usage || 0),
-                            ai_model: result.model || 'image-analysis-cache'
-                        }).catch(e => console.error(`[FB] Failed to save per-image analysis:`, e.message));
-                    });
                     dbService.saveFbChat({
                         page_id: pageId,
                         sender_id: pageId,
