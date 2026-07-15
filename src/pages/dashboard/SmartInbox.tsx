@@ -4,14 +4,16 @@ import {
   ChevronLeft,
   Inbox,
   Loader2,
+  MessageCircle,
   RefreshCw,
   Search,
   Send,
   ShieldCheck,
   Smartphone,
+  Tag,
   User as UserIcon
 } from "lucide-react";
-import { useParams } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import { toast } from "sonner";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -21,9 +23,9 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { BACKEND_URL } from "@/config";
 import { cn } from "@/lib/utils";
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "https://api.salesmanchatbot.online";
 const CHAT_POLL_INTERVAL_MS = 12000;
 const MESSAGE_POLL_INTERVAL_MS = 4500;
 const MESSAGE_LIMIT = 120;
@@ -96,6 +98,25 @@ const getActiveResourceId = (platform?: string | null) =>
 const getPlatformTitle = (platform?: string | null) =>
   platform === "whatsapp" ? "WhatsApp" : "Messenger";
 
+const getPlatformTheme = (platform: PlatformKey) =>
+  platform === "whatsapp"
+    ? {
+        accent: "#25D366",
+        accentSoft: "rgba(37,211,102,0.14)",
+        accentBorder: "rgba(37,211,102,0.32)",
+        bubbleOut: "from-[#d9fdd3] to-[#b7f3cc]",
+        icon: Smartphone,
+        title: "WhatsApp Business"
+      }
+    : {
+        accent: "#0084ff",
+        accentSoft: "rgba(0,132,255,0.14)",
+        accentBorder: "rgba(0,132,255,0.34)",
+        bubbleOut: "from-[#0084ff] to-[#0069d9]",
+        icon: MessageCircle,
+        title: "Messenger Business"
+      };
+
 const normalizeTimestamp = (value: number | string | null | undefined) => {
   if (value === null || value === undefined || value === "") return null;
 
@@ -159,7 +180,11 @@ const getDisplayName = (chat: Conversation | null) => {
 };
 
 const SmartInbox = () => {
-  const { platform } = useParams<{ platform: PlatformKey }>();
+  const location = useLocation();
+  const pathPlatform = location.pathname.split("/")[2];
+  const platform: PlatformKey = pathPlatform === "whatsapp" ? "whatsapp" : "messenger";
+  const platformTheme = useMemo(() => getPlatformTheme(platform), [platform]);
+  const PlatformIcon = platformTheme.icon;
   const [selectedChat, setSelectedChat] = useState<Conversation | null>(null);
   const [isMobileListVisible, setIsMobileListVisible] = useState(true);
   const [chats, setChats] = useState<Conversation[]>([]);
@@ -179,9 +204,15 @@ const SmartInbox = () => {
   const messagesAbortRef = useRef<AbortController | null>(null);
   const chatsSignatureRef = useRef("");
   const messagesSignatureRef = useRef("");
-
-  const activeResourceId = getActiveResourceId(platform);
+  const [activeResourceId, setActiveResourceId] = useState<string | null>(() => getActiveResourceId(platform));
   const hasActiveResource = Boolean(activeResourceId);
+
+  const syncActiveResourceId = useCallback(() => {
+    setActiveResourceId((prev) => {
+      const next = getActiveResourceId(platform);
+      return prev === next ? prev : next;
+    });
+  }, [platform]);
 
   const scrollToBottom = useCallback(() => {
     const viewport = scrollRef.current?.querySelector("[data-radix-scroll-area-viewport]") as HTMLDivElement | null;
@@ -327,12 +358,30 @@ const SmartInbox = () => {
   );
 
   useEffect(() => {
+    syncActiveResourceId();
+  }, [syncActiveResourceId]);
+
+  useEffect(() => {
+    const handleResourceChange = () => syncActiveResourceId();
+
+    window.addEventListener("db-connection-changed", handleResourceChange);
+    window.addEventListener("storage", handleResourceChange);
+    return () => {
+      window.removeEventListener("db-connection-changed", handleResourceChange);
+      window.removeEventListener("storage", handleResourceChange);
+    };
+  }, [syncActiveResourceId]);
+
+  useEffect(() => {
+    chatsAbortRef.current?.abort();
+    messagesAbortRef.current?.abort();
     setSelectedChat(null);
     setMessages([]);
+    setChats([]);
     setIsMobileListVisible(true);
     chatsSignatureRef.current = "";
     messagesSignatureRef.current = "";
-  }, [platform]);
+  }, [platform, activeResourceId]);
 
   useEffect(() => {
     fetchChats();
@@ -593,7 +642,7 @@ const SmartInbox = () => {
   );
 
   return (
-    <div className="flex h-[calc(100dvh-64px)] sm:h-[calc(100dvh-70px)] md:h-[calc(100vh-80px)] overflow-hidden bg-gradient-to-br from-[#050810] to-[#081020] md:rounded-[2rem] border border-white/5 shadow-2xl">
+    <div className="flex h-[calc(100dvh-64px)] sm:h-[calc(100dvh-70px)] md:h-[calc(100vh-80px)] overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(37,211,102,0.08),transparent_32%),linear-gradient(135deg,#050810,#081020)] md:rounded-[2rem] border border-white/8 shadow-2xl">
       {/* Conversation List */}
       <div
         className={cn(
@@ -606,15 +655,18 @@ const SmartInbox = () => {
           {/* Premium Header */}
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <div className="h-11 w-11 rounded-2xl bg-gradient-to-br from-[#00ff88] to-[#00cc6a] flex items-center justify-center shadow-[0_0_25px_rgba(0,255,136,0.35)]">
-                <Inbox size={22} className="text-black" />
+              <div
+                className="h-11 w-11 rounded-2xl flex items-center justify-center shadow-[0_0_25px_rgba(0,0,0,0.28)] ring-1 ring-white/10"
+                style={{ background: `linear-gradient(135deg, ${platformTheme.accent}, ${platform === "whatsapp" ? "#128C7E" : "#005bd8"})` }}
+              >
+                <PlatformIcon size={22} className="text-white" />
               </div>
               <div>
                 <h1 className="text-xl md:text-2xl font-black tracking-tight text-white">
                   Smart Inbox
                 </h1>
                 <p className="text-xs text-white/45 mt-0.5">
-                  Manage your {getPlatformTitle(platform)} conversations
+                  {platformTheme.title} conversations
                 </p>
               </div>
             </div>
@@ -704,7 +756,7 @@ const SmartInbox = () => {
                     className={cn(
                       "w-full rounded-2xl border p-3.5 sm:p-4 text-left transition-all duration-300 group",
                       isActive
-                        ? "border-[#00ff88]/30 bg-gradient-to-r from-[#00ff88]/12 to-[#00ff88]/6 shadow-[0_0_30px_rgba(0,255,136,0.12)]"
+                        ? "border-[#00ff88]/45 bg-gradient-to-r from-[#00ff88]/18 via-[#00ff88]/10 to-sky-500/10 shadow-[inset_4px_0_0_rgba(0,255,136,0.75),0_0_30px_rgba(0,255,136,0.14)]"
                         : "border-white/5 bg-white/[0.02] hover:bg-white/[0.04] hover:border-white/10"
                     )}
                   >
@@ -732,8 +784,17 @@ const SmartInbox = () => {
                               {chat.from}
                             </div>
                           </div>
-                          <div className="shrink-0 text-[10px] sm:text-[11px] text-white/40 font-medium">
-                            {formatListTime(chat.timestamp)}
+                          <div className="flex shrink-0 flex-col items-end gap-1.5">
+                            <div className="text-[10px] sm:text-[11px] text-white/40 font-medium">
+                              {formatListTime(chat.timestamp)}
+                            </div>
+                            <span
+                              className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-wide"
+                              style={{ borderColor: platformTheme.accentBorder, background: platformTheme.accentSoft, color: platform === "whatsapp" ? "#9fffc4" : "#9dccff" }}
+                            >
+                              <PlatformIcon size={10} />
+                              {getPlatformTitle(platform)}
+                            </span>
                           </div>
                         </div>
 
@@ -741,24 +802,32 @@ const SmartInbox = () => {
                           {getMessagePreview(chat.body)}
                         </p>
 
-                        <div className="mt-2.5 sm:mt-3 flex flex-wrap gap-1.5">
-                          {chat.active_labels.length > 0 ? (
-                            chat.active_labels.map((label) => (
+                        <div className="mt-2.5 sm:mt-3 flex items-center justify-between gap-2">
+                          <div className="flex min-w-0 flex-wrap gap-1.5">
+                            {chat.active_labels.length > 0 ? (
+                              chat.active_labels.slice(0, 3).map((label) => (
+                                <Badge
+                                  key={`${chat.id}-${label}`}
+                                  variant="outline"
+                                  className={cn("rounded-full px-2.5 sm:px-3 py-0.5 sm:py-1 text-[9px] sm:text-[10px] font-black border-opacity-70 shadow-sm", LABEL_META[label].className)}
+                                >
+                                  <Tag size={10} className="mr-1" />
+                                  {LABEL_META[label].title}
+                                </Badge>
+                              ))
+                            ) : (
                               <Badge
-                                key={`${chat.id}-${label}`}
                                 variant="outline"
-                                className={cn("rounded-full px-2.5 sm:px-3 py-0.5 sm:py-1 text-[9px] sm:text-[10px] font-bold border-opacity-50", LABEL_META[label].className)}
+                                className="rounded-full border-white/10 bg-white/[0.03] px-2.5 sm:px-3 py-0.5 sm:py-1 text-[9px] sm:text-[10px] text-white/45"
                               >
-                                {LABEL_META[label].title}
+                                New
                               </Badge>
-                            ))
-                          ) : (
-                            <Badge
-                              variant="outline"
-                              className="rounded-full border-white/10 bg-white/[0.03] px-2.5 sm:px-3 py-0.5 sm:py-1 text-[9px] sm:text-[10px] text-white/45"
-                            >
-                              New
-                            </Badge>
+                            )}
+                          </div>
+                          {chat.active_labels.length > 3 && (
+                            <span className="shrink-0 rounded-full bg-white/8 px-2 py-1 text-[9px] font-bold text-white/45">
+                              +{chat.active_labels.length - 3}
+                            </span>
                           )}
                         </div>
                       </div>
@@ -788,11 +857,19 @@ const SmartInbox = () => {
                     <ChevronLeft size={20} className="sm:w-5.5 sm:h-5.5" />
                   </Button>
 
-                  <Avatar className="h-10 w-10 sm:h-12 sm:w-12 border border-white/10">
-                    <AvatarFallback className="bg-gradient-to-br from-white/10 to-white/5 text-white/60">
-                      <UserIcon size={18} className="sm:w-5 sm:h-5" />
-                    </AvatarFallback>
-                  </Avatar>
+                  <div className="relative">
+                    <Avatar className="h-10 w-10 sm:h-12 sm:w-12 border border-white/10 shadow-lg">
+                      <AvatarFallback className="bg-gradient-to-br from-white/10 to-white/5 text-white/60">
+                        <UserIcon size={18} className="sm:w-5 sm:h-5" />
+                      </AvatarFallback>
+                    </Avatar>
+                    <span
+                      className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full border border-[#050810] text-white shadow-md"
+                      style={{ background: platformTheme.accent }}
+                    >
+                      <PlatformIcon size={11} />
+                    </span>
+                  </div>
 
                   <div className="min-w-0">
                     <div className="truncate text-sm sm:text-base font-bold text-white">
@@ -808,7 +885,7 @@ const SmartInbox = () => {
                             : "Waiting for your reply"}
                       </span>
                       <span className="text-white/20">•</span>
-                      <span>{getPlatformTitle(platform)}</span>
+                      <span>{platformTheme.title}</span>
                     </div>
                   </div>
                 </div>
@@ -828,21 +905,22 @@ const SmartInbox = () => {
                 </div>
               </div>
 
-              <div className="mt-3.5 sm:mt-4 flex flex-wrap gap-1.5 sm:gap-2">
+              <div className="mt-3.5 sm:mt-4 flex gap-1.5 sm:gap-2 overflow-x-auto pb-1">
                 {selectedChat.active_labels.length > 0 ? (
                   selectedChat.active_labels.map((label) => (
                     <Badge
                       key={`header-${label}`}
                       variant="outline"
-                      className={cn("rounded-full px-2.5 sm:px-3 py-1 sm:py-1.5 text-[9px] sm:text-[10px] font-bold border-opacity-50", LABEL_META[label].className)}
+                      className={cn("rounded-full px-3 py-1.5 text-[10px] font-black border-opacity-70 whitespace-nowrap shadow-sm", LABEL_META[label].className)}
                     >
+                      <Tag size={10} className="mr-1" />
                       {LABEL_META[label].title}
                     </Badge>
                   ))
                 ) : (
                   <Badge
                     variant="outline"
-                    className="rounded-full border-white/10 bg-white/[0.03] px-2.5 sm:px-3 py-1 sm:py-1.5 text-[9px] sm:text-[10px] text-white/45"
+                    className="rounded-full border-white/10 bg-white/[0.03] px-3 py-1.5 text-[10px] text-white/45 whitespace-nowrap"
                   >
                     New Conversation
                   </Badge>
@@ -851,7 +929,7 @@ const SmartInbox = () => {
             </div>
 
             {/* Mobile Label Controls */}
-            <div className="border-b border-white/5 bg-gradient-to-r from-white/[0.015] to-transparent px-4 py-4 md:hidden">
+            <div className="border-b border-white/5 px-4 py-4 md:hidden" style={{ background: `linear-gradient(90deg, ${platformTheme.accentSoft}, transparent)` }}>
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-2xl border border-white/8 bg-gradient-to-br from-white/[0.04] to-white/[0.02] p-4 hover:from-white/[0.06] hover:to-white/[0.03] transition-all duration-300">
                   <div className="flex items-center justify-between gap-3">
@@ -901,6 +979,17 @@ const SmartInbox = () => {
                 </div>
               ) : (
                 <div className="space-y-4 p-4 md:p-6">
+                  {visibleMessages.length === 0 && (
+                    <div className="flex min-h-[320px] items-center justify-center text-center">
+                      <div className="max-w-[280px] rounded-3xl border border-white/10 bg-[#202c33]/70 px-6 py-5 shadow-lg backdrop-blur-sm">
+                        <h3 className="text-sm font-bold text-white">No messages yet</h3>
+                        <p className="mt-2 text-xs leading-relaxed text-white/50">
+                          Saved messages for this conversation will appear here after they sync.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
                   {visibleMessages.map((message, index) => {
                     const body = message.body || "";
                     const imageMatch = body.match(
@@ -934,9 +1023,11 @@ const SmartInbox = () => {
                             "max-w-[88%] rounded-[1.5rem] px-4 py-3.5 text-sm md:max-w-[70%] lg:max-w-[60%] shadow-lg transition-all duration-200 hover:shadow-xl",
                             isOutgoing
                               ? isBot
-                                ? "rounded-br-md bg-gradient-to-br from-[#00ff88] to-[#00cc6a] text-black shadow-[0_4px_20px_rgba(0,255,136,0.25)]"
-                                : "rounded-br-md border border-[#00ff88]/20 bg-gradient-to-br from-[#1a3a28] to-[#0f291d] text-white shadow-[0_4px_20px_rgba(0,255,136,0.08)]"
-                              : "rounded-bl-md border border-white/10 bg-gradient-to-br from-white/[0.07] to-white/[0.04] text-white/95 shadow-[0_4px_20px_rgba(0,0,0,0.3)]"
+                                ? platform === "whatsapp"
+                                  ? "rounded-br-md bg-gradient-to-br from-[#d9fdd3] to-[#b7f3cc] text-slate-950 shadow-[0_4px_20px_rgba(0,168,132,0.22)]"
+                                  : "rounded-br-md bg-gradient-to-br from-[#0084ff] to-[#0069d9] text-white shadow-[0_4px_20px_rgba(0,132,255,0.24)]"
+                                : "rounded-br-md border border-sky-300/20 bg-gradient-to-br from-[#0b8bdc] to-[#0566b3] text-white shadow-[0_4px_20px_rgba(0,132,255,0.18)]"
+                              : "rounded-bl-md border border-white/10 bg-gradient-to-br from-[#202c33] to-[#17212b] text-white/95 shadow-[0_4px_20px_rgba(0,0,0,0.28)]"
                           )}
                         >
                           {isBotImage ? (
@@ -956,7 +1047,7 @@ const SmartInbox = () => {
                                 .replace(/##PRODUCT[^\n]+/g, "")
                                 .replace(/https?:\/\/[^\s]+/g, "")
                                 .trim() && (
-                                <p className={cn("text-xs leading-relaxed", isOutgoing ? "text-black/70" : "text-white/70")}>
+                                <p className={cn("text-xs leading-relaxed", isBot ? "text-black/70" : "text-white/70")}>
                                   {body
                                     .replace(/\[?System Memory:[^\]]+\]?/g, "")
                                     .replace(/##PRODUCT[^\n]+/g, "")
@@ -967,10 +1058,10 @@ const SmartInbox = () => {
                             </div>
                           ) : body.includes("Analyzed Image:") || body.includes("Analyzed Voice:") ? (
                             <details className="group">
-                              <summary className={cn("cursor-pointer list-none text-xs font-bold", isOutgoing ? "text-black/80" : "text-[#8effc4]")}>
-                                {body.includes("Analyzed Image:") ? "📷 Analyzed image details" : "🎤 Analyzed voice details"}
+                              <summary className={cn("cursor-pointer list-none text-xs font-bold", isBot ? "text-black/80" : isOutgoing ? "text-sky-100" : "text-[#8effc4]")}>
+                                {body.includes("Analyzed Image:") ? "Analyzed image details" : "Analyzed voice details"}
                               </summary>
-                              <p className={cn("mt-3 whitespace-pre-wrap text-xs leading-relaxed", isOutgoing ? "text-black/75" : "text-white/75")}>
+                              <p className={cn("mt-3 whitespace-pre-wrap text-xs leading-relaxed", isBot ? "text-black/75" : "text-white/75")}>
                                 {body
                                   .replace(/\[Analyzed Image\]:?\s*/i, "")
                                   .replace(/\[Analyzed Voice\]:?\s*/i, "")
@@ -988,7 +1079,7 @@ const SmartInbox = () => {
                           <div
                             className={cn(
                               "mt-2.5 flex items-center gap-2 text-[10px]",
-                              isOutgoing ? "justify-end text-black/55" : "text-white/40"
+                              isOutgoing ? (isBot ? "justify-end text-black/55" : "justify-end text-sky-100/70") : "text-white/40"
                             )}
                           >
                             <span className="font-medium">{formatClock(message.timestamp)}</span>
@@ -1067,20 +1158,28 @@ const SmartInbox = () => {
           {/* Profile Header */}
           <div className="border-b border-white/5 p-7 bg-gradient-to-b from-white/[0.02] to-transparent">
             <div className="flex flex-col items-center text-center">
-              <Avatar className="h-24 w-24 border-2 border-[#00ff88]/20 shadow-[0_0_30px_rgba(0,255,136,0.15)]">
-                <AvatarFallback className="bg-gradient-to-br from-[#00ff88]/20 to-white/5 text-white/70">
-                  <UserIcon size={36} />
-                </AvatarFallback>
-              </Avatar>
+              <div className="relative">
+                <Avatar className="h-24 w-24 border-2 shadow-[0_0_30px_rgba(0,0,0,0.25)]" style={{ borderColor: platformTheme.accentBorder }}>
+                  <AvatarFallback className="bg-gradient-to-br from-white/10 to-white/5 text-white/70">
+                    <UserIcon size={36} />
+                  </AvatarFallback>
+                </Avatar>
+                <span className="absolute bottom-1 right-1 flex h-8 w-8 items-center justify-center rounded-full border-2 border-[#070a14] text-white shadow-lg" style={{ background: platformTheme.accent }}>
+                  <PlatformIcon size={16} />
+                </span>
+              </div>
               <h3 className="mt-5 text-xl font-black text-white">
                 {getDisplayName(selectedChat)}
               </h3>
               <p className="mt-1.5 text-sm text-white/50 font-medium">
                 {selectedChat.from}
               </p>
-              <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-[#00ff88]/20 bg-gradient-to-r from-[#00ff88]/10 to-white/[0.03] px-4 py-1.5 text-[11px] text-[#8effc4]/80 shadow-sm">
-                <Smartphone size={14} />
-                {getPlatformTitle(platform)}
+              <div
+                className="mt-3 inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-[11px] font-black shadow-sm"
+                style={{ borderColor: platformTheme.accentBorder, background: platformTheme.accentSoft, color: platform === "whatsapp" ? "#9fffc4" : "#9dccff" }}
+              >
+                <PlatformIcon size={14} />
+                {platformTheme.title}
               </div>
             </div>
           </div>
