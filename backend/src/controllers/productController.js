@@ -867,6 +867,8 @@ exports.createProduct = async (req, res) => {
             sku_matrix: skuMatrix
         });
 
+        queueDirectProductImageEmbeddings(product, userId, allowedMessengerIds);
+
         res.status(201).json(product);
 
     } catch (error) {
@@ -1353,6 +1355,11 @@ exports.updateProduct = async (req, res) => {
         }
 
         const updated = await dbService.updateProduct(id, userId, updates);
+        queueDirectProductImageEmbeddings(
+            updated,
+            userId,
+            allowedMessengerIds.length > 0 ? allowedMessengerIds : parseArrayField(updated.allowed_messenger_ids || existing?.allowed_messenger_ids)
+        );
         res.json(updated);
 
     } catch (error) {
@@ -1426,6 +1433,57 @@ exports.importWooCommerce = async (req, res) => {
 };
 
 const aiService = require('../services/aiService');
+
+function collectDirectEmbeddingImageUrls(product = {}) {
+    const urls = [];
+    const seen = new Set();
+    const pushUrl = (url) => {
+        const value = String(url || '').trim();
+        if (!value || seen.has(value)) return;
+        if (!value.startsWith('http') && !value.startsWith('data:')) return;
+        seen.add(value);
+        urls.push(value);
+    };
+
+    pushUrl(product.image_url);
+    parseArrayField(product.additional_images).forEach(pushUrl);
+    parseArrayField(product.variants).forEach((variant) => pushUrl(variant?.image_url));
+    parseArrayField(product.sku_matrix).forEach((sku) => pushUrl(sku?.image_url));
+    return urls.slice(0, Number(process.env.IMAGE_EMBEDDING_MAX_PRODUCT_IMAGES || 8));
+}
+
+function queueDirectProductImageEmbeddings(product, userId, pageIds = []) {
+    const imageUrls = collectDirectEmbeddingImageUrls(product);
+    if (imageUrls.length === 0) return;
+
+    setImmediate(async () => {
+        const model = process.env.IMAGE_EMBEDDING_MODEL || 'gemini-embedding-2-preview';
+        const pageId = Array.isArray(pageIds) && pageIds.length > 0 ? String(pageIds[0]) : null;
+        let saved = 0;
+
+        for (let index = 0; index < imageUrls.length; index += 1) {
+            const imageUrl = imageUrls[index];
+            const imageVector = await aiService.getDirectImageEmbedding(imageUrl, { log: false });
+            if (!imageVector) continue;
+            const ok = await dbService.upsertProductImageEmbedding({
+                productId: product.id,
+                userId,
+                pageId,
+                imageUrl,
+                imageRole: index === 0 ? 'direct_primary' : `direct_additional_${index}`,
+                imageVector,
+                imageEmbeddingModel: model
+            });
+            if (ok) saved += 1;
+        }
+
+        if (saved > 0) {
+            console.log(`[ProductImageEmbedding] Saved ${saved}/${imageUrls.length} direct image embeddings for product ${product.id}`);
+        } else {
+            console.warn(`[ProductImageEmbedding] No direct image embeddings saved for product ${product.id}`);
+        }
+    });
+}
 
 exports.extractVisuals = async (req, res) => {
     try {
