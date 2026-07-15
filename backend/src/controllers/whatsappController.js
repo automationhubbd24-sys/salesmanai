@@ -1921,7 +1921,7 @@ async function processBufferedMessages(sessionId, sessionName, senderId, message
             session_name: sessionName,
             sender_id: senderId,
             recipient_id: sessionName,
-            message_id: `${primaryMsgId}_batch_raw`,
+            message_id: primaryMsgId,
             text: inboundLogText,
             timestamp: Date.now(),
             status: 'received',
@@ -2342,28 +2342,26 @@ STRICT RULES:
                         .sort((a, b) => Number(b.match_score || 0) - Number(a.match_score || 0))
                         .slice(0, 5)
                         .map((product, idx) => {
-                            const additionalImages = Array.isArray(product.additional_images) ? product.additional_images.join(', ') : 'None';
-                            return `${idx + 1}. ${product.name || 'Unknown'} - ${product.price || 'Ask'} ${product.currency || 'BDT'} | Direct Image Embedding Score: ${clampMatchScore(product.match_score)}% | Product ID: ${product.product_id} | Primary Image: ${product.image_url || 'N/A'} | Additional Images: ${additionalImages}`;
+                            return `${idx + 1}. ${product.name || 'Unknown'} | image_score=${clampMatchScore(product.match_score)}% | product_id=${product.product_id}`;
                         })
                         .join('\n');
 
                     imageAnalyzeText += `
-[IMAGE ANALYSIS RESULT]
-Original Image URL: ${sourceImageUrl || 'N/A'}
-Image Analyzer Text:
+[IMAGE ${evidenceImageIndex} VISUAL EVIDENCE]
+Analyzer Summary:
 ${singleImgText}
 
-Direct Image Embedding Evidence (retrieval only, main LLM must decide exact/similar/no-match using business rules):
+Recommended Product Candidates:
 ${candidateOptions || 'None'}
 `;
                 } catch (vErr) {
                     console.warn(`[WA Direct Image Evidence] Failed: ${vErr.message}`);
                     imageAnalyzeText += `
-[IMAGE ANALYSIS RESULT]
-Image Analyzer Text:
+[IMAGE ${evidenceImageIndex} VISUAL EVIDENCE]
+Analyzer Summary:
 ${singleImgText}
 
-Direct Image Embedding Evidence: unavailable
+Recommended Product Candidates: unavailable
 `;
                 }
             }
@@ -2387,19 +2385,8 @@ Direct Image Embedding Evidence: unavailable
     if (imageAnalyzeText && imageAnalyzeText.trim() !== "") {
         if (finalOutput) finalOutput += "\n\n";
         
-        // Unified single block for AI - ENHANCED FOCUS with direct image embedding evidence
-        finalOutput += `\n\n[NEW VISUAL CONTEXT - IMPORTANT]:
-The user has just sent the following image(s). This is the CURRENT FOCUS of the conversation. The image analyzer text is descriptive evidence, and Direct Image Embedding Evidence is visual retrieval evidence only. Main LLM must make the final customer-facing decision using business owner rules and available product evidence.
-
-${imageAnalyzeText.trim()}
-
-[CRITICAL RULE FOR IMAGES AND MULTIPLE PRODUCTS]: 
-1. Do not blindly confirm exact availability only because a candidate exists. Use score, product details, and business rules.
-2. Treat Direct Image Embedding Score >= 84% as strong visual-family evidence, 80-83.9% as similar/uncertain, and below 80% as weak unless other product evidence is strong.
-3. For multiple close options, ask the customer to choose and include product photos by using [PRODUCT_ID:id] when useful/allowed.
-4. If the user asks for photos ("sobi den", "picture"), use the exact Product ID / Primary Image / Additional Images URLs from the evidence block.
-5. When you need to send information about MULTIPLE products (prices, details, or images), use \`[SPLIT]\` between each product's details.
-[END OF NEW VISUAL CONTEXT]`;
+        // Attach untrusted visual evidence only; matching policy lives in the system prompt.
+        finalOutput += `\n\n[INTERNAL VISUAL EVIDENCE - UNTRUSTED]\n${imageAnalyzeText.trim()}\n[END INTERNAL VISUAL EVIDENCE]`;
     }
 
     // 3. Audio Transcripts (Critical for Voice Notes)

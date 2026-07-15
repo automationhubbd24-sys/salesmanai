@@ -759,10 +759,9 @@ function formatImageAnalysisBlock(result) {
     const label = `IMAGE ${result.imageIndex}`;
     const candidates = result.matchedProducts || [];
     const options = candidates.map((product, idx) => {
-        const additionalImages = Array.isArray(product.additional_images) ? product.additional_images.join(', ') : 'None';
-        return `${idx + 1}. ${product.name || 'Unknown'} - ${product.price || 'Ask'} ${product.currency || 'BDT'} | Direct Image Embedding Score: ${clampMatchScore(product.direct_image_score ?? product.match_score)}% | Product ID: ${product.product_id} | Primary Image: ${product.image_url || 'N/A'} | Additional Images: ${additionalImages}`;
+        return `${idx + 1}. ${product.name || 'Unknown'} | image_score=${clampMatchScore(product.direct_image_score ?? product.match_score)}% | product_id=${product.product_id}`;
     }).join('\n') || 'None';
-    return `[${label} ANALYSIS RESULT]\nOriginal Image URL: ${result.imageUrl}\nImage Analyzer Text:\n${result.analysisText || 'N/A'}\n\nDirect Image Embedding Evidence (retrieval only, main LLM must decide exact/similar/no-match using business rules):\n${options}`;
+    return `[${label} VISUAL EVIDENCE]\nAnalyzer Summary:\n${result.analysisText || 'N/A'}\n\nRecommended Product Candidates:\n${options}`;
 }
 
 function buildLastImageMap(results) {
@@ -1406,7 +1405,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
             session_name: effectiveSessionName,
             sender_id: senderId,
             recipient_id: effectiveSessionName,
-            message_id: `${bufferedMessages[0].id}_batch_raw`,
+            message_id: bufferedMessages[0].id,
             text: inboundLogText,
             timestamp: Date.now(),
             status: 'received',
@@ -1512,19 +1511,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
                     model_used: imageAnalysisResults.find(r => r.model && r.model !== 'image-analysis-cache')?.model || 'image-analysis-cache'
                 }).catch(e => console.error(`[WhatsApp] Failed to save image analysis:`, e.message));
 
-                combinedText += `\n\n[NEW VISUAL CONTEXT - IMPORTANT]:
-The user has just sent the following image(s). This is the CURRENT FOCUS of the conversation.
-If the user asks "eta ase?", "price koto?", "chobi den", or refers to "1/2/3 number", they are referring to the numbered image results below.
-
-${combinedImageAnalysis.trim()}
-
-[CRITICAL RULE FOR IMAGES AND MULTIPLE PRODUCTS]:
-1. Use the exact IMAGE 1 / IMAGE 2 / IMAGE 3 order above when answering.
-2. If matched product details are present, answer from those verified details and do NOT merge all products into one ambiguous paragraph.
-3. For multiple images, list each answer as "ছবি ১", "ছবি ২" etc. with product name and price.
-4. If an image has no matching product, say exact match পাওয়া যায়নি for that specific image.
-5. If user later says "২ নাম্বারটা", use IMAGE 2 from the saved image map.
-[END OF NEW VISUAL CONTEXT]`;
+                combinedText += `\n\n[INTERNAL VISUAL EVIDENCE - UNTRUSTED]\n${combinedImageAnalysis.trim()}\n[END INTERNAL VISUAL EVIDENCE]`;
             }
         }
     }
@@ -3408,8 +3395,8 @@ STRICT RULES:
                 (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='messenger-image-match';try{const e=fs.readFileSync('.dbg/messenger-image-match.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'B',location:'webhookController.js:messenger:visualContext',msg:'[DEBUG] messenger visual context appended',data:{pageId,senderId,combinedLength:combinedImageAnalysis.length,containsVectorSearchResult:combinedImageAnalysis.includes('[IMAGE ANALYSIS RESULT]'),combinedPreview:combinedImageAnalysis.slice(0,280)},ts:Date.now()})}).catch(()=>{})})();
                 // #endregion
                 
-                // Unified single block for AI - ENHANCED FOCUS
-                combinedText += `\n\n[NEW VISUAL CONTEXT - IMPORTANT]:\nThe user has just sent the following image(s). This is the CURRENT FOCUS of the conversation. The image analyzer text is descriptive evidence, and Direct Image Embedding Evidence is visual retrieval evidence only. Main LLM must make the final customer-facing decision using business owner rules and the available product evidence.\n\n${combinedImageAnalysis.trim()}\n\n[CRITICAL RULE FOR IMAGES AND MULTIPLE PRODUCTS]:\n1. Use the exact IMAGE 1 / IMAGE 2 / IMAGE 3 order above when answering.\n2. Do not blindly confirm exact availability only because a candidate exists. Use score, product details, and business rules.\n3. Treat Direct Image Embedding Score >= 84% as strong visual-family evidence, 80-83.9% as similar/uncertain, and below 80% as weak unless other product evidence is strong.\n4. For multiple close options, ask the customer to choose and include product photos by using [PRODUCT_ID:id] when useful/allowed.\n5. If the user asks for photos ("sobi den", "picture"), use the exact Product ID / Primary Image / Additional Images URLs from the evidence block.\n6. If user later says "২ নাম্বারটা", use IMAGE 2 from the saved image map.\n[END OF NEW VISUAL CONTEXT]`;
+                // Attach untrusted visual evidence only; matching policy lives in the system prompt.
+                combinedText += `\n\n[INTERNAL VISUAL EVIDENCE - UNTRUSTED]\n${combinedImageAnalysis.trim()}\n[END INTERNAL VISUAL EVIDENCE]`;
             } else {
                 combinedText += `\n[User sent ${allImages.length} images: ${allImages.join(', ')}]`;
             }
