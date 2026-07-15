@@ -2264,6 +2264,7 @@ STRICT RULES:
             console.warn(`[WA] Failed to fetch vision prompt: ${e.message}`);
         }
         let collectedTexts = [];
+        const collectedImageItems = [];
         const analysisPromises = [];
 
         for (const msg of messages) {
@@ -2294,26 +2295,25 @@ STRICT RULES:
             }).filter(t => t.length > 0);
 
             if (perImageTexts.length > 0) {
-                // Save the texts for the individual search later
-                perImageTexts.forEach(t => collectedTexts.push(t));
-                
-                const combinedForMsg = perImageTexts.join("\n\n");
-                // Parallel Save (No await)
-                dbService.saveWhatsAppChat({
-                    session_name: sessionName,
-                    sender_id: pageId || sessionName, // Bot (Page) is sender
-                    recipient_id: senderId, // User is recipient
-                    message_id: `analysis_${msg.id}`,
-                    text: `[Visual Data]:\n${msg.images && msg.images.length ? `[Image URLs]: ${msg.images.join(', ')}\n` : ''}${combinedForMsg}`,
-                    timestamp: Date.now(),
-                    status: 'sent',
-                    reply_by: 'bot', // Mark as BOT reply
-                    is_group: isGroup,
-                    group_id: null,
-                    group_name: null,
-                    token: totalVisionTokens, // Specific tokens for vision
-                    ai_model: lastVisionModel
-                }).catch(e => console.error(`[WA] Failed to save per-message analysis:`, e.message));
+                perImageTexts.forEach((text, imageIdx) => {
+                    collectedTexts.push(text);
+                    collectedImageItems.push({ text, url: msg.images?.[imageIdx] || null });
+                    dbService.saveWhatsAppChat({
+                        session_name: sessionName,
+                        sender_id: pageId || sessionName,
+                        recipient_id: senderId,
+                        message_id: `analysis_${msg.id}_${imageIdx + 1}`,
+                        text: `[Analyzed Image ${imageIdx + 1}]:\n${text}`,
+                        timestamp: Date.now(),
+                        status: 'analyzed',
+                        reply_by: 'bot',
+                        is_group: isGroup,
+                        group_id: null,
+                        group_name: null,
+                        token: imageIdx === 0 ? totalVisionTokens : 0,
+                        ai_model: lastVisionModel
+                    }).catch(e => console.error(`[WA] Failed to save per-image analysis:`, e.message));
+                });
             }
         });
 
@@ -2326,10 +2326,11 @@ STRICT RULES:
             // Loop through EACH image text INDIVIDUALLY and attach direct image embedding evidence.
             imageAnalyzeText = "";
             let evidenceImageIndex = 0;
-            for (const singleImgText of collectedTexts) {
+            for (const item of collectedImageItems) {
                 evidenceImageIndex += 1;
+                const singleImgText = item.text;
                 try {
-                    const sourceImageUrl = allImages[evidenceImageIndex - 1] || null;
+                    const sourceImageUrl = item.url || allImages[evidenceImageIndex - 1] || null;
                     const directImageVector = sourceImageUrl
                         ? await aiService.getDirectImageEmbedding(sourceImageUrl, { log: false })
                         : null;

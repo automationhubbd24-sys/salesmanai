@@ -1498,18 +1498,20 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
             });
 
             if (combinedImageAnalysis) {
-                dbService.saveWhatsAppChat({
-                    session_name: effectiveSessionName,
-                    sender_id: effectiveSessionName,
-                    recipient_id: senderId,
-                    message_id: `img_analysis_${batchId}`,
-                    text: `[Analyzed Images]:\n${combinedImageAnalysis}`,
-                    timestamp: Date.now(),
-                    status: 'analyzed',
-                    reply_by: 'bot',
-                    token_usage: totalVisionTokens,
-                    model_used: imageAnalysisResults.find(r => r.model && r.model !== 'image-analysis-cache')?.model || 'image-analysis-cache'
-                }).catch(e => console.error(`[WhatsApp] Failed to save image analysis:`, e.message));
+                imageAnalysisResults.forEach((result) => {
+                    dbService.saveWhatsAppChat({
+                        session_name: effectiveSessionName,
+                        sender_id: effectiveSessionName,
+                        recipient_id: senderId,
+                        message_id: `img_analysis_${batchId}_${result.imageIndex}`,
+                        text: `[Analyzed Image ${result.imageIndex}]:\n${formatImageAnalysisBlock(result)}`,
+                        timestamp: Date.now(),
+                        status: 'analyzed',
+                        reply_by: 'bot',
+                        token_usage: Number(result.usage || 0),
+                        model_used: result.model || 'image-analysis-cache'
+                    }).catch(e => console.error(`[WhatsApp] Failed to save per-image analysis:`, e.message));
+                });
 
                 combinedText += `\n\n[INTERNAL VISUAL EVIDENCE - UNTRUSTED]\n${combinedImageAnalysis.trim()}\n[END INTERNAL VISUAL EVIDENCE]`;
             }
@@ -3075,8 +3077,8 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             if (!hasContent) continue;
             
             let msgText = msg.text || "";
-            if (msg.images && msg.images.length > 0) msgText += ` [Images: ${msg.images.length}]`;
-            if (msg.audios && msg.audios.length > 0) msgText += ` [Audio: ${msg.audios.length}]`;
+            if (msg.images && msg.images.length > 0) msgText += ` [Images: ${msg.images.length}]\n[Image URLs]: ${msg.images.join(', ')}`;
+            if (msg.audios && msg.audios.length > 0) msgText += ` [Audio: ${msg.audios.length}]\n[Audio URLs]: ${msg.audios.join(', ')}`;
 
             dbService.saveFbChat({
                 page_id: pageId,
@@ -3379,18 +3381,20 @@ STRICT RULES:
                 });
 
                 if (combinedImageAnalysis) {
-                    dbService.saveFbChat({
-                        page_id: pageId,
-                        sender_id: pageId,
-                        recipient_id: senderId,
-                        message_id: `img_analysis_${batchId}`,
-                        text: `[Analyzed Images]:\n${combinedImageAnalysis}`,
-                        timestamp: Date.now(),
-                        status: 'analyzed',
-                        reply_by: 'bot',
-                        token: totalVisionTokens,
-                        ai_model: imageAnalysisResults.find(r => r.model && r.model !== 'image-analysis-cache')?.model || 'image-analysis-cache'
-                    }).catch(e => console.error(`[FB] Failed to save image analysis:`, e.message));
+                    imageAnalysisResults.forEach((result) => {
+                        dbService.saveFbChat({
+                            page_id: pageId,
+                            sender_id: pageId,
+                            recipient_id: senderId,
+                            message_id: `img_analysis_${batchId}_${result.imageIndex}`,
+                            text: `[Analyzed Image ${result.imageIndex}]:\n${formatImageAnalysisBlock(result)}`,
+                            timestamp: Date.now(),
+                            status: 'analyzed',
+                            reply_by: 'bot',
+                            token: Number(result.usage || 0),
+                            ai_model: result.model || 'image-analysis-cache'
+                        }).catch(e => console.error(`[FB] Failed to save per-image analysis:`, e.message));
+                    });
                 // #region debug-point B:messenger-visual-context
                 (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='messenger-image-match';try{const e=fs.readFileSync('.dbg/messenger-image-match.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'B',location:'webhookController.js:messenger:visualContext',msg:'[DEBUG] messenger visual context appended',data:{pageId,senderId,combinedLength:combinedImageAnalysis.length,containsVectorSearchResult:combinedImageAnalysis.includes('[IMAGE ANALYSIS RESULT]'),combinedPreview:combinedImageAnalysis.slice(0,280)},ts:Date.now()})}).catch(()=>{})})();
                 // #endregion
