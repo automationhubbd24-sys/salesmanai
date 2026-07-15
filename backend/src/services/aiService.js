@@ -3257,6 +3257,14 @@ const WAHA_BASE_URL = process.env.WAHA_BASE_URL || 'https://wahubbd.salesmanchat
 const WAHA_API_KEY = process.env.WAHA_API_KEY || 'e9457ca133cc4d73854ee0d43cee3bc5';
 
 // --- HELPER: Process Image (Vision) with Smart Fallback ---
+function appendImageSourceTypeInstruction(prompt = '') {
+    const instruction = 'Image Source Type: choose exactly one of raw_photo, screenshot, post_screenshot, or video_screenshot.';
+    const text = String(prompt || '').trim();
+    if (!text) return instruction;
+    if (text.includes('Image Source Type:')) return text;
+    return `${text}\n${instruction}`;
+}
+
 async function processImageWithVision(imageUrl, pageConfig = {}, customOptions = null) {
     let base64Image = null;
     let mimeType = null;
@@ -3302,14 +3310,14 @@ async function processImageWithVision(imageUrl, pageConfig = {}, customOptions =
     };
 
         // Determine System Prompt
-    let systemPrompt = typeof customOptions?.prompt === 'string' && customOptions.prompt.trim() !== "" 
+    let systemPrompt = appendImageSourceTypeInstruction(typeof customOptions?.prompt === 'string' && customOptions.prompt.trim() !== "" 
         ? customOptions.prompt 
         : `Analyze this image with extreme pixel-to-pixel precision for a search database. 
 Focus strictly on the core product design, shape, structural details, material/fabric (e.g. lace, cotton, net), cut (e.g. scalloped edge, thick strap, v-neck), and exact color shades. 
 Ignore all surrounding noise, text, play buttons, UI elements, mannequins, or backgrounds. 
 Extract only the pure visual and structural features.
 DO NOT use sentences. Provide a comma-separated list of visual keywords ONLY. 
-Example format: T-shirt, navy blue, horizontal stripes, short sleeves, crew neck, cotton fabric`;
+Example format: T-shirt, navy blue, horizontal stripes, short sleeves, crew neck, cotton fabric`);
 
     // Try fallback to OpenAI/OpenRouter vision format if standard process fails
     const processDirectVision = async (apiKeyToUse) => {
