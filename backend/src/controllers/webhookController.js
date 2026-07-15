@@ -2,7 +2,6 @@ const dbService = require('../services/dbService');
 const orderService = require('../services/orderService');
 const { query } = require('../services/pgClient');
 const aiService = require('../services/aiService');
-const visualBrainService = require('../services/visualBrainService');
 const facebookService = require('../services/facebookService');
 const { runMessengerWorkflow } = require('../services/messenger_workflow');
 const { runWhatsAppWorkflow } = require('../services/whatsapp_workflow');
@@ -696,77 +695,35 @@ async function analyzeAndMatchIncomingImage({ platform, pageId, senderId, imageU
     const usage = typeof visionResult === 'object' ? (visionResult.usage || 0) : 0;
     const model = typeof visionResult === 'object' ? (visionResult.model || 'unknown') : 'unknown';
 
-    const visualFingerprint = analysisText && !analysisText.startsWith('[Vision Analysis Failed]')
-        ? extractStructuredVisualFingerprint(analysisText)
-        : {};
+    const visualFingerprint = {};
     let matchedProducts = [];
-    let matchDecision = { status: 'NO_MATCH', confidence: 'low', reason: 'not_analyzed', options: [] };
+    let matchDecision = { status: 'EVIDENCE_ONLY', confidence: 'informational', reason: 'main_llm_decides', options: [] };
     if (analysisText && !analysisText.startsWith('[Vision Analysis Failed]')) {
         try {
-            const [imgVector, directImageVector] = await Promise.all([
-                aiService.getEmbedding(analysisText),
-                aiService.getDirectImageEmbedding(imageUrl, { log: false })
-            ]);
-            const [vectorMatches, directImageMatches, textMatches] = await Promise.all([
-                imgVector ? dbService.searchProductByImageVector(imgVector, pageId) : Promise.resolve([]),
-                directImageVector ? dbService.searchProductByDirectImageVector(directImageVector, pageId) : Promise.resolve([]),
-                dbService.searchProductsForResource(analysisText, pageId)
-            ]);
-            const merged = new Map();
-            directImageMatches.forEach((product) => {
-                const summary = toImageMatchSummary(product);
-                if (!summary) return;
-                summary.match_source = 'direct_image_embedding';
-                summary.direct_image_score = summary.match_score;
-                merged.set(summary.product_id, summary);
-            });
-            vectorMatches.forEach((product) => {
-                const summary = toImageMatchSummary(product);
-                if (!summary) return;
-                const existing = merged.get(summary.product_id);
-                if (existing) {
-                    existing.old_vector_score = summary.match_score;
-                    existing.match_score = Number(Math.min(100, Number(existing.match_score || 0) + Math.min(6, Number(summary.match_score || 0) * 0.06)).toFixed(1));
-                    return;
-                }
-                summary.match_source = 'old_image_text_embedding';
-                merged.set(summary.product_id, summary);
-            });
-            textMatches.forEach((product) => {
-                const summary = toImageMatchSummary(product);
-                if (!summary) return;
-                const existing = merged.get(summary.product_id);
-                if (existing) {
-                    existing.text_match_score = summary.match_score;
-                    existing.match_score = Number(Math.min(100, Number(existing.match_score || 0) + Math.min(8, Number(summary.match_score || 0) * 0.08)).toFixed(1));
-                    return;
-                }
-                summary.match_source = 'text_support';
-                summary.base_match_score = Math.min(65, Number(summary.base_match_score || summary.match_score || 0));
-                summary.match_score = summary.base_match_score;
-                merged.set(summary.product_id, summary);
-            });
-            matchedProducts = rerankMatchesWithFingerprint(Array.from(merged.values()), visualFingerprint).slice(0, 5);
-            matchDecision = await visualBrainService.judgeVisualMatch({
-                analysisText,
-                candidates: matchedProducts,
-                apiKey: process.env.VISUAL_BRAIN_API_KEY,
-                baseURL: process.env.VISUAL_BRAIN_BASE_URL,
-                model: process.env.VISUAL_BRAIN_MODEL
-            });
-            matchDecision.options = (matchDecision.options || []).map((option) => {
-                const product = matchedProducts.find(candidate => String(candidate.product_id) === String(option.product_id));
-                return product ? { ...product, ...option, match_score: option.match_score ?? product.match_score } : option;
-            });
+            const directImageVector = await aiService.getDirectImageEmbedding(imageUrl, { log: false });
+            const directImageMatches = directImageVector
+                ? await dbService.searchProductByDirectImageVector(directImageVector, pageId)
+                : [];
+
+            matchedProducts = directImageMatches
+                .map((product) => {
+                    const summary = toImageMatchSummary(product);
+                    if (!summary) return null;
+                    summary.match_source = 'direct_image_embedding';
+                    summary.direct_image_score = summary.match_score;
+                    return summary;
+                })
+                .filter(Boolean)
+                .sort((a, b) => Number(b.direct_image_score || 0) - Number(a.direct_image_score || 0))
+                .slice(0, 5);
+
+            matchDecision.options = matchedProducts;
         } catch (matchErr) {
-            console.warn(`[${platform}] Image product matching failed: ${matchErr.message}`);
+            console.warn(`[${platform}] Direct image embedding evidence failed: ${matchErr.message}`);
         }
     }
 
-    const selectedProductId = matchDecision.selected_product_id ? String(matchDecision.selected_product_id) : null;
-    const topMatch = matchDecision.status === 'EXACT_MATCH'
-        ? (matchedProducts.find(product => String(product.product_id) === selectedProductId) || matchedProducts[0] || null)
-        : null;
+    const topMatch = matchedProducts[0] || null;
     await dbService.upsertIncomingImageAnalysis({
         platform,
         page_id: pageId,
@@ -800,22 +757,12 @@ async function analyzeAndMatchIncomingImage({ platform, pageId, senderId, imageU
 
 function formatImageAnalysisBlock(result) {
     const label = `IMAGE ${result.imageIndex}`;
-    const decision = result.matchDecision || buildVisualMatchDecision(result.matchedProducts || []);
     const candidates = result.matchedProducts || [];
-    const options = (decision.options || candidates).map((option, idx) => {
-        const product = candidates.find(candidate => String(candidate.product_id) === String(option.product_id)) || option;
-        return `${idx + 1}. ${product.name || 'Unknown'} - ${product.price || 'Ask'} ${product.currency || 'BDT'} (score ${clampMatchScore(option.match_score ?? product.match_score)}%)${formatMatchSignals(product)}`;
+    const options = candidates.map((product, idx) => {
+        const additionalImages = Array.isArray(product.additional_images) ? product.additional_images.join(', ') : 'None';
+        return `${idx + 1}. ${product.name || 'Unknown'} - ${product.price || 'Ask'} ${product.currency || 'BDT'} | Direct Image Embedding Score: ${clampMatchScore(product.direct_image_score ?? product.match_score)}% | Product ID: ${product.product_id} | Primary Image: ${product.image_url || 'N/A'} | Additional Images: ${additionalImages}`;
     }).join('\n') || 'None';
-    if (!result.topMatch) {
-        const responseGuidance = decision.status === 'SIMILAR_ALTERNATIVE'
-            ? 'Do not say this exact product is available. Say the exact same item was not found, but similar/closest options are available if the customer wants.'
-            : decision.status === 'AMBIGUOUS_MATCH'
-                ? 'Do not confirm one product as exact. Ask the customer to choose from the close options.'
-                : 'Do not confirm availability for this image. Say no confident exact match was found.';
-        return `[${label} ANALYSIS RESULT]\nOriginal Image URL: ${result.imageUrl}\nImage Description: ${result.analysisText || 'N/A'}\nMatch Decision: ${decision.status}\nConfidence: ${decision.confidence || 'low'}\nReason: ${decision.reason || 'N/A'}\nResponse Guidance: ${responseGuidance}\nCandidate Options:\n${options}\nMatched Product Details: No exact matching product confirmed in the catalog.`;
-    }
-    const match = result.topMatch;
-    return `[${label} ANALYSIS RESULT]\nOriginal Image URL: ${result.imageUrl}\nImage Description: ${result.analysisText || 'N/A'}\nMatch Decision: ${decision.status}\nConfidence: ${decision.confidence || 'medium'}\nReason: ${decision.reason || 'N/A'}\nCandidate Options:\n${options}\nMatched Product Details:\n- Product ID: ${match.product_id}\n- Name: ${match.name || 'N/A'}\n- Price: ${match.price || 'Ask for Price'} ${match.currency || 'BDT'}\n- Primary Image: ${match.image_url || 'N/A'}\n- Additional Images: ${(match.additional_images || []).join(', ') || 'None'}\n- Description: ${match.description || 'N/A'}\n- Match Score: ${clampMatchScore(match.match_score)}%\n- Base Score: ${clampMatchScore(match.base_match_score || match.match_score)}%\n- Direct Image Embedding Score: ${match.direct_image_score !== undefined ? `${clampMatchScore(match.direct_image_score)}%` : 'N/A'}\n- Old Text/Vision Vector Score: ${match.old_vector_score !== undefined ? `${clampMatchScore(match.old_vector_score)}%` : 'N/A'}\n- Text Search Score: ${match.text_match_score !== undefined ? `${clampMatchScore(match.text_match_score)}%` : 'N/A'}\n- Match Source: ${match.match_source || 'N/A'}\n- Fingerprint Bonus: ${match.fingerprint_bonus || 0}`;
+    return `[${label} ANALYSIS RESULT]\nOriginal Image URL: ${result.imageUrl}\nImage Analyzer Text:\n${result.analysisText || 'N/A'}\n\nDirect Image Embedding Evidence (retrieval only, main LLM must decide exact/similar/no-match using business rules):\n${options}`;
 }
 
 function buildLastImageMap(results) {
@@ -1448,22 +1395,37 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     let combinedText = workflow.combinedText;
     const allImages = [...imageUrls];
     const allAudios = [...audioUrls];
-    const inboundLogText = combinedText
-        || (allImages.length > 0 ? `[User sent ${allImages.length} image(s)]` : '')
-        || (allAudios.length > 0 ? `[User sent ${allAudios.length} audio message(s)]` : '');
+    const inboundLogParts = [];
+    if (combinedText) inboundLogParts.push(combinedText);
+    if (allImages.length > 0) inboundLogParts.push(`[User sent ${allImages.length} image(s)]\n[Image URLs]: ${allImages.join(', ')}`);
+    if (allAudios.length > 0) inboundLogParts.push(`[User sent ${allAudios.length} audio message(s)]\n[Audio URLs]: ${allAudios.join(', ')}`);
+    const inboundLogText = inboundLogParts.join('\n\n').trim();
 
     if (inboundLogText) {
         await dbService.saveWhatsAppChat({
             session_name: effectiveSessionName,
             sender_id: senderId,
             recipient_id: effectiveSessionName,
-            message_id: bufferedMessages[0].id,
+            message_id: `${bufferedMessages[0].id}_batch_raw`,
             text: inboundLogText,
             timestamp: Date.now(),
             status: 'received',
             reply_by: 'user'
         });
     }
+
+    allImages.forEach((imageUrl, index) => {
+        dbService.saveWhatsAppChat({
+            session_name: effectiveSessionName,
+            sender_id: senderId,
+            recipient_id: effectiveSessionName,
+            message_id: `${bufferedMessages[0].id}_image_${index + 1}`,
+            text: `[Image Message]\n[Image URL]: ${imageUrl}`,
+            timestamp: Date.now(),
+            status: 'received',
+            reply_by: 'user'
+        }).catch(err => console.error(`[WhatsApp Webhook] Failed to save image URL:`, err.message));
+    });
 
     // --- ALWAYS MARK SEEN FIRST (like Messenger) ---
     if (latestIncomingMessageId && resolvedPhoneNumberId && config.cloud_access_token) {
@@ -1550,6 +1512,20 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
             });
 
             if (combinedImageAnalysis) {
+                imageAnalysisResults.forEach((result) => {
+                    dbService.saveWhatsAppChat({
+                        session_name: effectiveSessionName,
+                        sender_id: effectiveSessionName,
+                        recipient_id: senderId,
+                        message_id: `img_analysis_${batchId}_${result.imageIndex}`,
+                        text: `[Analyzed Image ${result.imageIndex}]:\n${formatImageAnalysisBlock(result)}`,
+                        timestamp: Date.now(),
+                        status: 'analyzed',
+                        reply_by: 'bot',
+                        token_usage: Number(result.usage || 0),
+                        model_used: result.model || 'image-analysis-cache'
+                    }).catch(e => console.error(`[WhatsApp] Failed to save per-image analysis:`, e.message));
+                });
                 dbService.saveWhatsAppChat({
                     session_name: effectiveSessionName,
                     sender_id: effectiveSessionName,
@@ -2783,7 +2759,16 @@ async function queueMessage(event, entryPageId = null) {
 
     // --- SAVE USER MESSAGE TO fb_chats (Background - Non-Blocking) ---
     // User Instructions: Fire and forget to reduce latency
+    const initialImageUrls = event.message?.attachments?.filter(att =>
+        att.type === 'image' && !att.payload?.sticker_id
+    ).map(att => att.payload.url).filter(Boolean) || [];
+    const initialAudioUrls = event.message?.attachments?.filter(att =>
+        att.type === 'audio' ||
+        (att.type === 'file' && att.payload?.url && /\.(mp3|wav|ogg|m4a|aac|mp4)(\?|$)/i.test(att.payload.url))
+    ).map(att => att.payload.url).filter(Boolean) || [];
     let rawLogText = messageText || (hasSticker ? '[Sticker]' : '[Media Message]');
+    if (initialImageUrls.length > 0) rawLogText += `\n[Image URLs]: ${initialImageUrls.join(', ')}`;
+    if (initialAudioUrls.length > 0) rawLogText += `\n[Audio URLs]: ${initialAudioUrls.join(', ')}`;
     dbService.saveFbChat({
         page_id: pageId,
         sender_id: senderId,
@@ -2794,6 +2779,19 @@ async function queueMessage(event, entryPageId = null) {
         status: 'received',
         reply_by: 'user'
     }).catch(err => console.error(`Error saving to fb_chats (Page: ${pageId}, Msg: ${messageId}):`, err.message));
+
+    initialImageUrls.forEach((imageUrl, index) => {
+        dbService.saveFbChat({
+            page_id: pageId,
+            sender_id: senderId,
+            recipient_id: pageId,
+            message_id: `${messageId}_image_${index + 1}`,
+            text: `[Image Message]\n[Image URL]: ${imageUrl}`,
+            timestamp: Date.now(),
+            status: 'received',
+            reply_by: 'user'
+        }).catch(err => console.error(`Error saving image URL to fb_chats (Page: ${pageId}, Msg: ${messageId}):`, err.message));
+    });
     // -------------------------------------------------
 
     const sessionId = `${pageId}_${senderId}`;
@@ -3433,6 +3431,20 @@ STRICT RULES:
                 });
 
                 if (combinedImageAnalysis) {
+                    imageAnalysisResults.forEach((result) => {
+                        dbService.saveFbChat({
+                            page_id: pageId,
+                            sender_id: pageId,
+                            recipient_id: senderId,
+                            message_id: `img_analysis_${batchId}_${result.imageIndex}`,
+                            text: `[Analyzed Image ${result.imageIndex}]:\n${formatImageAnalysisBlock(result)}`,
+                            timestamp: Date.now(),
+                            status: 'analyzed',
+                            reply_by: 'bot',
+                            token: Number(result.usage || 0),
+                            ai_model: result.model || 'image-analysis-cache'
+                        }).catch(e => console.error(`[FB] Failed to save per-image analysis:`, e.message));
+                    });
                     dbService.saveFbChat({
                         page_id: pageId,
                         sender_id: pageId,
@@ -3450,7 +3462,7 @@ STRICT RULES:
                 // #endregion
                 
                 // Unified single block for AI - ENHANCED FOCUS
-                combinedText += `\n\n[NEW VISUAL CONTEXT - IMPORTANT]:\nThe user has just sent the following image(s). This is the CURRENT FOCUS of the conversation. If the user asks "eta ase?", "price koto?", "chobi den", or refers to "1/2/3 number", they are referring to the numbered image results below.\n\n${combinedImageAnalysis.trim()}\n\n[CRITICAL RULE FOR IMAGES AND MULTIPLE PRODUCTS]:\n1. Use the exact IMAGE 1 / IMAGE 2 / IMAGE 3 order above when answering.\n2. If matched product details are present, answer from those verified details and do NOT merge all products into one ambiguous paragraph.\n3. For multiple images, list each answer as "ছবি ১", "ছবি ২" etc. with product name and price.\n4. If the user asks for photos ("sobi den", "picture"), use the exact Primary Image or Additional Images URLs from the matching block.\n5. If an image has no matching product, say exact match পাওয়া যায়নি for that specific image.\n6. If user later says "২ নাম্বারটা", use IMAGE 2 from the saved image map.\n[END OF NEW VISUAL CONTEXT]`;
+                combinedText += `\n\n[NEW VISUAL CONTEXT - IMPORTANT]:\nThe user has just sent the following image(s). This is the CURRENT FOCUS of the conversation. The image analyzer text is descriptive evidence, and Direct Image Embedding Evidence is visual retrieval evidence only. Main LLM must make the final customer-facing decision using business owner rules and the available product evidence.\n\n${combinedImageAnalysis.trim()}\n\n[CRITICAL RULE FOR IMAGES AND MULTIPLE PRODUCTS]:\n1. Use the exact IMAGE 1 / IMAGE 2 / IMAGE 3 order above when answering.\n2. Do not blindly confirm exact availability only because a candidate exists. Use score, product details, and business rules.\n3. Treat Direct Image Embedding Score >= 84% as strong visual-family evidence, 80-83.9% as similar/uncertain, and below 80% as weak unless other product evidence is strong.\n4. For multiple close options, ask the customer to choose and include product photos by using [PRODUCT_ID:id] when useful/allowed.\n5. If the user asks for photos ("sobi den", "picture"), use the exact Product ID / Primary Image / Additional Images URLs from the evidence block.\n6. If user later says "২ নাম্বারটা", use IMAGE 2 from the saved image map.\n[END OF NEW VISUAL CONTEXT]`;
             } else {
                 combinedText += `\n[User sent ${allImages.length} images: ${allImages.join(', ')}]`;
             }
