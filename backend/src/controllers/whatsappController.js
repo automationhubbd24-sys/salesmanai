@@ -62,11 +62,26 @@ function normalizeProductMediaUrl(url) {
     return `${baseUrl.replace(/\/$/, '')}${cleanPath}`;
 }
 
+function clampMatchScore(value) {
+    const score = Number(value || 0);
+    if (!Number.isFinite(score)) return 0;
+    return Math.max(0, Math.min(100, Number(score.toFixed(1))));
+}
+
+function formatMatchSignals(product = {}) {
+    const signals = [];
+    if (product.match_source) signals.push(`source ${product.match_source}`);
+    if (product.direct_image_score !== undefined) signals.push(`image ${clampMatchScore(product.direct_image_score)}%`);
+    if (product.old_vector_score !== undefined) signals.push(`old ${clampMatchScore(product.old_vector_score)}%`);
+    if (product.text_match_score !== undefined) signals.push(`text ${clampMatchScore(product.text_match_score)}%`);
+    return signals.length ? ` [${signals.join(', ')}]` : '';
+}
+
 function toWhatsAppImageMatchSummary(product) {
     if (!product || !product.id) return null;
     const score = product.distance !== undefined && product.distance !== null
-        ? Math.max(0, Math.min(100, Number(((1 - Number(product.distance)) * 100).toFixed(1))))
-        : Number(product.match_score || 0);
+        ? clampMatchScore((1 - Number(product.distance)) * 100)
+        : clampMatchScore(product.match_score || 0);
     return {
         product_id: String(product.id),
         name: product.name || null,
@@ -2393,7 +2408,7 @@ STRICT RULES:
                             : null;
                         const candidateOptions = (matchDecision.options || combinedForThisImage).slice(0, 5).map((option, idx) => {
                             const product = combinedForThisImage.find(item => String(item.product_id) === String(option.product_id)) || option;
-                            return `${idx + 1}. ${product.name || 'Unknown'} - ${product.price || 'Ask'} ${product.currency || 'BDT'} (score ${option.match_score || product.match_score || 0})`;
+                            return `${idx + 1}. ${product.name || 'Unknown'} - ${product.price || 'Ask'} ${product.currency || 'BDT'} (score ${clampMatchScore(option.match_score ?? product.match_score)}%)${formatMatchSignals(product)}`;
                         }).join('\n');
 
                         if (!topMatch) {
@@ -2427,7 +2442,12 @@ Matched Product Details:
 - Primary Image: ${topMatch.image_url || 'N/A'}
 - Additional Images: ${additionalImages}
 - Description: ${topMatch.description || 'N/A'}
-- Match Score: ${topMatch.match_score || 0}%
+- Match Score: ${clampMatchScore(topMatch.match_score)}%
+- Base Score: ${clampMatchScore(topMatch.base_match_score || topMatch.match_score)}%
+- Direct Image Embedding Score: ${topMatch.direct_image_score !== undefined ? `${clampMatchScore(topMatch.direct_image_score)}%` : 'N/A'}
+- Old Text/Vision Vector Score: ${topMatch.old_vector_score !== undefined ? `${clampMatchScore(topMatch.old_vector_score)}%` : 'N/A'}
+- Text Search Score: ${topMatch.text_match_score !== undefined ? `${clampMatchScore(topMatch.text_match_score)}%` : 'N/A'}
+- Match Source: ${topMatch.match_source || 'N/A'}
 `;
                     } else {
                         imageAnalyzeText += `

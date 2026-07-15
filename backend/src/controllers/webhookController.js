@@ -593,11 +593,27 @@ function getFingerprintRerankScore(queryFingerprint, candidate) {
     return { bonus: Number(Math.min(45, bonus).toFixed(2)), hits: hits.slice(0, 25) };
 }
 
+function clampMatchScore(value) {
+    const score = Number(value || 0);
+    if (!Number.isFinite(score)) return 0;
+    return Math.max(0, Math.min(100, Number(score.toFixed(1))));
+}
+
+function formatMatchSignals(product = {}) {
+    const signals = [];
+    if (product.match_source) signals.push(`source ${product.match_source}`);
+    if (product.direct_image_score !== undefined) signals.push(`image ${clampMatchScore(product.direct_image_score)}%`);
+    if (product.old_vector_score !== undefined) signals.push(`old ${clampMatchScore(product.old_vector_score)}%`);
+    if (product.text_match_score !== undefined) signals.push(`text ${clampMatchScore(product.text_match_score)}%`);
+    if (product.fingerprint_bonus !== undefined) signals.push(`fingerprint +${Number(product.fingerprint_bonus || 0).toFixed(1)}`);
+    return signals.length ? ` [${signals.join(', ')}]` : '';
+}
+
 function toImageMatchSummary(product) {
     if (!product || !product.id) return null;
     const score = product.distance !== undefined && product.distance !== null
-        ? Math.max(0, Math.min(100, Number(((1 - Number(product.distance)) * 100).toFixed(1))))
-        : Number(product.match_score || 0);
+        ? clampMatchScore((1 - Number(product.distance)) * 100)
+        : clampMatchScore(product.match_score || 0);
     return {
         product_id: String(product.id),
         name: product.name || null,
@@ -620,10 +636,10 @@ function rerankMatchesWithFingerprint(matches, fingerprint) {
         const rerank = getFingerprintRerankScore(fingerprint, match);
         return {
             ...match,
-            base_match_score: Number(match.base_match_score ?? match.match_score ?? 0),
+            base_match_score: clampMatchScore(match.base_match_score ?? match.match_score ?? 0),
             fingerprint_bonus: rerank.bonus,
             fingerprint_hits: rerank.hits,
-            match_score: Number((Number(match.base_match_score ?? match.match_score ?? 0) + rerank.bonus).toFixed(1))
+            match_score: clampMatchScore(Number(match.base_match_score ?? match.match_score ?? 0) + rerank.bonus)
         };
     }).sort((a, b) => Number(b.match_score || 0) - Number(a.match_score || 0));
 }
@@ -785,7 +801,11 @@ async function analyzeAndMatchIncomingImage({ platform, pageId, senderId, imageU
 function formatImageAnalysisBlock(result) {
     const label = `IMAGE ${result.imageIndex}`;
     const decision = result.matchDecision || buildVisualMatchDecision(result.matchedProducts || []);
-    const options = (decision.options || []).map((option, idx) => `${idx + 1}. ${option.name || 'Unknown'} - ${option.price || 'Ask'} ${option.currency || 'BDT'} (score ${option.match_score || 0})`).join('\n') || 'None';
+    const candidates = result.matchedProducts || [];
+    const options = (decision.options || candidates).map((option, idx) => {
+        const product = candidates.find(candidate => String(candidate.product_id) === String(option.product_id)) || option;
+        return `${idx + 1}. ${product.name || 'Unknown'} - ${product.price || 'Ask'} ${product.currency || 'BDT'} (score ${clampMatchScore(option.match_score ?? product.match_score)}%)${formatMatchSignals(product)}`;
+    }).join('\n') || 'None';
     if (!result.topMatch) {
         const responseGuidance = decision.status === 'SIMILAR_ALTERNATIVE'
             ? 'Do not say this exact product is available. Say the exact same item was not found, but similar/closest options are available if the customer wants.'
@@ -795,7 +815,7 @@ function formatImageAnalysisBlock(result) {
         return `[${label} ANALYSIS RESULT]\nOriginal Image URL: ${result.imageUrl}\nImage Description: ${result.analysisText || 'N/A'}\nMatch Decision: ${decision.status}\nConfidence: ${decision.confidence || 'low'}\nReason: ${decision.reason || 'N/A'}\nResponse Guidance: ${responseGuidance}\nCandidate Options:\n${options}\nMatched Product Details: No exact matching product confirmed in the catalog.`;
     }
     const match = result.topMatch;
-    return `[${label} ANALYSIS RESULT]\nOriginal Image URL: ${result.imageUrl}\nImage Description: ${result.analysisText || 'N/A'}\nMatch Decision: ${decision.status}\nConfidence: ${decision.confidence || 'medium'}\nReason: ${decision.reason || 'N/A'}\nCandidate Options:\n${options}\nMatched Product Details:\n- Product ID: ${match.product_id}\n- Name: ${match.name || 'N/A'}\n- Price: ${match.price || 'Ask for Price'} ${match.currency || 'BDT'}\n- Primary Image: ${match.image_url || 'N/A'}\n- Additional Images: ${(match.additional_images || []).join(', ') || 'None'}\n- Description: ${match.description || 'N/A'}\n- Match Score: ${match.match_score || 0}%\n- Base Score: ${match.base_match_score || match.match_score || 0}%\n- Fingerprint Bonus: ${match.fingerprint_bonus || 0}`;
+    return `[${label} ANALYSIS RESULT]\nOriginal Image URL: ${result.imageUrl}\nImage Description: ${result.analysisText || 'N/A'}\nMatch Decision: ${decision.status}\nConfidence: ${decision.confidence || 'medium'}\nReason: ${decision.reason || 'N/A'}\nCandidate Options:\n${options}\nMatched Product Details:\n- Product ID: ${match.product_id}\n- Name: ${match.name || 'N/A'}\n- Price: ${match.price || 'Ask for Price'} ${match.currency || 'BDT'}\n- Primary Image: ${match.image_url || 'N/A'}\n- Additional Images: ${(match.additional_images || []).join(', ') || 'None'}\n- Description: ${match.description || 'N/A'}\n- Match Score: ${clampMatchScore(match.match_score)}%\n- Base Score: ${clampMatchScore(match.base_match_score || match.match_score)}%\n- Direct Image Embedding Score: ${match.direct_image_score !== undefined ? `${clampMatchScore(match.direct_image_score)}%` : 'N/A'}\n- Old Text/Vision Vector Score: ${match.old_vector_score !== undefined ? `${clampMatchScore(match.old_vector_score)}%` : 'N/A'}\n- Text Search Score: ${match.text_match_score !== undefined ? `${clampMatchScore(match.text_match_score)}%` : 'N/A'}\n- Match Source: ${match.match_source || 'N/A'}\n- Fingerprint Bonus: ${match.fingerprint_bonus || 0}`;
 }
 
 function buildLastImageMap(results) {
