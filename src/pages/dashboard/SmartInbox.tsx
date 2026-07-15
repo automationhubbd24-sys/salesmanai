@@ -172,9 +172,16 @@ const getMessagePreview = (body?: string) => {
 
 const shouldHideMessage = (message: MessageItem) => {
   const body = message.body || "";
+  const lowerBody = body.toLowerCase();
   const hasImage = /https?:\/\/[^\s]+\.(jpg|jpeg|png|gif|webp|bmp)/i.test(body);
   const isBotImage = body.includes("bot_image:");
-  return (body.toLowerCase().includes("system memory") || body.includes("ai_memory")) && !hasImage && !isBotImage;
+  const isInternalNoise =
+    lowerBody.includes("system memory") ||
+    body.includes("ai_memory") ||
+    body.includes("[SYSTEM ERROR]") ||
+    lowerBody.includes("conversation locked") ||
+    lowerBody.includes("too many failures");
+  return isInternalNoise && !hasImage && !isBotImage;
 };
 
 const getDisplayName = (chat: Conversation | null) => {
@@ -692,11 +699,11 @@ const SmartInbox = () => {
   );
 
   return (
-    <div className="flex h-[calc(100dvh-64px)] sm:h-[calc(100dvh-70px)] md:h-[calc(100vh-80px)] overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(37,211,102,0.08),transparent_32%),linear-gradient(135deg,#050810,#081020)] md:rounded-[2rem] border border-white/8 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex h-[100dvh] overflow-hidden border-0 bg-[radial-gradient(circle_at_top_left,rgba(37,211,102,0.08),transparent_32%),linear-gradient(135deg,#050810,#081020)] shadow-2xl sm:relative sm:z-auto sm:h-[calc(100dvh-70px)] md:h-[calc(100vh-80px)] md:rounded-[2rem] md:border md:border-white/8">
       {/* Conversation List */}
       <div
         className={cn(
-          "w-full sm:w-[320px] md:w-[360px] lg:w-[380px] xl:w-[400px] border-r border-white/5 flex flex-col bg-gradient-to-b from-[#070a12] to-[#050810]",
+          "w-full sm:w-[clamp(300px,34vw,390px)] border-r border-white/5 flex flex-col bg-gradient-to-b from-[#070a12] to-[#050810]",
           !isMobileListVisible && "hidden sm:flex"
         )}
       >
@@ -1043,6 +1050,7 @@ const SmartInbox = () => {
                         body.toLowerCase().includes("system memory: user is viewing image") ||
                         body.toLowerCase().includes("sent images to user"));
                     const isAnalysisMessage = /\[Analyzed Images?\]|\[Analyzed Image\s*\d*\]|Analyzed Image:|Analyzed Voice:/i.test(body);
+                    const isTranscriptMessage = /^\[Transcript\]:/i.test(body.trim());
                     const isOutgoing = message.from === "me" || isBotImage;
                     const isBot = message.reply_by === "bot" || isBotImage;
 
@@ -1061,7 +1069,7 @@ const SmartInbox = () => {
 
                         <div
                           className={cn(
-                            "max-w-[86%] rounded-[1.25rem] px-3 py-2.5 text-sm sm:max-w-[82%] sm:px-3.5 sm:py-3 md:max-w-[72%] lg:max-w-[58%] shadow-lg transition-all duration-200 hover:shadow-xl", 
+                            "max-w-[min(86vw,320px)] rounded-[1.25rem] px-3 py-2.5 text-sm sm:max-w-[min(78%,420px)] sm:px-3.5 sm:py-3 md:max-w-[min(70%,560px)] lg:max-w-[min(58%,620px)] shadow-lg transition-all duration-200 hover:shadow-xl", 
                             isOutgoing
                               ? isBot
                                 ? platform === "whatsapp"
@@ -1099,11 +1107,11 @@ const SmartInbox = () => {
                                 </p>
                               )}
                             </div>
-                          ) : isAnalysisMessage ? (
-                            <details className="group max-w-[220px] sm:max-w-[360px]">
+                          ) : isAnalysisMessage || isTranscriptMessage ? (
+                            <details className="group max-w-[min(78vw,220px)] sm:max-w-[360px]">
                               <summary className={cn("cursor-pointer list-none rounded-2xl border px-3 py-2 text-xs font-black transition-colors", isBot ? "border-black/10 bg-black/5 text-black/80" : "border-white/10 bg-white/[0.04] text-[#8effc4]")}>
                                 <span className="flex items-center justify-between gap-3">
-                                  <span>{body.toLowerCase().includes("voice") ? "Voice analysis" : "Image analysis"}</span>
+                                  <span>{isTranscriptMessage ? "Voice transcript" : body.toLowerCase().includes("voice") ? "Voice analysis" : "Image analysis"}</span>
                                   <span className="text-[10px] opacity-60 group-open:hidden">Expand</span>
                                   <span className="hidden text-[10px] opacity-60 group-open:inline">Collapse</span>
                                 </span>
@@ -1113,6 +1121,7 @@ const SmartInbox = () => {
                                   .replace(/\[Analyzed Images?\]:?\s*/i, "")
                                   .replace(/\[Analyzed Image\s*\d*\]:?\s*/i, "")
                                   .replace(/\[Analyzed Voice\]:?\s*/i, "")
+                                  .replace(/^\[Transcript\]:\s*/i, "")
                                   .replace(/Analyzed Image:\s*/i, "")
                                   .replace(/Analyzed Voice:\s*/i, "")
                                   .trim()}
@@ -1228,7 +1237,7 @@ const SmartInbox = () => {
 
       {/* Desktop Right Panel */}
       {selectedChat && (
-        <div className="hidden w-[260px] xl:w-[300px] 2xl:w-[330px] border-l border-white/5 bg-gradient-to-b from-[#070a14] to-[#050812] lg:flex lg:flex-col">
+        <div className="hidden w-[clamp(240px,22vw,320px)] border-l border-white/5 bg-gradient-to-b from-[#070a14] to-[#050812] lg:flex lg:flex-col">
           {/* Profile Header */}
           <div className="border-b border-white/5 p-4 xl:p-5 bg-gradient-to-b from-white/[0.02] to-transparent">
             <div className="flex flex-col items-center text-center">
