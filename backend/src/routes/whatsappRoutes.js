@@ -6,7 +6,6 @@ const whatsappCloudController = require('../controllers/whatsappCloudController'
 const webhookController = require('../controllers/webhookController');
 const pgClient = require('../services/pgClient');
 const dbService = require('../services/dbService');
-const whatsappService = require('../services/whatsappService');
 const whatsappCloudService = require('../services/whatsappCloudService');
 const imageService = require('../services/imageService');
 const jwt = require('jsonwebtoken');
@@ -72,7 +71,10 @@ async function hasSessionAccess(sessionName, userId, userEmail) {
     await ensureOfficialWhatsAppColumns();
 
     const configResult = await pgClient.query(
-        'SELECT user_id, email, session_name FROM whatsapp_message_database WHERE session_name = $1 LIMIT 1',
+        `SELECT user_id, email, session_name, waba_id, phone_number_id
+         FROM whatsapp_message_database
+         WHERE session_name = $1 OR waba_id = $1 OR phone_number_id = $1
+         LIMIT 1`,
         [sessionName]
     );
 
@@ -1178,25 +1180,29 @@ router.post('/send', authMiddleware, smartInboxUpload.single('image'), async (re
         const configResult = await pgClient.query(
             `SELECT session_name, provider_type, phone_number_id, cloud_access_token
              FROM whatsapp_message_database
-             WHERE session_name = $1
+             WHERE session_name = $1 OR waba_id = $1 OR phone_number_id = $1
              LIMIT 1`,
             [String(sessionName)]
         );
         const config = configResult.rows[0] || {};
+        const resolvedSessionName = String(config.session_name || sessionName);
         const isOfficial = config.provider_type === 'official' && config.phone_number_id && config.cloud_access_token;
+        if (!isOfficial) {
+            return res.status(400).json({ error: 'Official WhatsApp Cloud API credentials not found for this inbox.' });
+        }
+        const recipientId = String(to).replace(/@c\.us$/i, '').replace(/@s\.whatsapp\.net$/i, '');
         const sentParts = [];
 
         if (req.file) {
             const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
             const imageUrl = await imageService.uploadProductImage(req.file.buffer, req.file.mimetype, `smart-inbox/${String(sessionName)}`, baseUrl);
-            const imageResponse = isOfficial
-                ? await whatsappCloudService.sendImageMessage(String(config.phone_number_id), String(config.cloud_access_token), String(to), imageUrl, message || undefined)
-                : await whatsappService.sendImage(String(sessionName), String(to), imageUrl, message || undefined);
+            const imageResponse = await whatsappCloudService.sendImageMessage(String(config.phone_number_id), String(config.cloud_access_token), recipientId, imageUrl, message || undefined);
+            if (!imageResponse) throw new Error('WhatsApp image send failed');
             const imageMessageId = imageResponse?.messages?.[0]?.id || imageResponse?.id || imageResponse?.messageId || `smart_inbox_admin_image_${Date.now()}`;
             const imageText = `[Image Message]\n[Image URL]: ${imageUrl}${message ? `\n${message}` : ''}`;
             await dbService.saveWhatsAppChat({
-                session_name: String(sessionName),
-                sender_id: String(sessionName),
+                session_name: resolvedSessionName,
+                sender_id: resolvedSessionName,
                 recipient_id: String(to),
                 message_id: String(imageMessageId),
                 text: imageText,
@@ -1208,13 +1214,12 @@ router.post('/send', authMiddleware, smartInboxUpload.single('image'), async (re
         }
 
         if (message && !req.file) {
-            const response = isOfficial
-                ? await whatsappCloudService.sendTextMessage(String(config.phone_number_id), String(config.cloud_access_token), String(to), message)
-                : await whatsappService.sendMessage(String(sessionName), String(to), message);
+            const response = await whatsappCloudService.sendTextMessage(String(config.phone_number_id), String(config.cloud_access_token), recipientId, message);
+            if (!response) throw new Error('WhatsApp text send failed');
             const messageId = response?.messages?.[0]?.id || response?.id || response?.messageId || `smart_inbox_admin_${Date.now()}`;
             await dbService.saveWhatsAppChat({
-                session_name: String(sessionName),
-                sender_id: String(sessionName),
+                session_name: resolvedSessionName,
+                sender_id: resolvedSessionName,
                 recipient_id: String(to),
                 message_id: String(messageId),
                 text: message,
