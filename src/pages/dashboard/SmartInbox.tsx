@@ -12,6 +12,7 @@ import {
   Send,
   ShieldCheck,
   Smartphone,
+  Instagram,
   Tag,
   User as UserIcon,
   X
@@ -36,7 +37,7 @@ const MESSAGE_LIMIT = 40;
 
 type LabelKey = "agent" | "human" | "order" | "human_transfer";
 type FilterKey = "all" | LabelKey;
-type PlatformKey = "whatsapp" | "messenger";
+type PlatformKey = "whatsapp" | "messenger" | "instagram";
 
 type Conversation = {
   id: string;
@@ -94,32 +95,47 @@ const FILTER_OPTIONS: { key: FilterKey; title: string }[] = [
   { key: "human_transfer", title: "Human Transfer" }
 ];
 
-const getActiveResourceId = (platform?: string | null) =>
-  platform === "whatsapp"
-    ? localStorage.getItem("active_wa_session_id")
-    : localStorage.getItem("active_fb_page_id");
+const getActiveResourceId = (platform?: string | null) => {
+  if (platform === "whatsapp") return localStorage.getItem("active_wa_session_id");
+  if (platform === "instagram") return localStorage.getItem("active_ig_account_id");
+  return localStorage.getItem("active_fb_page_id");
+};
 
 const getPlatformTitle = (platform?: string | null) =>
-  platform === "whatsapp" ? "WhatsApp" : "Messenger";
+  platform === "whatsapp" ? "WhatsApp" : platform === "instagram" ? "Instagram" : "Messenger";
 
-const getPlatformTheme = (platform: PlatformKey) =>
-  platform === "whatsapp"
-    ? {
-        accent: "#25D366",
-        accentSoft: "rgba(37,211,102,0.14)",
-        accentBorder: "rgba(37,211,102,0.32)",
-        bubbleOut: "from-[#d9fdd3] to-[#b7f3cc]",
-        icon: Smartphone,
-        title: "WhatsApp Business"
-      }
-    : {
-        accent: "#0084ff",
-        accentSoft: "rgba(0,132,255,0.14)",
-        accentBorder: "rgba(0,132,255,0.34)",
-        bubbleOut: "from-[#0084ff] to-[#0069d9]",
-        icon: MessageCircle,
-        title: "Messenger Business"
-      };
+const getPlatformTheme = (platform: PlatformKey) => {
+  if (platform === "whatsapp") {
+    return {
+      accent: "#25D366",
+      accentSoft: "rgba(37,211,102,0.14)",
+      accentBorder: "rgba(37,211,102,0.32)",
+      bubbleOut: "from-[#d9fdd3] to-[#b7f3cc]",
+      icon: Smartphone,
+      title: "WhatsApp Business"
+    };
+  }
+
+  if (platform === "instagram") {
+    return {
+      accent: "#E4405F",
+      accentSoft: "rgba(228,64,95,0.14)",
+      accentBorder: "rgba(228,64,95,0.34)",
+      bubbleOut: "from-[#E4405F] to-[#833AB4]",
+      icon: Instagram,
+      title: "Instagram Business"
+    };
+  }
+
+  return {
+    accent: "#0084ff",
+    accentSoft: "rgba(0,132,255,0.14)",
+    accentBorder: "rgba(0,132,255,0.34)",
+    bubbleOut: "from-[#0084ff] to-[#0069d9]",
+    icon: MessageCircle,
+    title: "Messenger Business"
+  };
+};
 
 const normalizeTimestamp = (value: number | string | null | undefined) => {
   if (value === null || value === undefined || value === "") return null;
@@ -193,7 +209,7 @@ const getDisplayName = (chat: Conversation | null) => {
 const SmartInbox = () => {
   const location = useLocation();
   const pathPlatform = location.pathname.split("/")[2];
-  const platform: PlatformKey = pathPlatform === "whatsapp" ? "whatsapp" : "messenger";
+  const platform: PlatformKey = pathPlatform === "whatsapp" ? "whatsapp" : pathPlatform === "instagram" ? "instagram" : "messenger";
   const platformTheme = useMemo(() => getPlatformTheme(platform), [platform]);
   const PlatformIcon = platformTheme.icon;
   const [selectedChat, setSelectedChat] = useState<Conversation | null>(null);
@@ -275,7 +291,9 @@ const SmartInbox = () => {
       const endpoint =
         platform === "whatsapp"
           ? `/api/whatsapp/conversations/${activeResourceId}?limit=${CHAT_LIMIT}`
-          : `/api/messenger/conversations/${activeResourceId}?limit=${CHAT_LIMIT}`;
+          : platform === "instagram"
+            ? `/api/instagram/conversations/${activeResourceId}?limit=${CHAT_LIMIT}`
+            : `/api/messenger/conversations/${activeResourceId}?limit=${CHAT_LIMIT}`;
 
       const response = await fetch(`${BACKEND_URL}${endpoint}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -343,7 +361,9 @@ const SmartInbox = () => {
         const endpoint =
           platform === "whatsapp"
             ? `/api/whatsapp/messages/${activeResourceId}/${chatId}?limit=${MESSAGE_LIMIT}`
-            : `/api/messenger/messages/${activeResourceId}/${chatId}?limit=${MESSAGE_LIMIT}`;
+            : platform === "instagram"
+              ? `/api/instagram/messages/${activeResourceId}/${chatId}?limit=${MESSAGE_LIMIT}`
+              : `/api/messenger/messages/${activeResourceId}/${chatId}?limit=${MESSAGE_LIMIT}`;
 
         const response = await fetch(`${BACKEND_URL}${endpoint}`, {
           headers: { Authorization: `Bearer ${token}` },
@@ -405,7 +425,9 @@ const SmartInbox = () => {
       const endpoint =
         platform === "whatsapp"
           ? `/api/whatsapp/messages/${activeResourceId}/${selectedChat.id}?limit=${MESSAGE_LIMIT}&offset=${messages.length}`
-          : `/api/messenger/messages/${activeResourceId}/${selectedChat.id}?limit=${MESSAGE_LIMIT}&offset=${messages.length}`;
+          : platform === "instagram"
+            ? `/api/instagram/messages/${activeResourceId}/${selectedChat.id}?limit=${MESSAGE_LIMIT}&offset=${messages.length}`
+            : `/api/messenger/messages/${activeResourceId}/${selectedChat.id}?limit=${MESSAGE_LIMIT}&offset=${messages.length}`;
 
       const response = await fetch(`${BACKEND_URL}${endpoint}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -574,7 +596,9 @@ const SmartInbox = () => {
       const endpoint =
         platform === "whatsapp"
           ? `/api/whatsapp/conversations/${activeResourceId}/${selectedChat.id}/labels`
-          : `/api/messenger/conversations/${activeResourceId}/${selectedChat.id}/labels`;
+          : platform === "instagram"
+            ? `/api/instagram/conversations/${activeResourceId}/${selectedChat.id}/labels`
+            : `/api/messenger/conversations/${activeResourceId}/${selectedChat.id}/labels`;
 
       const optimisticConversation: Conversation = {
         ...selectedChat,
@@ -688,9 +712,9 @@ const SmartInbox = () => {
 
     try {
       const token = localStorage.getItem("auth_token");
-      const endpoint = platform === "whatsapp" ? "/api/whatsapp/send" : "/api/messenger/send";
+      const endpoint = platform === "whatsapp" ? "/api/whatsapp/send" : platform === "instagram" ? "/api/instagram/send" : "/api/messenger/send";
       const formData = new FormData();
-      formData.append(platform === "whatsapp" ? "sessionName" : "pageId", activeResourceId);
+      formData.append(platform === "whatsapp" ? "sessionName" : platform === "instagram" ? "accountId" : "pageId", activeResourceId);
       formData.append("to", selectedChat.id);
       formData.append("message", messageText);
       if (selectedImage) formData.append("image", selectedImage);
@@ -772,7 +796,7 @@ const SmartInbox = () => {
       {/* Conversation List */}
       <div
         className={cn(
-          "w-full sm:w-[clamp(300px,34vw,390px)] border-r border-white/5 flex flex-col bg-gradient-to-b from-[#070a12] to-[#050810]",
+          "w-full min-w-0 shrink-0 overflow-hidden sm:w-[clamp(300px,34vw,390px)] border-r border-white/5 flex flex-col bg-gradient-to-b from-[#070a12] to-[#050810]",
           !isMobileListVisible && "hidden sm:flex"
         )}
       >
@@ -783,7 +807,7 @@ const SmartInbox = () => {
             <div className="flex items-center gap-3">
               <div
                 className="h-9 w-9 sm:h-11 sm:w-11 rounded-2xl flex items-center justify-center shadow-[0_0_25px_rgba(0,0,0,0.28)] ring-1 ring-white/10"
-                style={{ background: `linear-gradient(135deg, ${platformTheme.accent}, ${platform === "whatsapp" ? "#128C7E" : "#005bd8"})` }}
+                style={{ background: `linear-gradient(135deg, ${platformTheme.accent}, ${platform === "whatsapp" ? "#128C7E" : platform === "instagram" ? "#833AB4" : "#005bd8"})` }}
               >
                 <PlatformIcon size={22} className="text-white" />
               </div>
@@ -841,7 +865,7 @@ const SmartInbox = () => {
         </div>
 
         {/* Conversation List */}
-        <ScrollArea className="flex-1">
+        <ScrollArea className="min-w-0 flex-1 overflow-hidden">
           {loading ? (
             <div className="space-y-3 p-4">
               {Array.from({ length: 6 }).map((_, index) => (
@@ -871,7 +895,7 @@ const SmartInbox = () => {
               </p>
             </div>
           ) : (
-            <div className="p-2 sm:p-3 md:p-3.5 space-y-2 sm:space-y-2.5">
+            <div className="min-w-0 overflow-hidden p-2 sm:p-3 md:p-3.5 space-y-2 sm:space-y-2.5">
               {filteredChats.map((chat) => {
                 const isActive = selectedChat?.id === chat.id;
                 return (
@@ -967,7 +991,7 @@ const SmartInbox = () => {
       </div>
 
       {/* Chat Area */}
-      <div className={cn("flex flex-1 flex-col bg-[#050810]", isMobileListVisible && "hidden sm:flex")}>
+      <div className={cn("flex min-w-0 flex-1 flex-col bg-[#050810]", isMobileListVisible && "hidden sm:flex")}>
         {selectedChat ? (
           <>
             {/* Chat Header */}
@@ -1298,7 +1322,7 @@ const SmartInbox = () => {
                   onClick={handleSendMessage}
                   disabled={(!newMessage.trim() && !selectedImage) || sending}
                   className="h-10 w-10 sm:h-12 sm:w-12 shrink-0 rounded-2xl text-black transition-all duration-300 hover:scale-105 active:scale-95 disabled:hover:scale-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                  style={{ background: `linear-gradient(135deg, ${platformTheme.accent}, ${platform === "whatsapp" ? "#128C7E" : "#005bd8"})` }}
+                  style={{ background: `linear-gradient(135deg, ${platformTheme.accent}, ${platform === "whatsapp" ? "#128C7E" : platform === "instagram" ? "#833AB4" : "#005bd8"})` }}
                 >
                   {sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={19} className="text-white" />}
                 </Button>
