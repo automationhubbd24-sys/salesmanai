@@ -1103,7 +1103,8 @@ router.delete('/label-actions/:id', authMiddleware, whatsappController.deleteLab
 router.get('/conversations/:sessionName', authMiddleware, async (req, res) => {
     try {
         const { sessionName } = req.params;
-        const rows = await getSmartInboxConversations(pgClient, 'whatsapp', sessionName);
+        const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 60, 20), 120);
+        const rows = await getSmartInboxConversations(pgClient, 'whatsapp', sessionName, { limit });
         res.json(rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1113,7 +1114,8 @@ router.get('/conversations/:sessionName', authMiddleware, async (req, res) => {
 router.get('/messages/:sessionName/:senderId', authMiddleware, async (req, res) => {
     try {
         const { sessionName, senderId } = req.params;
-        const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 120, 20), 300);
+        const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 40, 10), 120);
+        const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
         const { rows } = await pgClient.query(
             `SELECT *
              FROM (
@@ -1126,10 +1128,10 @@ router.get('/messages/:sessionName/:senderId', authMiddleware, async (req, res) 
                 FROM whatsapp_chats
                 WHERE session_name = $1 AND (sender_id = $2 OR recipient_id = $2)
                 ORDER BY COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000) DESC
-                LIMIT $3
+                LIMIT $3 OFFSET $4
              ) recent_messages
              ORDER BY timestamp ASC`,
-            [sessionName, senderId, limit]
+            [sessionName, senderId, limit, offset]
         );
         res.json(rows);
     } catch (err) {

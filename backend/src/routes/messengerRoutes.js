@@ -1193,7 +1193,8 @@ router.get('/download-conversation', authMiddleware, async (req, res) => {
 router.get('/conversations/:pageId', authMiddleware, async (req, res) => {
     try {
         const { pageId } = req.params;
-        const rows = await getSmartInboxConversations(pgClient, 'messenger', pageId);
+        const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 60, 20), 120);
+        const rows = await getSmartInboxConversations(pgClient, 'messenger', pageId, { limit });
         res.json(rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1203,7 +1204,8 @@ router.get('/conversations/:pageId', authMiddleware, async (req, res) => {
 router.get('/messages/:pageId/:senderId', authMiddleware, async (req, res) => {
     try {
         const { pageId, senderId } = req.params;
-        const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 120, 20), 300);
+        const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 40, 10), 120);
+        const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
         const { rows } = await pgClient.query(
             `SELECT *
              FROM (
@@ -1216,10 +1218,10 @@ router.get('/messages/:pageId/:senderId', authMiddleware, async (req, res) => {
                 FROM fb_chats
                 WHERE page_id = $1 AND (sender_id = $2 OR recipient_id = $2)
                 ORDER BY COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000) DESC
-                LIMIT $3
+                LIMIT $3 OFFSET $4
              ) recent_messages
              ORDER BY timestamp ASC`,
-            [pageId, senderId, limit]
+            [pageId, senderId, limit, offset]
         );
         res.json(rows);
     } catch (err) {

@@ -29,9 +29,10 @@ import { Switch } from "@/components/ui/switch";
 import { BACKEND_URL } from "@/config";
 import { cn } from "@/lib/utils";
 
-const CHAT_POLL_INTERVAL_MS = 12000;
-const MESSAGE_POLL_INTERVAL_MS = 4500;
-const MESSAGE_LIMIT = 120;
+const CHAT_POLL_INTERVAL_MS = 30000;
+const MESSAGE_POLL_INTERVAL_MS = 12000;
+const CHAT_LIMIT = 60;
+const MESSAGE_LIMIT = 40;
 
 type LabelKey = "agent" | "human" | "order" | "human_transfer";
 type FilterKey = "all" | LabelKey;
@@ -203,6 +204,8 @@ const SmartInbox = () => {
   const [refreshingChats, setRefreshingChats] = useState(false);
   const [msgLoading, setMsgLoading] = useState(false);
   const [refreshingMessages, setRefreshingMessages] = useState(false);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  const [hasOlderMessages, setHasOlderMessages] = useState(false);
   const [sending, setSending] = useState(false);
   const [newMessage, setNewMessage] = useState("");
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
@@ -215,6 +218,8 @@ const SmartInbox = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatsAbortRef = useRef<AbortController | null>(null);
   const messagesAbortRef = useRef<AbortController | null>(null);
+  const olderMessagesAbortRef = useRef<AbortController | null>(null);
+  const skipNextScrollRef = useRef(false);
   const chatsSignatureRef = useRef("");
   const messagesSignatureRef = useRef("");
   const [activeResourceId, setActiveResourceId] = useState<string | null>(() => getActiveResourceId(platform));
@@ -269,8 +274,8 @@ const SmartInbox = () => {
       const token = localStorage.getItem("auth_token");
       const endpoint =
         platform === "whatsapp"
-          ? `/api/whatsapp/conversations/${activeResourceId}`
-          : `/api/messenger/conversations/${activeResourceId}`;
+          ? `/api/whatsapp/conversations/${activeResourceId}?limit=${CHAT_LIMIT}`
+          : `/api/messenger/conversations/${activeResourceId}?limit=${CHAT_LIMIT}`;
 
       const response = await fetch(`${BACKEND_URL}${endpoint}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -282,14 +287,18 @@ const SmartInbox = () => {
       }
 
       const data = (await response.json()) as Conversation[];
-      const signature = JSON.stringify(data);
+      const lightweightData = (data || []).map((chat) => ({
+        ...chat,
+        body: getMessagePreview(chat.body).slice(0, 180)
+      }));
+      const signature = JSON.stringify(lightweightData);
 
       if (signature !== chatsSignatureRef.current) {
         chatsSignatureRef.current = signature;
-        setChats(data || []);
+        setChats(lightweightData);
         setSelectedChat((prev) => {
           if (!prev) return null;
-          return data.find((item) => item.id === prev.id) || null;
+          return lightweightData.find((item) => item.id === prev.id) || null;
         });
       }
     } catch (error) {
@@ -350,8 +359,21 @@ const SmartInbox = () => {
 
         if (signature !== messagesSignatureRef.current) {
           messagesSignatureRef.current = signature;
-          setMessages(data || []);
+          setMessages((prev) => {
+            const nextData = data || [];
+            if (!silent) return nextData;
+
+            const merged = new Map<string, MessageItem>();
+            [...prev, ...nextData].forEach((item) => {
+              merged.set(`${normalizeTimestamp(item.timestamp)}:${item.from}:${item.body}`, item);
+            });
+
+            return Array.from(merged.values()).sort(
+              (a, b) => (normalizeTimestamp(a.timestamp) || 0) - (normalizeTimestamp(b.timestamp) || 0)
+            );
+          });
         }
+        setHasOlderMessages((data || []).length === MESSAGE_LIMIT);
       } catch (error) {
         if ((error as Error).name !== "AbortError") {
           console.error("Failed to fetch messages:", error);
@@ -369,6 +391,49 @@ const SmartInbox = () => {
     },
     [activeResourceId, hasActiveResource, platform]
   );
+
+  const loadOlderMessages = useCallback(async () => {
+    if (!selectedChat?.id || !activeResourceId || !platform || loadingOlderMessages || !hasOlderMessages) return;
+
+    olderMessagesAbortRef.current?.abort();
+    const controller = new AbortController();
+    olderMessagesAbortRef.current = controller;
+    setLoadingOlderMessages(true);
+
+    try {
+      const token = localStorage.getItem("auth_token");
+      const endpoint =
+        platform === "whatsapp"
+          ? `/api/whatsapp/messages/${activeResourceId}/${selectedChat.id}?limit=${MESSAGE_LIMIT}&offset=${messages.length}`
+          : `/api/messenger/messages/${activeResourceId}/${selectedChat.id}?limit=${MESSAGE_LIMIT}&offset=${messages.length}`;
+
+      const response = await fetch(`${BACKEND_URL}${endpoint}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to load older messages");
+      }
+
+      const olderData = (await response.json()) as MessageItem[];
+      setHasOlderMessages(olderData.length === MESSAGE_LIMIT);
+      if (olderData.length) {
+        skipNextScrollRef.current = true;
+        setMessages((prev) => {
+          const seen = new Set(prev.map((item) => `${normalizeTimestamp(item.timestamp)}:${item.from}:${item.body}`));
+          const nextOlder = olderData.filter((item) => !seen.has(`${normalizeTimestamp(item.timestamp)}:${item.from}:${item.body}`));
+          return [...nextOlder, ...prev];
+        });
+      }
+    } catch (error) {
+      if ((error as Error).name !== "AbortError") {
+        toast.error("Older messages load korte parini");
+      }
+    } finally {
+      setLoadingOlderMessages(false);
+    }
+  }, [activeResourceId, hasOlderMessages, loadingOlderMessages, messages.length, platform, selectedChat?.id]);
 
   useEffect(() => {
     syncActiveResourceId();
@@ -388,8 +453,10 @@ const SmartInbox = () => {
   useEffect(() => {
     chatsAbortRef.current?.abort();
     messagesAbortRef.current?.abort();
+    olderMessagesAbortRef.current?.abort();
     setSelectedChat(null);
     setMessages([]);
+    setHasOlderMessages(false);
     setSelectedImage(null);
     setSelectedImagePreview((preview) => {
       if (preview) URL.revokeObjectURL(preview);
@@ -445,8 +512,13 @@ const SmartInbox = () => {
 
   useEffect(() => {
     if (!messages.length) return;
-    scrollToBottom();
-  }, [messages, scrollToBottom]);
+    if (skipNextScrollRef.current) {
+      skipNextScrollRef.current = false;
+      return;
+    }
+    const frameId = window.requestAnimationFrame(scrollToBottom);
+    return () => window.cancelAnimationFrame(frameId);
+  }, [messages.length, scrollToBottom]);
 
   const filteredChats = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
@@ -489,14 +561,10 @@ const SmartInbox = () => {
     );
   }, [chats]);
 
-  const handleSelectChat = useCallback(
-    (chat: Conversation) => {
-      setSelectedChat(chat);
-      setIsMobileListVisible(false);
-      fetchMessages(chat.id);
-    },
-    [fetchMessages]
-  );
+  const handleSelectChat = useCallback((chat: Conversation) => {
+    setSelectedChat(chat);
+    setIsMobileListVisible(false);
+  }, []);
 
   const handleToggleLabel = useCallback(
     async (labelKey: "order" | "human_transfer", active: boolean) => {
@@ -697,6 +765,7 @@ const SmartInbox = () => {
     () => messages.filter((message) => !shouldHideMessage(message)),
     [messages]
   );
+  const renderedMessages = visibleMessages.slice(-MESSAGE_LIMIT);
 
   return (
     <div className="fixed inset-0 z-50 flex h-[100dvh] overflow-hidden border-0 bg-[radial-gradient(circle_at_top_left,rgba(37,211,102,0.08),transparent_32%),linear-gradient(135deg,#050810,#081020)] shadow-2xl sm:relative sm:z-auto sm:h-[calc(100dvh-70px)] md:h-[calc(100vh-80px)] md:rounded-[2rem] md:border md:border-white/8">
@@ -1016,7 +1085,7 @@ const SmartInbox = () => {
             {/* Messages */}
             <ScrollArea ref={scrollRef} className="flex-1 bg-gradient-to-b from-transparent to-black/10">
               {msgLoading ? (
-                <div className="space-y-3 p-3 sm:p-4 md:p-6">
+                <div className="space-y-2.5 p-2.5 sm:p-4 md:p-5">
                   {Array.from({ length: 5 }).map((_, index) => (
                     <div key={index} className={cn("flex", index % 2 === 0 ? "justify-start" : "justify-end")}>
                       <Skeleton className="h-20 w-[65%] md:w-[55%] rounded-3xl bg-white/8 animate-pulse" />
@@ -1025,6 +1094,21 @@ const SmartInbox = () => {
                 </div>
               ) : (
                 <div className="space-y-3 p-3 sm:p-4 md:p-6">
+                  {hasOlderMessages && visibleMessages.length > 0 && (
+                    <div className="pb-1 text-center">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={loadOlderMessages}
+                        disabled={loadingOlderMessages}
+                        className="h-9 rounded-full border border-white/10 bg-white/[0.03] px-4 text-xs text-white/55 hover:bg-white/[0.06] hover:text-white"
+                      >
+                        {loadingOlderMessages ? "Loading older..." : "Load older messages"}
+                      </Button>
+                    </div>
+                  )}
+
                   {visibleMessages.length === 0 && (
                     <div className="flex min-h-[320px] items-center justify-center text-center">
                       <div className="max-w-[280px] rounded-3xl border border-white/10 bg-[#202c33]/70 px-6 py-5 shadow-lg backdrop-blur-sm">
@@ -1036,7 +1120,7 @@ const SmartInbox = () => {
                     </div>
                   )}
 
-                  {visibleMessages.map((message, index) => {
+                  {renderedMessages.map((message, index) => {
                     const body = message.body || "";
                     const imageMatch = body.match(
                       /(https?:\/\/[^\s\]\)]+\.(?:jpg|jpeg|png|gif|webp|bmp)(?:\?[^\s\]\)]*)?)/i
@@ -1084,11 +1168,12 @@ const SmartInbox = () => {
                               <img
                                 src={imageUrl}
                                 alt="Conversation media"
-                                className="w-full max-w-[190px] sm:max-w-[260px] max-h-[240px] rounded-2xl border border-black/10 object-cover cursor-pointer hover:scale-[1.02] transition-transform duration-300"
+                                loading="lazy"
+                                decoding="async"
+                                className="w-full max-w-[170px] sm:max-w-[240px] max-h-[220px] rounded-2xl border border-black/10 object-cover cursor-pointer"
                                 onClick={() => window.open(imageUrl, "_blank")}
                                 onError={(event) => {
-                                  (event.target as HTMLImageElement).src =
-                                    "https://placehold.co/400x400/1a1a2e/ffffff?text=Image+Not+Available";
+                                  (event.currentTarget as HTMLImageElement).style.display = "none";
                                 }}
                               />
                               {body
