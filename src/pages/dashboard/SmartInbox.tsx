@@ -880,15 +880,15 @@ const SmartInbox = () => {
                     type="button"
                     onClick={() => handleSelectChat(chat)}
                     className={cn(
-                      "w-full rounded-2xl border p-3 sm:p-4 text-left transition-all duration-300 group",
+                      "w-full overflow-hidden rounded-2xl border p-3 sm:p-4 text-left transition-all duration-300 group",
                       isActive
                         ? "border-[#00ff88]/45 bg-gradient-to-r from-[#00ff88]/18 via-[#00ff88]/10 to-sky-500/10 shadow-[inset_4px_0_0_rgba(0,255,136,0.75),0_0_30px_rgba(0,255,136,0.14)]"
                         : "border-white/5 bg-white/[0.02] hover:bg-white/[0.04] hover:border-white/10"
                     )}
                   >
-                    <div className="flex items-start gap-2.5 sm:gap-3">
+                    <div className="flex min-w-0 items-start gap-2.5 sm:gap-3">
                       <Avatar className={cn(
-                        "h-10 w-10 sm:h-12 sm:w-12 border transition-all duration-300",
+                        "h-10 w-10 shrink-0 sm:h-12 sm:w-12 border transition-all duration-300",
                         isActive ? "border-[#00ff88]/30" : "border-white/10 group-hover:border-white/20"
                       )}>
                         <AvatarImage src={undefined} />
@@ -900,13 +900,13 @@ const SmartInbox = () => {
                         </AvatarFallback>
                       </Avatar>
 
-                      <div className="min-w-0 flex-1">
+                      <div className="min-w-0 max-w-full flex-1 overflow-hidden">
                         <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
+                          <div className="min-w-0 flex-1 overflow-hidden">
                             <div className="truncate text-sm sm:text-base font-bold text-white">
                               {getDisplayName(chat)}
                             </div>
-                            <div className="mt-0.5 text-[10px] sm:text-[11px] text-white/40">
+                            <div className="mt-0.5 truncate text-[10px] sm:text-[11px] text-white/40">
                               {chat.from}
                             </div>
                           </div>
@@ -924,7 +924,7 @@ const SmartInbox = () => {
                           </div>
                         </div>
 
-                        <p className="mt-1.5 sm:mt-2 line-clamp-2 text-sm leading-relaxed text-white/65">
+                        <p className="mt-1.5 sm:mt-2 max-w-full overflow-hidden break-words text-sm leading-relaxed text-white/65 line-clamp-2">
                           {getMessagePreview(chat.body)}
                         </p>
 
