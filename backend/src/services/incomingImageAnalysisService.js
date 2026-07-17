@@ -138,7 +138,7 @@ function stripVisionReasoningFromAnalysis(text) {
 
 function formatVisionDecisionSummary(reasoningText) {
     const parsed = extractJsonObject(reasoningText);
-    if (!parsed) return 'final_decision=unavailable';
+    if (!parsed) return null;
 
     // Support both old JSON schema (matched_products) and new JSON schema (best_product_id/per_image_match)
     if (parsed.matched_products === undefined && parsed.non_product_analysis === undefined && parsed.status === undefined) {
