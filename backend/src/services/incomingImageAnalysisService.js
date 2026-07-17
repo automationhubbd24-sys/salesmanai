@@ -221,36 +221,37 @@ async function analyzeAndMatchIncomingImage({
     let matchedProducts = [];
     let matchDecision = { status: 'EVIDENCE_ONLY', confidence: 'informational', reason: 'main_llm_decides', options: [] };
 
-    if (analysisText && !analysisText.startsWith('[Vision Analysis Failed]')) {
-        try {
-            const directImageVector = await aiService.getDirectImageEmbedding(imageUrl, { log: false });
-            const directImageMatches = directImageVector
-                ? await dbService.searchProductByDirectImageVector(directImageVector, pageId)
-                : [];
+    // Always run vector search even if initial vision fails (e.g. timeout), so we still have embedding fallback
+    try {
+        const directImageVector = await aiService.getDirectImageEmbedding(imageUrl, { log: false });
+        const directImageMatches = directImageVector
+            ? await dbService.searchProductByDirectImageVector(directImageVector, pageId)
+            : [];
 
-            matchedProducts = directImageMatches
-                .map((product) => {
-                    const summary = toImageMatchSummary(product);
-                    if (!summary) return null;
-                    summary.match_source = 'direct_image_embedding';
-                    summary.direct_image_score = summary.match_score;
-                    return summary;
-                })
-                .filter((product) => product && Number(product.direct_image_score || product.match_score || 0) >= 50)
-                .sort((a, b) => Number(b.direct_image_score || 0) - Number(a.direct_image_score || 0))
-                .slice(0, 5);
+        matchedProducts = directImageMatches
+            .map((product) => {
+                const summary = toImageMatchSummary(product);
+                if (!summary) return null;
+                summary.match_source = 'direct_image_embedding';
+                summary.direct_image_score = summary.match_score;
+                return summary;
+            })
+            .filter((product) => product && Number(product.direct_image_score || product.match_score || 0) >= 50)
+            .sort((a, b) => Number(b.direct_image_score || 0) - Number(a.direct_image_score || 0))
+            .slice(0, 5);
 
-            matchDecision = buildVisualMatchDecision(matchedProducts);
-            if (matchedProducts.length > 0) {
-                const reasoned = await aiService.reasonImageProductMatchWithVision(imageUrl, matchedProducts, pageConfig, { timeoutMs: 45000 });
-                if (reasoned?.text) {
-                    matchDecision.vision_reasoning_text = reasoned.text;
-                    analysisText += `\n\n[Product Vision Reasoning]\n${reasoned.text}`;
-                }
+        matchDecision = buildVisualMatchDecision(matchedProducts);
+        
+        // Only run secondary reasoning if we have candidates AND initial vision didn't completely fail
+        if (matchedProducts.length > 0 && analysisText && !analysisText.startsWith('[Vision Analysis Failed]')) {
+            const reasoned = await aiService.reasonImageProductMatchWithVision(imageUrl, matchedProducts, pageConfig, { timeoutMs: 45000 });
+            if (reasoned?.text) {
+                matchDecision.vision_reasoning_text = reasoned.text;
+                analysisText += `\n\n[Product Vision Reasoning]\n${reasoned.text}`;
             }
-        } catch (matchErr) {
-            console.warn(`[${platform}] Direct image embedding evidence failed: ${matchErr.message}`);
         }
+    } catch (matchErr) {
+        console.warn(`[${platform}] Direct image embedding evidence failed: ${matchErr.message}`);
     }
 
     const topMatch = matchedProducts[0] || null;
