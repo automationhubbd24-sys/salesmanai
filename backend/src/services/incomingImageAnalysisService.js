@@ -29,6 +29,18 @@ function safeJsonParse(value, fallback = null) {
     }
 }
 
+function extractJsonObject(text) {
+    const raw = String(text || '').replace(/```json|```/gi, '').trim();
+    const start = raw.indexOf('{');
+    const end = raw.lastIndexOf('}');
+    if (start < 0 || end <= start) return null;
+    try {
+        return JSON.parse(raw.slice(start, end + 1));
+    } catch {
+        return null;
+    }
+}
+
 function clampMatchScore(value) {
     const score = Number(value || 0);
     if (!Number.isFinite(score)) return 0;
@@ -106,6 +118,45 @@ function resolveIncomingImagePrompt({ pagePrompts = null, pageConfig = null, fal
         if (typeof source.vision_prompt === 'string' && source.vision_prompt.trim()) return source.vision_prompt.trim();
     }
     return String(fallbackPrompt || '').trim();
+}
+
+function extractVisionReasoningText(result = {}) {
+    if (typeof result.matchDecision?.vision_reasoning_text === 'string' && result.matchDecision.vision_reasoning_text.trim()) {
+        return result.matchDecision.vision_reasoning_text.trim();
+    }
+
+    const analysisText = String(result.analysisText || '');
+    const match = analysisText.match(/\[Product Vision Reasoning\]([\s\S]*)$/i);
+    return match ? String(match[1] || '').trim() : '';
+}
+
+function stripVisionReasoningFromAnalysis(text) {
+    return String(text || '')
+        .replace(/\n*\[Product Vision Reasoning\][\s\S]*$/i, '')
+        .trim();
+}
+
+function formatVisionDecisionSummary(reasoningText) {
+    const parsed = extractJsonObject(reasoningText);
+    if (!parsed) return 'final_decision=unavailable';
+
+    const lines = [];
+    lines.push(`status=${parsed.status || 'unknown'}`);
+    if (parsed.visual_text) lines.push(`visual_text=${String(parsed.visual_text).trim()}`);
+    if (parsed.ocr_text) lines.push(`ocr_text=${String(parsed.ocr_text).trim()}`);
+
+    const matchedProducts = Array.isArray(parsed.matched_products) ? parsed.matched_products : [];
+    if (matchedProducts.length > 0) {
+        matchedProducts.forEach((product, idx) => {
+            lines.push(`${idx + 1}. product_id=${product.product_id || 'N/A'} | product_name=${product.product_name || 'Unknown'} | confidence=${product.confidence || 'unknown'}${product.reason ? ` | reason=${product.reason}` : ''}`);
+        });
+    } else if (parsed.non_product_analysis?.summary) {
+        lines.push(`summary=${String(parsed.non_product_analysis.summary).trim()}`);
+    } else {
+        lines.push('matched_products=None');
+    }
+
+    return lines.join('\n');
 }
 
 async function analyzeAndMatchIncomingImage({
@@ -218,13 +269,17 @@ async function analyzeAndMatchIncomingImage({
 
 function formatImageAnalysisBlock(result) {
     const label = `IMAGE ${result.imageIndex}`;
-    const candidates = result.matchedProducts || [];
-    const options = candidates.map((product, idx) => {
-        return `${idx + 1}. product_id=${product.product_id} | product_name=${product.name || 'Unknown'} | image_score=${clampMatchScore(product.direct_image_score ?? product.match_score)}%`;
-    }).join('\n') || 'None';
+    const cleanAnalysisText = stripVisionReasoningFromAnalysis(result.analysisText || '');
+    const reasoningText = extractVisionReasoningText(result);
+    const reasoningSummary = reasoningText ? formatVisionDecisionSummary(reasoningText) : '';
+    let block = `[${label} VISUAL EVIDENCE]\nAnalyzer Summary / OCR / Visual Text:\n${cleanAnalysisText || 'N/A'}`;
 
-    const decision = result.matchDecision || {};
-    return `[${label} VISUAL EVIDENCE]\nAnalyzer Summary / OCR / Visual Text:\n${result.analysisText || 'N/A'}\n\nProduct Match Gate:\nstatus=${decision.status || 'EVIDENCE_ONLY'} | confidence=${decision.confidence || 'informational'} | reason=${decision.reason || 'main_llm_decides'}\n\nRecommended Product Candidates (50%+ only; product_id/product_name hint only, fetch full DB details before answering price):\n${options}`;
+    if (reasoningText) {
+        block += `\n\n[Product Vision Reasoning]\n${reasoningText}`;
+        block += `\n\nVision Final Decision:\n${reasoningSummary}`;
+    }
+
+    return block;
 }
 
 function buildLastImageMap(results) {
