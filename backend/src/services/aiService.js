@@ -4287,18 +4287,56 @@ async function transcribeAudio(audioUrl, config) {
     return { text: `[Audio Transcription Failed] Error: ${lastError?.message || 'Unknown'}`, usage: 0 };
 }
 
-function resolveOpenAiCompatibleVisionConfig(pageConfig = {}) {
-    const model = pageConfig.vision_model || pageConfig.chat_model || pageConfig.chatmodel || process.env.VISION_MODEL || process.env.DEFAULT_VISION_MODEL || 'gemini-3.5-flash';
-    const apiKey = pageConfig.api_key || process.env.VISION_API_KEY || process.env.OPENAI_API_KEY || process.env.OPENROUTER_API_KEY;
-    let baseURL = pageConfig.custom_base_url || pageConfig.base_url || process.env.VISION_BASE_URL || process.env.OPENAI_BASE_URL || '';
-    let provider = (pageConfig.ai_provider || pageConfig.ai || '').toLowerCase();
+function isUsableVisionApiKey(value) {
+    const key = String(value || '').trim();
+    return Boolean(
+        key &&
+        key !== 'MANAGED_SECRET_KEY' &&
+        !key.startsWith('salesman_') &&
+        !key.startsWith('sk-managed')
+    );
+}
 
+async function resolveOpenAiCompatibleVisionConfig(pageConfig = {}) {
+    const model = pageConfig.vision_model || pageConfig.chat_model || pageConfig.chatmodel || process.env.VISION_MODEL_OPENAI || process.env.VISION_MODEL || process.env.DEFAULT_VISION_MODEL || 'gemini-3.5-flash';
+    let provider = (pageConfig.ai_provider || pageConfig.ai || '').toLowerCase();
+    let apiKey = isUsableVisionApiKey(pageConfig.vision_api_key) ? String(pageConfig.vision_api_key).trim() : null;
+    if (!apiKey && isUsableVisionApiKey(pageConfig.api_key)) apiKey = String(pageConfig.api_key).trim();
+    if (!apiKey) {
+        apiKey = [
+            process.env.VISION_API_KEY_OPENAI,
+            process.env.VISION_API_KEY,
+            process.env.GEMINI_API_KEY,
+            process.env.GOOGLE_API_KEY,
+            process.env.OPENAI_API_KEY,
+            process.env.OPENROUTER_API_KEY
+        ].find(isUsableVisionApiKey);
+    }
+
+    if (!provider) {
+        if (apiKey && String(apiKey).startsWith('AIza')) provider = 'google';
+        else if ((pageConfig.custom_base_url || pageConfig.base_url || process.env.VISION_BASE_URL_OPENAI || process.env.VISION_BASE_URL || '').includes('gemini')) provider = 'google';
+        else provider = 'openrouter';
+    }
+
+    if (!apiKey && keyService.getSmartKey) {
+        const keyProvider = provider === 'custom' ? 'google' : provider;
+        try {
+            let keyData = await keyService.getSmartKey(keyProvider, model, 'vision');
+            if (!keyData?.key) keyData = await keyService.getSmartKey(keyProvider, 'default', 'vision');
+            if (isUsableVisionApiKey(keyData?.key)) apiKey = String(keyData.key).trim();
+        } catch (err) {
+            console.warn(`[Vision Product Reasoning] Key lookup failed: ${err.message}`);
+        }
+    }
+
+    let baseURL = pageConfig.custom_base_url || pageConfig.base_url || process.env.VISION_BASE_URL_OPENAI || process.env.VISION_BASE_URL || process.env.OPENAI_BASE_URL || '';
     if (!baseURL) {
         if (provider === 'google' || (apiKey && String(apiKey).startsWith('AIza'))) baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai';
         else if (provider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
         else baseURL = 'https://openrouter.ai/api/v1';
     }
-    return { apiKey, model, baseURL: String(baseURL).replace(/\/+$/, '') };
+    return { apiKey, model, baseURL: String(baseURL).replace(/\/+$/, ''), provider };
 }
 
 function parseVisionCandidateMedia(value) {
@@ -4346,8 +4384,11 @@ async function reasonImageProductMatchWithVision(imageUrl, candidates = [], page
         .slice(0, 5);
     if (!imageUrl || usableCandidates.length === 0) return null;
 
-    const config = resolveOpenAiCompatibleVisionConfig(pageConfig);
-    if (!config.apiKey || !config.baseURL || !config.model) return null;
+    const config = await resolveOpenAiCompatibleVisionConfig(pageConfig);
+    if (!config.apiKey || !config.baseURL || !config.model) {
+        console.warn('[Vision Product Reasoning] Skipped: missing usable vision API key/config');
+        return null;
+    }
 
     const prompt = `You are a visual product matching judge. Compare the USER IMAGE against the candidate product images.
 Return valid JSON only.
