@@ -281,6 +281,18 @@ function formatImageAnalysisBlock(result) {
     if (reasoningSummary) {
         block += `\n\n[Product Vision Reasoning]\n${reasoningText}`;
         block += `\n\nVision Final Decision:\n${reasoningSummary}`;
+    } else {
+        const candidates = result.matchedProducts || [];
+        if (candidates.length > 0) {
+            const options = candidates.map((product, idx) => {
+                return `${idx + 1}. product_id=${product.product_id} | product_name=${product.name || 'Unknown'} | image_score=${clampMatchScore(product.direct_image_score ?? product.match_score)}%`;
+            }).join('\n');
+            const decision = result.matchDecision || {};
+            block += `\n\nProduct Match Gate (Embedding Fallback):\nstatus=${decision.status || 'EVIDENCE_ONLY'} | confidence=${decision.confidence || 'informational'} | reason=${decision.reason || 'vision_reasoning_failed'}`;
+            block += `\n\nRecommended Product Candidates:\n${options}`;
+        } else {
+            block += `\n\nProduct Match Gate:\nstatus=no_product_match\nmatched_products=None`;
+        }
     }
 
     return block;
