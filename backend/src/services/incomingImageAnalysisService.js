@@ -140,6 +140,10 @@ function formatVisionDecisionSummary(reasoningText) {
     const parsed = extractJsonObject(reasoningText);
     if (!parsed) return 'final_decision=unavailable';
 
+    if (parsed.matched_products === undefined && parsed.non_product_analysis === undefined) {
+        return null;
+    }
+
     const lines = [];
     lines.push(`status=${parsed.status || 'unknown'}`);
     if (parsed.visual_text) lines.push(`visual_text=${String(parsed.visual_text).trim()}`);
@@ -271,10 +275,10 @@ function formatImageAnalysisBlock(result) {
     const label = `IMAGE ${result.imageIndex}`;
     const cleanAnalysisText = stripVisionReasoningFromAnalysis(result.analysisText || '');
     const reasoningText = extractVisionReasoningText(result);
-    const reasoningSummary = reasoningText ? formatVisionDecisionSummary(reasoningText) : '';
+    const reasoningSummary = reasoningText ? formatVisionDecisionSummary(reasoningText) : null;
     let block = `[${label} VISUAL EVIDENCE]\nAnalyzer Summary / OCR / Visual Text:\n${cleanAnalysisText || 'N/A'}`;
 
-    if (reasoningText) {
+    if (reasoningSummary) {
         block += `\n\n[Product Vision Reasoning]\n${reasoningText}`;
         block += `\n\nVision Final Decision:\n${reasoningSummary}`;
     }
