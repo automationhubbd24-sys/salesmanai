@@ -2254,39 +2254,19 @@ STRICT RULES:
 - Background/Environment: [Brief description of where the product is placed]`
             });
             const batchId = `wa_img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-            const imageJobs = [];
-            let imageIndex = 1;
-
-            for (const msg of messages) {
-                for (const url of msg.images || []) {
-                    imageJobs.push({ url, imageIndex: imageIndex++ });
-                }
-            }
-
-            const imageAnalysisResults = await Promise.all(imageJobs.map((job) =>
-                incomingImageAnalysisService.analyzeAndMatchIncomingImage({
-                    platform: 'whatsapp',
-                    pageId: sessionName,
-                    senderId,
-                    imageUrl: job.url,
-                    imageIndex: job.imageIndex,
-                    batchId,
-                    pageConfig,
-                    prompt: productAnalysisPrompt
-                }).catch((error) => ({
-                    imageIndex: job.imageIndex,
-                    imageUrl: job.url,
-                    analysisText: `[Vision Analysis Failed] ${error.message}`,
-                    matchedProducts: [],
-                    topMatch: null,
-                    usage: 0,
-                    model: 'vision-error'
-                }))
-            ));
-
-            totalVisionTokens += imageAnalysisResults.reduce((sum, result) => sum + Number(result.usage || 0), 0);
-            imageAnalyzeText = imageAnalysisResults.map(incomingImageAnalysisService.formatImageAnalysisBlock).join('\n\n');
-            const lastImageMap = incomingImageAnalysisService.buildLastImageMap(imageAnalysisResults);
+            const analyzedImages = await incomingImageAnalysisService.analyzeIncomingImagesForConversation({
+                platform: 'whatsapp',
+                pageId: sessionName,
+                senderId,
+                imageUrls: allImages,
+                pageConfig,
+                prompt: productAnalysisPrompt,
+                batchId
+            });
+            const imageAnalysisResults = analyzedImages.results;
+            imageAnalyzeText = analyzedImages.combinedImageAnalysis;
+            const lastImageMap = analyzedImages.lastImageMap;
+            totalVisionTokens += analyzedImages.totalUsage;
 
             await dbService.setConversationState(sessionName, senderId, {
                 last_image_map: Object.keys(lastImageMap).length > 0 ? lastImageMap : null,

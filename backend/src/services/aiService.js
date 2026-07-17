@@ -1244,7 +1244,9 @@ function extractImagesFromText(text) {
 }
 
 function isDirectImageEmbeddingEnabled() {
-    return process.env.IMAGE_EMBEDDING_ENABLED === '1' || process.env.IMAGE_EMBEDDING_ENABLED === 'true';
+    const raw = process.env.IMAGE_EMBEDDING_ENABLED;
+    if (raw === '0' || raw === 'false') return false;
+    return Boolean(process.env.IMAGE_EMBEDDING_API_KEY || process.env.GEMINI_EMBEDDING_API_KEY || process.env.GEMINI_API_KEY);
 }
 
 function getImageEmbeddingConfig() {
@@ -2420,15 +2422,32 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         const source = String(text || '');
         const evidenceBlocks = source.match(/\[INTERNAL VISUAL EVIDENCE - UNTRUSTED\][\s\S]*?\[END INTERNAL VISUAL EVIDENCE\]/gi) || [];
         for (const block of evidenceBlocks) {
-            const reasoningMatch = block.match(/\[Product Vision Reasoning\]([\s\S]*?)(?:\n\s*Product Match Gate:|\n\s*Recommended Product Candidates|\[END INTERNAL VISUAL EVIDENCE\]|$)/i);
-            if (!reasoningMatch) continue;
-            const reasoningText = reasoningMatch[1] || '';
-            const parsed = extractJsonObject(reasoningText);
-            const matchedProducts = Array.isArray(parsed?.matched_products) ? parsed.matched_products : [];
-            for (const product of matchedProducts) {
-                const id = String(product?.product_id || '').trim();
-                const confidence = String(product?.confidence || '').toLowerCase();
-                if (/^[0-9]+$/.test(id) && confidence !== 'low') ids.add(id);
+            const reasoningMatches = [...block.matchAll(/\[Product Vision Reasoning\]([\s\S]*?)(?:\n\s*Vision Final Decision:|\n\s*Product Match Gate:|\n\s*Recommended Product Candidates:|\n\s*\[MULTI IMAGE AB MATCH\]|\[END INTERNAL VISUAL EVIDENCE\]|$)/gi)];
+            for (const match of reasoningMatches) {
+                const reasoningText = match[1] || '';
+                const parsed = extractJsonObject(reasoningText);
+                if (!parsed) continue;
+
+                const matchedProducts = Array.isArray(parsed?.matched_products) ? parsed.matched_products : [];
+                for (const product of matchedProducts) {
+                    const id = String(product?.product_id || '').trim();
+                    const confidence = String(product?.confidence || '').toLowerCase();
+                    if (/^[0-9]+$/.test(id) && confidence !== 'low') ids.add(id);
+                }
+
+                const bestProductId = String(parsed?.best_product_id || '').trim();
+                if (/^[0-9]+$/.test(bestProductId)) ids.add(bestProductId);
+
+                const perImageMatches = Array.isArray(parsed?.per_image_match) ? parsed.per_image_match : [];
+                for (const perImage of perImageMatches) {
+                    const candidateIds = Array.isArray(perImage?.matched_product_ids)
+                        ? perImage.matched_product_ids
+                        : [perImage?.matched_product_id];
+                    for (const candidateId of candidateIds) {
+                        const cleanId = String(candidateId || '').trim();
+                        if (/^[0-9]+$/.test(cleanId)) ids.add(cleanId);
+                    }
+                }
             }
         }
         return [...ids].slice(0, 10);
@@ -4282,6 +4301,45 @@ function resolveOpenAiCompatibleVisionConfig(pageConfig = {}) {
     return { apiKey, model, baseURL: String(baseURL).replace(/\/+$/, '') };
 }
 
+function parseVisionCandidateMedia(value) {
+    if (Array.isArray(value)) return value;
+    if (!value || typeof value === 'object') return [];
+    try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+}
+
+function normalizeVisionCandidateUrl(url) {
+    if (!url || url === 'N/A') return null;
+    const value = String(url).trim();
+    if (!value) return null;
+    if (value.startsWith('http')) return value;
+    const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
+    const cleanPath = value.startsWith('/') ? value : `/${value}`;
+    return `${baseUrl.replace(/\/$/, '')}${cleanPath}`;
+}
+
+function collectVisionCandidateImages(candidate, limit = 3) {
+    const urls = [];
+    const seen = new Set();
+    const push = (value) => {
+        const clean = normalizeVisionCandidateUrl(value);
+        if (!clean || seen.has(clean)) return;
+        seen.add(clean);
+        urls.push(clean);
+    };
+
+    push(candidate?.matched_image_url);
+    push(candidate?.image_url);
+    parseVisionCandidateMedia(candidate?.additional_images).forEach(push);
+    parseVisionCandidateMedia(candidate?.variants).forEach((item) => push(item?.image_url));
+    parseVisionCandidateMedia(candidate?.sku_matrix).forEach((item) => push(item?.image_url));
+    return urls.slice(0, Math.max(1, Number(limit) || 3));
+}
+
 async function reasonImageProductMatchWithVision(imageUrl, candidates = [], pageConfig = {}, options = {}) {
     const usableCandidates = (candidates || [])
         .filter(candidate => candidate && candidate.product_id && Number(candidate.match_score || candidate.direct_image_score || 0) >= 50)
@@ -4306,11 +4364,12 @@ Schema:
     content.push({ type: 'text', text: 'USER IMAGE:' });
     content.push({ type: 'image_url', image_url: { url: imageUrl } });
     usableCandidates.forEach((candidate, idx) => {
-        const candidateImageUrl = candidate.matched_image_url || candidate.image_url || (Array.isArray(candidate.additional_images) ? candidate.additional_images[0] : null);
+        const candidateImageUrls = collectVisionCandidateImages(candidate, Number(options.candidateImageLimit || process.env.PRODUCT_VISION_REASONING_CANDIDATE_IMAGES || 3));
         content.push({ type: 'text', text: `CANDIDATE ${idx + 1}: product_id=${candidate.product_id}, product_name=${candidate.name || candidate.product_name || 'Unknown'}, image_score=${candidate.match_score || candidate.direct_image_score || 0}%` });
-        if (candidateImageUrl && candidateImageUrl !== 'N/A') {
+        candidateImageUrls.forEach((candidateImageUrl, imageIdx) => {
+            content.push({ type: 'text', text: `Candidate ${idx + 1} image ${imageIdx + 1}` });
             content.push({ type: 'image_url', image_url: { url: candidateImageUrl } });
-        }
+        });
     });
 
     try {
@@ -4322,7 +4381,7 @@ Schema:
         }, {
             headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
             timeout: Number(options.timeoutMs || process.env.PRODUCT_VISION_REASONING_TIMEOUT_MS || 45000),
-            proxy: false
+            proxy: false // Explicitly disable axios proxy to avoid strict proxy mode errors for direct vision reasoning calls
         });
         const text = res.data?.choices?.[0]?.message?.content || '';
         return { text: String(text).trim(), usage: res.data?.usage?.total_tokens || 0, model: res.data?.model || config.model };

@@ -683,8 +683,20 @@ function formatImageAnalysisBlock(result) {
     return incomingImageAnalysisService.formatImageAnalysisBlock(result);
 }
 
-function buildLastImageMap(results) {
-    return incomingImageAnalysisService.buildLastImageMap(results);
+async function analyzeIncomingImageBatch(args) {
+    return incomingImageAnalysisService.analyzeIncomingImageBatch(args);
+}
+
+async function analyzeIncomingImagesForConversation(args) {
+    return incomingImageAnalysisService.analyzeIncomingImagesForConversation(args);
+}
+
+function composeImageAnalysisBlocks(results, aggregateResult) {
+    return incomingImageAnalysisService.composeImageAnalysisBlocks(results, aggregateResult);
+}
+
+function buildLastImageMap(results, aggregateResult) {
+    return incomingImageAnalysisService.buildLastImageMap(results, aggregateResult);
 }
 
 function normalizePhotoDecision(photoDecision) {
@@ -1361,39 +1373,20 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
             });
 
             const batchId = `wa_img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-            const imageJobs = [];
-            let imageIndex = 1;
-            for (const msg of normalizedMessages) {
-                for (const url of msg.images || []) {
-                    imageJobs.push({ msg, url, imageIndex: imageIndex++ });
-                }
-            }
-
-            const imageAnalysisResults = await Promise.all(imageJobs.map(job =>
-                analyzeAndMatchIncomingImage({
-                    platform: 'whatsapp',
-                    pageId: effectiveSessionName,
-                    senderId,
-                    imageUrl: job.url,
-                    imageIndex: job.imageIndex,
-                    batchId,
-                    pageConfig: config,
-                    prompt: productAnalysisPrompt
-                }).catch(error => ({
-
-                    imageIndex: job.imageIndex,
-                    imageUrl: job.url,
-                    analysisText: `[Vision Analysis Failed] ${error.message}`,
-                    matchedProducts: [],
-                    topMatch: null,
-                    usage: 0,
-                    model: 'vision-error'
-                }))
-            ));
-
-            totalVisionTokens += imageAnalysisResults.reduce((sum, result) => sum + Number(result.usage || 0), 0);
-            const combinedImageAnalysis = imageAnalysisResults.map(formatImageAnalysisBlock).join('\n\n');
-            const lastImageMap = buildLastImageMap(imageAnalysisResults);
+            const analyzedImages = await analyzeIncomingImagesForConversation({
+                platform: 'whatsapp',
+                pageId: effectiveSessionName,
+                senderId,
+                imageUrls: allImages,
+                pageConfig: config,
+                prompt: productAnalysisPrompt,
+                batchId
+            });
+            const imageAnalysisResults = analyzedImages.results;
+            const aggregateImageAnalysis = analyzedImages.aggregateResult;
+            const combinedImageAnalysis = analyzedImages.combinedImageAnalysis;
+            const lastImageMap = analyzedImages.lastImageMap;
+            totalVisionTokens += analyzedImages.totalUsage;
 
             await dbService.setConversationState(effectiveSessionName, senderId, {
                 last_image_map: Object.keys(lastImageMap).length > 0 ? lastImageMap : null,
@@ -3246,39 +3239,20 @@ STRICT RULES:
                 });
 
                 const batchId = `fb_img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-                const imageJobs = [];
-                let imageIndex = 1;
-                for (const msg of messages) {
-                    for (const url of msg.images || []) {
-                        imageJobs.push({ msg, url, imageIndex: imageIndex++ });
-                    }
-                }
-
-                const imageAnalysisResults = await Promise.all(imageJobs.map(job =>
-                    analyzeAndMatchIncomingImage({
-                        platform: 'messenger',
-                        pageId,
-                        senderId,
-                        imageUrl: job.url,
-                        imageIndex: job.imageIndex,
-                        batchId,
-                        pageConfig,
-                        prompt: productAnalysisPrompt
-                    }).catch(error => ({
-
-                        imageIndex: job.imageIndex,
-                        imageUrl: job.url,
-                        analysisText: `[Vision Analysis Failed] ${error.message}`,
-                        matchedProducts: [],
-                        topMatch: null,
-                        usage: 0,
-                        model: 'vision-error'
-                    }))
-                ));
-
-                totalVisionTokens += imageAnalysisResults.reduce((sum, result) => sum + Number(result.usage || 0), 0);
-                const combinedImageAnalysis = imageAnalysisResults.map(formatImageAnalysisBlock).join('\n\n');
-                const lastImageMap = buildLastImageMap(imageAnalysisResults);
+                const analyzedImages = await analyzeIncomingImagesForConversation({
+                    platform: 'messenger',
+                    pageId,
+                    senderId,
+                    imageUrls: allImages,
+                    pageConfig,
+                    prompt: productAnalysisPrompt,
+                    batchId
+                });
+                const imageAnalysisResults = analyzedImages.results;
+                const aggregateImageAnalysis = analyzedImages.aggregateResult;
+                const combinedImageAnalysis = analyzedImages.combinedImageAnalysis;
+                const lastImageMap = analyzedImages.lastImageMap;
+                totalVisionTokens += analyzedImages.totalUsage;
 
                 await dbService.setConversationState(pageId, senderId, {
                     last_image_map: Object.keys(lastImageMap).length > 0 ? lastImageMap : null,

@@ -110,6 +110,359 @@ function normalizeCachedMatches(value) {
     return Array.isArray(parsed) ? parsed : [];
 }
 
+function normalizeCandidateUrl(url) {
+    if (!url || url === 'N/A') return null;
+    const value = String(url).trim();
+    if (!value) return null;
+    return value.startsWith('http') ? value : normalizePublicMediaUrl(value);
+}
+
+function parseMaybeJson(value, fallback = []) {
+    if (Array.isArray(value)) return value;
+    const parsed = safeJsonParse(value, fallback);
+    return Array.isArray(parsed) ? parsed : fallback;
+}
+
+function collectCandidateImages(product, limit = 3) {
+    const urls = [];
+    const seen = new Set();
+    const push = (value) => {
+        const clean = normalizeCandidateUrl(value);
+        if (!clean || seen.has(clean)) return;
+        seen.add(clean);
+        urls.push(clean);
+    };
+
+    push(product.matched_image_url);
+    push(product.image_url);
+    parseMaybeJson(product.additional_images, []).forEach(push);
+    parseMaybeJson(product.variants, []).forEach((item) => push(item?.image_url));
+    parseMaybeJson(product.sku_matrix, []).forEach((item) => push(item?.image_url));
+    return urls.slice(0, Math.max(1, Number(limit) || 3));
+}
+
+function mergeBatchCandidates(perImageCandidates, topK = 5) {
+    const byId = new Map();
+    perImageCandidates.forEach((entry) => {
+        const imageIndex = Number(entry.image_index || 0);
+        (entry.candidates || []).forEach((candidate) => {
+            const id = String(candidate.id || '').trim();
+            const score = Number(candidate.score || 0);
+            if (!id || !Number.isFinite(score)) return;
+            const existing = byId.get(id);
+            if (!existing) {
+                byId.set(id, {
+                    ...candidate,
+                    best_score: score,
+                    score_sum: score,
+                    appear_count: 1,
+                    source_image_indexes: imageIndex ? [imageIndex] : [],
+                    per_image_scores: imageIndex ? [{ image_index: imageIndex, score }] : []
+                });
+                return;
+            }
+
+            existing.best_score = Math.max(existing.best_score, score);
+            existing.score_sum += score;
+            existing.appear_count += 1;
+            if (imageIndex) {
+                if (!existing.source_image_indexes.includes(imageIndex)) existing.source_image_indexes.push(imageIndex);
+                existing.per_image_scores.push({ image_index: imageIndex, score });
+            }
+            if (score > Number(existing.score || 0)) {
+                Object.assign(existing, candidate);
+            }
+        });
+    });
+
+    return Array.from(byId.values())
+        .map((candidate) => ({
+            ...candidate,
+            merged_score: Number((candidate.best_score + Math.min(8, Math.max(0, candidate.appear_count - 1) * 2.5)).toFixed(1))
+        }))
+        .sort((a, b) => Number(b.merged_score || 0) - Number(a.merged_score || 0))
+        .slice(0, Math.max(1, Number(topK) || 5));
+}
+
+function resolveOpenAiCompatibleVisionConfig(pageConfig = {}) {
+    const model = pageConfig.vision_model || pageConfig.chat_model || pageConfig.chatmodel || process.env.VISION_MODEL || process.env.DEFAULT_VISION_MODEL || 'gemini-3.5-flash';
+    const apiKey = pageConfig.api_key || process.env.VISION_API_KEY || process.env.OPENAI_API_KEY || process.env.OPENROUTER_API_KEY;
+    let baseURL = pageConfig.custom_base_url || pageConfig.base_url || process.env.VISION_BASE_URL || process.env.OPENAI_BASE_URL || '';
+    const provider = (pageConfig.ai_provider || pageConfig.ai || '').toLowerCase();
+
+    if (!baseURL) {
+        if (provider === 'google' || (apiKey && String(apiKey).startsWith('AIza'))) baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai';
+        else if (provider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
+        else baseURL = 'https://openrouter.ai/api/v1';
+    }
+
+    return {
+        apiKey,
+        model,
+        baseURL: String(baseURL).replace(/\/+$/, '')
+    };
+}
+
+function resolveImageMatchingMode(pageConfig = {}) {
+    const rawMode = String(
+        pageConfig.image_matching_mode
+        || pageConfig.image_analysis_architecture
+        || pageConfig.page_prompts?.image_matching_mode
+        || pageConfig.page_prompts?.image_analysis_architecture
+        || process.env.DEFAULT_IMAGE_MATCHING_MODE
+        || 'ab_independent'
+    ).trim().toLowerCase();
+
+    if (['legacy', 'single_pass', 'embedding_only'].includes(rawMode)) return 'legacy';
+    if (['ab_merged', 'merged', 'batch_merged'].includes(rawMode)) return 'ab_merged';
+    return 'ab_independent';
+}
+
+async function fetchJsonWithTimeout(url, options, timeoutMs) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const response = await fetch(url, {
+            ...options,
+            signal: controller.signal
+        });
+        const bodyText = await response.text();
+        let parsed = null;
+        try {
+            parsed = JSON.parse(bodyText);
+        } catch {
+            parsed = null;
+        }
+        if (!response.ok) {
+            throw new Error(parsed?.error?.message || bodyText || `HTTP ${response.status}`);
+        }
+        return parsed;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+function buildBatchReasoningPrompt(userImageUrls, candidates, candidateImageLimit) {
+    const candidateList = candidates.map((candidate, idx) => {
+        const imageCount = collectCandidateImages(candidate, candidateImageLimit).length;
+        return `${idx + 1}. product_id=${candidate.id}, product_name=${candidate.name || 'Unknown'}, price=${candidate.price || 'N/A'} ${candidate.currency || 'BDT'}, merged_score=${candidate.merged_score || candidate.score}%, source_images=${(candidate.source_image_indexes || []).join(',') || 'unknown'}, images=${imageCount}`;
+    }).join('\n');
+
+    return `You are validating multi-image product matching for an ecommerce chatbot.
+Compare ALL USER IMAGES against the candidate product images in this request.
+
+Rules:
+- Candidate order is only a hint from image embedding. Trust the visuals more than the scores.
+- If a user image is a collage or screenshot, identify every visible product you can confirm.
+- Return only products that visually match. If nothing matches, return status "no_product_match".
+- If the result is unclear between close products, return status "ambiguous".
+- Return valid JSON only.
+
+Schema:
+{"status":"match|multi_match|ambiguous|no_product_match","reasoning":"short explanation","matched_products":[{"product_id":"string","product_name":"string","confidence":"high|medium|low","reason":"short"}],"per_image_match":[{"image_index":1,"matched_product_ids":["string"],"reason":"short"}],"user_images_visual_text":[{"image_index":1,"visual_summary":"short","visible_products_count":"number_or_unknown"}],"candidate_comparison":[{"product_id":"string","product_name":"string","visual_match":"exact|partial|no_match","reason":"short"}]}
+
+User image count: ${userImageUrls.length}
+Merged top candidates:
+${candidateList}`;
+}
+
+async function analyzeIncomingImageBatchMerged({
+    results = [],
+    pageConfig = {},
+    candidateImageLimit = Number(process.env.IMAGE_AB_CANDIDATE_IMAGES || 3),
+    topK = Number(process.env.IMAGE_AB_TOP_K || 5),
+    timeoutMs = Number(process.env.IMAGE_AB_VISION_TIMEOUT_MS || process.env.PRODUCT_VISION_REASONING_TIMEOUT_MS || 45000)
+} = {}) {
+    const uniqueUserImageUrls = Array.from(new Set(
+        (results || [])
+            .map((result) => normalizeCandidateUrl(result?.imageUrl))
+            .filter(Boolean)
+    )).slice(0, Math.max(2, Number(process.env.IMAGE_AB_MAX_USER_IMAGES || 6)));
+
+    if (uniqueUserImageUrls.length < 2) return null;
+
+    const perImageCandidates = (results || []).map((result) => ({
+        image_index: result?.imageIndex,
+        candidates: (result?.matchedProducts || [])
+            .map((product) => ({
+                id: String(product?.product_id || '').trim(),
+                name: product?.name || product?.product_name || null,
+                price: product?.price || null,
+                currency: product?.currency || 'BDT',
+                image_url: normalizeCandidateUrl(product?.image_url),
+                matched_image_url: normalizeCandidateUrl(product?.matched_image_url || product?.image_url),
+                additional_images: Array.isArray(product?.additional_images) ? product.additional_images : parseMaybeJson(product?.additional_images, []),
+                variants: Array.isArray(product?.variants) ? product.variants : parseMaybeJson(product?.variants, []),
+                sku_matrix: Array.isArray(product?.sku_matrix) ? product.sku_matrix : parseMaybeJson(product?.sku_matrix, []),
+                score: clampMatchScore(product?.direct_image_score ?? product?.match_score)
+            }))
+            .filter((product) => product.id && Number(product.score || 0) >= 50)
+            .slice(0, Math.max(1, Number(topK) || 5))
+    })).filter((entry) => entry.candidates.length > 0);
+
+    if (perImageCandidates.length < 2) return null;
+
+    const mergedCandidates = mergeBatchCandidates(perImageCandidates, topK);
+    if (mergedCandidates.length === 0) return null;
+
+    const config = resolveOpenAiCompatibleVisionConfig(pageConfig);
+    if (!config.apiKey || !config.baseURL || !config.model) return null;
+
+    const content = [{ type: 'text', text: buildBatchReasoningPrompt(uniqueUserImageUrls, mergedCandidates, candidateImageLimit) }];
+    uniqueUserImageUrls.forEach((url, idx) => {
+        content.push({ type: 'text', text: `USER IMAGE ${idx + 1}:` });
+        content.push({ type: 'image_url', image_url: { url } });
+    });
+
+    mergedCandidates.forEach((candidate, idx) => {
+        const productImages = collectCandidateImages(candidate, candidateImageLimit);
+        content.push({
+            type: 'text',
+            text: `CANDIDATE ${idx + 1}: product_id=${candidate.id}, product_name=${candidate.name || 'Unknown'}, merged_score=${candidate.merged_score || candidate.score}%`
+        });
+        productImages.forEach((url, imageIdx) => {
+            content.push({ type: 'text', text: `Candidate ${idx + 1} image ${imageIdx + 1}` });
+            content.push({ type: 'image_url', image_url: { url } });
+        });
+    });
+
+    try {
+        const json = await fetchJsonWithTimeout(`${config.baseURL}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${config.apiKey}`
+            },
+            body: JSON.stringify({
+                model: config.model,
+                messages: [{ role: 'user', content }],
+                temperature: 0.1,
+                max_tokens: Number(process.env.IMAGE_AB_MAX_TOKENS || 2200)
+            })
+        }, timeoutMs);
+
+        const raw = String(json?.choices?.[0]?.message?.content || '').trim();
+        if (!raw) return null;
+
+        return {
+            raw,
+            parsed: extractJsonObject(raw),
+            usage: Number(json?.usage?.total_tokens || json?.usage?.completion_tokens || 0),
+            model: json?.model || config.model,
+            mergedCandidates,
+            userImageUrls: uniqueUserImageUrls
+        };
+    } catch (error) {
+        console.warn(`[Image Batch AB] Failed: ${error.message}`);
+        return null;
+    }
+}
+
+function buildIndependentAggregatePrompt(results = []) {
+    const blocks = (results || []).map((result) => {
+        const reasoningText = extractVisionReasoningText(result);
+        const fallback = reasoningText
+            ? reasoningText
+            : JSON.stringify({
+                image_index: result?.imageIndex || null,
+                status: 'no_product_match',
+                matched_products: [],
+                reason: result?.matchDecision?.reason || 'no_visual_reasoning'
+            });
+        return `IMAGE ${result?.imageIndex || 'unknown'} RESULT:\n${fallback}`;
+    }).join('\n\n');
+
+    return `You are the final multi-image product matching judge for an ecommerce chatbot.
+
+Each user image was independently analyzed with image embedding + candidate product vision comparison.
+Now combine those per-image results into one strict final decision.
+
+Rules:
+- Trust the per-image visual reasoning more than embedding rank.
+- If multiple images match different products, return all confirmed products.
+- If the same product appears in multiple images, keep it once in matched_products but mention all source_image_indexes.
+- If nothing is visually confirmed, return status "no_product_match".
+- If results conflict or remain uncertain, return status "ambiguous".
+- Return valid JSON only.
+
+Schema:
+{"status":"match|multi_match|ambiguous|no_product_match","reasoning":"short explanation","matched_products":[{"source_image_indexes":[1],"product_id":"string","product_name":"string","confidence":"high|medium|low","reason":"short"}],"per_image_match":[{"image_index":1,"matched_product_ids":["string"],"reason":"short"}]}
+
+Per-image results:
+${blocks}`;
+}
+
+async function analyzeIncomingImageBatchIndependent({
+    results = [],
+    pageConfig = {},
+    timeoutMs = Number(process.env.IMAGE_AB_VISION_TIMEOUT_MS || process.env.PRODUCT_VISION_REASONING_TIMEOUT_MS || 45000)
+} = {}) {
+    const usableResults = (results || []).filter((result) => result && result.imageUrl);
+    if (usableResults.length < 2) return null;
+
+    const config = resolveOpenAiCompatibleVisionConfig(pageConfig);
+    if (!config.apiKey || !config.baseURL || !config.model) return null;
+
+    try {
+        const json = await fetchJsonWithTimeout(`${config.baseURL}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${config.apiKey}`
+            },
+            body: JSON.stringify({
+                model: config.model,
+                messages: [{
+                    role: 'user',
+                    content: [{ type: 'text', text: buildIndependentAggregatePrompt(usableResults) }]
+                }],
+                temperature: 0.1,
+                max_tokens: Number(process.env.IMAGE_AB_FINAL_MAX_TOKENS || 1600)
+            })
+        }, timeoutMs);
+
+        const raw = String(json?.choices?.[0]?.message?.content || '').trim();
+        if (!raw) return null;
+
+        return {
+            raw,
+            parsed: extractJsonObject(raw),
+            usage: Number(json?.usage?.total_tokens || json?.usage?.completion_tokens || 0),
+            model: json?.model || config.model,
+            mode: 'ab_independent'
+        };
+    } catch (error) {
+        console.warn(`[Image Batch AB Independent] Failed: ${error.message}`);
+        return null;
+    }
+}
+
+async function analyzeIncomingImageBatch(args = {}) {
+    const mode = resolveImageMatchingMode(args.pageConfig || {});
+    if (mode === 'legacy') return null;
+    if (mode === 'ab_merged') return analyzeIncomingImageBatchMerged(args);
+    return analyzeIncomingImageBatchIndependent(args);
+}
+
+function formatBatchImageAnalysisBlock(aggregateResult) {
+    if (!aggregateResult?.raw) return '';
+    const reasoningSummary = formatVisionDecisionSummary(aggregateResult.raw);
+    const mode = aggregateResult?.mode || 'ab_merged';
+    let block = `[MULTI IMAGE AB MATCH]\nmode=${mode}\nThis block combines all user images into one final match decision. Prefer it over a single-image fallback when it is present.`;
+    block += `\n\n[Product Vision Reasoning]\n${aggregateResult.raw}`;
+    if (reasoningSummary) {
+        block += `\n\nVision Final Decision:\n${reasoningSummary}`;
+    }
+    return block;
+}
+
+function composeImageAnalysisBlocks(results = [], aggregateResult = null) {
+    const blocks = (results || []).map(formatImageAnalysisBlock).filter(Boolean);
+    const aggregateBlock = formatBatchImageAnalysisBlock(aggregateResult);
+    if (aggregateBlock) blocks.push(aggregateBlock);
+    return blocks.join('\n\n').trim();
+}
+
 function resolveIncomingImagePrompt({ pagePrompts = null, pageConfig = null, fallbackPrompt = '' } = {}) {
     const promptSources = [pagePrompts, pageConfig?.page_prompts, pageConfig];
     for (const source of promptSources) {
@@ -177,6 +530,52 @@ function formatVisionDecisionSummary(reasoningText) {
     return lines.join('\n');
 }
 
+function extractConfirmedMatchesFromReasoning(reasoningText) {
+    const parsed = extractJsonObject(reasoningText);
+    if (!parsed) return [];
+
+    const matches = [];
+    const matchedProducts = Array.isArray(parsed?.matched_products) ? parsed.matched_products : [];
+    matchedProducts.forEach((product) => {
+        const id = String(product?.product_id || '').trim();
+        const confidence = String(product?.confidence || '').toLowerCase();
+        if (!id || confidence === 'low') return;
+        matches.push({
+            product_id: id,
+            product_name: product?.product_name || product?.name || null,
+            confidence: confidence || 'medium',
+            reason: product?.reason || null
+        });
+    });
+
+    const bestProductId = String(parsed?.best_product_id || '').trim();
+    if (bestProductId) {
+        matches.push({
+            product_id: bestProductId,
+            product_name: parsed?.best_product_name || null,
+            confidence: String(parsed?.confidence || '').toLowerCase() || 'medium',
+            reason: parsed?.reasoning || null
+        });
+    }
+
+    return matches.filter((match, index, list) => list.findIndex((item) => item.product_id === match.product_id) === index);
+}
+
+function buildAggregatePerImageMatchMap(aggregateResult = null) {
+    const parsed = aggregateResult?.parsed;
+    const entries = Array.isArray(parsed?.per_image_match) ? parsed.per_image_match : [];
+    return entries.reduce((map, entry) => {
+        const imageIndex = String(entry?.image_index || '').trim();
+        if (!imageIndex) return map;
+        const ids = Array.isArray(entry?.matched_product_ids)
+            ? entry.matched_product_ids
+            : [entry?.matched_product_id];
+        const cleanIds = ids.map((id) => String(id || '').trim()).filter(Boolean);
+        if (cleanIds.length > 0) map.set(imageIndex, cleanIds);
+        return map;
+    }, new Map());
+}
+
 async function analyzeAndMatchIncomingImage({
     platform,
     pageId,
@@ -242,8 +641,8 @@ async function analyzeAndMatchIncomingImage({
 
         matchDecision = buildVisualMatchDecision(matchedProducts);
         
-        // Only run secondary reasoning if we have candidates AND initial vision didn't completely fail
-        if (matchedProducts.length > 0 && analysisText && !analysisText.startsWith('[Vision Analysis Failed]')) {
+        // Run product-vs-candidate visual reasoning even if the generic analyzer failed.
+        if (matchedProducts.length > 0) {
             const reasoned = await aiService.reasonImageProductMatchWithVision(imageUrl, matchedProducts, pageConfig, { timeoutMs: 45000 });
             if (reasoned?.text) {
                 matchDecision.vision_reasoning_text = reasoned.text;
@@ -313,18 +712,35 @@ function formatImageAnalysisBlock(result) {
     return block;
 }
 
-function buildLastImageMap(results) {
+function buildLastImageMap(results, aggregateResult = null) {
+    return buildLastImageMapWithAggregate(results, aggregateResult);
+}
+
+function buildLastImageMapWithAggregate(results, aggregateResult = null) {
+    const aggregatePerImageMap = buildAggregatePerImageMatchMap(aggregateResult);
     return results.reduce((map, result) => {
+        const reasoningMatches = extractConfirmedMatchesFromReasoning(extractVisionReasoningText(result));
         const options = result.matchDecision?.options || [];
-        const primary = result.topMatch || options[0] || null;
-        if (primary || options.length > 0) {
+        const aggregateIds = aggregatePerImageMap.get(String(result.imageIndex)) || [];
+        const aggregatePrimaryId = aggregateIds[0] || null;
+        const primary =
+            reasoningMatches[0]
+            || (aggregatePrimaryId ? options.find((option) => String(option?.product_id || '') === aggregatePrimaryId) : null)
+            || null;
+
+        const confirmedIds = new Set([
+            ...reasoningMatches.map((item) => String(item.product_id)),
+            ...aggregateIds.map((id) => String(id))
+        ]);
+
+        if (primary && confirmedIds.size > 0) {
             map[String(result.imageIndex)] = {
                 product_id: primary?.product_id || null,
-                name: primary?.name || null,
-                product_name: primary?.name || null,
+                name: primary?.name || primary?.product_name || null,
+                product_name: primary?.name || primary?.product_name || null,
                 match_score: primary?.match_score || null,
-                match_decision: result.matchDecision?.status || 'UNKNOWN',
-                candidate_options: options,
+                match_decision: result.matchDecision?.status || 'CONFIRMED_VISUAL_MATCH',
+                candidate_options: options.filter((option) => confirmedIds.has(String(option?.product_id || ''))),
                 image_url: result.imageUrl
             };
         }
@@ -332,10 +748,67 @@ function buildLastImageMap(results) {
     }, {});
 }
 
+async function analyzeIncomingImagesForConversation({
+    platform,
+    pageId,
+    senderId,
+    imageUrls = [],
+    pageConfig = {},
+    prompt = '',
+    batchId = `img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+} = {}) {
+    const imageJobs = (imageUrls || []).filter(Boolean).map((url, idx) => ({
+        url,
+        imageIndex: idx + 1
+    }));
+
+    const results = await Promise.all(imageJobs.map((job) =>
+        analyzeAndMatchIncomingImage({
+            platform,
+            pageId,
+            senderId,
+            imageUrl: job.url,
+            imageIndex: job.imageIndex,
+            batchId,
+            pageConfig,
+            prompt
+        }).catch((error) => ({
+            imageIndex: job.imageIndex,
+            imageUrl: job.url,
+            analysisText: `[Vision Analysis Failed] ${error.message}`,
+            matchedProducts: [],
+            topMatch: null,
+            matchDecision: { status: 'NO_MATCH', confidence: 'low', reason: error.message, options: [] },
+            usage: 0,
+            model: 'vision-error'
+        }))
+    ));
+
+    const aggregateResult = await analyzeIncomingImageBatch({
+        results,
+        pageConfig
+    });
+
+    return {
+        batchId,
+        results,
+        aggregateResult,
+        combinedImageAnalysis: composeImageAnalysisBlocks(results, aggregateResult),
+        lastImageMap: buildLastImageMapWithAggregate(results, aggregateResult),
+        totalUsage: results.reduce((sum, result) => sum + Number(result?.usage || 0), 0) + Number(aggregateResult?.usage || 0),
+        mode: resolveImageMatchingMode(pageConfig)
+    };
+}
+
 module.exports = {
     clampMatchScore,
     resolveIncomingImagePrompt,
+    resolveImageMatchingMode,
     analyzeAndMatchIncomingImage,
+    analyzeIncomingImagesForConversation,
+    analyzeIncomingImageBatch,
     formatImageAnalysisBlock,
+    formatBatchImageAnalysisBlock,
+    composeImageAnalysisBlocks,
     buildLastImageMap
 };
