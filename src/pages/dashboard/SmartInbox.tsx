@@ -1117,7 +1117,7 @@ const SmartInbox = () => {
                   ))}
                 </div>
               ) : (
-                <div className="space-y-3 p-3 sm:p-4 md:p-6">
+                <div className="min-w-0 overflow-hidden space-y-3 p-3 sm:p-4 md:p-6">
                   {hasOlderMessages && visibleMessages.length > 0 && (
                     <div className="pb-1 text-center">
                       <Button
@@ -1165,7 +1165,7 @@ const SmartInbox = () => {
                     return (
                       <div
                         key={`${normalizeTimestamp(message.timestamp) || index}-${index}`}
-                        className={cn("flex gap-3 items-end animate-in fade-in slide-in-from-bottom-2 duration-500", isOutgoing ? "justify-end" : "justify-start")}
+                        className={cn("flex w-full min-w-0 overflow-hidden gap-3 items-end animate-in fade-in slide-in-from-bottom-2 duration-500", isOutgoing ? "justify-end" : "justify-start")}
                       >
                         {!isOutgoing && (
                           <Avatar className="hidden sm:flex h-9 w-9 border border-white/10 shrink-0">

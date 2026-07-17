@@ -47,6 +47,27 @@ export default function AdsPage() {
       ? "/dashboard/whatsapp/sessions"
       : "/dashboard/messenger/integration";
 
+  const getActiveResource = () => {
+    const activeFbPageId = localStorage.getItem("active_fb_page_id");
+    const activeWaSession = localStorage.getItem("active_wa_session_id");
+    const activeFbPageName = localStorage.getItem("active_fb_page_name");
+    const activeWaSessionName = localStorage.getItem("active_wa_session_name");
+
+    if (platform === "whatsapp") {
+      return { id: activeWaSession || "", name: activeWaSessionName || activeWaSession || "Active Session" };
+    }
+
+    if (platform === "messenger") {
+      return { id: activeFbPageId || "", name: activeFbPageName || activeFbPageId || "Active Page" };
+    }
+
+    const id = activeFbPageId || activeWaSession || "";
+    return {
+      id,
+      name: activeFbPageName || activeWaSessionName || activeWaSession || activeFbPageId || "Active Session",
+    };
+  };
+
   // Form State
   const [adId, setAdId] = useState("");
   const [pageId, setPageId] = useState("");
@@ -143,9 +164,7 @@ export default function AdsPage() {
       const user = JSON.parse(storedUser);
       const userId = user.id;
       
-      const activeFb = localStorage.getItem("active_fb_page_id");
-      const activeWa = localStorage.getItem("active_wa_session_id");
-      const resolvedPageId = activeFb || activeWa;
+      const resolvedPageId = getActiveResource().id;
 
       const params = new URLSearchParams();
       params.set("user_id", userId);
@@ -179,9 +198,7 @@ export default function AdsPage() {
       const user = JSON.parse(storedUser);
       const userId = user.id;
       
-      const activeFb = localStorage.getItem("active_fb_page_id");
-      const activeWa = localStorage.getItem("active_wa_session_id");
-      const resolvedPageId = pageId || activeFb || activeWa;
+      const resolvedPageId = pageId || getActiveResource().id;
 
       const params = new URLSearchParams();
       params.set("user_id", userId);
@@ -207,8 +224,11 @@ export default function AdsPage() {
   };
 
   const handleSaveAd = async () => {
-    if (!adId || !pageId) {
-      toast.error("Ad ID and Page ID are required");
+    const activeResource = getActiveResource();
+    const resolvedPageId = pageId || activeResource.id;
+
+    if (!adId || !resolvedPageId) {
+      toast.error("Ad ID and active page are required");
       return;
     }
 
@@ -225,7 +245,7 @@ export default function AdsPage() {
         },
         body: JSON.stringify({
           ad_id: adId,
-          page_id: pageId,
+          page_id: resolvedPageId,
           user_id: userId,
           description,
           linked_product_ids: selectedProducts,
@@ -270,14 +290,10 @@ export default function AdsPage() {
 
   const resetForm = () => {
     setAdId("");
-    // Auto-fill pageId from localStorage if available
-    const activeFbPageId = localStorage.getItem("active_fb_page_id");
-    const activeWaSession = localStorage.getItem("active_wa_session_id");
-    const activeFbPageName = localStorage.getItem("active_fb_page_name");
-    const activeWaSessionName = localStorage.getItem("active_wa_session_name");
+    const activeResource = getActiveResource();
 
-    setPageId(activeFbPageId || activeWaSession || "");
-    setActivePageName(activeFbPageName || activeWaSessionName || activeWaSession || "");
+    setPageId(activeResource.id);
+    setActivePageName(activeResource.name);
     
     setDescription("");
     setSelectedProducts([]);
