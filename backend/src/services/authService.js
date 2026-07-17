@@ -243,7 +243,7 @@ async function sendOtpEmail(email, code) {
     const text = [
         `Your SalesmanAI verification code is ${code}.`,
         'It will expire in 5 minutes.',
-        'If you do not find this email in your inbox, please check your Spam or Junk folder.'
+        'For your security, do not share this code with anyone.'
     ].join(' ');
     const html = `
         <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; color: #111827;">
@@ -255,8 +255,8 @@ async function sendOtpEmail(email, code) {
                     ${code}
                 </div>
                 <p style="margin: 0 0 10px; font-size: 14px; color: #374151;">For your security, do not share this code with anyone.</p>
-                <p style="margin: 0; padding: 12px 14px; border-radius: 10px; background: #fff7ed; font-size: 13px; line-height: 1.6; color: #9a3412;">
-                    নোট: ইনবক্সে ইমেইল না পেলে Spam/Junk ফোল্ডারও চেক করুন।
+                <p style="margin: 0; font-size: 13px; line-height: 1.6; color: #6b7280;">
+                    This email was sent because a verification code was requested for your SalesmanAI account.
                 </p>
             </div>
         </div>
@@ -267,7 +267,11 @@ async function sendOtpEmail(email, code) {
         to: email,
         subject,
         text,
-        html
+        html,
+        headers: {
+            'X-Auto-Response-Suppress': 'All',
+            'Auto-Submitted': 'auto-generated'
+        }
     });
 }
 

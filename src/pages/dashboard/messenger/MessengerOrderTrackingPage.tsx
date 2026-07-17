@@ -39,6 +39,46 @@ interface Order {
   created_at: string;
 }
 
+const orderExportHeaders = ["ID", "Product Name", "Number", "Location", "Quantity", "Price", "Date"];
+
+const getOrderExportRows = (orders: Order[]) => [
+  orderExportHeaders,
+  ...orders.map((order) => [
+    order.id,
+    order.product_name || "",
+    order.number || "",
+    order.location || "",
+    order.product_quantity || "",
+    order.price || "",
+    order.created_at || "",
+  ]),
+];
+
+const escapeCsvCell = (value: string | number) => {
+  const text = String(value ?? "");
+  const escaped = text.replace(/"/g, '""');
+  return /[",\r\n]/.test(text) ? `"${escaped}"` : escaped;
+};
+
+const escapeSheetCell = (value: string | number) =>
+  String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+
+const downloadBlob = (content: string, type: string, fileName: string) => {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", fileName);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
+
 export default function MessengerOrderTrackingPage() {
   const { currentPage, loading: contextLoading } = useMessenger();
   const navigate = useNavigate();
@@ -204,29 +244,34 @@ Phone: ${order.number || 'N/A'}`;
       toast.error("No orders to export");
       return;
     }
-    
-    const headers = ["ID", "Product Name", "Number", "Location", "Quantity", "Price", "Date"];
-    const csvContent = [
-      headers.join(","),
-      ...orders.map(order => [
-        order.id,
-        `"${order.product_name || ''}"`,
-        order.number,
-        `"${order.location || ''}"`,
-        order.product_quantity,
-        order.price,
-        order.created_at
-      ].join(","))
-    ].join("\n");
 
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `fb_orders_${dateFilter}_${format(new Date(), 'yyyy-MM-dd')}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const csvContent = getOrderExportRows(orders)
+      .map((row) => row.map(escapeCsvCell).join(","))
+      .join("\r\n");
+
+    downloadBlob(
+      `\uFEFF${csvContent}`,
+      "text/csv;charset=utf-8;",
+      `fb_orders_${dateFilter}_${format(new Date(), "yyyy-MM-dd")}.csv`
+    );
+  };
+
+  const downloadGoogleSheet = () => {
+    if (!orders.length) {
+      toast.error("No orders to export");
+      return;
+    }
+
+    const tableRows = getOrderExportRows(orders)
+      .map((row) => `<tr>${row.map((cell) => `<td>${escapeSheetCell(cell)}</td>`).join("")}</tr>`)
+      .join("");
+    const sheetContent = `<!DOCTYPE html><html><head><meta charset="UTF-8" /></head><body><table>${tableRows}</table></body></html>`;
+
+    downloadBlob(
+      sheetContent,
+      "application/vnd.ms-excel;charset=utf-8;",
+      `fb_orders_${dateFilter}_${format(new Date(), "yyyy-MM-dd")}.xls`
+    );
   };
 
   if (contextLoading && !activePageId) {
@@ -302,6 +347,10 @@ Phone: ${order.number || 'N/A'}`;
                   <Button variant="outline" onClick={downloadCSV}>
                       <Download className="mr-2 h-4 w-4" />
                       CSV
+                  </Button>
+                  <Button variant="outline" onClick={downloadGoogleSheet}>
+                      <Download className="mr-2 h-4 w-4" />
+                      Google Sheet
                   </Button>
               </div>
            </div>

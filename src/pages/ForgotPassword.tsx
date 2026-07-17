@@ -37,8 +37,8 @@ const ForgotPassword = () => {
       }
       toast.success(
         t(
-          "Password reset code sent to your email.",
-          "পাসওয়ার্ড রিসেট কোড আপনার ইমেইলে পাঠানো হয়েছে।"
+          "If this email has an account, a password reset code has been sent.",
+          "এই ইমেইলে অ্যাকাউন্ট থাকলে পাসওয়ার্ড রিসেট কোড পাঠানো হয়েছে।"
         )
       );
       navigate(`/reset-password?email=${encodeURIComponent(email)}`);
@@ -69,7 +69,7 @@ const ForgotPassword = () => {
               t("Reset your password", "আপনার পাসওয়ার্ড রিসেট করুন")
             }</h2>
             <p className="mt-2 text-sm text-gray-400">
-              {t("Enter your account email and we'll send you a reset link.", "আপনার অ্যাকাউন্ট ইমেইল দিন, আমরা একটি রিসেট লিংক পাঠাব।")}
+              {t("Enter your account email and we'll send a 6-digit reset code.", "আপনার অ্যাকাউন্ট ইমেইল দিন, আমরা ৬ ডিজিট রিসেট কোড পাঠাব।")}
             </p>
           </div>
           <form onSubmit={handleSendReset} className="space-y-6">
@@ -93,7 +93,7 @@ const ForgotPassword = () => {
               className="h-12 w-full rounded-full bg-[#00ff88] text-black font-bold shadow-[0_10px_30px_rgba(0,255,136,0.25)] hover:bg-[#00f07f] transition-all hover:scale-[1.01] active:scale-95"
               disabled={loading}
             >
-              {loading ? t("Sending...", "পাঠানো হচ্ছে...") : t("Send Reset Link", "রিসেট লিংক পাঠান")}
+              {loading ? t("Sending...", "পাঠানো হচ্ছে...") : t("Send Reset Code", "রিসেট কোড পাঠান")}
             </Button>
           </form>
           <div className="mt-8 text-center">
