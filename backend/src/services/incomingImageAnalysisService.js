@@ -140,7 +140,8 @@ function formatVisionDecisionSummary(reasoningText) {
     const parsed = extractJsonObject(reasoningText);
     if (!parsed) return 'final_decision=unavailable';
 
-    if (parsed.matched_products === undefined && parsed.non_product_analysis === undefined) {
+    // Support both old JSON schema (matched_products) and new JSON schema (best_product_id/per_image_match)
+    if (parsed.matched_products === undefined && parsed.non_product_analysis === undefined && parsed.status === undefined) {
         return null;
     }
 
@@ -149,6 +150,19 @@ function formatVisionDecisionSummary(reasoningText) {
     if (parsed.visual_text) lines.push(`visual_text=${String(parsed.visual_text).trim()}`);
     if (parsed.ocr_text) lines.push(`ocr_text=${String(parsed.ocr_text).trim()}`);
 
+    // If new schema is found, format it
+    if (parsed.per_image_match || parsed.best_product_id) {
+        if (parsed.best_product_id) {
+            lines.push(`best_product_id=${parsed.best_product_id} | best_product_name=${parsed.best_product_name || 'Unknown'} | confidence=${parsed.confidence || 'unknown'}`);
+            if (parsed.reasoning) lines.push(`reasoning=${parsed.reasoning}`);
+        } else {
+             lines.push('matched_products=None');
+             if (parsed.reasoning) lines.push(`reasoning=${parsed.reasoning}`);
+        }
+        return lines.join('\n');
+    }
+
+    // Fallback to old schema
     const matchedProducts = Array.isArray(parsed.matched_products) ? parsed.matched_products : [];
     if (matchedProducts.length > 0) {
         matchedProducts.forEach((product, idx) => {
