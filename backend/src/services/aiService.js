@@ -4298,29 +4298,31 @@ function isUsableVisionApiKey(value) {
 }
 
 async function resolveOpenAiCompatibleVisionConfig(pageConfig = {}) {
-    const model = pageConfig.vision_model || pageConfig.chat_model || pageConfig.chatmodel || process.env.VISION_MODEL_OPENAI || process.env.VISION_MODEL || process.env.DEFAULT_VISION_MODEL || 'gemini-3.5-flash';
-    let provider = (pageConfig.ai_provider || pageConfig.ai || '').toLowerCase();
-    let apiKey = isUsableVisionApiKey(pageConfig.vision_api_key) ? String(pageConfig.vision_api_key).trim() : null;
-    if (!apiKey && isUsableVisionApiKey(pageConfig.api_key)) apiKey = String(pageConfig.api_key).trim();
-    if (!apiKey) {
-        apiKey = [
-            process.env.VISION_API_KEY_OPENAI,
-            process.env.VISION_API_KEY,
-            process.env.GEMINI_API_KEY,
-            process.env.GOOGLE_API_KEY,
-            process.env.OPENAI_API_KEY,
-            process.env.OPENROUTER_API_KEY
-        ].find(isUsableVisionApiKey);
-    }
+    const explicitOpenAiBaseURL = process.env.VISION_BASE_URL_OPENAI || process.env.VISUAL_BRAIN_BASE_URL;
+    const model = process.env.VISION_MODEL_OPENAI || process.env.VISUAL_BRAIN_MODEL || pageConfig.vision_model || pageConfig.chat_model || pageConfig.chatmodel || process.env.VISION_MODEL || process.env.DEFAULT_VISION_MODEL || 'gemini-3.5-flash';
+    let provider = explicitOpenAiBaseURL ? 'openai_compatible' : (pageConfig.ai_provider || pageConfig.ai || '').toLowerCase();
+    let apiKey = [
+        process.env.VISION_API_KEY_OPENAI,
+        process.env.VISUAL_BRAIN_API_KEY,
+        pageConfig.vision_api_key,
+        pageConfig.api_key,
+        process.env.VISION_API_KEY,
+        process.env.GEMINI_API_KEY,
+        process.env.GOOGLE_API_KEY,
+        process.env.OPENAI_API_KEY,
+        process.env.OPENROUTER_API_KEY
+    ].find(isUsableVisionApiKey);
+
+    let baseURL = explicitOpenAiBaseURL || pageConfig.custom_base_url || pageConfig.base_url || process.env.VISION_BASE_URL || process.env.OPENAI_BASE_URL || '';
 
     if (!provider) {
-        if (apiKey && String(apiKey).startsWith('AIza')) provider = 'google';
-        else if ((pageConfig.custom_base_url || pageConfig.base_url || process.env.VISION_BASE_URL_OPENAI || process.env.VISION_BASE_URL || '').includes('gemini')) provider = 'google';
+        if (baseURL && !baseURL.includes('generativelanguage.googleapis.com')) provider = 'openai_compatible';
+        else if (apiKey && String(apiKey).startsWith('AIza')) provider = 'google';
         else provider = 'openrouter';
     }
 
     if (!apiKey && keyService.getSmartKey) {
-        const keyProvider = provider === 'custom' ? 'google' : provider;
+        const keyProvider = provider === 'custom' || provider === 'openai_compatible' ? 'google' : provider;
         try {
             let keyData = await keyService.getSmartKey(keyProvider, model, 'vision');
             if (!keyData?.key) keyData = await keyService.getSmartKey(keyProvider, 'default', 'vision');
@@ -4330,7 +4332,6 @@ async function resolveOpenAiCompatibleVisionConfig(pageConfig = {}) {
         }
     }
 
-    let baseURL = pageConfig.custom_base_url || pageConfig.base_url || process.env.VISION_BASE_URL_OPENAI || process.env.VISION_BASE_URL || process.env.OPENAI_BASE_URL || '';
     if (!baseURL) {
         if (provider === 'google' || (apiKey && String(apiKey).startsWith('AIza'))) baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai';
         else if (provider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
