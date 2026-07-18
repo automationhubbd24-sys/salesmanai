@@ -122,11 +122,11 @@ router.get('/pages', authMiddleware, async (req, res) => {
     try {
         await ensureInstagramColumns();
         const { rows } = await pgClient.query(
-            `SELECT p.page_id, p.name, p.id, d.id AS db_id
+            `SELECT p.page_id, p.name, d.id AS db_id
              FROM page_access_token_message p
              LEFT JOIN fb_message_database d ON d.page_id = p.page_id AND d.platform = 'instagram'
              WHERE p.platform = 'instagram' AND p.user_id::text = $1
-             ORDER BY p.id DESC`,
+             ORDER BY p.page_id DESC`,
             [String(req.user.id)]
         );
         res.json(rows);
