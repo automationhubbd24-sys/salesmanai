@@ -19,14 +19,14 @@ const PLATFORM_CONFIG = {
         resourceColumn: "page_id",
         orderTable: "fb_order_tracking",
         timestampExpression: "COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000)",
-        platformCondition: "platform = 'messenger'"
+        chatsCondition: "platform = 'messenger'"
     },
     instagram: {
         chatsTable: "fb_chats",
         resourceColumn: "page_id",
         orderTable: "fb_order_tracking",
         timestampExpression: "COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000)",
-        platformCondition: "platform = 'instagram'"
+        chatsCondition: "platform = 'instagram'"
     }
 };
 
@@ -100,13 +100,11 @@ function buildConversationPayload(row) {
     };
 }
 
-async function getSmartInboxConversations(pgClient, platform, resourceId, options = {}) {
+async function getSmartInboxConversations(pgClient, platform, resourceId) {
     const config = PLATFORM_CONFIG[platform];
     if (!config) {
         throw new Error(`Unsupported platform: ${platform}`);
     }
-
-    const limit = Math.min(Math.max(parseInt(options.limit, 10) || 60, 20), 120);
 
     await ensureSmartInboxLabelsTable(pgClient);
 
@@ -122,7 +120,7 @@ async function getSmartInboxConversations(pgClient, platform, resourceId, option
                 ${config.timestampExpression} AS event_at
             FROM ${config.chatsTable}
             WHERE ${config.resourceColumn} = $1
-              AND ${config.platformCondition || 'TRUE'}
+              AND ${config.chatsCondition || 'TRUE'}
         ),
         usable_messages AS (
             SELECT *
@@ -172,7 +170,6 @@ async function getSmartInboxConversations(pgClient, platform, resourceId, option
                 status
             FROM ${config.orderTable}
             WHERE ${config.resourceColumn} = $1
-              AND ${config.platformCondition || 'TRUE'}
             ORDER BY sender_id, id DESC
         )
         SELECT
@@ -209,10 +206,9 @@ async function getSmartInboxConversations(pgClient, platform, resourceId, option
             ON lo.sender_id = COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id)
         WHERE COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id) IS NOT NULL
         ORDER BY COALESCE(lp.event_at, lf.event_at, ls.event_at) DESC
-        LIMIT $3
     `;
 
-    const result = await pgClient.query(queryText, [resourceId, platform, limit]);
+    const result = await pgClient.query(queryText, [resourceId, platform]);
     return result.rows.map(buildConversationPayload);
 }
 
