@@ -7,7 +7,6 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { BACKEND_URL } from "@/config";
 import { toast } from "sonner";
-import { CommentAutomationSettings } from "@/components/dashboard/CommentAutomationSettings";
 
 const defaultConfig = {
   provider: "gemini",
@@ -72,6 +71,5 @@ export default function InstagramSettingsPage() {
   return <div className="space-y-6">
     <div className="flex items-center justify-between"><div><h1 className="text-3xl font-bold">Instagram AI Settings</h1><p className="mt-1 text-muted-foreground">Instagram DM automation-এর AI behavior configure করুন।</p></div><Button onClick={() => void save()} disabled={saving}>{saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save</Button></div>
     <Card><CardHeader><CardTitle className="flex items-center gap-2"><Settings2 className="text-pink-500" />AI Configuration</CardTitle><CardDescription>নিজের AI provider ও prompt ব্যবহার করুন।</CardDescription></CardHeader><CardContent className="space-y-4"><div><Label>AI Provider</Label><Input value={config.provider} onChange={event => setConfig({ ...config, provider: event.target.value })} placeholder="gemini, openai, openrouter" /></div><div><Label>API Key</Label><Input type="password" value={config.api_key} onChange={event => setConfig({ ...config, api_key: event.target.value })} placeholder="API key" /></div><div><Label>Model</Label><Input value={config.chat_model} onChange={event => setConfig({ ...config, chat_model: event.target.value })} placeholder="gemini-2.0-flash" /></div><div><Label>Reply Delay (seconds)</Label><Input type="number" min="0" value={config.wait} onChange={event => setConfig({ ...config, wait: Number(event.target.value) })} /></div><div><Label>System Prompt</Label><Textarea value={config.text_prompt} onChange={event => setConfig({ ...config, text_prompt: event.target.value })} className="min-h-48" /></div></CardContent></Card>
-    <CommentAutomationSettings platform="instagram" resourceId={accountId} />
   </div>;
 }

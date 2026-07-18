@@ -50,6 +50,7 @@ import InstagramOrderTrackingPage from "./pages/dashboard/instagram/InstagramOrd
 import InstagramSettingsPage from "./pages/dashboard/instagram/InstagramSettingsPage";
 import InstagramDatabasePage from "./pages/dashboard/instagram/InstagramDatabasePage";
 import InstagramConversionPage from "./pages/dashboard/instagram/InstagramConversionPage";
+import CommentAutomationPage from "./pages/dashboard/CommentAutomationPage";
 import ApiManagementPage from "./pages/dashboard/ApiManagementPage";
 import DeveloperPage from "./pages/dashboard/DeveloperPage";
 import ApiDocsPage from "./pages/dashboard/ApiDocsPage";
@@ -123,6 +124,7 @@ const App = () => (
                   <Route path="conversion" element={<MessengerConversionPage />} />
                   <Route path="database" element={<MessengerDatabasePage />} />
                   <Route path="settings" element={<MessengerSettingsPage />} />
+                  <Route path="comment-automation" element={<CommentAutomationPage />} />
                   <Route path="products" element={<ProductsPage />} />
                   <Route path="ads" element={<AdsPage />} />
                   <Route path="reseller" element={<ResellerPage />} />
@@ -140,6 +142,7 @@ const App = () => (
                   <Route path="conversion" element={<InstagramConversionPage />} />
                   <Route path="database" element={<InstagramDatabasePage />} />
                   <Route path="settings" element={<InstagramSettingsPage />} />
+                  <Route path="comment-automation" element={<CommentAutomationPage />} />
                   <Route path="products" element={<ProductsPage />} />
                   <Route path="ads" element={<AdsPage />} />
                   <Route path="reseller" element={<ResellerPage />} />

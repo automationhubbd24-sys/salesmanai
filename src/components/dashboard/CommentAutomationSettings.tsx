@@ -1,113 +1,46 @@
 import { useEffect, useState } from "react";
-import { Loader2, MessageCircle, Plus, Save } from "lucide-react";
+import { Check, Clock3, ExternalLink, Loader2, MessageCircle, Plus, Save, Sparkles, Trash2, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 import { BACKEND_URL } from "@/config";
 import { toast } from "sonner";
 
 type Platform = "messenger" | "instagram";
-
-type Config = {
-  enabled: boolean;
-  public_reply_enabled: boolean;
-  dm_enabled: boolean;
-  ai_enabled: boolean;
-  public_reply_template: string;
-  dm_system_prompt: string;
-  trigger_keywords: string[];
-  cooldown_hours: number;
-};
-
+type Config = { enabled: boolean; public_reply_enabled: boolean; dm_enabled: boolean; ai_enabled: boolean; public_reply_template: string; dm_system_prompt: string; trigger_keywords: string[]; cooldown_hours: number };
 type Mapping = { id?: number; post_id: string; caption?: string; media_url?: string; product_ids: string[]; is_active?: boolean };
 
-const defaultConfig: Config = {
-  enabled: false,
-  public_reply_enabled: true,
-  dm_enabled: true,
-  ai_enabled: true,
-  public_reply_template: "বিস্তারিত জানতে আপনার inbox দেখুন।",
-  dm_system_prompt: "You are a sales assistant. Use mapped post/product context as source of truth and reply privately with exact product details in Bangla.",
-  trigger_keywords: ["price", "dam", "দাম", "কত", "details", "order", "অর্ডার", "inbox"],
-  cooldown_hours: 24,
-};
+const defaultConfig: Config = { enabled: false, public_reply_enabled: true, dm_enabled: true, ai_enabled: true, public_reply_template: "বিস্তারিত জানতে আপনার inbox দেখুন।", dm_system_prompt: "You are a sales assistant. Use mapped post/product context as source of truth and reply privately with exact product details in Bangla.", trigger_keywords: ["price", "dam", "দাম", "কত", "details", "order", "অর্ডার", "inbox"], cooldown_hours: 24 };
+
+function FeatureRow({ title, description, checked, onChange, icon: Icon }: { title: string; description: string; checked: boolean; onChange: (value: boolean) => void; icon: typeof Zap }) {
+  return <div className="flex items-center justify-between gap-4 rounded-xl border bg-card/60 p-4 transition-colors hover:bg-muted/40"><div className="flex min-w-0 items-center gap-3"><div className="rounded-lg bg-primary/10 p-2 text-primary"><Icon className="h-4 w-4" /></div><div><p className="font-medium">{title}</p><p className="text-xs text-muted-foreground">{description}</p></div></div><Switch checked={checked} onCheckedChange={onChange} /></div>;
+}
 
 export function CommentAutomationSettings({ platform, resourceId }: { platform: Platform; resourceId: string | null }) {
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [config, setConfig] = useState<Config>(defaultConfig);
-  const [mappings, setMappings] = useState<Mapping[]>([]);
-  const [mapping, setMapping] = useState<Mapping>({ post_id: "", caption: "", media_url: "", product_ids: [] });
-
+  const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [config, setConfig] = useState<Config>(defaultConfig); const [mappings, setMappings] = useState<Mapping[]>([]); const [mapping, setMapping] = useState<Mapping>({ post_id: "", caption: "", media_url: "", product_ids: [] });
   const base = `${BACKEND_URL}/api/${platform}`;
-  const authHeaders = () => {
-    const token = localStorage.getItem("auth_token");
-    return { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) };
-  };
+  const headers = () => { const token = localStorage.getItem("auth_token"); return { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }; };
 
-  const load = async () => {
-    if (!resourceId) { setLoading(false); return; }
-    setLoading(true);
-    try {
-      const [configResponse, mappingsResponse] = await Promise.all([
-        fetch(`${base}/comment-automation/${resourceId}`, { headers: authHeaders() }),
-        fetch(`${base}/post-mappings/${resourceId}`, { headers: authHeaders() }),
-      ]);
-      if (configResponse.ok) setConfig({ ...defaultConfig, ...(await configResponse.json()) });
-      if (mappingsResponse.ok) setMappings(await mappingsResponse.json());
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Comment automation load করা যায়নি");
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  const load = async () => { if (!resourceId) { setLoading(false); return; } setLoading(true); try { const [configResponse, mappingsResponse] = await Promise.all([fetch(`${base}/comment-automation/${resourceId}`, { headers: headers() }), fetch(`${base}/post-mappings/${resourceId}`, { headers: headers() })]); if (configResponse.ok) setConfig({ ...defaultConfig, ...(await configResponse.json()) }); if (mappingsResponse.ok) setMappings(await mappingsResponse.json()); } catch (error) { toast.error(error instanceof Error ? error.message : "Comment automation load করা যায়নি"); } finally { setLoading(false); } };
   useEffect(() => { void load(); }, [platform, resourceId]);
+  const saveConfig = async () => { if (!resourceId) return; setSaving(true); try { const response = await fetch(`${base}/comment-automation/${resourceId}`, { method: "PUT", headers: headers(), body: JSON.stringify(config) }); if (!response.ok) throw new Error("Comment automation settings save করা যায়নি"); setConfig({ ...defaultConfig, ...(await response.json()) }); toast.success("Comment automation settings saved"); } catch (error) { toast.error(error instanceof Error ? error.message : "Comment automation settings save করা যায়নি"); } finally { setSaving(false); } };
+  const saveMapping = async () => { if (!resourceId || !mapping.post_id.trim()) { toast.error("Post / Media ID দিন"); return; } try { const response = await fetch(`${base}/post-mappings/${resourceId}`, { method: "POST", headers: headers(), body: JSON.stringify(mapping) }); if (!response.ok) throw new Error("Post mapping save করা যায়নি"); setMapping({ post_id: "", caption: "", media_url: "", product_ids: [] }); toast.success("Post mapping saved"); await load(); } catch (error) { toast.error(error instanceof Error ? error.message : "Post mapping save করা যায়নি"); } };
+  const updateMappingProducts = (value: string) => setMapping({ ...mapping, product_ids: value.split(",").map(item => item.trim()).filter(Boolean) });
 
-  const saveConfig = async () => {
-    if (!resourceId) return;
-    setSaving(true);
-    try {
-      const response = await fetch(`${base}/comment-automation/${resourceId}`, { method: "PUT", headers: authHeaders(), body: JSON.stringify(config) });
-      if (!response.ok) throw new Error("Comment automation settings save করা যায়নি");
-      setConfig({ ...defaultConfig, ...(await response.json()) });
-      toast.success("Comment automation settings saved");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Comment automation settings save করা যায়নি");
-    } finally {
-      setSaving(false);
-    }
-  };
+  if (!resourceId) return <Card><CardContent className="py-12 text-center text-muted-foreground">একটি {platform === "instagram" ? "Instagram account" : "Messenger page"} select করুন।</CardContent></Card>;
+  if (loading) return <Card><CardContent className="flex justify-center py-12"><Loader2 className="animate-spin text-primary" /></CardContent></Card>;
 
-  const saveMapping = async () => {
-    if (!resourceId || !mapping.post_id.trim()) return;
-    try {
-      const response = await fetch(`${base}/post-mappings/${resourceId}`, { method: "POST", headers: authHeaders(), body: JSON.stringify(mapping) });
-      if (!response.ok) throw new Error("Post mapping save করা যায়নি");
-      setMapping({ post_id: "", caption: "", media_url: "", product_ids: [] });
-      toast.success("Post product mapping saved");
-      await load();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Post mapping save করা যায়নি");
-    }
-  };
-
-  if (!resourceId) return null;
-  if (loading) return <Card><CardContent className="flex justify-center py-8"><Loader2 className="animate-spin" /></CardContent></Card>;
-
-  return <Card>
-    <CardHeader><CardTitle className="flex items-center gap-2"><MessageCircle className="text-pink-500" />Comment Reply + Auto DM</CardTitle><CardDescription>Post ID-এর সাথে Product ID map করলে AI বুঝবে কোন post-এ কোন product, দাম/ডিটেইলস কী। Public comment-এ inbox বলবে, DM-এ full details যাবে।</CardDescription></CardHeader>
-    <CardContent className="space-y-6">
-      <div className="grid gap-4 md:grid-cols-2"><div className="flex items-center justify-between rounded-lg border p-4"><div><Label>Enable Automation</Label><p className="text-sm text-muted-foreground">Comment এলে public reply + DM flow চালু হবে।</p></div><Switch checked={config.enabled} onCheckedChange={enabled => setConfig({ ...config, enabled })} /></div><div className="flex items-center justify-between rounded-lg border p-4"><div><Label>Use AI for DM</Label><p className="text-sm text-muted-foreground">Mapped product context দিয়ে AI private DM লিখবে।</p></div><Switch checked={config.ai_enabled} onCheckedChange={ai_enabled => setConfig({ ...config, ai_enabled })} /></div><div className="flex items-center justify-between rounded-lg border p-4"><div><Label>Public Reply</Label><p className="text-sm text-muted-foreground">Comment reply-তে inbox দেখতে বলবে।</p></div><Switch checked={config.public_reply_enabled} onCheckedChange={public_reply_enabled => setConfig({ ...config, public_reply_enabled })} /></div><div className="flex items-center justify-between rounded-lg border p-4"><div><Label>Private DM</Label><p className="text-sm text-muted-foreground">Commenter-কে details inbox করবে।</p></div><Switch checked={config.dm_enabled} onCheckedChange={dm_enabled => setConfig({ ...config, dm_enabled })} /></div></div>
-      <div><Label>Public Reply Template</Label><Input value={config.public_reply_template} onChange={event => setConfig({ ...config, public_reply_template: event.target.value })} /></div>
-      <div><Label>Comment DM System Prompt</Label><Textarea className="min-h-36" value={config.dm_system_prompt} onChange={event => setConfig({ ...config, dm_system_prompt: event.target.value })} /></div>
-      <div className="grid gap-4 md:grid-cols-2"><div><Label>Trigger Keywords</Label><Input value={config.trigger_keywords.join(", ")} onChange={event => setConfig({ ...config, trigger_keywords: event.target.value.split(",").map(item => item.trim()).filter(Boolean) })} /></div><div><Label>Cooldown Hours</Label><Input type="number" value={config.cooldown_hours} onChange={event => setConfig({ ...config, cooldown_hours: Number(event.target.value) })} /></div></div>
-      <Button onClick={() => void saveConfig()} disabled={saving}>{saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save Comment Settings</Button>
-      <div className="rounded-lg border p-4"><h3 className="mb-3 font-semibold">Post to Product Mapping</h3><div className="grid gap-3 md:grid-cols-2"><div><Label>Post / Media ID</Label><Input value={mapping.post_id} onChange={event => setMapping({ ...mapping, post_id: event.target.value })} placeholder="Facebook post ID or Instagram media ID" /></div><div><Label>Product IDs</Label><Input value={mapping.product_ids.join(", ")} onChange={event => setMapping({ ...mapping, product_ids: event.target.value.split(",").map(item => item.trim()).filter(Boolean) })} placeholder="12, 15, 20" /></div><div className="md:col-span-2"><Label>Caption / Context</Label><Textarea value={mapping.caption} onChange={event => setMapping({ ...mapping, caption: event.target.value })} placeholder="এই post-এর product/campaign context" /></div></div><Button className="mt-3" variant="outline" onClick={() => void saveMapping()}><Plus className="mr-2 h-4 w-4" />Save Mapping</Button></div>
-      <div className="space-y-2">{mappings.map(item => <div key={item.id || item.post_id} className="rounded-md border p-3 text-sm"><div className="font-medium">Post: {item.post_id}</div><div className="text-muted-foreground">Products: {item.product_ids?.join(", ") || "No product"}</div>{item.caption && <div className="mt-1 line-clamp-2">{item.caption}</div>}</div>)}</div>
-    </CardContent>
-  </Card>;
+  return <div className="space-y-6">
+    <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-primary/10 via-card to-card p-6"><div className="absolute -right-12 -top-16 h-44 w-44 rounded-full bg-primary/10 blur-3xl" /><div className="relative flex flex-col justify-between gap-5 sm:flex-row sm:items-center"><div><div className="mb-3 flex items-center gap-2"><div className="rounded-xl bg-primary p-2 text-primary-foreground"><MessageCircle className="h-5 w-5" /></div><Badge variant={config.enabled ? "default" : "secondary"}>{config.enabled ? "Active" : "Paused"}</Badge></div><h1 className="text-2xl font-bold tracking-tight">Comment Automation</h1><p className="mt-1 max-w-2xl text-sm text-muted-foreground">Comment-এর public reply এবং private DM একসাথে automate করুন। Product mapping থাকলে AI সঠিক post-এর সঠিক price ও details ব্যবহার করবে।</p></div><Button onClick={() => void saveConfig()} disabled={saving} size="lg" className="shrink-0">{saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save changes</Button></div></div>
+    <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+      <Card><CardHeader><CardTitle>Automation workflow</CardTitle><CardDescription>কোন ধাপে bot কী করবে তা নিয়ন্ত্রণ করুন।</CardDescription></CardHeader><CardContent className="space-y-3"><FeatureRow title="Enable automation" description="নতুন comment-এর automation চালু রাখুন" checked={config.enabled} onChange={enabled => setConfig({ ...config, enabled })} icon={Zap} /><FeatureRow title="Public comment reply" description="Comment-এ inbox দেখার নির্দেশ দেবে" checked={config.public_reply_enabled} onChange={public_reply_enabled => setConfig({ ...config, public_reply_enabled })} icon={MessageCircle} /><FeatureRow title="Private DM" description="Commenter-কে product details পাঠাবে" checked={config.dm_enabled} onChange={dm_enabled => setConfig({ ...config, dm_enabled })} icon={ExternalLink} /><FeatureRow title="AI-powered DM" description="Mapped product context দিয়ে উত্তর তৈরি করবে" checked={config.ai_enabled} onChange={ai_enabled => setConfig({ ...config, ai_enabled })} icon={Sparkles} /><div className="grid gap-3 pt-3 sm:grid-cols-2"><div><Label className="text-xs">Cooldown (hours)</Label><div className="relative mt-1"><Clock3 className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input className="pl-9" type="number" min="0" value={config.cooldown_hours} onChange={event => setConfig({ ...config, cooldown_hours: Number(event.target.value) })} /></div></div><div><Label className="text-xs">Trigger keywords</Label><Input className="mt-1" value={config.trigger_keywords.join(", ")} onChange={event => setConfig({ ...config, trigger_keywords: event.target.value.split(",").map(item => item.trim()).filter(Boolean) })} placeholder="price, দাম, order" /></div></div></CardContent></Card>
+      <Card><CardHeader><CardTitle>Message templates</CardTitle><CardDescription>Public reply ছোট রাখুন; full details শুধু DM-এ পাঠান।</CardDescription></CardHeader><CardContent className="space-y-4"><div><Label>Public reply</Label><Input className="mt-1" value={config.public_reply_template} onChange={event => setConfig({ ...config, public_reply_template: event.target.value })} /></div><div><Label>DM system prompt</Label><Textarea className="mt-1 min-h-40 text-sm leading-6" value={config.dm_system_prompt} onChange={event => setConfig({ ...config, dm_system_prompt: event.target.value })} /></div><div className="rounded-xl bg-muted/50 p-3 text-xs text-muted-foreground"><Check className="mr-1 inline h-3.5 w-3.5 text-emerald-500" />AI কখনো mapped product context-এর বাইরে price বা availability অনুমান করবে না।</div></CardContent></Card>
+    </div>
+    <Card><CardHeader><CardTitle>Post & product mapping</CardTitle><CardDescription>এখানেই AI জানবে কোন post-এ কোন product আছে। Product IDs comma দিয়ে লিখুন।</CardDescription></CardHeader><CardContent className="space-y-5"><div className="grid gap-4 md:grid-cols-2"><div><Label>Post / media ID <span className="text-destructive">*</span></Label><Input className="mt-1" value={mapping.post_id} onChange={event => setMapping({ ...mapping, post_id: event.target.value })} placeholder={platform === "instagram" ? "Instagram media ID" : "Facebook post ID"} /></div><div><Label>Product IDs</Label><Input className="mt-1" value={mapping.product_ids.join(", ")} onChange={event => updateMappingProducts(event.target.value)} placeholder="12, 15, 20" /></div><div><Label>Post caption / context</Label><Textarea className="mt-1" value={mapping.caption} onChange={event => setMapping({ ...mapping, caption: event.target.value })} placeholder="যেমন: Red Panjabi Eid offer post — price 1200" /></div><div><Label>Media URL <span className="text-muted-foreground">(optional)</span></Label><Input className="mt-1" value={mapping.media_url} onChange={event => setMapping({ ...mapping, media_url: event.target.value })} placeholder="https://..." /></div></div><Button variant="outline" onClick={() => void saveMapping()}><Plus className="mr-2 h-4 w-4" />Add mapping</Button><Separator /><div className="space-y-2">{mappings.length === 0 ? <div className="rounded-xl border border-dashed py-8 text-center text-sm text-muted-foreground">No mappings yet. Add a post and its product IDs above.</div> : mappings.map(item => <div key={item.id || item.post_id} className="flex items-start justify-between gap-3 rounded-xl border p-4"><div className="min-w-0"><p className="font-medium">{item.post_id}</p><p className="mt-1 text-xs text-muted-foreground">Products: {item.product_ids?.join(", ") || "No product linked"}</p>{item.caption && <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">{item.caption}</p>}</div><Button variant="ghost" size="icon" className="shrink-0 text-muted-foreground hover:text-destructive"><Trash2 className="h-4 w-4" /></Button></div>)}</div></CardContent></Card>
+  </div>;
 }

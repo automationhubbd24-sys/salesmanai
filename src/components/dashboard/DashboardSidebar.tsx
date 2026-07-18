@@ -18,7 +18,8 @@ import {
   ShoppingBag,
   MessageSquare,
   Key,
-  Inbox
+  Inbox,
+  MessageCircle
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -79,6 +80,7 @@ export function DashboardSidebar({ isMobile, onLinkClick }: { isMobile?: boolean
 
     if (['whatsapp', 'messenger', 'instagram'].includes(platform)) {
       platformItems.push({ title: "AI Settings", icon: Sparkles, path: `${base}/settings` });
+      if (platform === 'messenger' || platform === 'instagram') platformItems.push({ title: "Comment Automation", icon: MessageCircle, path: `${base}/comment-automation` });
       platformItems.push({ title: "Order Tracking", icon: ShoppingBag, path: `${base}/orders` });
       platformItems.push({ title: "Conversion", icon: MessageSquare, path: `${base}/conversion` });
       platformItems.push({ title: "Smart Inbox", icon: Inbox, path: `${base}/smart-inbox` });
