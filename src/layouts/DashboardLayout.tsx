@@ -157,7 +157,7 @@ export function DashboardLayout() {
     );
   }
 
-  if (platform === 'messenger' || platform === 'instagram') {
+  if (platform === 'messenger') {
     return (
       <MessengerProvider key={reloadKey}>
         {LayoutContent}

@@ -44,6 +44,12 @@ import MessengerOrderTrackingPage from "./pages/dashboard/messenger/MessengerOrd
 import MessengerSettingsPage from "./pages/dashboard/messenger/MessengerSettingsPage";
 import MessengerDatabasePage from "./pages/dashboard/messenger/MessengerDatabasePage";
 import MessengerConversionPage from "./pages/dashboard/messenger/MessengerConversionPage";
+import InstagramIntegrationPage from "./pages/dashboard/instagram/InstagramIntegrationPage";
+import InstagramControlPage from "./pages/dashboard/instagram/InstagramControlPage";
+import InstagramOrderTrackingPage from "./pages/dashboard/instagram/InstagramOrderTrackingPage";
+import InstagramSettingsPage from "./pages/dashboard/instagram/InstagramSettingsPage";
+import InstagramDatabasePage from "./pages/dashboard/instagram/InstagramDatabasePage";
+import InstagramConversionPage from "./pages/dashboard/instagram/InstagramConversionPage";
 import ApiManagementPage from "./pages/dashboard/ApiManagementPage";
 import DeveloperPage from "./pages/dashboard/DeveloperPage";
 import ApiDocsPage from "./pages/dashboard/ApiDocsPage";
@@ -128,12 +134,12 @@ const App = () => (
                 <Route path="instagram" element={<Outlet />}>
                   <Route index element={<DashboardHome />} />
                   <Route path="smart-inbox" element={<SmartInbox />} />
-                  <Route path="integration" element={<MessengerIntegrationPage />} />
-                  <Route path="control" element={<MessengerControlPage />} />
-                  <Route path="orders" element={<MessengerOrderTrackingPage />} />
-                  <Route path="conversion" element={<MessengerConversionPage />} />
-                  <Route path="database" element={<MessengerDatabasePage />} />
-                  <Route path="settings" element={<MessengerSettingsPage />} />
+                  <Route path="integration" element={<InstagramIntegrationPage />} />
+                  <Route path="control" element={<InstagramControlPage />} />
+                  <Route path="orders" element={<InstagramOrderTrackingPage />} />
+                  <Route path="conversion" element={<InstagramConversionPage />} />
+                  <Route path="database" element={<InstagramDatabasePage />} />
+                  <Route path="settings" element={<InstagramSettingsPage />} />
                   <Route path="products" element={<ProductsPage />} />
                   <Route path="ads" element={<AdsPage />} />
                   <Route path="reseller" element={<ResellerPage />} />

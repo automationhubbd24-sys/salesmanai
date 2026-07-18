@@ -1373,14 +1373,15 @@ async function saveFbChat(data) {
         data.status || 'pending',
         data.reply_by || 'user',
         data.token || 0,
-        data.ai_model || null
+        data.ai_model || null,
+        data.platform || 'messenger'
     ];
 
     const run = async () => {
         await query(
             `INSERT INTO fb_chats
-                (page_id, sender_id, recipient_id, message_id, text, timestamp, status, reply_by, token, ai_model)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                (page_id, sender_id, recipient_id, message_id, text, timestamp, status, reply_by, token, ai_model, platform)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
              ON CONFLICT (message_id) DO UPDATE SET
                 page_id = EXCLUDED.page_id,
                 sender_id = EXCLUDED.sender_id,
@@ -1441,23 +1442,25 @@ async function ensureFbChatsTable() {
             created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
             reply_by TEXT,
             token INTEGER DEFAULT 0,
-            ai_model TEXT
-        );
+            ai_model TEXT,
+            platform TEXT NOT NULL DEFAULT 'messenger'
+            );
         CREATE INDEX IF NOT EXISTS idx_fb_chats_page_sender ON fb_chats(page_id, sender_id);
     `);
 }
 
 // 9. Get Old Messages from fb_chats
-async function getFbChatHistory(pageId, senderId, limit = 5) {
+async function getFbChatHistory(pageId, senderId, limit = 5, platform = 'messenger') {
     try {
         const result = await query(
             `SELECT *
              FROM fb_chats
              WHERE page_id = $1
                AND (sender_id = $2 OR recipient_id = $2)
+               AND platform = $4
              ORDER BY timestamp DESC
              LIMIT $3`,
-            [pageId, senderId, limit]
+            [pageId, senderId, limit, platform]
         );
         return result.rows.reverse();
     } catch (error) {

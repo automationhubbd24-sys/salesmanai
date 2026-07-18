@@ -15,7 +15,7 @@ import { useMessenger } from "@/context/MessengerContext";
 export default function MessengerControlPage() {
   const { platform } = useParams();
   const platformName = platform === 'instagram' ? 'Instagram' : 'Messenger';
-  const channelName = platform === 'instagram' ? 'Instagram' : 'Facebook';
+  const accountLabel = platform === 'instagram' ? 'Instagram Account' : 'Facebook Page';
   const integrationPath = platform === 'instagram' ? '/dashboard/instagram/integration' : '/dashboard/messenger/integration';
   const { currentPage, loading: contextLoading } = useMessenger();
   const [loading, setLoading] = useState(true);
@@ -206,10 +206,10 @@ export default function MessengerControlPage() {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] space-y-4">
         <Bot className="h-16 w-16 text-muted-foreground" />
-        <h2 className="text-2xl font-bold">No Page Connected</h2>
-        <p className="text-muted-foreground">Please select a {channelName} page to manage.</p>
+        <h2 className="text-2xl font-bold">No {accountLabel} Connected</h2>
+        <p className="text-muted-foreground">Please select an {accountLabel} to manage.</p>
         <Button asChild>
-            <Link to={integrationPath}>Go to Pages</Link>
+            <Link to={integrationPath}>Go to Accounts</Link>
         </Button>
       </div>
     );

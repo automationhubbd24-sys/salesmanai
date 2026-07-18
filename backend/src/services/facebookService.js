@@ -244,6 +244,38 @@ async function sendImageUpload(pageId, recipientId, imageUrl, accessToken) {
     }
 }
 
+async function sendInstagramMessage(accountId, recipientId, text, accessToken) {
+    const url = `https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/me/messages`;
+    const payload = { recipient: { id: String(recipientId) }, message: { text: String(text) } };
+    const delays = [500, 1000, 2000];
+    for (let attempt = 0; ; attempt += 1) {
+        try {
+            const response = await axios.post(url, payload, { params: { access_token: accessToken }, timeout: 20000 });
+            return response.data;
+        } catch (error) {
+            const status = error.response?.status;
+            if (!(status === 429 || status === 613 || status >= 500) || attempt >= delays.length) throw error;
+            await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+        }
+    }
+}
+
+async function sendInstagramImage(accountId, recipientId, imageUrl, accessToken) {
+    const url = `https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/me/messages`;
+    const payload = { recipient: { id: String(recipientId) }, message: { attachment: { type: 'image', payload: { url: imageUrl } } } };
+    const delays = [500, 1000, 2000];
+    for (let attempt = 0; ; attempt += 1) {
+        try {
+            const response = await axios.post(url, payload, { params: { access_token: accessToken }, timeout: 20000 });
+            return response.data;
+        } catch (error) {
+            const status = error.response?.status;
+            if (!(status === 429 || status === 613 || status >= 500) || attempt >= delays.length) throw error;
+            await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+        }
+    }
+}
+
 async function sendImageMessage(pageId, recipientId, imageUrl, accessToken) {
     try {
         const url = `https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/me/messages?access_token=${accessToken}`;
@@ -425,6 +457,8 @@ async function getMessageById(messageId, accessToken) {
 
 module.exports = {
     sendMessage,
+    sendInstagramMessage,
+    sendInstagramImage,
     sendImageMessage,
     sendImageUpload,
     sendVideoMessage,

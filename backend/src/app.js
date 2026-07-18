@@ -3,6 +3,7 @@ const cors = require('cors');
 const webhookRoutes = require('./routes/webhookRoutes');
 const whatsappRoutes = require('./routes/whatsappRoutes');
 const messengerRoutes = require('./routes/messengerRoutes');
+const instagramRoutes = require('./routes/instagramRoutes');
 const authRoutes = require('./routes/authRoutes');
 const productRoutes = require('./routes/productRoutes');
 const adsRoutes = require('./routes/adsRoutes');
@@ -58,6 +59,7 @@ app.use('/api/whatsapp', whatsappRoutes);
 
 app.use('/messenger', messengerRoutes);
 app.use('/api/messenger', messengerRoutes);
+app.use('/api/instagram', instagramRoutes);
 
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);

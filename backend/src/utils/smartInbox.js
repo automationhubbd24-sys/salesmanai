@@ -18,7 +18,15 @@ const PLATFORM_CONFIG = {
         chatsTable: "fb_chats",
         resourceColumn: "page_id",
         orderTable: "fb_order_tracking",
-        timestampExpression: "COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000)"
+        timestampExpression: "COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000)",
+        platformCondition: "platform = 'messenger'"
+    },
+    instagram: {
+        chatsTable: "fb_chats",
+        resourceColumn: "page_id",
+        orderTable: "fb_order_tracking",
+        timestampExpression: "COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000)",
+        platformCondition: "platform = 'instagram'"
     }
 };
 
@@ -112,6 +120,7 @@ async function getSmartInboxConversations(pgClient, platform, resourceId) {
                 ${config.timestampExpression} AS event_at
             FROM ${config.chatsTable}
             WHERE ${config.resourceColumn} = $1
+              AND ${config.platformCondition || 'TRUE'}
         ),
         usable_messages AS (
             SELECT *
@@ -161,6 +170,7 @@ async function getSmartInboxConversations(pgClient, platform, resourceId) {
                 status
             FROM ${config.orderTable}
             WHERE ${config.resourceColumn} = $1
+              AND ${config.platformCondition || 'TRUE'}
             ORDER BY sender_id, id DESC
         )
         SELECT

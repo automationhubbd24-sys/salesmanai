@@ -74,6 +74,10 @@ type PromptProduct = {
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export default function MessengerSettingsPage() {
+  const isInstagram = window.location.pathname.includes("/dashboard/instagram");
+  const platformName = isInstagram ? "Instagram" : "Messenger";
+  const accountLabel = isInstagram ? "Instagram Account" : "Facebook Page";
+  const integrationPath = isInstagram ? "/dashboard/instagram/integration" : "/dashboard/messenger/integration";
   const [loading, setLoading] = useState(true);
   const [dbId, setDbId] = useState<string | null>(null);
   const [pageId, setPageId] = useState<string | null>(null);
@@ -145,7 +149,7 @@ export default function MessengerSettingsPage() {
         provider: "openrouter",
         api_key: "",
         chatmodel: "openrouter/auto",
-        text_prompt: "You are a helpful assistant for a Facebook page.",
+        text_prompt: `You are a helpful assistant for an ${accountLabel}.`,
       },
   });
 
@@ -779,10 +783,10 @@ export default function MessengerSettingsPage() {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] space-y-4">
         <Bot className="h-16 w-16 text-muted-foreground" />
-        <h2 className="text-2xl font-bold">No Page Connected</h2>
-        <p className="text-muted-foreground">Please connect to a page to manage AI settings.</p>
+        <h2 className="text-2xl font-bold">No {accountLabel} Connected</h2>
+        <p className="text-muted-foreground">Please connect to an {accountLabel} to manage AI settings.</p>
         <Button asChild>
-            <Link to="/dashboard/messenger/integration">Go to Pages</Link>
+            <Link to={integrationPath}>Go to Accounts</Link>
         </Button>
       </div>
     );
@@ -810,9 +814,9 @@ export default function MessengerSettingsPage() {
     <div className="space-y-8 -m-4 md:-m-6 lg:-m-6 p-4 md:p-6 lg:p-6">
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
-           <h2 className="text-3xl font-bold tracking-tight">Messenger AI Intelligence</h2>
+           <h2 className="text-3xl font-bold tracking-tight">{platformName} AI Intelligence</h2>
            <p className="text-muted-foreground mt-1">
-             Connect your preferred AI brain for your Facebook Page.
+             Connect your preferred AI brain for your {accountLabel}.
            </p>
         </div>
         <div className="flex gap-2">
@@ -1672,7 +1676,7 @@ export default function MessengerSettingsPage() {
                                     />
                                     <p className="text-xs text-muted-foreground flex items-center gap-1">
                                         <Sparkles className="w-3 h-3" />
-                                        AI will automatically rewrite this for each customer to avoid Facebook spam detection.
+                                        AI will automatically rewrite this for each customer to keep reminders varied.
                                     </p>
                                 </div>
                             </div>

@@ -6,8 +6,9 @@ const router = express.Router();
 // VERY IMPORTANT: Put this BEFORE dynamic routes to avoid it being caught by a parameter route
 router.get('/monitor', webhookController.getWebhookLogs);
 
-// Facebook Webhook Verification (GET)
+// Facebook and Instagram Webhook Verification (GET)
 router.get('/', webhookController.verifyWebhook);
+router.get('/instagram', require('../controllers/instagramController').verifyInstagramWebhook);
 
 // WhatsApp Webhook Verification (GET)
 router.get('/whatsapp', webhookController.verifyWhatsAppWebhook);

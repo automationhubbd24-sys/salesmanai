@@ -9,6 +9,10 @@ import { toast } from "sonner";
 import { BACKEND_URL } from "@/config";
 
 export default function MessengerDatabasePage() {
+  const isInstagram = window.location.pathname.includes("/dashboard/instagram");
+  const platformName = isInstagram ? "Instagram" : "Facebook";
+  const accountLabel = isInstagram ? "Instagram Account" : "Page";
+  const integrationLabel = isInstagram ? "Instagram Integration" : "Facebook Integration";
   const [searchId, setSearchId] = useState("");
   const [loading, setLoading] = useState(false);
   const [connectedDb, setConnectedDb] = useState<any | null>(null);
@@ -142,9 +146,9 @@ export default function MessengerDatabasePage() {
     <div className="space-y-6 -m-4 md:-m-6 lg:-m-6 p-4 md:p-6 lg:p-6">
       {/* Header */}
       <div>
-        <h2 className="text-2xl font-bold text-foreground">Facebook Database Connect</h2>
+        <h2 className="text-2xl font-bold text-foreground">{platformName} Database Connect</h2>
         <p className="text-muted-foreground">
-          Connect to your Facebook Page Database using your unique 6-digit ID.
+          Connect to your {accountLabel} Database using your unique 6-digit ID.
         </p>
       </div>
 
@@ -181,9 +185,9 @@ export default function MessengerDatabasePage() {
               <CardContent className="pt-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-muted-foreground">Active Page</p>
+                    <p className="text-sm text-muted-foreground">Active {accountLabel}</p>
                     <p className="text-xl font-bold text-foreground truncate max-w-[200px] md:max-w-md">
-                      {pageName || connectedDb.page_id || "Unknown Page"}
+                      {pageName || connectedDb.page_id || `Unknown ${accountLabel}`}
                     </p>
                     <div className="flex gap-2 mt-1">
                         <div className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold border ${
@@ -216,7 +220,7 @@ export default function MessengerDatabasePage() {
           <CardDescription>
             {connectedDb 
                 ? `Connected to ID: ${connectedDb.id}` 
-                : "Enter the 6-digit Database ID from your Facebook Integration page."}
+                : `Enter the 6-digit Database ID from your ${integrationLabel} page.`}
           </CardDescription>
         </CardHeader>
         <CardContent>

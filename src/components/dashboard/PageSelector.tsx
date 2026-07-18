@@ -7,7 +7,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Facebook, PlusCircle } from "lucide-react";
+import { Facebook, Instagram, PlusCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 interface PageSelectorProps {
@@ -81,7 +81,7 @@ export function PageSelector({ platform = 'messenger' }: PageSelectorProps) {
       >
         <SelectTrigger className="w-full bg-sidebar-accent border-sidebar-border text-sidebar-foreground h-9">
           <div className="flex items-center gap-2 overflow-hidden">
-            <Facebook size={14} className={`shrink-0 ${iconClass}`} />
+            {platform === 'instagram' ? <Instagram size={14} className={`shrink-0 ${iconClass}`} /> : <Facebook size={14} className={`shrink-0 ${iconClass}`} />}
             <SelectValue placeholder={`Select ${platformLabel.toLowerCase()} page`} />
           </div>
         </SelectTrigger>

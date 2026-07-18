@@ -34,6 +34,10 @@ import { BACKEND_URL } from "@/config";
 import { useSearchParams } from "react-router-dom";
 
 export default function MessengerConversionPage() {
+  const platform = window.location.pathname.includes("/dashboard/instagram") ? "instagram" : "messenger";
+  const isInstagram = platform === "instagram";
+  const accountLabel = isInstagram ? "Instagram Account" : "Page";
+  const databasePath = isInstagram ? "/dashboard/instagram/database" : "/dashboard/messenger/database";
   const { currentPage, loading: contextLoading } = useMessenger();
   const [searchParams, setSearchParams] = useSearchParams();
   const [messages, setMessages] = useState<any[]>([]);
@@ -190,13 +194,13 @@ export default function MessengerConversionPage() {
              fetchStats(activePageId);
         }
     } else {
-        toast.error("No active page found. Please connect a database.");
+        toast.error(`No active ${accountLabel.toLowerCase()} found. Please connect a database.`);
     }
   };
 
   const handleDownload = async () => {
     if (!activePageId || !date?.from || !date?.to) {
-      toast.error("Please select a page and a date range.");
+      toast.error(`Please select an ${accountLabel} and a date range.`);
       return;
     }
 
@@ -258,7 +262,7 @@ export default function MessengerConversionPage() {
                 <AlertCircle className="h-4 w-4" />
                 <AlertTitle>No Database Connected</AlertTitle>
                 <AlertDescription>
-                    Please connect a database in the <Link to="/dashboard/messenger/database" className="underline font-bold">Database Connect</Link> page to view conversions.
+                    Please connect a database in the <Link to={databasePath} className="underline font-bold">Database Connect</Link> page to view conversions.
                 </AlertDescription>
             </Alert>
           </div>
@@ -284,7 +288,7 @@ export default function MessengerConversionPage() {
             <div>
                 <h1 className="text-3xl font-bold tracking-tight">Conversion</h1>
                 <p className="text-muted-foreground">
-                Track user messages and bot automated replies for Page ID: <span className="font-mono text-xs bg-muted px-1 py-0.5 rounded">{activePageId}</span>
+                Track user messages and bot automated replies for {accountLabel} ID: <span className="font-mono text-xs bg-muted px-1 py-0.5 rounded">{activePageId}</span>
                 </p>
             </div>
             
@@ -348,7 +352,7 @@ export default function MessengerConversionPage() {
                 </Button>
                 
                 {activePageId && (
-                  <BulkCampaignModal pageId={activePageId} platform="messenger" />
+                  <BulkCampaignModal pageId={activePageId} platform={platform as any} />
                 )}
             </div>
         </div>
@@ -454,7 +458,7 @@ export default function MessengerConversionPage() {
                 </TableRow>
               ) : messages.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center">No messages found for this page</TableCell>
+                  <TableCell colSpan={7} className="text-center">No messages found for this {accountLabel.toLowerCase()}</TableCell>
                 </TableRow>
               ) : (
                 messages.map((msg) => (

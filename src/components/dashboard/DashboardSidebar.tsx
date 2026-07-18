@@ -33,6 +33,7 @@ import {
 import { SessionSelector } from "./SessionSelector";
 import { PageSelector } from "@/components/dashboard/PageSelector";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
+import { InstagramAccountSelector } from "./InstagramAccountSelector";
 
 export function DashboardSidebar({ isMobile, onLinkClick }: { isMobile?: boolean; onLinkClick?: () => void }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -162,12 +163,13 @@ export function DashboardSidebar({ isMobile, onLinkClick }: { isMobile?: boolean
                   <SessionSelector />
                 </>
              )}
-             {['messenger', 'instagram'].includes(platform) && (
+             {platform === 'messenger' && (
                 <>
-                  <WorkspaceSwitcher platform={platform as 'messenger' | 'instagram'} />
-                  <PageSelector platform={platform as 'messenger' | 'instagram'} />
+                  <WorkspaceSwitcher platform="messenger" />
+                  <PageSelector platform="messenger" />
                 </>
              )}
+             {platform === 'instagram' && <InstagramAccountSelector />}
           </div>
         )}
 

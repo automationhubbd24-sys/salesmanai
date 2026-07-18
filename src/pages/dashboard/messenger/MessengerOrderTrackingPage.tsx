@@ -24,7 +24,7 @@ import { Calendar as CalendarIcon, Download, ShoppingBag, Copy, Check, RefreshCw
 import { toast } from "sonner";
 import { BACKEND_URL } from "@/config";
 import { OrderNotificationModal } from "@/components/dashboard/OrderNotificationModal";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 
 interface Order {
   id: string;
@@ -80,6 +80,13 @@ const downloadBlob = (content: string, type: string, fileName: string) => {
 };
 
 export default function MessengerOrderTrackingPage() {
+  const { platform } = useParams();
+  const isInstagram = platform === "instagram";
+  const platformName = isInstagram ? "Instagram" : "Messenger";
+  const botLabel = isInstagram ? "Instagram bot" : "Facebook bot";
+  const conversionPath = isInstagram ? "/dashboard/instagram/conversion" : "/dashboard/messenger/conversion";
+  const exportPrefix = isInstagram ? "instagram" : "fb";
+  const notificationPlatform = isInstagram ? "instagram" : "messenger";
   const { currentPage, loading: contextLoading } = useMessenger();
   const navigate = useNavigate();
   const [orders, setOrders] = useState<Order[]>([]);
@@ -141,7 +148,7 @@ Phone: ${order.number || 'N/A'}`;
     }
 
     const params = new URLSearchParams({ sender_id: order.sender_id });
-    navigate(`/dashboard/messenger/conversion?${params.toString()}`);
+    navigate(`${conversionPath}?${params.toString()}`);
   };
 
   useEffect(() => {
@@ -252,7 +259,7 @@ Phone: ${order.number || 'N/A'}`;
     downloadBlob(
       `\uFEFF${csvContent}`,
       "text/csv;charset=utf-8;",
-      `fb_orders_${dateFilter}_${format(new Date(), "yyyy-MM-dd")}.csv`
+      `${exportPrefix}_orders_${dateFilter}_${format(new Date(), "yyyy-MM-dd")}.csv`
     );
   };
 
@@ -270,7 +277,7 @@ Phone: ${order.number || 'N/A'}`;
     downloadBlob(
       sheetContent,
       "application/vnd.ms-excel;charset=utf-8;",
-      `fb_orders_${dateFilter}_${format(new Date(), "yyyy-MM-dd")}.xls`
+      `${exportPrefix}_orders_${dateFilter}_${format(new Date(), "yyyy-MM-dd")}.xls`
     );
   };
 
@@ -286,13 +293,13 @@ Phone: ${order.number || 'N/A'}`;
     <div className="space-y-6 -m-4 md:-m-6 lg:-m-6 p-4 md:p-6 lg:p-6">
       <div className="flex items-center justify-between">
         <div>
-           <h2 className="text-3xl font-bold tracking-tight">Messenger Order Tracking</h2>
+           <h2 className="text-3xl font-bold tracking-tight">{platformName} Order Tracking</h2>
            <p className="text-muted-foreground">
-             View and manage customer orders collected by the Facebook bot.
+             View and manage customer orders collected by the {botLabel}.
            </p>
         </div>
         {activeDbId > 0 && (
-          <OrderNotificationModal dbId={activeDbId} platform="messenger" />
+          <OrderNotificationModal dbId={activeDbId} platform={notificationPlatform as any} />
         )}
       </div>
 

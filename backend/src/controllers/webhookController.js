@@ -870,6 +870,7 @@ function parsePrice(value) {
 }
 
 const whatsappCloudService = require('../services/whatsappCloudService');
+const instagramController = require('./instagramController');
 
 // Step 1: Webhook Trigger
 const handleWebhook = async (req, res) => {
@@ -882,6 +883,10 @@ const handleWebhook = async (req, res) => {
 
     if (body.object === 'whatsapp_business_account') {
         return handleWhatsAppWebhook(req, res);
+    }
+
+    if (body.object === 'instagram') {
+        return instagramController.handleInstagramWebhook(req, res);
     }
 
     if (body.object === 'page') {
