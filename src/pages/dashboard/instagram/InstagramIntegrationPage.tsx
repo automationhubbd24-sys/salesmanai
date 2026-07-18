@@ -32,9 +32,14 @@ export default function InstagramIntegrationPage() {
     try {
       const token = localStorage.getItem("auth_token");
       const response = await fetch(`${BACKEND_URL}/api/instagram/pages`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-      if (!response.ok) throw new Error("Instagram accounts load করা যায়নি");
+      // #region debug-point A:instagram-pages-response
+      if (!response.ok) { const body = await response.text(); fetch("http://192.168.0.111:7778/event", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: "instagram-integration-500", runId: "pre-fix", hypothesisId: "A", location: "InstagramIntegrationPage.tsx:loadAccounts", msg: "[DEBUG] Instagram pages request failed", data: { status: response.status, body: body.slice(0, 1000), backendUrl: BACKEND_URL }, ts: Date.now() }) }).catch(() => {}); throw new Error("Instagram accounts load করা যায়নি"); }
+      // #endregion
       setAccounts(await response.json());
     } catch (error) {
+      // #region debug-point D:instagram-pages-network-error
+      fetch("http://192.168.0.111:7778/event", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: "instagram-integration-500", runId: "pre-fix", hypothesisId: "D", location: "InstagramIntegrationPage.tsx:loadAccounts", msg: "[DEBUG] Instagram pages load exception", data: { message: error instanceof Error ? error.message : String(error), backendUrl: BACKEND_URL }, ts: Date.now() }) }).catch(() => {});
+      // #endregion
       toast.error(error instanceof Error ? error.message : "Instagram accounts load করা যায়নি");
     } finally {
       setLoading(false);
