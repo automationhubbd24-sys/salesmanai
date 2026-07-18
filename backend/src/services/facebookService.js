@@ -416,6 +416,19 @@ async function replyToComment(commentId, message, accessToken) {
     }
 }
 
+async function deleteComment(commentId, accessToken) {
+    try {
+        const url = `https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/${commentId}?access_token=${accessToken}`;
+        console.log(`Deleting comment ${commentId}`);
+        const response = await axios.delete(url);
+        return response.data;
+    } catch (error) {
+        const errData = error.response ? (error.response.data || 'No data') : error.message;
+        console.error(`Error deleting comment ${commentId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
+        throw error;
+    }
+}
+
 // Get Comment Replies (to check if already replied)
 async function getCommentReplies(commentId, accessToken) {
     try {
@@ -467,6 +480,7 @@ module.exports = {
     sendTypingAction,
     getConversationMessages,
     replyToComment,
+    deleteComment,
     getCommentReplies,
     getUserProfile,
     getMessageById

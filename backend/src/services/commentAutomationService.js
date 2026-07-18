@@ -20,9 +20,11 @@ async function ensureTables() {
       public_reply_enabled BOOLEAN NOT NULL DEFAULT TRUE,
       dm_enabled BOOLEAN NOT NULL DEFAULT TRUE,
       ai_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      delete_bad_comments_enabled BOOLEAN NOT NULL DEFAULT FALSE,
       public_reply_template TEXT NOT NULL DEFAULT '${DEFAULT_PUBLIC_REPLY.replace(/'/g, "''")}',
       dm_system_prompt TEXT NOT NULL DEFAULT '${DEFAULT_DM_PROMPT.replace(/'/g, "''")}',
       trigger_keywords TEXT[] NOT NULL DEFAULT ARRAY['price','dam','দাম','কত','details','বিস্তারিত','order','অর্ডার','inbox','ইনবক্স'],
+      bad_comment_keywords TEXT[] NOT NULL DEFAULT ARRAY['spam','fake','scam','ভুয়া','ফালতু','বাজে'],
       cooldown_hours INTEGER NOT NULL DEFAULT 24,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
       updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -67,9 +69,11 @@ async function ensureTables() {
     ALTER TABLE comment_automation_configs ADD COLUMN IF NOT EXISTS public_reply_enabled BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE comment_automation_configs ADD COLUMN IF NOT EXISTS dm_enabled BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE comment_automation_configs ADD COLUMN IF NOT EXISTS ai_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE comment_automation_configs ADD COLUMN IF NOT EXISTS delete_bad_comments_enabled BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE comment_automation_configs ADD COLUMN IF NOT EXISTS public_reply_template TEXT NOT NULL DEFAULT '${DEFAULT_PUBLIC_REPLY.replace(/'/g, "''")}';
     ALTER TABLE comment_automation_configs ADD COLUMN IF NOT EXISTS dm_system_prompt TEXT NOT NULL DEFAULT '${DEFAULT_DM_PROMPT.replace(/'/g, "''")}';
     ALTER TABLE comment_automation_configs ADD COLUMN IF NOT EXISTS trigger_keywords TEXT[] NOT NULL DEFAULT ARRAY['price','dam','দাম','কত','details','বিস্তারিত','order','অর্ডার','inbox','ইনবক্স'];
+    ALTER TABLE comment_automation_configs ADD COLUMN IF NOT EXISTS bad_comment_keywords TEXT[] NOT NULL DEFAULT ARRAY['spam','fake','scam','ভুয়া','ফালতু','বাজে'];
     ALTER TABLE comment_automation_configs ADD COLUMN IF NOT EXISTS cooldown_hours INTEGER NOT NULL DEFAULT 24;
     ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS caption TEXT;
     ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS media_url TEXT;
@@ -99,16 +103,18 @@ async function updateConfig(platform, accountId, input) {
   const next = { ...current, ...(input || {}) };
   const { rows } = await pgClient.query(
     `INSERT INTO comment_automation_configs
-      (platform, account_id, enabled, public_reply_enabled, dm_enabled, ai_enabled, public_reply_template, dm_system_prompt, trigger_keywords, cooldown_hours)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+      (platform, account_id, enabled, public_reply_enabled, dm_enabled, ai_enabled, delete_bad_comments_enabled, public_reply_template, dm_system_prompt, trigger_keywords, bad_comment_keywords, cooldown_hours)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
      ON CONFLICT (platform, account_id) DO UPDATE SET
       enabled = EXCLUDED.enabled,
       public_reply_enabled = EXCLUDED.public_reply_enabled,
       dm_enabled = EXCLUDED.dm_enabled,
       ai_enabled = EXCLUDED.ai_enabled,
+      delete_bad_comments_enabled = EXCLUDED.delete_bad_comments_enabled,
       public_reply_template = EXCLUDED.public_reply_template,
       dm_system_prompt = EXCLUDED.dm_system_prompt,
       trigger_keywords = EXCLUDED.trigger_keywords,
+      bad_comment_keywords = EXCLUDED.bad_comment_keywords,
       cooldown_hours = EXCLUDED.cooldown_hours,
       updated_at = NOW()
      RETURNING *`,
@@ -119,9 +125,11 @@ async function updateConfig(platform, accountId, input) {
       next.public_reply_enabled !== false,
       next.dm_enabled !== false,
       next.ai_enabled !== false,
+      Boolean(next.delete_bad_comments_enabled),
       next.public_reply_template || DEFAULT_PUBLIC_REPLY,
       next.dm_system_prompt || DEFAULT_DM_PROMPT,
       Array.isArray(next.trigger_keywords) ? next.trigger_keywords : String(next.trigger_keywords || '').split(',').map(s => s.trim()).filter(Boolean),
+      Array.isArray(next.bad_comment_keywords) ? next.bad_comment_keywords : String(next.bad_comment_keywords || '').split(',').map(s => s.trim()).filter(Boolean),
       Number(next.cooldown_hours || 24)
     ]
   );
@@ -193,6 +201,13 @@ function shouldTrigger(config, text) {
   return keywords.some((keyword) => raw.includes(String(keyword).toLowerCase()));
 }
 
+function shouldDeleteBadComment(config, text) {
+  if (!config.delete_bad_comments_enabled) return false;
+  const raw = String(text || '').toLowerCase();
+  const keywords = Array.isArray(config.bad_comment_keywords) ? config.bad_comment_keywords : [];
+  return keywords.some((keyword) => raw.includes(String(keyword).toLowerCase()));
+}
+
 async function processCommentAutomationEvent(event) {
   const platform = event.platform;
   const accountId = String(event.accountId || '');
@@ -206,11 +221,23 @@ async function processCommentAutomationEvent(event) {
 
   const config = await getConfig(platform, accountId);
   if (!config?.enabled) return { skipped: true, reason: 'disabled' };
-  if (!shouldTrigger(config, commentText)) return { skipped: true, reason: 'keyword_not_matched' };
 
   await ensureTables();
   const existing = await pgClient.query(`SELECT id FROM comment_automation_events WHERE platform = $1 AND comment_id = $2 LIMIT 1`, [platform, commentId]);
   if (existing.rows[0]) return { skipped: true, reason: 'duplicate_comment' };
+
+  if (shouldDeleteBadComment(config, commentText)) {
+    await facebookService.deleteComment(commentId, accessToken);
+    await pgClient.query(
+      `INSERT INTO comment_automation_events (platform, account_id, post_id, comment_id, commenter_id, comment_text, public_reply_status, dm_status, error_message)
+       VALUES ($1,$2,$3,$4,$5,$6,'deleted','skipped','bad_comment_deleted')
+       ON CONFLICT (platform, comment_id) DO NOTHING`,
+      [platform, accountId, postId, commentId, commenterId, commentText]
+    );
+    return { success: true, deleted: true, reason: 'bad_comment' };
+  }
+
+  if (!shouldTrigger(config, commentText)) return { skipped: true, reason: 'keyword_not_matched' };
 
   const context = await findPostContext(platform, accountId, postId);
   const productIds = context.products.map(p => String(p.id));
