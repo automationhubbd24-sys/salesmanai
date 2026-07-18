@@ -66,11 +66,14 @@ async function ensureTables() {
 
 async function getConfig(platform, accountId) {
   await ensureTables();
-  const { rows } = await pgClient.query(
+  await pgClient.query(
     `INSERT INTO comment_automation_configs (platform, account_id)
      VALUES ($1, $2)
-     ON CONFLICT (platform, account_id) DO NOTHING;
-     SELECT * FROM comment_automation_configs WHERE platform = $1 AND account_id = $2 LIMIT 1`,
+     ON CONFLICT (platform, account_id) DO NOTHING`,
+    [platform, String(accountId)]
+  );
+  const { rows } = await pgClient.query(
+    `SELECT * FROM comment_automation_configs WHERE platform = $1 AND account_id = $2 LIMIT 1`,
     [platform, String(accountId)]
   );
   return rows[0] || null;
