@@ -29,6 +29,17 @@ async function ensureMessengerPageColumns() {
     `);
 }
 
+async function getPageByPageId(pageId, userId, userEmail) {
+    const { rows } = await pgClient.query(
+        `SELECT * FROM page_access_token_message
+         WHERE page_id = $1
+           AND (user_id::text = $2 OR LOWER(email) = LOWER($3))
+         LIMIT 1`,
+        [String(pageId), String(userId || ''), String(userEmail || '')]
+    );
+    return rows[0] || null;
+}
+
 async function verifyFacebookPageAccessToken(pageId, pageAccessToken) {
     console.log('🔍 [DEBUG] verifyFacebookPageAccessToken called for page ID:', pageId);
     try {

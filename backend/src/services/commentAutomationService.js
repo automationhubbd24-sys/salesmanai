@@ -62,6 +62,20 @@ async function ensureTables() {
       UNIQUE(platform, comment_id)
     );
   `);
+  await pgClient.query(`
+    ALTER TABLE comment_automation_configs ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE comment_automation_configs ADD COLUMN IF NOT EXISTS public_reply_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE comment_automation_configs ADD COLUMN IF NOT EXISTS dm_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE comment_automation_configs ADD COLUMN IF NOT EXISTS ai_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE comment_automation_configs ADD COLUMN IF NOT EXISTS public_reply_template TEXT NOT NULL DEFAULT '${DEFAULT_PUBLIC_REPLY.replace(/'/g, "''")}';
+    ALTER TABLE comment_automation_configs ADD COLUMN IF NOT EXISTS dm_system_prompt TEXT NOT NULL DEFAULT '${DEFAULT_DM_PROMPT.replace(/'/g, "''")}';
+    ALTER TABLE comment_automation_configs ADD COLUMN IF NOT EXISTS trigger_keywords TEXT[] NOT NULL DEFAULT ARRAY['price','dam','দাম','কত','details','বিস্তারিত','order','অর্ডার','inbox','ইনবক্স'];
+    ALTER TABLE comment_automation_configs ADD COLUMN IF NOT EXISTS cooldown_hours INTEGER NOT NULL DEFAULT 24;
+    ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS caption TEXT;
+    ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS media_url TEXT;
+    ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS product_ids TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
+    ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+  `);
 }
 
 async function getConfig(platform, accountId) {
