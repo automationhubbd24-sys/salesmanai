@@ -100,11 +100,13 @@ function buildConversationPayload(row) {
     };
 }
 
-async function getSmartInboxConversations(pgClient, platform, resourceId) {
+async function getSmartInboxConversations(pgClient, platform, resourceId, options = {}) {
     const config = PLATFORM_CONFIG[platform];
     if (!config) {
         throw new Error(`Unsupported platform: ${platform}`);
     }
+
+    const limit = Math.min(Math.max(parseInt(options.limit, 10) || 60, 20), 120);
 
     await ensureSmartInboxLabelsTable(pgClient);
 
@@ -207,9 +209,10 @@ async function getSmartInboxConversations(pgClient, platform, resourceId) {
             ON lo.sender_id = COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id)
         WHERE COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id) IS NOT NULL
         ORDER BY COALESCE(lp.event_at, lf.event_at, ls.event_at) DESC
+        LIMIT $3
     `;
 
-    const result = await pgClient.query(queryText, [resourceId, platform]);
+    const result = await pgClient.query(queryText, [resourceId, platform, limit]);
     return result.rows.map(buildConversationPayload);
 }
 

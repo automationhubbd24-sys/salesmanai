@@ -2,12 +2,21 @@ const crypto = require('crypto');
 const aiService = require('./aiService');
 const dbService = require('./dbService');
 
-async function buildImageHash(imageUrl) {
+function getProtectedMediaHeaders(imageUrl, pageConfig = {}) {
+    const value = String(imageUrl || '');
+    const token = pageConfig.page_access_token || pageConfig.cloud_access_token;
+    if ((value.includes('graph.facebook.com') || value.includes('lookaside.fbsbx.com')) && token) {
+        return { Authorization: `Bearer ${token}` };
+    }
+    return {};
+}
+
+async function buildImageHash(imageUrl, pageConfig = {}) {
     const normalizedUrl = String(imageUrl || '').trim();
     if (!normalizedUrl) return null;
 
     try {
-        const response = await fetch(normalizedUrl);
+        const response = await fetch(normalizedUrl, { headers: getProtectedMediaHeaders(normalizedUrl, pageConfig) });
         if (response.ok) {
             const arrayBuffer = await response.arrayBuffer();
             return crypto.createHash('sha256').update(Buffer.from(arrayBuffer)).digest('hex');
@@ -586,7 +595,7 @@ async function analyzeAndMatchIncomingImage({
     pageConfig,
     prompt
 }) {
-    const imageHash = await buildImageHash(imageUrl);
+    const imageHash = await buildImageHash(imageUrl, pageConfig);
     const useIncomingImageCache = false;
 
     if (useIncomingImageCache) {
@@ -622,7 +631,7 @@ async function analyzeAndMatchIncomingImage({
 
     // Always run vector search even if initial vision fails (e.g. timeout), so we still have embedding fallback
     try {
-        const directImageVector = await aiService.getDirectImageEmbedding(imageUrl, { log: false });
+        const directImageVector = await aiService.getDirectImageEmbedding(imageUrl, { log: false, pageConfig });
         const directImageMatches = directImageVector
             ? await dbService.searchProductByDirectImageVector(directImageVector, pageId)
             : [];
