@@ -11,6 +11,7 @@ const authMiddleware = require('../middleware/authMiddleware');
 
 const webhookController = require('../controllers/webhookController');
 const { getSmartInboxConversations, upsertSmartInboxLabel } = require('../utils/smartInbox');
+const commentAutomationService = require('../services/commentAutomationService');
 const FACEBOOK_GRAPH_VERSION = process.env.FACEBOOK_GRAPH_VERSION || 'v25.0';
 const smartInboxUpload = multer({
     storage: multer.memoryStorage(),
@@ -1320,6 +1321,38 @@ router.post('/send', authMiddleware, smartInboxUpload.single('image'), async (re
         console.error('Error sending Messenger smart inbox message:', err);
         res.status(500).json({ error: err.message });
     }
+});
+
+router.get('/comment-automation/:pageId', authMiddleware, async (req, res) => {
+    try {
+        const page = await getPageByPageId(req.params.pageId, req.user.id, req.user.email);
+        if (!page) return res.status(404).json({ error: 'Page not found' });
+        res.json(await commentAutomationService.getConfig('messenger', page.page_id));
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+router.put('/comment-automation/:pageId', authMiddleware, async (req, res) => {
+    try {
+        const page = await getPageByPageId(req.params.pageId, req.user.id, req.user.email);
+        if (!page) return res.status(404).json({ error: 'Page not found' });
+        res.json(await commentAutomationService.updateConfig('messenger', page.page_id, req.body));
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+router.get('/post-mappings/:pageId', authMiddleware, async (req, res) => {
+    try {
+        const page = await getPageByPageId(req.params.pageId, req.user.id, req.user.email);
+        if (!page) return res.status(404).json({ error: 'Page not found' });
+        res.json(await commentAutomationService.listMappings('messenger', page.page_id));
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+router.post('/post-mappings/:pageId', authMiddleware, async (req, res) => {
+    try {
+        const page = await getPageByPageId(req.params.pageId, req.user.id, req.user.email);
+        if (!page) return res.status(404).json({ error: 'Page not found' });
+        res.json(await commentAutomationService.upsertMapping('messenger', page.page_id, req.body));
+    } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 module.exports = router;

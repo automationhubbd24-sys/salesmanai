@@ -1,5 +1,6 @@
 const dbService = require('../services/dbService');
 const aiService = require('../services/aiService');
+const commentAutomationService = require('../services/commentAutomationService');
 
 const facebookService = require('../services/facebookService');
 const pgClient = require('../services/pgClient');
@@ -41,6 +42,26 @@ async function processInstagramWebhook(body) {
         if (!accountId) continue;
         const config = await getInstagramConfig(accountId);
         if (!config?.page_access_token) continue;
+
+        for (const change of entry.changes || []) {
+            if (!['comments', 'feed'].includes(change.field)) continue;
+            const value = change.value || {};
+            const commentId = value.comment_id || value.id;
+            const commenterId = value.from?.id || value.user_id;
+            const postId = value.media?.id || value.media_id || value.post_id;
+            const commentText = value.text || value.message || '';
+            if (!commentId || !commenterId || !postId || String(commenterId) === accountId) continue;
+            await commentAutomationService.processCommentAutomationEvent({
+                platform: 'instagram',
+                accountId,
+                postId,
+                commentId,
+                commenterId,
+                commentText,
+                accessToken: config.page_access_token,
+                accountConfig: config
+            });
+        }
 
         for (const event of entry.messaging || []) {
             if (event.message?.is_echo || !event.sender?.id || !event.message) continue;

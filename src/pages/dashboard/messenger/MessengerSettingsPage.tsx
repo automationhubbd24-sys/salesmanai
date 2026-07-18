@@ -42,11 +42,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
-  DialogTitle,
   DialogDescription,
   DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog";
+import { CommentAutomationSettings } from "@/components/dashboard/CommentAutomationSettings";
 
 const formSchema = z.object({
   provider: z.string().min(1, "Please select a provider"),
@@ -1445,6 +1446,8 @@ export default function MessengerSettingsPage() {
             )}
           </CardContent>
         </Card>
+
+        <CommentAutomationSettings platform="messenger" resourceId={pageId} />
 
         {/* Semantic Cache Controls - Removed from User View (Admin Only) */}
         {/*

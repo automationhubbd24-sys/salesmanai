@@ -3,6 +3,7 @@ const orderService = require('../services/orderService');
 const { query } = require('../services/pgClient');
 const aiService = require('../services/aiService');
 const facebookService = require('../services/facebookService');
+const commentAutomationService = require('../services/commentAutomationService');
 const incomingImageAnalysisService = require('../services/incomingImageAnalysisService');
 const { runMessengerWorkflow } = require('../services/messenger_workflow');
 const { runWhatsAppWorkflow } = require('../services/whatsapp_workflow');
@@ -4788,96 +4789,27 @@ STRICT RULES:
 // Handle Comments (n8n "OnComment" Logic)
 async function processCommentEvent(changeValue, entryPageId = null) {
     try {
-        return;
         if (changeValue.item !== 'comment' || changeValue.verb !== 'add') return;
-
         const commentId = changeValue.comment_id;
         const message = changeValue.message;
         const senderId = changeValue.from?.id;
-        const senderName = changeValue.from?.name || 'Unknown';
         const postId = changeValue.post_id;
-        
-        // Priority: Use entryPageId from Webhook Entry if available, otherwise extract from Post ID
-        const pageId = entryPageId || postId.split('_')[0]; 
+        const pageId = entryPageId || postId?.split('_')?.[0];
+        if (!commentId || !senderId || !postId || !pageId || senderId === pageId) return;
 
-        // Ignore if sender is the page itself
-        if (senderId === pageId) return;
-
-        console.log(`Processing comment ${commentId} from ${senderName}: ${message}`);
-
-        // 1. Save to DB (Avoid Duplicates)
-        await dbService.saveFbComment({
-            comment_id: commentId,
-            page_id: pageId,
-            sender_id: senderId,
-            post_id: postId,
-            message: message,
-            status: 'received'
-        });
-
-        // 2. Fetch Config
         const pageConfig = await dbService.getPageConfig(pageId);
-        if (!pageConfig || pageConfig.subscription_status === 'banned') {
-             console.log(`Page ${pageId} inactive, banned or not found.`);
-             return;
-        }
+        if (!pageConfig || pageConfig.subscription_status === 'banned' || !pageConfig.page_access_token) return;
 
-        // --- CREDIT CHECK LOGIC (Modified for Cheap Engine vs Own API) ---
-        // Default to TRUE (Cheap Engine) if undefined, for backward compatibility
-        const isCheapEngine = pageConfig.cheap_engine !== false; 
-
-        const hasBonus = Number(pageConfig.bonus_credit || 0) > 0;
-        const hasPermanent = Number(pageConfig.permanent_credit || 0) > 0;
-        const hasDaily = Number(pageConfig.daily_limit || 0) > Number(pageConfig.daily_used || 0);
-        const hasLegacy = Number(pageConfig.message_credit || 0) > 0;
-
-        const hasAnyCredit = (hasBonus || hasPermanent || hasDaily || hasLegacy);
-
-        if (isCheapEngine) {
-            if (!hasAnyCredit) {
-                console.log(`Page ${pageId} out of credits for comments (Cheap Engine Active).`);
-                return;
-            }
-        } else {
-             console.log(`Page ${pageId} using Own API for comments. Bypassing credit check.`);
-        }
-        // -----------------------------------------------------------------
-
-        // 3. Generate AI Reply
-        // Use a simplified prompt for comments (or same as chat)
-        const pagePrompts = await dbService.getPagePrompts(pageId);
-        
-        // Pass "COMMENT_CONTEXT" to help AI understand
-        const aiResponse = await aiService.generateReply(
-            `[User Commented on Post]: ${message}`, 
-            pageConfig, 
-            pagePrompts, 
-            [] // No history for comments usually, just single turn
-        );
-
-        const replyText = aiResponse.reply;
-
-        if (!replyText || replyText.toLowerCase().trim() === 'no reply') return;
-
-        // 4. Reply to Comment
-        await facebookService.replyToComment(commentId, replyText, pageConfig.page_access_token);
-        
-        // 5. Update DB Status
-        await dbService.saveFbComment({
-            comment_id: commentId,
-            reply_text: replyText,
-            status: 'replied'
+        await commentAutomationService.processCommentAutomationEvent({
+            platform: 'messenger',
+            accountId: pageId,
+            postId,
+            commentId,
+            commenterId: senderId,
+            commentText: message,
+            accessToken: pageConfig.page_access_token,
+            accountConfig: pageConfig
         });
-
-        // 6. Deduct Credit (ONLY IF CHEAP ENGINE IS ACTIVE)
-        if (isCheapEngine) {
-             await dbService.deductCredit(pageId);
-        } else {
-             console.log(`[Credit] Skipped deduction for Page ${pageId} (Own API Mode)`);
-        }
-        
-        console.log(`Replied to comment ${commentId}`);
-
     } catch (error) {
         console.error("Error processing comment:", error);
         const safeMeta = changeValue ? { commentId: changeValue.comment_id, senderId: changeValue.from?.id } : { raw: 'Invalid changeValue' };
