@@ -21,6 +21,44 @@ const smartInboxUpload = multer({
     }
 });
 
+function normalizeEmojiText(value) {
+    return String(value || '').replace(/\uFE0F/g, '').normalize('NFC');
+}
+
+function buildEmojiList(...values) {
+    return values
+        .filter(Boolean)
+        .join(' ')
+        .split(/[, ]+/)
+        .map((item) => normalizeEmojiText(item.trim()))
+        .filter(Boolean);
+}
+
+async function applyWhatsAppSmartInboxEmojiLock(config, recipientId, message) {
+    if (!config?.session_name || !recipientId || !message) return;
+
+    const promptConfig = config.page_prompts || {};
+    const lockList = buildEmojiList(
+        promptConfig.block_emoji,
+        promptConfig.lock_emojis,
+        config.block_emoji,
+        config.lock_emojis
+    );
+    const unlockList = buildEmojiList(
+        promptConfig.unblock_emoji,
+        promptConfig.unlock_emojis,
+        config.unblock_emoji,
+        config.unlock_emojis
+    );
+    const cleanMessage = normalizeEmojiText(message);
+    const isLocked = lockList.some((emoji) => cleanMessage.includes(emoji));
+    const isUnlocked = !isLocked && unlockList.some((emoji) => cleanMessage.includes(emoji));
+
+    if (isLocked || isUnlocked) {
+        await dbService.toggleWhatsAppLock(config.session_name, String(recipientId), isLocked);
+    }
+}
+
 async function ensureOfficialWhatsAppColumns() {
     await pgClient.query(`
         ALTER TABLE whatsapp_message_database
@@ -1180,7 +1218,8 @@ router.post('/send', authMiddleware, smartInboxUpload.single('image'), async (re
         }
 
         const configResult = await pgClient.query(
-            `SELECT session_name, provider_type, phone_number_id, cloud_access_token
+            `SELECT session_name, provider_type, phone_number_id, cloud_access_token,
+                    page_prompts, block_emoji, unblock_emoji, lock_emojis, unlock_emojis
              FROM whatsapp_message_database
              WHERE session_name = $1 OR waba_id = $1 OR phone_number_id = $1
              LIMIT 1`,
@@ -1229,6 +1268,7 @@ router.post('/send', authMiddleware, smartInboxUpload.single('image'), async (re
                 status: 'sent',
                 reply_by: 'admin'
             });
+            await applyWhatsAppSmartInboxEmojiLock({ ...config, session_name: resolvedSessionName }, recipientId, message);
             sentParts.push({ messageId, body: message });
         }
 
