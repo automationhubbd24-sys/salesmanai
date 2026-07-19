@@ -1219,7 +1219,7 @@ router.post('/send', authMiddleware, smartInboxUpload.single('image'), async (re
 
         const configResult = await pgClient.query(
             `SELECT session_name, provider_type, phone_number_id, cloud_access_token,
-                    page_prompts, block_emoji, unblock_emoji, lock_emojis, unlock_emojis
+                    block_emoji, unblock_emoji, lock_emojis, unlock_emojis
              FROM whatsapp_message_database
              WHERE session_name = $1 OR waba_id = $1 OR phone_number_id = $1
              LIMIT 1`,
