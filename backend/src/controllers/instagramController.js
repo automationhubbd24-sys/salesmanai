@@ -72,6 +72,9 @@ async function processInstagramWebhook(body) {
             if (!text && !imageUrls.length) continue;
 
             const bodyText = [text, ...imageUrls.map((url) => `[Image URL]: ${url}`)].filter(Boolean).join('\n');
+            const senderProfile = await facebookService.getUserProfile(senderId, config.page_access_token);
+            const senderName = senderProfile?.name && senderProfile.name !== 'Customer' ? senderProfile.name : null;
+
             await dbService.saveFbChat({
                 page_id: accountId,
                 sender_id: senderId,
@@ -81,7 +84,8 @@ async function processInstagramWebhook(body) {
                 timestamp: Number(event.timestamp) || Date.now(),
                 status: 'received',
                 reply_by: 'user',
-                platform: 'instagram'
+                platform: 'instagram',
+                sender_name: senderName
             });
 
             if (!text && imageUrls.length && !config.image_detection) continue;

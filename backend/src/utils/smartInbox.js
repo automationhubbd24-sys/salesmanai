@@ -59,6 +59,9 @@ async function ensureSmartInboxLabelsTable(pgClient) {
 
         CREATE INDEX IF NOT EXISTS idx_smart_inbox_labels_lookup
             ON smart_inbox_labels(platform, resource_id, sender_id);
+
+        ALTER TABLE IF EXISTS fb_chats ADD COLUMN IF NOT EXISTS sender_name TEXT;
+        ALTER TABLE IF EXISTS whatsapp_chats ADD COLUMN IF NOT EXISTS sender_name TEXT;
     `);
 }
 
@@ -117,6 +120,7 @@ async function getSmartInboxConversations(pgClient, platform, resourceId) {
                 END AS conversation_id,
                 text,
                 reply_by,
+                sender_name,
                 ${config.timestampExpression} AS event_at
             FROM ${config.chatsTable}
             WHERE ${config.resourceColumn} = $1
@@ -152,6 +156,15 @@ async function getSmartInboxConversations(pgClient, platform, resourceId) {
                 event_at
             FROM usable_messages
             WHERE reply_by IN ('user', 'bot', 'admin')
+            ORDER BY conversation_id, event_at DESC
+        ),
+        latest_names AS (
+            SELECT DISTINCT ON (conversation_id)
+                conversation_id,
+                NULLIF(BTRIM(sender_name), '') AS name
+            FROM usable_messages
+            WHERE sender_name IS NOT NULL
+              AND sender_name NOT IN ('Unknown', 'Customer')
             ORDER BY conversation_id, event_at DESC
         ),
         manual_labels AS (
@@ -194,7 +207,7 @@ async function getSmartInboxConversations(pgClient, platform, resourceId) {
             END AS human_transfer_selected,
             ml.order_override,
             ml.human_transfer_override,
-            NULL::text AS name
+            ln.name AS name
         FROM latest_signal ls
         FULL OUTER JOIN latest_preview lp
             ON lp.conversation_id = ls.conversation_id
@@ -202,6 +215,8 @@ async function getSmartInboxConversations(pgClient, platform, resourceId) {
             ON lf.conversation_id = COALESCE(ls.conversation_id, lp.conversation_id)
         LEFT JOIN manual_labels ml
             ON ml.sender_id = COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id)
+        LEFT JOIN latest_names ln
+            ON ln.conversation_id = COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id)
         LEFT JOIN latest_orders lo
             ON lo.sender_id = COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id)
         WHERE COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id) IS NOT NULL
