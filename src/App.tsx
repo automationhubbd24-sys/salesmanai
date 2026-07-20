@@ -80,6 +80,7 @@ const App = () => (
               <Route path="/branding-preview" element={<BrandingPreview />} />
               <Route path="/auth/facebook/messenger/callback" element={<FacebookMessengerCallbackPage />} />
               <Route path="/auth/facebook/whatsapp/callback" element={<FacebookWhatsAppCallbackPage />} />
+              <Route path="/developer-preview" element={<DeveloperPage />} />
               
               {/* Dashboard Routes */}
               <Route path="/dashboard" element={<DashboardLayout />}>

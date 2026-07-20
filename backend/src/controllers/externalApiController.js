@@ -1,714 +1,534 @@
-const dbService = require('../services/dbService');
-const aiService = require('../services/aiService');
-const liteEngineService = require('../services/liteEngineService');
-const openrouterEngineService = require('../services/openrouterEngineService');
-const keyService = require('../services/keyService');
 const axios = require('axios');
 const crypto = require('crypto');
-
 const pgClient = require('../services/pgClient');
 
-// Helper to validate API Key and return user config
-const validateApiKey = async (req) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        console.warn(`[ExternalAPI] Missing or invalid Authorization header: ${authHeader ? 'Exists but no Bearer' : 'Missing'}`);
+let schemaReady = false;
+const upstreamCursors = { aistudio: 0, codex: 0 };
+
+async function ensureDeveloperApiSchema() {
+    if (schemaReady) return;
+
+    await pgClient.query(`
+        CREATE TABLE IF NOT EXISTS developer_api_keys (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id UUID NOT NULL,
+            name TEXT NOT NULL DEFAULT 'Default key',
+            key_hash TEXT NOT NULL UNIQUE,
+            key_prefix TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            last_used_at TIMESTAMPTZ
+        )
+    `);
+
+    await pgClient.query(`
+        CREATE TABLE IF NOT EXISTS developer_api_models (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            modalities_in TEXT[] DEFAULT '{}',
+            modalities_out TEXT[] DEFAULT '{}',
+            input_price NUMERIC DEFAULT 0,
+            output_price NUMERIC DEFAULT 0,
+            cached_input_price NUMERIC DEFAULT 0,
+            context_length INTEGER DEFAULT 0,
+            released TEXT DEFAULT '',
+            upstream_model TEXT NOT NULL,
+            upstream_type TEXT NOT NULL DEFAULT 'aistudio',
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    `);
+
+    await pgClient.query(`
+        ALTER TABLE developer_api_models
+        ADD COLUMN IF NOT EXISTS upstream_type TEXT NOT NULL DEFAULT 'aistudio'
+    `);
+
+    await pgClient.query(`
+        CREATE TABLE IF NOT EXISTS developer_api_usage (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id UUID NOT NULL,
+            api_key_id UUID,
+            model TEXT NOT NULL,
+            upstream_model TEXT NOT NULL,
+            prompt_tokens INTEGER DEFAULT 0,
+            completion_tokens INTEGER DEFAULT 0,
+            cached_tokens INTEGER DEFAULT 0,
+            total_tokens INTEGER DEFAULT 0,
+            cost NUMERIC DEFAULT 0,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    `);
+
+    await pgClient.query(`
+        INSERT INTO developer_api_models (
+            id, name, description, modalities_in, modalities_out,
+            input_price, output_price, cached_input_price, context_length, released, upstream_model, upstream_type
+        ) VALUES
+        ('gemini-3.1-pro-preview', 'gemini-3.1-pro-preview', 'AIStudioToProxy Gemini Pro preview model.', ARRAY['text','image','audio','video','pdf'], ARRAY['text'], 2.00, 12.00, 0.20, 1000000, 'Feb 19, 2026', 'gemini-3.1-pro-preview', 'aistudio'),
+        ('gemini-3.5-flash', 'gemini-3.5-flash', 'AIStudioToProxy Gemini Flash model.', ARRAY['text','image','audio','video','pdf'], ARRAY['text'], 1.50, 9.00, 0.15, 1000000, 'May 19, 2026', 'gemini-3.5-flash', 'aistudio'),
+        ('gemini-3-flash-preview', 'gemini-3-flash-preview', 'AIStudioToProxy Gemini Flash preview model.', ARRAY['text','image','audio','video','pdf'], ARRAY['text'], 0.50, 3.00, 0.05, 1000000, 'Dec 17, 2025', 'gemini-3-flash-preview', 'aistudio'),
+        ('gpt-5.5', 'gpt-5.5', 'codex-proxy GPT model.', ARRAY['text','image'], ARRAY['text'], 5.00, 30.00, 0.50, 1000000, 'Apr 25, 2026', 'gpt-5.5', 'codex'),
+        ('gpt-5.4-mini', 'gpt-5.4-mini', 'codex-proxy GPT mini model.', ARRAY['text','image'], ARRAY['text'], 0.75, 4.50, 0.075, 400000, 'Mar 17, 2026', 'gpt-5.4-mini', 'codex'),
+        ('codex-auto-review', 'codex-auto-review', 'codex-proxy automated code review model.', ARRAY['text'], ARRAY['text'], 0.75, 4.50, 0.075, 400000, 'custom', 'codex-auto-review', 'codex')
+        ON CONFLICT (id) DO UPDATE SET
+            name = EXCLUDED.name,
+            description = EXCLUDED.description,
+            modalities_in = EXCLUDED.modalities_in,
+            modalities_out = EXCLUDED.modalities_out,
+            input_price = EXCLUDED.input_price,
+            output_price = EXCLUDED.output_price,
+            cached_input_price = EXCLUDED.cached_input_price,
+            context_length = EXCLUDED.context_length,
+            released = EXCLUDED.released,
+            upstream_model = EXCLUDED.upstream_model,
+            upstream_type = EXCLUDED.upstream_type,
+            status = 'active',
+            updated_at = NOW()
+    `);
+
+    schemaReady = true;
+}
+
+function hashKey(key) {
+    return crypto.createHash('sha256').update(key).digest('hex');
+}
+
+function maskKey(key) {
+    if (!key) return '';
+    if (key.length <= 12) return `${key.slice(0, 4)}...`;
+    return `${key.slice(0, 10)}...${key.slice(-4)}`;
+}
+
+function createUserApiKey() {
+    return `sk-scb-${crypto.randomBytes(32).toString('hex')}`;
+}
+
+function getAuthBearer(req) {
+    const authHeader = req.headers.authorization || '';
+    if (!authHeader.startsWith('Bearer ')) return '';
+    return authHeader.replace('Bearer ', '').trim();
+}
+
+async function validateDeveloperApiKey(req) {
+    await ensureDeveloperApiSchema();
+    const apiKey = getAuthBearer(req);
+    if (!apiKey) {
         return { error: { status: 401, message: 'Missing or invalid Authorization header', type: 'invalid_request_error', code: 'unauthorized' } };
     }
 
-    const apiKey = authHeader.replace('Bearer ', '').trim();
+    const result = await pgClient.query(
+        `SELECT k.id AS api_key_id, k.user_id, k.status, uc.balance
+         FROM developer_api_keys k
+         LEFT JOIN user_configs uc ON uc.user_id = k.user_id
+         WHERE k.key_hash = $1
+         LIMIT 1`,
+        [hashKey(apiKey)]
+    );
 
-    // Check if key is actually provided after 'Bearer '
-    if (!apiKey) {
-        return { error: { status: 401, message: 'Invalid API Key format', type: 'invalid_request_error', code: 'invalid_api_key' } };
+    const row = result.rows[0];
+    if (!row) {
+        return { error: { status: 401, message: 'Invalid API key', type: 'invalid_request_error', code: 'invalid_api_key' } };
+    }
+    if (row.status !== 'active') {
+        return { error: { status: 403, message: 'API key is disabled', type: 'invalid_request_error', code: 'key_disabled' } };
     }
 
-    let userConfig = null;
+    return { userConfig: row };
+}
 
-    try {
-        const result = await pgClient.query(
-            'SELECT user_id, balance, service_api_key, api_key FROM user_configs WHERE service_api_key = $1 LIMIT 1',
-            [apiKey]
+function readEnv(name) {
+    return String(process.env[name] || process.env[name.toUpperCase()] || '').trim();
+}
+
+function getProxyUpstreams(type) {
+    const normalizedType = type === 'codex' ? 'codex' : 'aistudio';
+    const prefixes = normalizedType === 'codex'
+        ? ['CODEX_PROXY', 'PUBLIC_CODEX_PROXY', 'GPT']
+        : ['AISTUDIO_PROXY', 'PUBLIC_AISTUDIO_PROXY', 'GEMINI'];
+
+    const indexes = new Set();
+    for (const key of Object.keys(process.env)) {
+        for (const prefix of prefixes) {
+            const lowerPrefix = prefix.toLowerCase();
+            const pattern = new RegExp(`^(${prefix}|${lowerPrefix})_(BASE_URL|INTERNAL_KEY|API_KEY)_(\\d+)$`, 'i');
+            const match = key.match(pattern);
+            if (match) indexes.add(Number(match[3]));
+        }
+    }
+
+    return [...indexes].sort((a, b) => a - b).map(index => {
+        let baseURL = '';
+        let apiKey = '';
+        for (const prefix of prefixes) {
+            baseURL = baseURL || readEnv(`${prefix}_BASE_URL_${index}`);
+            apiKey = apiKey || readEnv(`${prefix}_INTERNAL_KEY_${index}`) || readEnv(`${prefix}_API_KEY_${index}`);
+        }
+        if (!baseURL || !apiKey) return null;
+        return {
+            type: normalizedType,
+            index,
+            baseURL: baseURL.replace(/\/+$/, ''),
+            apiKey
+        };
+    }).filter(Boolean);
+}
+
+function pickProxyUpstream(type) {
+    const normalizedType = type === 'codex' ? 'codex' : 'aistudio';
+    const upstreams = getProxyUpstreams(normalizedType);
+    if (upstreams.length === 0) {
+        throw new Error(
+            normalizedType === 'codex'
+                ? 'No codex-proxy upstream configured. Set CODEX_PROXY_BASE_URL_1 and CODEX_PROXY_INTERNAL_KEY_1.'
+                : 'No AIStudio proxy upstream configured. Set AISTUDIO_PROXY_BASE_URL_1 and AISTUDIO_PROXY_INTERNAL_KEY_1.'
         );
-
-        if (result.rows.length > 0) {
-            userConfig = result.rows[0];
-        }
-    } catch (error) {
-        console.error(`[ExternalAPI] Database Error for Key: ${apiKey.substring(0, 8)}...`, error);
-        return { error: { status: 500, message: 'Internal Database Error', type: 'api_error' } };
     }
+    const selected = upstreams[upstreamCursors[normalizedType] % upstreams.length];
+    upstreamCursors[normalizedType] = (upstreamCursors[normalizedType] + 1) % upstreams.length;
+    return selected;
+}
 
-    if (!userConfig) {
-        console.warn(`[ExternalAPI] Auth Failed - Key not found in DB: ${apiKey.substring(0, 8)}...`);
-        return { error: { status: 401, message: 'Invalid API Key', type: 'invalid_request_error', code: 'invalid_api_key' } };
-    }
+async function getModel(modelId) {
+    await ensureDeveloperApiSchema();
+    const result = await pgClient.query(
+        `SELECT * FROM developer_api_models WHERE id = $1 AND status = 'active' LIMIT 1`,
+        [modelId]
+    );
+    return result.rows[0] || null;
+}
 
-    return { userConfig };
-};
+function extractUsageTokens(usage = {}) {
+    const inputDetails = usage.prompt_tokens_details || usage.input_tokens_details || {};
+    const outputDetails = usage.completion_tokens_details || usage.output_tokens_details || {};
+    const promptTokens = Number(usage.prompt_tokens || usage.input_tokens || 0);
+    const completionTokens = Number(usage.completion_tokens || usage.output_tokens || 0);
+    const cachedTokens = Number(
+        inputDetails.cached_tokens ||
+        inputDetails.cache_read_tokens ||
+        usage.cached_tokens ||
+        usage.cache_read_input_tokens ||
+        0
+    );
+    const totalTokens = Number(usage.total_tokens || promptTokens + completionTokens);
+    return {
+        promptTokens,
+        completionTokens,
+        cachedTokens,
+        totalTokens,
+        reasoningTokens: Number(outputDetails.reasoning_tokens || usage.reasoning_tokens || 0)
+    };
+}
 
-// Helper to clean AI response text (removes JSON structures if they appear)
-const cleanAiText = (text) => {
-    if (!text) return "";
-    
-    // 1. Try to parse as direct JSON
-    try {
-        const parsed = JSON.parse(text);
-        if (typeof parsed === 'object' && parsed !== null) {
-            return parsed.reply || parsed.text || parsed.message || text;
-        }
-    } catch (e) {
-        // Not direct JSON, continue
-    }
+function calculateCost(modelRow, usage) {
+    const { promptTokens, completionTokens, cachedTokens } = extractUsageTokens(usage);
+    const billablePrompt = Math.max(promptTokens - cachedTokens, 0);
+    const inputCost = (billablePrompt / 1000000) * Number(modelRow?.input_price || 0);
+    const cachedCost = (cachedTokens / 1000000) * Number(modelRow?.cached_input_price || 0);
+    const outputCost = (completionTokens / 1000000) * Number(modelRow?.output_price || 0);
+    return Number((inputCost + cachedCost + outputCost).toFixed(8));
+}
 
-    // 2. Look for JSON-like structure with "reply": "..."
-    const replyMatch = text.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-    if (replyMatch && replyMatch[1]) {
-        // Unescape the captured string
-        try {
-            return JSON.parse(`"${replyMatch[1]}"`);
-        } catch (e) {
-            return replyMatch[1];
-        }
-    }
+async function logUsage({ userConfig, modelRow, usage }) {
+    const { promptTokens, completionTokens, cachedTokens, totalTokens } = extractUsageTokens(usage);
+    const cost = calculateCost(modelRow, usage);
 
-    // 3. Remove markdown code blocks if they wrap the whole thing
-    let cleaned = text.trim();
-    if (cleaned.startsWith("```") && cleaned.endsWith("```")) {
-        cleaned = cleaned.replace(/^```[a-z]*\n/i, "").replace(/\n```$/i, "").trim();
-        // Recurse once if we found a code block
-        return cleanAiText(cleaned);
-    }
+    await pgClient.query(
+        `INSERT INTO developer_api_usage
+         (user_id, api_key_id, model, upstream_model, prompt_tokens, completion_tokens, cached_tokens, total_tokens, cost)
+         VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9)`,
+        [userConfig.user_id, userConfig.api_key_id, modelRow.id, modelRow.upstream_model, promptTokens, completionTokens, cachedTokens, totalTokens, cost]
+    );
 
-    return text;
-};
+    await pgClient.query('UPDATE developer_api_keys SET last_used_at = NOW() WHERE id = $1::uuid', [userConfig.api_key_id]);
+    return cost;
+}
 
 exports.handleChatCompletion = async (req, res) => {
     try {
-        // 1. Validate API Key & Fetch User Config
-        const { userConfig, error: authError } = await validateApiKey(req);
-        if (authError) {
-            return res.status(authError.status).json({ error: { message: authError.message, type: authError.type, code: authError.code } });
+        const { userConfig, error } = await validateDeveloperApiKey(req);
+        if (error) return res.status(error.status).json({ error: { message: error.message, type: error.type, code: error.code } });
+
+        const requestedModel = req.body?.model;
+        if (!requestedModel) {
+            return res.status(400).json({ error: { message: 'model is required', type: 'invalid_request_error', code: 'missing_model' } });
+        }
+        const modelRow = await getModel(requestedModel);
+        if (!modelRow) {
+            return res.status(404).json({ error: { message: `Model ${requestedModel} not found`, type: 'invalid_request_error', code: 'model_not_found' } });
         }
 
-        // 2. Parse Request (OpenAI Format) - MOVED UP for access to 'stream' and 'model'
-        const { messages, model, stream, user: externalUser } = req.body;
-        const requestedModel = model || 'salesmanchatbot-pro';
-        const isBranded = requestedModel.startsWith('salesmanchatbot-');
-
-        if (!messages || !Array.isArray(messages)) {
+        if (!Array.isArray(req.body?.messages)) {
             return res.status(400).json({ error: { message: 'messages array is required', type: 'invalid_request_error' } });
         }
 
-        let systemPrompt = null;
-        let history = [];
-        let userMessage = "";
-        let imageUrls = [];
-        let audioUrls = [];
+        const upstream = pickProxyUpstream(modelRow.upstream_type);
+        const upstreamBody = { ...req.body, model: modelRow.upstream_model };
+        const targetUrl = `${upstream.baseURL}/chat/completions`;
+        const headers = {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${upstream.apiKey}`,
+            'HTTP-Referer': process.env.PUBLIC_SITE_URL || 'https://salesmanchatbot.online',
+            'X-Title': 'SalesmanChatbot Developer API'
+        };
 
-        // Parse messages to get image/audio URLs for resolution
-        for (let i = 0; i < messages.length; i++) {
-            const msg = messages[i];
-            let contentText = "";
-            if (Array.isArray(msg.content)) {
-                for (const part of msg.content) {
-                    if (part.type === 'text') contentText += part.text || "";
-                    else if (part.type === 'image_url') {
-                        const url = part.image_url?.url || part.image_url;
-                        if (url && i === messages.length - 1 && msg.role === 'user') imageUrls.push(url);
-                    } else if (part.type === 'audio_url') {
-                        const url = part.audio_url?.url || part.audio_url;
-                        if (url && i === messages.length - 1 && msg.role === 'user') audioUrls.push(url);
-                    }
-                }
-            } else {
-                contentText = msg.content || "";
-            }
-            if (msg.role === 'system') systemPrompt = contentText;
-            else if (i === messages.length - 1 && msg.role === 'user') userMessage = contentText;
-            else history.push({ role: msg.role, content: contentText });
-        }
-
-        // 3. Free Tier Logic (Lifetime 20 requests if balance is low)
-        let freeTierActive = false;
-        try {
-            const pgClient = require('../services/pgClient');
-            const countResult = await pgClient.query(
-                'SELECT COUNT(*)::int AS cnt FROM api_usage_stats WHERE user_id = $1::uuid',
-                [userConfig.user_id]
-            );
-            const totalCount = countResult.rows.length > 0 ? (countResult.rows[0].cnt || 0) : 0;
-            if (Number(userConfig.balance) < 0.01 && totalCount < 20) {
-                freeTierActive = true;
-            }
-        } catch (e) {
-            console.error("[ExternalAPI] Free tier check error:", e.message);
-        }
-
-        // 4. Resolve Provider & Model
-        let provider = 'google';
-        let modelToUse = requestedModel;
-        let isSystemRequest = false; // Developer API MUST ALWAYS use user keys
-
-        if (isBranded) {
-            try {
-                // Branded models resolve to underlying provider models but must use user's keys
-                const resolved = await aiService.resolveSalesmanchatbotEngine({ chat_model: requestedModel }, 'salesmanchatbot', requestedModel, imageUrls.length > 0, audioUrls.length > 0);
-                provider = resolved.finalProvider;
-                modelToUse = resolved.finalModel;
-            } catch (e) {
-                console.warn(`[ExternalAPI] Resolution failed for ${requestedModel}:`, e.message);
-            }
-        } else {
-            // Non-branded models (Fallback or direct)
-            if (requestedModel.includes('gpt')) provider = 'openai';
-            else if (requestedModel.includes('mistral')) provider = 'mistral';
-            else if (requestedModel.includes('llama') || requestedModel.includes('mixtral')) provider = 'groq';
-            else if (requestedModel.includes('claude')) provider = 'anthropic';
-            else if (requestedModel.includes('gemini') || requestedModel.includes('google')) provider = 'google';
-        }
-
-        // 5. Check Balance (Optional: if you still want to charge for using the system logic/platform)
-        if (!freeTierActive) {
-            if (userConfig.balance < 0.01) {
-                return res.status(402).json({ error: { message: `Insufficient balance. Minimum 0.01 BDT required.`, type: 'insufficient_quota', code: 'insufficient_balance' } });
-            }
-        }
-
-        // 6. Check for API Keys (Personal Pool or Single Key) - MANDATORY for Developer API
-        let hasUserPoolKeys = false;
-        try {
-            const pgClient = require('../services/pgClient');
-            const poolCheck = await pgClient.query(
-                "SELECT COUNT(*)::int as count FROM api_list WHERE owner_id = $1::uuid AND status = 'active'",
-                [userConfig.user_id]
-            );
-            hasUserPoolKeys = poolCheck.rows[0].count > 0;
-        } catch (e) {
-            console.error("[ExternalAPI] Pool check error:", e.message);
-        }
-
-        const hasSingleKey = userConfig.api_key && userConfig.api_key.trim() !== '';
-
-        if (!hasUserPoolKeys && !hasSingleKey) {
-            return res.status(200).json({ 
-                id: `err-${Date.now()}`,
-                object: "chat.completion",
-                created: Math.floor(Date.now() / 1000),
-                model: requestedModel,
-                choices: [
-                    {
-                        index: 0,
-                        message: {
-                            role: "assistant",
-                            content: "no api key founds"
-                        },
-                        finish_reason: "stop"
-                    }
-                ],
-                usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+        if (req.body.stream) {
+            const response = await axios.post(targetUrl, upstreamBody, {
+                headers,
+                responseType: 'stream',
+                timeout: 120000,
+                validateStatus: () => true
             });
-        }
-
-        // --- COMMON LOGIC: Fetch Key & Prepare Request ---
-        const maxAttempts = 3;
-        let lastError = null;
-        let targetUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
-        
-        if (provider === 'openai') targetUrl = 'https://api.openai.com/v1/chat/completions';
-        else if (provider === 'groq') targetUrl = 'https://api.groq.com/openai/v1/chat/completions';
-        else if (provider === 'mistral') targetUrl = 'https://api.mistral.ai/v1/chat/completions';
-        else if (provider === 'anthropic') targetUrl = 'https://api.anthropic.com/v1/messages'; 
-
-        // --- STREAMING SUPPORT ---
-        if (stream) {
-            console.log(`[ExternalAPI] Streaming request for model: ${requestedModel} (User Pool Keys: ${hasUserPoolKeys})`);
-            
-            for (let attempt = 0; attempt < maxAttempts; attempt++) {
-                let keyData = null;
-                
-                // 1. Try to get a key from the user's personal pool first
-                keyData = await keyService.getSmartKey(provider, modelToUse, imageUrls.length > 0 ? 'vision' : 'text', false, userConfig.user_id);
-                
-                // 2. Fallback to single userConfig.api_key if no pool key found
-                if (!keyData && hasSingleKey) {
-                    keyData = { key: userConfig.api_key };
-                }
-                
-                if (!keyData || !keyData.key) {
-                    lastError = { message: `No active ${provider} keys found in your pool.` };
-                    break;
-                }
-
-                const headers = { 'Content-Type': 'application/json' };
-                if (provider === 'google' || provider === 'gemini') headers['x-goog-api-key'] = keyData.key;
-                else headers['Authorization'] = `Bearer ${keyData.key}`;
-
-                try {
-                    // Update body for upstream
-                    const upstreamBody = { ...req.body, model: modelToUse };
-
-                    const response = await axios.post(targetUrl, upstreamBody, {
-                        headers,
-                        responseType: 'stream',
-                        timeout: 60000,
-                        validateStatus: () => true
-                    });
-
-                    if (response.status >= 400) {
-                        lastError = { status: response.status, data: "" };
-                        if (response.status === 429) keyService.markKeyAsDead(keyData.key, 2 * 60 * 1000, 'upstream_429');
-                        else if ([401, 403].includes(response.status)) keyService.markKeyAsDead(keyData.key, 24 * 60 * 60 * 1000, 'upstream_auth');
-                        continue;
-                    }
-
-                    // Success: Pipe the stream
-                    res.setHeader('Content-Type', 'text/event-stream');
-                    res.setHeader('Cache-Control', 'no-cache');
-                    res.setHeader('Connection', 'keep-alive');
-                    
-                    response.data.pipe(res);
-
-                    // Billing (Flat rate for stream)
-                    if (!freeTierActive) {
-                        const cost = await dbService.getCostForModel(requestedModel);
-                        dbService.deductUserBalance(userConfig.user_id, cost, `Stream: ${requestedModel}`).catch(() => {});
-                        dbService.logApiUsage(userConfig.user_id, requestedModel, 0, cost, 'external_api');
-                    }
-                    return;
-                } catch (err) {
-                    console.error(`[ExternalAPI] Stream Attempt ${attempt + 1} failed:`, err.message);
-                    lastError = err;
-                }
-            }
-            return res.status(502).json({ error: { message: "Stream failed or no keys available", details: lastError?.message || lastError } });
-        }
-
-        // --- NON-STREAMING RAW API PATH ---
-        console.log(`[ExternalAPI] Non-streaming request for model: ${requestedModel} (User Pool Keys: ${hasUserPoolKeys})`);
-
-        for (let attempt = 0; attempt < maxAttempts; attempt++) {
-            let keyData = null;
-            
-            // 1. Try to get a key from the user's personal pool first
-            keyData = await keyService.getSmartKey(provider, modelToUse, imageUrls.length > 0 ? 'vision' : 'text', false, userConfig.user_id);
-            
-            // 2. Fallback to single userConfig.api_key if no pool key found
-            if (!keyData && hasSingleKey) {
-                keyData = { key: userConfig.api_key };
-            }
-            
-            if (!keyData || !keyData.key) {
-                lastError = { message: `No active ${provider} keys found in your pool.` };
-                break;
-            }
-
-            const headers = { 'Content-Type': 'application/json' };
-            if (provider === 'google' || provider === 'gemini') headers['x-goog-api-key'] = keyData.key;
-            else headers['Authorization'] = `Bearer ${keyData.key}`;
-
-            try {
-                // Update body for upstream
-                const upstreamBody = { ...req.body, model: modelToUse };
-
-                const response = await axios.post(targetUrl, upstreamBody, {
-                    headers,
-                    timeout: 60000,
-                    validateStatus: () => true
+            if (response.status >= 400) {
+                const chunks = [];
+                response.data.on('data', chunk => chunks.push(chunk));
+                response.data.on('end', () => {
+                    const text = Buffer.concat(chunks).toString('utf8');
+                    res.status(response.status).send(text);
                 });
-
-                if (response.status >= 400) {
-                    lastError = { status: response.status, data: response.data };
-                    if (response.status === 429) keyService.markKeyAsDead(keyData.key, 2 * 60 * 1000, 'upstream_429');
-                    else if ([401, 403].includes(response.status)) keyService.markKeyAsDead(keyData.key, 24 * 60 * 60 * 1000, 'upstream_auth');
-                    continue;
-                }
-
-                // Success: Return RAW OpenAI compatible response
-                const data = response.data;
-                
-                // Branded response model name
-                if (data.model) data.model = requestedModel;
-
-                // Billing
-                if (!freeTierActive) {
-                    const tokens = data.usage?.total_tokens || 0;
-                    const cost = await dbService.getCostForModel(requestedModel);
-                    await dbService.deductUserBalance(userConfig.user_id, cost, `API: ${requestedModel} (${tokens} tokens)`);
-                    await dbService.logApiUsage(userConfig.user_id, requestedModel, tokens, cost, 'external_api');
-                }
-
-                return res.json(data);
-
-            } catch (err) {
-                console.error(`[ExternalAPI] Attempt ${attempt + 1} failed:`, err.message);
-                lastError = err;
+                return;
             }
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Connection', 'keep-alive');
+            response.data.pipe(res);
+            return;
         }
 
-        return res.status(502).json({ error: { message: "API request failed or no keys available", details: lastError?.message || lastError } });
-
-    } catch (error) {
-        console.error('[ExternalAPI] Error:', error);
-        const branded = aiService.formatBrandedError(error);
-        return res.status(branded.code).json({ 
-            error: { 
-                message: branded.message, 
-                type: branded.type, 
-                code: branded.code 
-            } 
+        const response = await axios.post(targetUrl, upstreamBody, {
+            headers,
+            timeout: 120000,
+            validateStatus: () => true
         });
+
+        if (response.status >= 400) {
+            return res.status(response.status).json(response.data);
+        }
+
+        const data = response.data || {};
+        if (data.model) data.model = modelRow.id;
+        if (data.usage) {
+            const cost = await logUsage({ userConfig, modelRow, usage: data.usage });
+            data.usage.cost = cost;
+        }
+
+        return res.json(data);
+    } catch (error) {
+        console.error('[DeveloperAPI] Chat error:', error);
+        return res.status(500).json({ error: { message: error.message, type: 'api_error' } });
     }
 };
 
 exports.listModels = async (req, res) => {
     try {
-        // Optional: Validate API Key for discovery if we want to restrict connection to valid users only.
-        // n8n will call this to verify the connection.
-        const { userConfig, error } = await validateApiKey(req);
-        if (error) {
-            // Some tools might try to list models without a key first.
-            // But for OpenAI compatibility, a key is usually required.
-            return res.status(error.status).json({ error: { message: error.message, type: error.type, code: error.code } });
-        }
-
-        return res.json({
-            object: "list",
-            data: [
-                { id: "salesmanchatbot-pro", object: "model", created: 1677610602, owned_by: "salesman", permission: [] },
-                { id: "salesmanchatbot-flash", object: "model", created: 1709251200, owned_by: "salesman", permission: [] },
-                { id: "salesmanchatbot-lite", object: "model", created: 1709251200, owned_by: "salesman", permission: [] }
-            ]
+        await ensureDeveloperApiSchema();
+        const result = await pgClient.query(
+            `SELECT * FROM developer_api_models WHERE status = 'active' ORDER BY name ASC`
+        );
+        res.json({
+            object: 'list',
+            data: result.rows.map(row => ({
+                id: row.id,
+                object: 'model',
+                created: Math.floor(new Date(row.created_at).getTime() / 1000),
+                owned_by: 'salesmanchatbot',
+                name: row.name,
+                description: row.description,
+                modalities: { input: row.modalities_in || [], output: row.modalities_out || [] },
+                pricing: {
+                    prompt: Number(row.input_price || 0),
+                    completion: Number(row.output_price || 0),
+                    cached_prompt: Number(row.cached_input_price || 0)
+                },
+                context_length: Number(row.context_length || 0),
+                released: row.released,
+                upstream_model: row.upstream_model,
+                upstream_type: row.upstream_type || 'aistudio'
+            }))
         });
     } catch (error) {
-        console.error('[ExternalAPI] Error:', error);
-        const branded = aiService.formatBrandedError(error);
-        return res.status(branded.code).json({ 
-            error: { 
-                message: branded.message, 
-                type: branded.type, 
-                code: branded.code 
-            } 
-        });
+        res.status(500).json({ error: { message: error.message, type: 'api_error' } });
     }
 };
 
-exports.transcribeAudio = async (req, res) => {
+exports.getModelDetails = async (req, res) => {
     try {
-        const { userConfig, error } = await validateApiKey(req);
-        if (error) return res.status(error.status).json({ error });
-
-        // Check Balance (Minimal)
-        if (userConfig.balance < 0.001) {
-            return res.status(402).json({ error: { message: `Insufficient balance. Minimum 0.001 BDT required.`, type: 'insufficient_quota', code: 'insufficient_balance' } });
-        }
-
-        const { url } = req.body;
-        if (!url) {
-            return res.status(400).json({ error: { message: 'Missing audio URL', type: 'invalid_request_error' } });
-        }
-
-        console.log(`[ExternalAPI] Transcribing Audio for User ${userConfig.user_id}...`);
-        
-        // Use LiteEngine (Groq Whisper)
-        const cost = await dbService.getCostForModel('salesmanchatbot-lite');
-
-        let transcription = "";
-        try {
-            transcription = await liteEngineService.transcribeAudio(url);
-        } catch (e) {
-            console.error('[ExternalAPI] Transcription Failed:', e.message);
-            return res.status(500).json({ error: { message: 'Transcription Failed', details: e.message } });
-        }
-
-        // Deduct Balance
-        await dbService.deductUserBalance(userConfig.user_id, cost, `Audio Transcription`);
-        
-        // Log Usage
-        await dbService.logApiUsage(userConfig.user_id, 'salesmanchatbot-lite', 1, cost, 'external_api');
-
-        res.json({ text: transcription });
-
+        const model = await getModel(req.params.modelId);
+        if (!model) return res.status(404).json({ error: 'Model not found' });
+        res.json(model);
     } catch (error) {
-        console.error('[ExternalAPI] Audio Error:', error);
-        const branded = aiService.formatBrandedError(error);
-        return res.status(branded.code).json({ 
-            error: { 
-                message: branded.message, 
-                type: branded.type, 
-                code: branded.code 
-            } 
-        });
+        res.status(500).json({ error: error.message });
+    }
+};
+
+exports.createModel = async (req, res) => {
+    try {
+        await ensureDeveloperApiSchema();
+        const { id, name, description, modalities_in, modalities_out, input_price, output_price, cached_input_price, context_length, released, upstream_model, upstream_type } = req.body || {};
+        if (!id || !name || !upstream_model) return res.status(400).json({ error: 'id, name and upstream_model are required' });
+        const normalizedUpstreamType = upstream_type === 'codex' ? 'codex' : 'aistudio';
+
+        const result = await pgClient.query(
+            `INSERT INTO developer_api_models
+             (id, name, description, modalities_in, modalities_out, input_price, output_price, cached_input_price, context_length, released, upstream_model, upstream_type)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+             ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name,
+                description = EXCLUDED.description,
+                modalities_in = EXCLUDED.modalities_in,
+                modalities_out = EXCLUDED.modalities_out,
+                input_price = EXCLUDED.input_price,
+                output_price = EXCLUDED.output_price,
+                cached_input_price = EXCLUDED.cached_input_price,
+                context_length = EXCLUDED.context_length,
+                released = EXCLUDED.released,
+                upstream_model = EXCLUDED.upstream_model,
+                upstream_type = EXCLUDED.upstream_type,
+                status = 'active',
+                updated_at = NOW()
+             RETURNING *`,
+            [id, name, description || '', modalities_in || ['text'], modalities_out || ['text'], input_price || 0, output_price || 0, cached_input_price || 0, context_length || 0, released || '', upstream_model, normalizedUpstreamType]
+        );
+        res.json({ success: true, model: result.rows[0] });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+exports.deleteModel = async (req, res) => {
+    try {
+        await ensureDeveloperApiSchema();
+        await pgClient.query(`UPDATE developer_api_models SET status = 'deleted', updated_at = NOW() WHERE id = $1`, [req.params.modelId]);
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+exports.getApiKeys = async (req, res) => {
+    try {
+        await ensureDeveloperApiSchema();
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+        const result = await pgClient.query(
+            `SELECT id, name, key_prefix, status, created_at, last_used_at
+             FROM developer_api_keys WHERE user_id = $1::uuid ORDER BY created_at DESC`,
+            [userId]
+        );
+        res.json({ keys: result.rows });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+exports.createApiKey = async (req, res) => {
+    try {
+        await ensureDeveloperApiSchema();
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+        const name = String(req.body?.name || 'Default key').trim() || 'Default key';
+        const apiKey = createUserApiKey();
+        const result = await pgClient.query(
+            `INSERT INTO developer_api_keys (user_id, name, key_hash, key_prefix)
+             VALUES ($1::uuid, $2, $3, $4)
+             RETURNING id, name, key_prefix, status, created_at`,
+            [userId, name, hashKey(apiKey), maskKey(apiKey)]
+        );
+        res.json({ success: true, api_key: apiKey, key: result.rows[0] });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+exports.disableApiKey = async (req, res) => {
+    try {
+        await ensureDeveloperApiSchema();
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+        await pgClient.query(
+            `UPDATE developer_api_keys SET status = CASE WHEN status = 'active' THEN 'disabled' ELSE 'active' END WHERE id = $1::uuid AND user_id = $2::uuid`,
+            [req.params.keyId, userId]
+        );
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+exports.deleteApiKey = async (req, res) => {
+    try {
+        await ensureDeveloperApiSchema();
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+        await pgClient.query(`DELETE FROM developer_api_keys WHERE id = $1::uuid AND user_id = $2::uuid`, [req.params.keyId, userId]);
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
 };
 
 exports.getApiKey = async (req, res) => {
     try {
-        const userId = req.user?.id; 
+        await ensureDeveloperApiSchema();
+        const userId = req.user?.id;
         if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-        
-        const pgClient = require('../services/pgClient');
-        
-        // Check if table user_configs exists
-        const tableCheck = await pgClient.query(
-            "SELECT tablename FROM pg_catalog.pg_tables WHERE tablename = 'user_configs'"
-        );
-        if (tableCheck.rows.length === 0) {
-            console.warn("[FetchKey] Table user_configs does not exist yet");
-            return res.json({ api_key: null });
-        }
-
-        // Check if service_api_key column exists
-        const columnCheck = await pgClient.query(
-            "SELECT column_name FROM information_schema.columns WHERE table_name='user_configs' AND column_name='service_api_key'"
-        );
-        if (columnCheck.rows.length === 0) {
-            console.warn("[FetchKey] service_api_key column missing in user_configs");
-            return res.json({ api_key: null });
-        }
-
         const result = await pgClient.query(
-            'SELECT user_id, balance, service_api_key FROM user_configs WHERE user_id = $1::uuid LIMIT 1',
+            `SELECT id, name, key_prefix, status, created_at, last_used_at FROM developer_api_keys WHERE user_id = $1::uuid ORDER BY created_at DESC LIMIT 1`,
             [userId]
         );
-        
-        // If no config exists, we should probably return null instead of 404
-        if (result.rows.length === 0) {
-            return res.json({ api_key: null });
-        }
-
-        const row = result.rows[0];
-        res.json({ api_key: row.service_api_key || null });
+        res.json({ api_key: result.rows[0]?.key_prefix || null, key: result.rows[0] || null });
     } catch (error) {
-        console.error("Fetch Key Exception:", error);
-        res.status(500).json({ error: "Failed to fetch API key", details: error.message });
+        res.status(500).json({ error: 'Failed to fetch API key', details: error.message });
     }
 };
 
-exports.regenerateApiKey = async (req, res) => {
-    try {
-        const userId = req.user?.id;
-        console.log(`[KeyGen] Request received for user: ${userId}`);
-
-        if (!userId) {
-            console.warn(`[KeyGen] Unauthorized access attempt`);
-            return res.status(401).json({ error: 'Unauthorized' });
-        }
-
-        const newKey = 'salesmanchatbot-' + crypto.randomBytes(24).toString('hex');
-        console.log(`[KeyGen] Generating new key for user: ${userId}`);
-
-        const pgClient = require('../services/pgClient');
-
-        // Check if config exists
-        const checkRes = await pgClient.query(
-            'SELECT id FROM user_configs WHERE user_id = $1::uuid LIMIT 1',
-            [userId]
-        );
-
-        if (checkRes.rows.length === 0) {
-            // Create new config
-            // Use req.user.email if available, or fetch from users table
-            let email = req.user?.email;
-            if (!email) {
-                const userRes = await pgClient.query('SELECT email FROM users WHERE id = $1::uuid', [userId]);
-                email = userRes.rows[0]?.email || 'dev@salesmanchatbot.online';
-            }
-
-            await pgClient.query(
-                'INSERT INTO user_configs (user_id, email, service_api_key, balance) VALUES ($1::uuid, $2, $3, 0)',
-                [userId, email, newKey]
-            );
-        } else {
-            // Update existing
-            await pgClient.query(
-                'UPDATE user_configs SET service_api_key = $1 WHERE user_id = $2::uuid',
-                [newKey, userId]
-            );
-        }
-
-        res.json({ success: true, api_key: newKey });
-    } catch (error) {
-        console.error("[KeyGen] Error:", error);
-        res.status(500).json({ error: "Failed to generate key", details: error.message });
-    }
-};
-
-exports.updateUserConfig = async (req, res) => {
-    try {
-        const userId = req.user?.id;
-        if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-
-        const { ai_provider, api_key, model_name } = req.body;
-        const pgClient = require('../services/pgClient');
-
-        // Upsert user config
-        const query = `
-            INSERT INTO user_configs (user_id, email, ai_provider, api_key, model_name)
-            VALUES ($1::uuid, $2, $3, $4, $5)
-            ON CONFLICT (user_id)
-            DO UPDATE SET
-                ai_provider = COALESCE(EXCLUDED.ai_provider, user_configs.ai_provider),
-                api_key = COALESCE(EXCLUDED.api_key, user_configs.api_key),
-                model_name = COALESCE(EXCLUDED.model_name, user_configs.model_name),
-                email = COALESCE(EXCLUDED.email, user_configs.email),
-                updated_at = NOW()
-            RETURNING *
-        `;
-
-        const values = [userId, req.user.email, ai_provider, api_key, model_name];
-        const result = await pgClient.query(query, values);
-
-        res.json({ success: true, config: result.rows[0] });
-    } catch (error) {
-        console.error("Update User Config Error:", error);
-        res.status(500).json({ error: error.message });
-    }
-};
-
-exports.getUserConfig = async (req, res) => {
-    try {
-        const userId = req.user?.id;
-        if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-
-        const pgClient = require('../services/pgClient');
-        const result = await pgClient.query(
-            'SELECT ai_provider, api_key, model_name FROM user_configs WHERE user_id = $1::uuid',
-            [userId]
-        );
-
-        if (result.rows.length === 0) {
-            return res.json({});
-        }
-
-        res.json(result.rows[0]);
-    } catch (error) {
-        console.error("Get User Config Error:", error);
-        res.status(500).json({ error: error.message });
-    }
-};
+exports.regenerateApiKey = exports.createApiKey;
 
 exports.getUsageStats = async (req, res) => {
     try {
+        await ensureDeveloperApiSchema();
         const userId = req.user?.id;
         if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-
-        const { startDate, endDate } = req.query;
-        const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 20;
+        const page = Number(req.query.page || 1);
+        const limit = Number(req.query.limit || 20);
         const offset = (page - 1) * limit;
 
-        const pgClient = require('../services/pgClient');
-
-        // Robust check if table exists
-        const tableCheck = await pgClient.query(
-            "SELECT tablename FROM pg_catalog.pg_tables WHERE tablename = 'api_usage_stats'"
-        );
-
-        if (tableCheck.rows.length === 0) {
-            console.warn("[UsageStats] Table api_usage_stats does not exist yet");
-            return res.json({ 
-                stats: [],
-                pagination: { total_records: 0, total_pages: 1, current_page: page, limit: limit },
-                summary: { total_cost: 0, total_tokens: 0, total_requests: 0, today_cost: 0, today_tokens: 0, today_requests: 0, yesterday_cost: 0, yesterday_tokens: 0, yesterday_requests: 0, range_cost: 0, range_tokens: 0, range_requests: 0 }
-            });
-        }
-
-        // Check for specific columns (cost, tokens) to avoid 500 if migration failed
-        const columnCheck = await pgClient.query(
-            "SELECT column_name FROM information_schema.columns WHERE table_name='api_usage_stats' AND column_name IN ('cost', 'tokens')"
-        );
-        const hasCost = columnCheck.rows.some(r => r.column_name === 'cost');
-        const hasTokens = columnCheck.rows.some(r => r.column_name === 'tokens');
-
-        const selectCols = `id, user_id, model, ${hasTokens ? 'tokens' : '0 as tokens'}, ${hasCost ? 'cost' : '0 as cost'}, created_at`;
-
-        // 1. Fetch Paginated Stats
-        const recentResult = await pgClient.query(
-            `SELECT ${selectCols}
-             FROM api_usage_stats
-             WHERE user_id = $1::uuid
-             ORDER BY created_at DESC
-             LIMIT $2 OFFSET $3`,
+        const statsResult = await pgClient.query(
+            `SELECT * FROM developer_api_usage WHERE user_id = $1::uuid ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
             [userId, limit, offset]
         );
-        const stats = recentResult.rows || [];
-
-        // 1.5 Fetch Total Count for Pagination
-        const countResult = await pgClient.query(
-            'SELECT COUNT(*)::int as total FROM api_usage_stats WHERE user_id = $1::uuid',
+        const countResult = await pgClient.query(`SELECT COUNT(*)::int AS total FROM developer_api_usage WHERE user_id = $1::uuid`, [userId]);
+        const summaryResult = await pgClient.query(
+            `SELECT
+                COALESCE(SUM(cost), 0)::float AS total_cost,
+                COALESCE(SUM(total_tokens), 0)::int AS total_tokens,
+                COUNT(*)::int AS total_requests,
+                COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE THEN cost ELSE 0 END), 0)::float AS today_cost,
+                COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE THEN total_tokens ELSE 0 END), 0)::int AS today_tokens,
+                COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE)::int AS today_requests
+             FROM developer_api_usage WHERE user_id = $1::uuid`,
             [userId]
         );
-        const totalCount = countResult.rows[0]?.total || 0;
-        const totalPages = Math.ceil(totalCount / limit);
 
-        // 2. Calculate Totals
-        const totalResult = await pgClient.query(
-            `SELECT ${hasCost ? 'cost' : '0 as cost'}, ${hasTokens ? 'tokens' : '0 as tokens'} 
-             FROM api_usage_stats WHERE user_id = $1::uuid`,
-            [userId]
-        );
-        const totalRows = totalResult.rows || [];
-
-        const totalCost = totalRows.reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
-        const totalTokens = totalRows.reduce((sum, item) => sum + (Number(item.tokens) || 0), 0);
-        const totalRequests = totalRows.length;
-
-        // Today's stats
-        const today = new Date().toISOString().split('T')[0];
-        const todayResult = await pgClient.query(
-            `SELECT ${hasCost ? 'cost' : '0 as cost'}, ${hasTokens ? 'tokens' : '0 as tokens'}
-             FROM api_usage_stats
-             WHERE user_id = $1::uuid
-               AND created_at >= $2::timestamptz`,
-            [userId, `${today}T00:00:00Z`]
-        );
-        const todayRows = todayResult.rows || [];
-        const todayCost = todayRows.reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
-        const todayTokens = todayRows.reduce((sum, item) => sum + (Number(item.tokens) || 0), 0);
-        const todayRequests = todayRows.length;
-
-        // Yesterday stats
-        const y = new Date();
-        y.setDate(y.getDate() - 1);
-        const yesterday = y.toISOString().split('T')[0];
-        const yesterdayResult = await pgClient.query(
-            `SELECT ${hasCost ? 'cost' : '0 as cost'}, ${hasTokens ? 'tokens' : '0 as tokens'}
-             FROM api_usage_stats
-             WHERE user_id = $1::uuid
-               AND created_at >= $2::timestamptz
-               AND created_at <= $3::timestamptz`,
-            [userId, `${yesterday}T00:00:00Z`, `${yesterday}T23:59:59Z`]
-        );
-        const yesterdayRows = yesterdayResult.rows || [];
-        const yesterdayCost = yesterdayRows.reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
-        const yesterdayTokens = yesterdayRows.reduce((sum, item) => sum + (Number(item.tokens) || 0), 0);
-        const yesterdayRequests = yesterdayRows.length;
-
-        // Range stats
-        let rangeCost = 0, rangeTokens = 0, rangeRequests = 0;
-        if (startDate && endDate) {
-            const rangeResult = await pgClient.query(
-                `SELECT ${hasCost ? 'cost' : '0 as cost'}, ${hasTokens ? 'tokens' : '0 as tokens'}
-                 FROM api_usage_stats
-                 WHERE user_id = $1::uuid
-                   AND created_at >= $2::timestamptz
-                   AND created_at <= $3::timestamptz`,
-                [userId, `${startDate}T00:00:00Z`, `${endDate}T23:59:59Z`]
-            );
-            const rangeRows = rangeResult.rows || [];
-            rangeCost = rangeRows.reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
-            rangeTokens = rangeRows.reduce((sum, item) => sum + (Number(item.tokens) || 0), 0);
-            rangeRequests = rangeRows.length;
-        }
-
-        res.json({ 
-            stats,
-            pagination: { total_records: totalCount, total_pages: totalPages, current_page: page, limit },
-            summary: { total_cost: totalCost, total_tokens: totalTokens, total_requests: totalRequests, today_cost: todayCost, today_tokens: todayTokens, today_requests: todayRequests, yesterday_cost: yesterdayCost, yesterday_tokens: yesterdayTokens, yesterday_requests: yesterdayRequests, range_cost: rangeCost, range_tokens: rangeTokens, range_requests: rangeRequests }
+        const total = countResult.rows[0]?.total || 0;
+        res.json({
+            stats: statsResult.rows,
+            pagination: { total_records: total, total_pages: Math.max(Math.ceil(total / limit), 1), current_page: page, limit },
+            summary: summaryResult.rows[0] || { total_cost: 0, total_tokens: 0, total_requests: 0, today_cost: 0, today_tokens: 0, today_requests: 0 }
         });
     } catch (error) {
-        console.error("[UsageStats] Error:", error);
-        res.status(500).json({ error: "Failed to fetch usage statistics", details: error.message });
+        res.status(500).json({ error: 'Failed to fetch usage statistics', details: error.message });
     }
 };
+
+exports.updateUserConfig = async (req, res) => res.json({ success: true, message: 'Developer API uses AIStudioToProxy and codex-proxy upstream env pools.' });
+exports.getUserConfig = async (req, res) => res.json({
+    platform: 'salesmanchatbot-cloud-api',
+    upstreams: {
+        aistudio: getProxyUpstreams('aistudio').map(({ apiKey, ...item }) => item),
+        codex: getProxyUpstreams('codex').map(({ apiKey, ...item }) => item)
+    }
+});
+exports.transcribeAudio = async (req, res) => res.status(501).json({ error: { message: 'Use /v1/chat/completions with audio-capable models.', type: 'not_implemented' } });
