@@ -5,8 +5,10 @@ const facebookService = require('./facebookService');
 
 const DEFAULT_PUBLIC_REPLY = 'বিস্তারিত জানতে আপনার inbox দেখুন।';
 const DEFAULT_DM_PROMPT = `You are a sales assistant replying privately to a customer who commented on a social media post.
+Understand the customer's intent from the full comment, not from fixed keywords.
 Use the mapped post/product context as the primary source of truth.
 If product details are available, answer price/details/order questions clearly in Bangla.
+If the comment is a greeting or general interest, respond naturally and guide the customer toward the mapped product.
 If no product is mapped, ask which product they mean.
 Never say the product is available unless the context confirms it.`;
 
@@ -194,13 +196,6 @@ function productSummary(products) {
   }).join('\n\n');
 }
 
-function shouldTrigger(config, text) {
-  const raw = String(text || '').toLowerCase();
-  const keywords = Array.isArray(config.trigger_keywords) ? config.trigger_keywords : [];
-  if (!keywords.length) return true;
-  return keywords.some((keyword) => raw.includes(String(keyword).toLowerCase()));
-}
-
 function shouldDeleteBadComment(config, text) {
   if (!config.delete_bad_comments_enabled) return false;
   const raw = String(text || '').toLowerCase();
@@ -237,8 +232,6 @@ async function processCommentAutomationEvent(event) {
     return { success: true, deleted: true, reason: 'bad_comment' };
   }
 
-  if (!shouldTrigger(config, commentText)) return { skipped: true, reason: 'keyword_not_matched' };
-
   const context = await findPostContext(platform, accountId, postId);
   const productIds = context.products.map(p => String(p.id));
   const publicReply = config.public_reply_template || DEFAULT_PUBLIC_REPLY;
@@ -261,7 +254,7 @@ async function processCommentAutomationEvent(event) {
 
     if (config.dm_enabled) {
       if (config.ai_enabled) {
-        const hiddenContext = `<comment_post_context>\nPost ID: ${postId}\nCaption: ${context.mapping?.caption || ''}\nComment: ${commentText}\nMapped Products:\n${productSummary(context.products)}\nInstruction: Reply privately with exact details from mapped products. If no mapped product exists, ask for clarification.\n</comment_post_context>`;
+        const hiddenContext = `<comment_post_context>\nPost ID: ${postId}\nCaption: ${context.mapping?.caption || ''}\nComment: ${commentText}\nMapped Products:\n${productSummary(context.products)}\nInstruction: Reply privately based on the customer's full comment and intent. Do not rely on keyword matching. Use exact details from mapped products. If no mapped product exists, ask for clarification in Bangla.\n</comment_post_context>`;
         const result = await aiService.generateResponse({
           pageId: accountId,
           userId: commenterId,
