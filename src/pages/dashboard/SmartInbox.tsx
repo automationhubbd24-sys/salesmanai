@@ -187,10 +187,30 @@ const getMessagePreview = (body?: string) => {
   return body;
 };
 
+const extractMediaImageUrl = (body?: string) => {
+  if (!body) return "";
+
+  const labeledMatch = body.match(/\[Image URLs?\]:\s*(https?:\/\/[^\s\]\)]+)/i);
+  if (labeledMatch?.[1]) return labeledMatch[1];
+
+  const extensionMatch = body.match(/(https?:\/\/[^\s\]\)]+\.(?:jpg|jpeg|png|gif|webp|bmp)(?:\?[^\s\]\)]*)?)/i);
+  if (extensionMatch?.[1]) return extensionMatch[1];
+
+  return "";
+};
+
+const cleanMediaMessageText = (body: string) =>
+  body
+    .replace(/\[?System Memory:[^\]]+\]?/g, "")
+    .replace(/##PRODUCT[^\n]+/g, "")
+    .replace(/\[Image URLs?\]:\s*https?:\/\/[^\s\]\)]+/gi, "")
+    .replace(/https?:\/\/[^\s]+\.(?:jpg|jpeg|png|gif|webp|bmp)(?:\?[^\s]+)?/gi, "")
+    .trim();
+
 const shouldHideMessage = (message: MessageItem) => {
   const body = message.body || "";
   const lowerBody = body.toLowerCase();
-  const hasImage = /https?:\/\/[^\s]+\.(jpg|jpeg|png|gif|webp|bmp)/i.test(body);
+  const hasImage = Boolean(extractMediaImageUrl(body));
   const isBotImage = body.includes("bot_image:");
   const isInternalNoise =
     lowerBody.includes("system memory") ||
@@ -1146,20 +1166,19 @@ const SmartInbox = () => {
 
                   {renderedMessages.map((message, index) => {
                     const body = message.body || "";
-                    const imageMatch = body.match(
-                      /(https?:\/\/[^\s\]\)]+\.(?:jpg|jpeg|png|gif|webp|bmp)(?:\?[^\s\]\)]*)?)/i
-                    );
-                    const imageUrl = imageMatch ? imageMatch[0] : "";
+                    const imageUrl = extractMediaImageUrl(body);
                     const hasMediaImage = Boolean(imageUrl);
+                    const lowerBody = body.toLowerCase();
                     const isBotImage =
                       hasMediaImage &&
-                      (body.includes("bot_image:") ||
+                      (message.reply_by === "bot" ||
+                        body.includes("bot_image:") ||
                         body.includes("##PRODUCT") ||
-                        body.toLowerCase().includes("system memory: user is viewing image") ||
-                        body.toLowerCase().includes("sent images to user"));
+                        lowerBody.includes("system memory: user is viewing image") ||
+                        lowerBody.includes("sent images to user"));
                     const isAnalysisMessage = /\[Analyzed Images?\]|\[Analyzed Image\s*\d*\]|Analyzed Image:|Analyzed Voice:/i.test(body);
                     const isTranscriptMessage = /^\[Transcript\]:/i.test(body.trim());
-                    const isOutgoing = message.from === "me" || isBotImage;
+                    const isOutgoing = message.from === "me" || message.reply_by === "admin" || isBotImage;
                     const isBot = message.reply_by === "bot" || isBotImage;
 
                     return (
@@ -1200,19 +1219,9 @@ const SmartInbox = () => {
                                   (event.currentTarget as HTMLImageElement).style.display = "none";
                                 }}
                               />
-                              {body
-                                .replace(/\[?System Memory:[^\]]+\]?/g, "")
-                                .replace(/##PRODUCT[^\n]+/g, "")
-                                .replace(/\[Image URLs?\]:\s*/gi, "")
-                                .replace(/https?:\/\/[^\s]+/g, "")
-                                .trim() && (
+                              {cleanMediaMessageText(body) && (
                                 <p className={cn("text-xs leading-relaxed", isBot ? "text-black/70" : "text-white/70")}>
-                                  {body
-                                    .replace(/\[?System Memory:[^\]]+\]?/g, "")
-                                    .replace(/##PRODUCT[^\n]+/g, "")
-                                    .replace(/\[Image URLs?\]:\s*/gi, "")
-                                    .replace(/https?:\/\/[^\s]+/g, "")
-                                    .trim()}
+                                  {cleanMediaMessageText(body)}
                                 </p>
                               )}
                             </div>

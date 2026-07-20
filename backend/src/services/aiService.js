@@ -403,30 +403,60 @@ async function convertOggToMp3(inputBuffer) {
     }
 }
 
-// --- CPU CONCURRENCY CONTROL ---
-// Limits simultaneous AI calls to prevent CPU spikes during bursts
+// --- PLATFORM-AWARE AI CONCURRENCY CONTROL ---
+// Keeps traffic bursts from one channel from consuming all AI capacity.
 let activeAiCalls = 0;
-const MAX_CONCURRENT_AI_CALLS = process.env.MAX_CONCURRENT_AI_CALLS ? parseInt(process.env.MAX_CONCURRENT_AI_CALLS) : 50; // Increased to 50 for large scale (10k+ users)
-const AI_QUEUE_TIMEOUT = 120000; // Increased to 120s (2 mins) to handle extreme traffic bursts in queue
-const DEFAULT_AI_REQUEST_BUDGET_MS = process.env.AI_REQUEST_BUDGET_MS ? parseInt(process.env.AI_REQUEST_BUDGET_MS) : 180000; // 3 minutes
+const activeAiCallsByLane = new Map();
+const MAX_CONCURRENT_AI_CALLS = process.env.MAX_CONCURRENT_AI_CALLS ? parseInt(process.env.MAX_CONCURRENT_AI_CALLS) : 50;
+const MAX_CONCURRENT_WHATSAPP_AI_CALLS = process.env.MAX_CONCURRENT_WHATSAPP_AI_CALLS ? parseInt(process.env.MAX_CONCURRENT_WHATSAPP_AI_CALLS) : 24;
+const MAX_CONCURRENT_MESSENGER_AI_CALLS = process.env.MAX_CONCURRENT_MESSENGER_AI_CALLS ? parseInt(process.env.MAX_CONCURRENT_MESSENGER_AI_CALLS) : 24;
+const MAX_CONCURRENT_OTHER_AI_CALLS = process.env.MAX_CONCURRENT_OTHER_AI_CALLS ? parseInt(process.env.MAX_CONCURRENT_OTHER_AI_CALLS) : 8;
+const AI_QUEUE_TIMEOUT = 120000;
+const DEFAULT_AI_REQUEST_BUDGET_MS = process.env.AI_REQUEST_BUDGET_MS ? parseInt(process.env.AI_REQUEST_BUDGET_MS) : 180000;
 
-async function acquireAiSlot(maxWaitMs = AI_QUEUE_TIMEOUT) {
+function normalizeAiLane(lane) {
+    const normalized = String(lane || 'other').toLowerCase();
+    if (normalized.includes('whatsapp')) return 'whatsapp';
+    if (normalized.includes('messenger') || normalized.includes('facebook')) return 'messenger';
+    if (normalized.includes('instagram')) return 'instagram';
+    return 'other';
+}
+
+function getAiLaneLimit(lane) {
+    if (lane === 'whatsapp') return MAX_CONCURRENT_WHATSAPP_AI_CALLS;
+    if (lane === 'messenger' || lane === 'instagram') return MAX_CONCURRENT_MESSENGER_AI_CALLS;
+    return MAX_CONCURRENT_OTHER_AI_CALLS;
+}
+
+function getActiveAiLaneCalls(lane) {
+    return activeAiCallsByLane.get(lane) || 0;
+}
+
+async function acquireAiSlot(maxWaitMs = AI_QUEUE_TIMEOUT, lane = 'other') {
+    const aiLane = normalizeAiLane(lane);
+    const laneLimit = getAiLaneLimit(aiLane);
     const effectiveWaitMs = Math.max(0, Math.min(
         Number.isFinite(Number(maxWaitMs)) ? Number(maxWaitMs) : AI_QUEUE_TIMEOUT,
         AI_QUEUE_TIMEOUT
     ));
     const start = Date.now();
-    while (activeAiCalls >= MAX_CONCURRENT_AI_CALLS) {
+
+    while (activeAiCalls >= MAX_CONCURRENT_AI_CALLS || getActiveAiLaneCalls(aiLane) >= laneLimit) {
         if (Date.now() - start > effectiveWaitMs) {
-            throw new Error("AI Server is too busy. Please try again in a few seconds.");
+            throw new Error(`AI Server is too busy for ${aiLane}. Please try again in a few seconds.`);
         }
-        await new Promise(resolve => setTimeout(resolve, 500)); // Wait 500ms
+        await new Promise(resolve => setTimeout(resolve, 100));
     }
+
     activeAiCalls++;
+    activeAiCallsByLane.set(aiLane, getActiveAiLaneCalls(aiLane) + 1);
+    return aiLane;
 }
 
-function releaseAiSlot() {
+function releaseAiSlot(lane = 'other') {
+    const aiLane = normalizeAiLane(lane);
     activeAiCalls = Math.max(0, activeAiCalls - 1);
+    activeAiCallsByLane.set(aiLane, Math.max(0, getActiveAiLaneCalls(aiLane) - 1));
 }
 // -------------------------------
 
@@ -2201,12 +2231,13 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     let currentContextId = null; // For context-aware semantic cache
     let primaryModel = null;
     const requestDeadlineAt = getRequestDeadlineAt(pageConfig || {});
+    const aiLane = normalizeAiLane(pageConfig?.platform || pageConfig?.provider_type || 'other');
     let aiSlotAcquired = false;
     let aiSlotReleased = false;
 
     const safeReleaseAiSlot = () => {
         if (aiSlotAcquired && !aiSlotReleased) {
-            releaseAiSlot();
+            releaseAiSlot(aiLane);
             aiSlotReleased = true;
         }
     };
@@ -2406,7 +2437,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     }
 
     // --- 3. ACQUIRE AI SLOT (Only for actual LLM calls) ---
-    await acquireAiSlot(getRemainingBudgetMs(requestDeadlineAt, 1000));
+    await acquireAiSlot(getRemainingBudgetMs(requestDeadlineAt, 1000), aiLane);
     aiSlotAcquired = true;
 
     // --- PRODUCT SNAPSHOT INJECTION (Prompt-Only Mode) ---
