@@ -1,25 +1,5 @@
 const SMART_INBOX_MANUAL_LABELS = new Set(["order", "human_transfer"]);
 
-// #region debug-point smart-inbox-loading:reporter
-function reportSmartInboxDebug(hypothesisId, msg, data = {}) {
-    try {
-        const fs = require('fs');
-        let url = 'http://127.0.0.1:7777/event';
-        let sessionId = 'smart-inbox-loading';
-        try {
-            const env = fs.readFileSync('.dbg/smart-inbox-loading.env', 'utf8');
-            url = env.match(/DEBUG_SERVER_URL=(.+)/)?.[1] || url;
-            sessionId = env.match(/DEBUG_SESSION_ID=(.+)/)?.[1] || sessionId;
-        } catch {}
-        fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId, runId: 'post-fix', hypothesisId, location: 'backend/src/utils/smartInbox.js', msg: `[DEBUG] ${msg}`, data, ts: Date.now() })
-        }).catch(() => {});
-    } catch {}
-}
-// #endregion
-
 const SMART_INBOX_LABEL_TITLES = {
     agent: "Agent",
     human: "Human",
@@ -122,24 +102,11 @@ function buildConversationPayload(row) {
 
 async function getSmartInboxConversations(pgClient, platform, resourceId) {
     const config = PLATFORM_CONFIG[platform];
-    // #region debug-point A:entry
-    reportSmartInboxDebug('A', 'getSmartInboxConversations entry', { platform, resourceId, hasConfig: Boolean(config) });
-    // #endregion
     if (!config) {
         throw new Error(`Unsupported platform: ${platform}`);
     }
 
-    try {
-        await ensureSmartInboxLabelsTable(pgClient);
-        // #region debug-point B:labels-ready
-        reportSmartInboxDebug('B', 'smart_inbox_labels table ensured', { platform, resourceId });
-        // #endregion
-    } catch (error) {
-        // #region debug-point B:labels-error
-        reportSmartInboxDebug('B', 'smart_inbox_labels table ensure failed', { platform, resourceId, error: error.message, code: error.code, stack: error.stack });
-        // #endregion
-        throw error;
-    }
+    await ensureSmartInboxLabelsTable(pgClient);
 
     const queryText = `
         WITH base_messages AS (
@@ -241,21 +208,8 @@ async function getSmartInboxConversations(pgClient, platform, resourceId) {
         ORDER BY COALESCE(lp.event_at, lf.event_at, ls.event_at) DESC
     `;
 
-    try {
-        // #region debug-point C:query-before
-        reportSmartInboxDebug('C', 'conversation query executing', { platform, resourceId, chatsTable: config.chatsTable, orderTable: config.orderTable, resourceColumn: config.resourceColumn, chatPlatformCondition: config.chatPlatformCondition || 'TRUE' });
-        // #endregion
-        const result = await pgClient.query(queryText, [resourceId, platform]);
-        // #region debug-point C:query-success
-        reportSmartInboxDebug('C', 'conversation query success', { platform, resourceId, rowCount: result.rows.length });
-        // #endregion
-        return result.rows.map(buildConversationPayload);
-    } catch (error) {
-        // #region debug-point C:query-error
-        reportSmartInboxDebug('C', 'conversation query failed', { platform, resourceId, error: error.message, code: error.code, detail: error.detail, hint: error.hint, position: error.position, stack: error.stack });
-        // #endregion
-        throw error;
-    }
+    const result = await pgClient.query(queryText, [resourceId, platform]);
+    return result.rows.map(buildConversationPayload);
 }
 
 async function upsertSmartInboxLabel(pgClient, {

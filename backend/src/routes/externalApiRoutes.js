@@ -9,7 +9,10 @@ const adminAuthMiddleware = require('../middleware/adminAuthMiddleware');
 router.post('/chat/completions', externalApiController.handleChatCompletion);
 router.post('/audio/transcriptions', externalApiController.transcribeAudio);
 router.get('/models', externalApiController.listModels);
-router.get('/models/:modelId(*)', externalApiController.getModelDetails);
+router.get(/^\/models\/(.+)$/, (req, res) => {
+    req.params.modelId = req.params[0];
+    return externalApiController.getModelDetails(req, res);
+});
 
 // Management Endpoints (Protected by User Auth AND Developer Approval)
 router.get('/key', authMiddleware, developerAuthMiddleware, externalApiController.getApiKey);
@@ -24,6 +27,9 @@ router.get('/user-config', authMiddleware, developerAuthMiddleware, externalApiC
 
 // Admin model catalog management
 router.post('/admin/models', adminAuthMiddleware, externalApiController.createModel);
-router.delete('/admin/models/:modelId(*)', adminAuthMiddleware, externalApiController.deleteModel);
+router.delete(/^\/admin\/models\/(.+)$/, adminAuthMiddleware, (req, res) => {
+    req.params.modelId = req.params[0];
+    return externalApiController.deleteModel(req, res);
+});
 
 module.exports = router;
