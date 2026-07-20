@@ -117,6 +117,7 @@ async function subscribePageForInstagram(pageId, pageAccessToken) {
 
 router.get('/webhook', instagramController.verifyInstagramWebhook);
 router.post('/webhook', instagramController.handleInstagramWebhook);
+router.get('/webhook/monitor', authMiddleware, instagramController.getInstagramWebhookLogs);
 
 router.get('/pages', authMiddleware, async (req, res) => {
     try {

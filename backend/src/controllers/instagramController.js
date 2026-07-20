@@ -5,6 +5,27 @@ const commentAutomationService = require('../services/commentAutomationService')
 const facebookService = require('../services/facebookService');
 const pgClient = require('../services/pgClient');
 
+const recentInstagramWebhookLogs = [];
+const MAX_INSTAGRAM_WEBHOOK_LOGS = 50;
+
+function addInstagramWebhookLog(payload) {
+    recentInstagramWebhookLogs.unshift({
+        id: Date.now() + Math.random().toString(36).slice(2, 7),
+        timestamp: new Date().toISOString(),
+        object: payload?.object,
+        sourceId: String(payload?.entry?.[0]?.id || 'unknown'),
+        entry_count: Array.isArray(payload?.entry) ? payload.entry.length : 0,
+        payload
+    });
+    if (recentInstagramWebhookLogs.length > MAX_INSTAGRAM_WEBHOOK_LOGS) recentInstagramWebhookLogs.pop();
+}
+
+function getInstagramWebhookLogs(req, res) {
+    const sourceId = req.query.sourceId ? String(req.query.sourceId) : '';
+    const logs = sourceId ? recentInstagramWebhookLogs.filter(log => log.sourceId === sourceId) : recentInstagramWebhookLogs;
+    res.json({ logs });
+}
+
 function verifyInstagramWebhook(req, res) {
     const token = req.query['hub.verify_token'];
     const expected = new Set([
@@ -118,6 +139,7 @@ async function processInstagramWebhook(body) {
 }
 
 async function handleInstagramWebhook(req, res) {
+    addInstagramWebhookLog(req.body);
     res.status(200).send('EVENT_RECEIVED');
     if (req.body?.object !== 'instagram') return;
     processInstagramWebhook(req.body).catch((error) => {
@@ -125,4 +147,4 @@ async function handleInstagramWebhook(req, res) {
     });
 }
 
-module.exports = { verifyInstagramWebhook, handleInstagramWebhook, processInstagramWebhook };
+module.exports = { verifyInstagramWebhook, handleInstagramWebhook, processInstagramWebhook, getInstagramWebhookLogs };
