@@ -499,12 +499,17 @@ class ConnectionRegistry extends EventEmitter {
      * @returns {boolean} True if at least one active message queue belongs to the account
      */
     hasMessageQueueForAuth(authIndex) {
+        return this.getMessageQueueCountForAuth(authIndex) > 0;
+    }
+
+    getMessageQueueCountForAuth(authIndex) {
+        let count = 0;
         for (const entry of this.messageQueues.values()) {
             if (entry.authIndex === authIndex) {
-                return true;
+                count++;
             }
         }
-        return false;
+        return count;
     }
 
     /**

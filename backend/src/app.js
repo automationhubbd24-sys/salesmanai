@@ -17,6 +17,7 @@ const teamRoutes = require('./routes/teamRoutes');
 const statsRoutes = require('./routes/statsRoutes');
 const aiRoutes = require('./routes/aiRoutes');
 const marketingRoutes = require('./routes/marketingRoutes');
+const shopifyRoutes = require('./routes/shopifyRoutes');
 
 const path = require('path');
 const app = express();
@@ -79,6 +80,7 @@ app.use('/stats', statsRoutes);
 app.use('/api/stats', statsRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/marketing', marketingRoutes);
+app.use('/api/shopify', shopifyRoutes);
 
 // Basic health check
 app.get('/', (req, res) => {

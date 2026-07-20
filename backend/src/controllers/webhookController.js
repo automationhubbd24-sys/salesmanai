@@ -1330,8 +1330,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
             text: inboundLogText,
             timestamp: Date.now(),
             status: 'received',
-            reply_by: 'user',
-            sender_name: senderName && senderName !== 'Unknown' ? senderName : null
+            reply_by: 'user'
         });
     }
 
@@ -1564,8 +1563,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         text: inboundLogText || combinedText,
         timestamp: Date.now(),
         status: 'received',
-        reply_by: 'user',
-        sender_name: senderName && senderName !== 'Unknown' ? senderName : null
+        reply_by: 'user'
     });
 
     const isLocked = await dbService.checkWhatsAppLockStatus(effectiveSessionName, senderId);
@@ -2644,8 +2642,7 @@ async function queueMessage(event, entryPageId = null) {
         text: rawLogText, 
         timestamp: Date.now(),
         status: 'received',
-        reply_by: 'user',
-        sender_name: event.sender?.name || null
+        reply_by: 'user'
     }).catch(err => console.error(`Error saving to fb_chats (Page: ${pageId}, Msg: ${messageId}):`, err.message));
 
     // -------------------------------------------------
@@ -3190,19 +3187,6 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
 
         const senderName = userProfile.name || 'Customer';
         const senderGender = userProfile.gender || null;
-        if (senderName && senderName !== 'Customer') {
-            dbService.saveFbChat({
-                page_id: pageId,
-                sender_id: senderId,
-                recipient_id: pageId,
-                message_id: messageId,
-                text: rawLogText,
-                timestamp: Date.now(),
-                status: 'received',
-                reply_by: 'user',
-                sender_name: senderName
-            }).catch(() => {});
-        }
         
         // --------------------------------------------
 

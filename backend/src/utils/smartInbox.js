@@ -19,14 +19,14 @@ const PLATFORM_CONFIG = {
         resourceColumn: "page_id",
         orderTable: "fb_order_tracking",
         timestampExpression: "COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000)",
-        chatsCondition: "platform = 'messenger'"
+        platformCondition: "platform = 'messenger'"
     },
     instagram: {
         chatsTable: "fb_chats",
         resourceColumn: "page_id",
         orderTable: "fb_order_tracking",
         timestampExpression: "COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000)",
-        chatsCondition: "platform = 'instagram'"
+        platformCondition: "platform = 'instagram'"
     }
 };
 
@@ -59,9 +59,6 @@ async function ensureSmartInboxLabelsTable(pgClient) {
 
         CREATE INDEX IF NOT EXISTS idx_smart_inbox_labels_lookup
             ON smart_inbox_labels(platform, resource_id, sender_id);
-
-        ALTER TABLE IF EXISTS fb_chats ADD COLUMN IF NOT EXISTS sender_name TEXT;
-        ALTER TABLE IF EXISTS whatsapp_chats ADD COLUMN IF NOT EXISTS sender_name TEXT;
     `);
 }
 
@@ -120,11 +117,10 @@ async function getSmartInboxConversations(pgClient, platform, resourceId) {
                 END AS conversation_id,
                 text,
                 reply_by,
-                sender_name,
                 ${config.timestampExpression} AS event_at
             FROM ${config.chatsTable}
             WHERE ${config.resourceColumn} = $1
-              AND ${config.chatsCondition || 'TRUE'}
+              AND ${config.platformCondition || 'TRUE'}
         ),
         usable_messages AS (
             SELECT *
@@ -158,15 +154,6 @@ async function getSmartInboxConversations(pgClient, platform, resourceId) {
             WHERE reply_by IN ('user', 'bot', 'admin')
             ORDER BY conversation_id, event_at DESC
         ),
-        latest_names AS (
-            SELECT DISTINCT ON (conversation_id)
-                conversation_id,
-                NULLIF(BTRIM(sender_name), '') AS name
-            FROM usable_messages
-            WHERE sender_name IS NOT NULL
-              AND sender_name NOT IN ('Unknown', 'Customer')
-            ORDER BY conversation_id, event_at DESC
-        ),
         manual_labels AS (
             SELECT
                 sender_id,
@@ -183,6 +170,7 @@ async function getSmartInboxConversations(pgClient, platform, resourceId) {
                 status
             FROM ${config.orderTable}
             WHERE ${config.resourceColumn} = $1
+              AND ${config.platformCondition || 'TRUE'}
             ORDER BY sender_id, id DESC
         )
         SELECT
@@ -207,7 +195,7 @@ async function getSmartInboxConversations(pgClient, platform, resourceId) {
             END AS human_transfer_selected,
             ml.order_override,
             ml.human_transfer_override,
-            ln.name AS name
+            NULL::text AS name
         FROM latest_signal ls
         FULL OUTER JOIN latest_preview lp
             ON lp.conversation_id = ls.conversation_id
@@ -215,8 +203,6 @@ async function getSmartInboxConversations(pgClient, platform, resourceId) {
             ON lf.conversation_id = COALESCE(ls.conversation_id, lp.conversation_id)
         LEFT JOIN manual_labels ml
             ON ml.sender_id = COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id)
-        LEFT JOIN latest_names ln
-            ON ln.conversation_id = COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id)
         LEFT JOIN latest_orders lo
             ON lo.sender_id = COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id)
         WHERE COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id) IS NOT NULL

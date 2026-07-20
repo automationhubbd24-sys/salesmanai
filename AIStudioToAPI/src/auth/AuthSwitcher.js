@@ -19,6 +19,8 @@ class AuthSwitcher {
         this.browserManager = browserManager;
         this.failureCount = 0;
         this.usageCount = 0;
+        this.usageCountsByAuth = new Map();
+        this.failureCountsByAuth = new Map();
         this.isSystemBusy = false;
         this.temporarilyUnavailableUntil = new Map();
     }
@@ -354,19 +356,19 @@ class AuthSwitcher {
             return;
         }
 
-        this.failureCount++;
+        const failureCount = this.incrementFailureCount(sourceAuthIndex);
         if (this.config.failureThreshold > 0) {
             this.logger.warn(
-                `⚠️ [Auth] Request failed - failure count: ${this.failureCount}/${this.config.failureThreshold} (Current account index: ${this.currentAuthIndex})`
+                `⚠️ [Auth] Request failed - failure count: ${failureCount}/${this.config.failureThreshold} (Account index: ${sourceAuthIndex})`
             );
         } else {
             this.logger.warn(
-                `⚠️ [Auth] Request failed - failure count: ${this.failureCount} (Current account index: ${this.currentAuthIndex})`
+                `⚠️ [Auth] Request failed - failure count: ${failureCount} (Account index: ${sourceAuthIndex})`
             );
         }
 
         const isThresholdReached =
-            this.config.failureThreshold > 0 && this.failureCount >= this.config.failureThreshold;
+            this.config.failureThreshold > 0 && failureCount >= this.config.failureThreshold;
 
         if (isImmediateSwitch || isThresholdReached) {
             if (isImmediateSwitch) {
@@ -375,7 +377,7 @@ class AuthSwitcher {
                 );
             } else {
                 this.logger.warn(
-                    `🔴 [Auth] Failure threshold reached (${this.failureCount}/${this.config.failureThreshold})! Preparing to switch account...`
+                    `🔴 [Auth] Failure threshold reached for account #${sourceAuthIndex} (${failureCount}/${this.config.failureThreshold})! Preparing to switch account...`
                 );
             }
 
@@ -397,7 +399,7 @@ class AuthSwitcher {
                 if (error.message.includes("Only one account is available")) {
                     userMessage = "❌ Switch failed: Only one account available.";
                     this.logger.info("[Auth] Only one account available, failure count reset.");
-                    this.failureCount = 0;
+                    this.resetCounters(sourceAuthIndex);
                 } else if (error.message.includes("Fallback failed reason")) {
                     userMessage = `❌ Fatal error: Both automatic switching and emergency fallback failed, service may be interrupted, please check logs!`;
                 } else if (error.message.includes("Switching to account")) {
@@ -410,16 +412,49 @@ class AuthSwitcher {
         }
     }
 
-    incrementUsageCount() {
+    getUsageCount(authIndex = this.currentAuthIndex) {
+        if (!Number.isInteger(authIndex) || authIndex < 0) {
+            return this.usageCount;
+        }
+        return this.usageCountsByAuth.get(authIndex) || 0;
+    }
+
+    getFailureCount(authIndex = this.currentAuthIndex) {
+        if (!Number.isInteger(authIndex) || authIndex < 0) {
+            return this.failureCount;
+        }
+        return this.failureCountsByAuth.get(authIndex) || 0;
+    }
+
+    incrementUsageCount(authIndex = this.currentAuthIndex) {
         this.usageCount++;
-        return this.usageCount;
+        if (!Number.isInteger(authIndex) || authIndex < 0) {
+            return this.usageCount;
+        }
+        const nextCount = (this.usageCountsByAuth.get(authIndex) || 0) + 1;
+        this.usageCountsByAuth.set(authIndex, nextCount);
+        return nextCount;
     }
 
-    shouldSwitchByUsage() {
-        return this.config.switchOnUses > 0 && this.usageCount >= this.config.switchOnUses;
+    incrementFailureCount(authIndex = this.currentAuthIndex) {
+        this.failureCount++;
+        if (!Number.isInteger(authIndex) || authIndex < 0) {
+            return this.failureCount;
+        }
+        const nextCount = (this.failureCountsByAuth.get(authIndex) || 0) + 1;
+        this.failureCountsByAuth.set(authIndex, nextCount);
+        return nextCount;
     }
 
-    resetCounters() {
+    shouldSwitchByUsage(authIndex = this.currentAuthIndex) {
+        return this.config.switchOnUses > 0 && this.getUsageCount(authIndex) >= this.config.switchOnUses;
+    }
+
+    resetCounters(authIndex = null) {
+        if (Number.isInteger(authIndex) && authIndex >= 0) {
+            this.usageCountsByAuth.set(authIndex, 0);
+            this.failureCountsByAuth.set(authIndex, 0);
+        }
         this.failureCount = 0;
         this.usageCount = 0;
     }

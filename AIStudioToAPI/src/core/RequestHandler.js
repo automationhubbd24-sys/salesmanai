@@ -45,7 +45,6 @@ class RequestHandler {
 
         this.maxRetries = this.config.maxRetries;
         this.retryDelay = this.config.retryDelay;
-        this.needsSwitchingAfterRequest = false;
 
         // Round-robin index for context selection
         this._roundRobinIndex = -1;
@@ -96,29 +95,25 @@ class RequestHandler {
             return selectionPool[0];
         }
 
-        // First, try to find the least loaded context (based on active message queues)
-        const indexLoads = selectionPool.map(idx => ({
-            index: idx,
-            load: this.connectionRegistry.hasMessageQueueForAuth(idx) ? 1 : 0 // Simple load: 1 if busy, 0 if free
-        }));
+        const queueCounter = idx =>
+            this.connectionRegistry.getMessageQueueCountForAuth
+                ? this.connectionRegistry.getMessageQueueCountForAuth(idx)
+                : this.connectionRegistry.hasMessageQueueForAuth(idx)
+                  ? 1
+                  : 0;
 
-        // Sort by load (ascending), then by index (ascending)
-        indexLoads.sort((a, b) => a.load - b.load || a.index - b.index);
+        const minUsage = Math.min(...selectionPool.map(idx => this.authSwitcher.getUsageCount(idx)));
+        const leastUsedPool = selectionPool.filter(idx => this.authSwitcher.getUsageCount(idx) === minUsage);
+        const minLoad = Math.min(...leastUsedPool.map(queueCounter));
+        const leastLoadedPool = leastUsedPool.filter(idx => queueCounter(idx) === minLoad).sort((a, b) => a - b);
 
-        // Check if there are any free contexts (load === 0)
-        const freeIndices = indexLoads.filter(x => x.load === 0);
-        if (freeIndices.length > 0) {
-            // Round-robin through free indices
-            this._roundRobinIndex = (this._roundRobinIndex + 1) % freeIndices.length;
-            const selectedIndex = freeIndices[this._roundRobinIndex].index;
-            this.logger.debug(`[LoadBalancer] Selected free context: ${selectedIndex} (round-robin: ${this._roundRobinIndex})`);
-            return selectedIndex;
-        }
-
-        // If all are busy, round-robin through all available indices
-        this._roundRobinIndex = (this._roundRobinIndex + 1) % selectionPool.length;
-        const selectedIndex = selectionPool[this._roundRobinIndex];
-        this.logger.debug(`[LoadBalancer] All contexts busy, selected: ${selectedIndex} (round-robin: ${this._roundRobinIndex})`);
+        this._roundRobinIndex = (this._roundRobinIndex + 1) % leastLoadedPool.length;
+        const selectedIndex = leastLoadedPool[this._roundRobinIndex];
+        this.logger.debug(
+            `[LoadBalancer] Selected account #${selectedIndex} (usage=${this.authSwitcher.getUsageCount(
+                selectedIndex
+            )}, activeQueues=${queueCounter(selectedIndex)}, candidates=[${leastLoadedPool.join(", ")}])`
+        );
         return selectedIndex;
     }
 
@@ -1114,16 +1109,17 @@ class RequestHandler {
                 req.method === "POST" &&
                 (req.path.includes("generateContent") || req.path.includes("streamGenerateContent"));
 
+            let shouldSwitchAfterRequest = false;
             if (isGenerativeRequest) {
-                const usageCount = this.authSwitcher.incrementUsageCount();
+                const usageCount = this.authSwitcher.incrementUsageCount(authIndex);
                 if (usageCount > 0) {
                     const rotationCountText =
                         this.config.switchOnUses > 0 ? `${usageCount}/${this.config.switchOnUses}` : `${usageCount}`;
                     this.logger.info(
-                        `[Request] Google generation request - account rotation count: ${rotationCountText} (Selected account: ${authIndex}), request ID: ${requestId}`
+                        `[Request] Google generation request - account #${authIndex} usage count: ${rotationCountText}, request ID: ${requestId}`
                     );
-                    if (this.authSwitcher.shouldSwitchByUsage()) {
-                        this.needsSwitchingAfterRequest = true;
+                    if (this.authSwitcher.shouldSwitchByUsage(authIndex)) {
+                        shouldSwitchAfterRequest = true;
                     }
                 }
             }
@@ -1172,14 +1168,16 @@ class RequestHandler {
                 this._handleRequestError(error, res, requestId);
             } finally {
                 this.connectionRegistry.removeMessageQueue(requestId, "request_complete");
-                if (this.needsSwitchingAfterRequest) {
+                if (shouldSwitchAfterRequest) {
                     this.logger.info(
-                        `[Auth] Rotation count reached switching threshold (${this.authSwitcher.usageCount}/${this.config.switchOnUses}), will automatically switch account in background...`
+                        `[Auth] Account #${authIndex} reached usage threshold (${this.authSwitcher.getUsageCount(
+                            authIndex
+                        )}/${this.config.switchOnUses}), will automatically switch account in background...`
                     );
+                    this.authSwitcher.resetCounters(authIndex);
                     this.authSwitcher.switchToNextAuth().catch(err => {
                         this.logger.error(`[Auth] Background account switching task failed: ${err.message}`);
                     });
-                    this.needsSwitchingAfterRequest = false;
                 }
                 if (!res.writableEnded) res.end();
             }
@@ -1331,16 +1329,16 @@ class RequestHandler {
             const isOpenAIStream = req.body.stream === true;
             const systemStreamMode = this.serverSystem.streamingMode;
 
-            // Handle usage counting
-            const usageCount = this.authSwitcher.incrementUsageCount();
+            let shouldSwitchAfterRequest = false;
+            const usageCount = this.authSwitcher.incrementUsageCount(authIndex);
             if (usageCount > 0) {
                 const rotationCountText =
                     this.config.switchOnUses > 0 ? `${usageCount}/${this.config.switchOnUses}` : `${usageCount}`;
                 this.logger.info(
-                    `[Request] OpenAI generation request - account rotation count: ${rotationCountText} (Selected account: ${authIndex}), request ID: ${requestId}`
+                    `[Request] OpenAI generation request - account #${authIndex} usage count: ${rotationCountText}, request ID: ${requestId}`
                 );
-                if (this.authSwitcher.shouldSwitchByUsage()) {
-                    this.needsSwitchingAfterRequest = true;
+                if (this.authSwitcher.shouldSwitchByUsage(authIndex)) {
+                    shouldSwitchAfterRequest = true;
                 }
             }
 
@@ -1649,14 +1647,16 @@ class RequestHandler {
                 this._handleRequestError(error, res, requestId);
             } finally {
                 this.connectionRegistry.removeMessageQueue(requestId, "request_complete");
-                if (this.needsSwitchingAfterRequest) {
+                if (shouldSwitchAfterRequest) {
                     this.logger.info(
-                        `[Auth] Rotation count reached switching threshold (${this.authSwitcher.usageCount}/${this.config.switchOnUses}), will automatically switch account in background...`
+                        `[Auth] Account #${authIndex} reached usage threshold (${this.authSwitcher.getUsageCount(
+                            authIndex
+                        )}/${this.config.switchOnUses}), will automatically switch account in background...`
                     );
+                    this.authSwitcher.resetCounters(authIndex);
                     this.authSwitcher.switchToNextAuth().catch(err => {
                         this.logger.error(`[Auth] Background account switching task failed: ${err.message}`);
                     });
-                    this.needsSwitchingAfterRequest = false;
                 }
                 if (!res.writableEnded) res.end();
             }
@@ -1737,16 +1737,16 @@ class RequestHandler {
             );
             const systemStreamMode = this.serverSystem.streamingMode;
 
-            // Handle usage counting
-            const usageCount = this.authSwitcher.incrementUsageCount();
+            let shouldSwitchAfterRequest = false;
+            const usageCount = this.authSwitcher.incrementUsageCount(authIndex);
             if (usageCount > 0) {
                 const rotationCountText =
                     this.config.switchOnUses > 0 ? `${usageCount}/${this.config.switchOnUses}` : `${usageCount}`;
                 this.logger.info(
-                    `[Request] OpenAI Response generation request - account rotation count: ${rotationCountText} (Selected account: ${authIndex}), request ID: ${requestId}`
+                    `[Request] OpenAI Response generation request - account #${authIndex} usage count: ${rotationCountText}, request ID: ${requestId}`
                 );
-                if (this.authSwitcher.shouldSwitchByUsage()) {
-                    this.needsSwitchingAfterRequest = true;
+                if (this.authSwitcher.shouldSwitchByUsage(authIndex)) {
+                    shouldSwitchAfterRequest = true;
                 }
             }
 
@@ -2079,14 +2079,16 @@ class RequestHandler {
                 this._handleRequestError(error, res, requestId);
             } finally {
                 this.connectionRegistry.removeMessageQueue(requestId, "request_complete");
-                if (this.needsSwitchingAfterRequest) {
+                if (shouldSwitchAfterRequest) {
                     this.logger.info(
-                        `[Auth] Rotation count reached switching threshold (${this.authSwitcher.usageCount}/${this.config.switchOnUses}), will automatically switch account in background...`
+                        `[Auth] Account #${authIndex} reached usage threshold (${this.authSwitcher.getUsageCount(
+                            authIndex
+                        )}/${this.config.switchOnUses}), will automatically switch account in background...`
                     );
+                    this.authSwitcher.resetCounters(authIndex);
                     this.authSwitcher.switchToNextAuth().catch(err => {
                         this.logger.error(`[Auth] Background account switching task failed: ${err.message}`);
                     });
-                    this.needsSwitchingAfterRequest = false;
                 }
                 if (!res.writableEnded) res.end();
             }
@@ -2118,16 +2120,16 @@ class RequestHandler {
             const isClaudeStream = req.body.stream === true;
             const systemStreamMode = this.serverSystem.streamingMode;
 
-            // Handle usage counting
-            const usageCount = this.authSwitcher.incrementUsageCount();
+            let shouldSwitchAfterRequest = false;
+            const usageCount = this.authSwitcher.incrementUsageCount(authIndex);
             if (usageCount > 0) {
                 const rotationCountText =
                     this.config.switchOnUses > 0 ? `${usageCount}/${this.config.switchOnUses}` : `${usageCount}`;
                 this.logger.info(
-                    `[Request] Claude generation request - account rotation count: ${rotationCountText} (Selected account: ${authIndex}), request ID: ${requestId}`
+                    `[Request] Claude generation request - account #${authIndex} usage count: ${rotationCountText}, request ID: ${requestId}`
                 );
-                if (this.authSwitcher.shouldSwitchByUsage()) {
-                    this.needsSwitchingAfterRequest = true;
+                if (this.authSwitcher.shouldSwitchByUsage(authIndex)) {
+                    shouldSwitchAfterRequest = true;
                 }
             }
 
@@ -2426,14 +2428,16 @@ class RequestHandler {
                 this._handleRequestError(error, res, requestId);
             } finally {
                 this.connectionRegistry.removeMessageQueue(requestId, "request_complete");
-                if (this.needsSwitchingAfterRequest) {
+                if (shouldSwitchAfterRequest) {
                     this.logger.info(
-                        `[Auth] Rotation count reached switching threshold (${this.authSwitcher.usageCount}/${this.config.switchOnUses}), will automatically switch account in background...`
+                        `[Auth] Account #${authIndex} reached usage threshold (${this.authSwitcher.getUsageCount(
+                            authIndex
+                        )}/${this.config.switchOnUses}), will automatically switch account in background...`
                     );
+                    this.authSwitcher.resetCounters(authIndex);
                     this.authSwitcher.switchToNextAuth().catch(err => {
                         this.logger.error(`[Auth] Background account switching task failed: ${err.message}`);
                     });
-                    this.needsSwitchingAfterRequest = false;
                 }
                 if (!res.writableEnded) res.end();
             }

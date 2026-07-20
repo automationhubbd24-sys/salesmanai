@@ -54,6 +54,7 @@ import CommentAutomationPage from "./pages/dashboard/CommentAutomationPage";
 import ApiManagementPage from "./pages/dashboard/ApiManagementPage";
 import DeveloperPage from "./pages/dashboard/DeveloperPage";
 import ApiDocsPage from "./pages/dashboard/ApiDocsPage";
+import ShopifyPage from "./pages/dashboard/ShopifyPage";
 
 import SmartInbox from "./pages/dashboard/SmartInbox";
 
@@ -96,6 +97,7 @@ const App = () => (
                 <Route path="settings" element={<SettingsPage />} />
                 <Route path="payment" element={<PaymentPage />} />
                 <Route path="profile" element={<ProfilePage />} />
+                <Route path="shopify" element={<ShopifyPage />} />
 
                 {/* WhatsApp Routes */}
                 <Route path="whatsapp" element={<Outlet />}>

@@ -1276,22 +1276,13 @@ async function withTimeout(promise, timeoutMs, label) {
     }
 }
 
-function getProtectedMediaHeaders(mediaUrl, pageConfig = {}) {
-    const value = String(mediaUrl || '');
-    const token = pageConfig.page_access_token || pageConfig.cloud_access_token;
-    if ((value.includes('graph.facebook.com') || value.includes('lookaside.fbsbx.com')) && token) {
-        return { Authorization: `Bearer ${token}` };
-    }
-    return {};
-}
-
-async function urlToInlineData(imageUrl, pageConfig = {}) {
+async function urlToInlineData(imageUrl) {
     if (String(imageUrl || '').startsWith('data:')) {
         const [meta, data] = String(imageUrl).split(',', 2);
         const mimeType = meta.match(/^data:([^;]+)/)?.[1] || 'image/jpeg';
         return { mimeType, data };
     }
-    const response = await fetch(imageUrl, { headers: getProtectedMediaHeaders(imageUrl, pageConfig) });
+    const response = await fetch(imageUrl);
     if (!response.ok) throw new Error(`Image download failed ${response.status}: ${imageUrl}`);
     const arrayBuffer = await response.arrayBuffer();
     const mimeType = response.headers.get('content-type') || 'image/jpeg';

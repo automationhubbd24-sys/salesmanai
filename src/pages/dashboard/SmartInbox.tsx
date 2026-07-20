@@ -35,28 +35,6 @@ const MESSAGE_POLL_INTERVAL_MS = 12000;
 const CHAT_LIMIT = 60;
 const MESSAGE_LIMIT = 40;
 
-function extractMediaImageUrl(body: string) {
-  const taggedMatch = body.match(/\[Image URLs?\]:\s*(https?:\/\/[^\s,\]\)]+)/i);
-  if (taggedMatch?.[1]) return taggedMatch[1];
-
-  const imageFileMatch = body.match(
-    /(https?:\/\/[^\s\]\)]+\.(?:jpg|jpeg|png|gif|webp|bmp)(?:\?[^\s\]\)]*)?)/i
-  );
-  if (imageFileMatch?.[1]) return imageFileMatch[1];
-
-  return "";
-}
-
-function getMediaCaption(body: string) {
-  return body
-    .replace(/\[Image Message\]/gi, "")
-    .replace(/\[?System Memory:[^\]]+\]?/g, "")
-    .replace(/##PRODUCT[^\n]+/g, "")
-    .replace(/\[Image URLs?\]:\s*https?:\/\/[^\s]+/gi, "")
-    .replace(/https?:\/\/[^\s]+/g, "")
-    .trim();
-}
-
 type LabelKey = "agent" | "human" | "order" | "human_transfer";
 type FilterKey = "all" | LabelKey;
 type PlatformKey = "whatsapp" | "messenger" | "instagram";
@@ -202,7 +180,6 @@ const getMessagePreview = (body?: string) => {
   if (!body) return "No messages yet";
 
   if (body.includes("bot_image:")) return "Sent an image";
-  if (extractMediaImageUrl(body)) return getMediaCaption(body) || "Sent an image";
   if (body.includes("Analyzed Image:")) return "Analyzed image";
   if (body.includes("Analyzed Voice:")) return "Analyzed voice";
   if (body.toLowerCase().includes("system memory") || body.includes("ai_memory")) return "System update";
@@ -213,7 +190,7 @@ const getMessagePreview = (body?: string) => {
 const shouldHideMessage = (message: MessageItem) => {
   const body = message.body || "";
   const lowerBody = body.toLowerCase();
-  const hasImage = Boolean(extractMediaImageUrl(body));
+  const hasImage = /https?:\/\/[^\s]+\.(jpg|jpeg|png|gif|webp|bmp)/i.test(body);
   const isBotImage = body.includes("bot_image:");
   const isInternalNoise =
     lowerBody.includes("system memory") ||
@@ -1169,8 +1146,10 @@ const SmartInbox = () => {
 
                   {renderedMessages.map((message, index) => {
                     const body = message.body || "";
-                    const imageUrl = extractMediaImageUrl(body);
-                    const mediaCaption = getMediaCaption(body);
+                    const imageMatch = body.match(
+                      /(https?:\/\/[^\s\]\)]+\.(?:jpg|jpeg|png|gif|webp|bmp)(?:\?[^\s\]\)]*)?)/i
+                    );
+                    const imageUrl = imageMatch ? imageMatch[0] : "";
                     const hasMediaImage = Boolean(imageUrl);
                     const isBotImage =
                       hasMediaImage &&
@@ -1221,9 +1200,19 @@ const SmartInbox = () => {
                                   (event.currentTarget as HTMLImageElement).style.display = "none";
                                 }}
                               />
-                              {mediaCaption && (
+                              {body
+                                .replace(/\[?System Memory:[^\]]+\]?/g, "")
+                                .replace(/##PRODUCT[^\n]+/g, "")
+                                .replace(/\[Image URLs?\]:\s*/gi, "")
+                                .replace(/https?:\/\/[^\s]+/g, "")
+                                .trim() && (
                                 <p className={cn("text-xs leading-relaxed", isBot ? "text-black/70" : "text-white/70")}>
-                                  {mediaCaption}
+                                  {body
+                                    .replace(/\[?System Memory:[^\]]+\]?/g, "")
+                                    .replace(/##PRODUCT[^\n]+/g, "")
+                                    .replace(/\[Image URLs?\]:\s*/gi, "")
+                                    .replace(/https?:\/\/[^\s]+/g, "")
+                                    .trim()}
                                 </p>
                               )}
                             </div>

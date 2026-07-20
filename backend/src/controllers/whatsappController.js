@@ -1731,14 +1731,6 @@ async function queueMessage(session, messagePayload) {
     if (!pushName && messagePayload.sender) {
          pushName = messagePayload.sender.pushname || messagePayload.sender.name || messagePayload.sender.shortName;
     }
-    if (pushName && pushName !== 'Unknown') {
-        dbService.saveWhatsAppContact({
-            session_name: sessionName,
-            phone_number: senderId,
-            name: pushName,
-            lid: senderId && senderId.includes('@lid') ? senderId : null
-        }).catch(() => {});
-    }
 
     let replyToId = messagePayload.replyTo?.id || null;
     if (replyToId && typeof replyToId === 'object') {

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { MessageSquare, Facebook, Instagram, ArrowRight, Zap, Activity, ShieldCheck } from "lucide-react";
+import { MessageSquare, Facebook, Instagram, ArrowRight, Zap, Activity, ShieldCheck, ShoppingBag } from "lucide-react";
 import { BACKEND_URL } from "@/config";
 
 export default function PlatformSelection() {
@@ -72,6 +72,15 @@ export default function PlatformSelection() {
       color: "bg-gradient-to-tr from-yellow-400 via-red-500 to-purple-500",
       stats: "Active",
       action: "Manage"
+    },
+    {
+      id: "shopify",
+      name: "Shopify Catalog",
+      description: "Connect a Shopify store to read products and inventory manually.",
+      icon: ShoppingBag,
+      color: "bg-green-700",
+      stats: "Optional",
+      action: "Connect"
     },
   ];
 

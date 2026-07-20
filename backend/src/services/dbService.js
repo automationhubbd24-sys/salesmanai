@@ -1374,15 +1374,14 @@ async function saveFbChat(data) {
         data.reply_by || 'user',
         data.token || 0,
         data.ai_model || null,
-        data.platform || 'messenger',
-        data.sender_name || null
+        data.platform || 'messenger'
     ];
 
     const run = async () => {
         await query(
             `INSERT INTO fb_chats
-                (page_id, sender_id, recipient_id, message_id, text, timestamp, status, reply_by, token, ai_model, platform, sender_name)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+                (page_id, sender_id, recipient_id, message_id, text, timestamp, status, reply_by, token, ai_model, platform)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
              ON CONFLICT (message_id) DO UPDATE SET
                 page_id = EXCLUDED.page_id,
                 sender_id = EXCLUDED.sender_id,
@@ -1392,9 +1391,7 @@ async function saveFbChat(data) {
                 status = EXCLUDED.status,
                 reply_by = EXCLUDED.reply_by,
                 token = EXCLUDED.token,
-                ai_model = EXCLUDED.ai_model,
-                platform = EXCLUDED.platform,
-                sender_name = COALESCE(EXCLUDED.sender_name, fb_chats.sender_name)`,
+                ai_model = EXCLUDED.ai_model`,
             params
         );
     };
@@ -1402,8 +1399,8 @@ async function saveFbChat(data) {
     try {
         await run();
     } catch (error) {
-        if (error.message.includes('no unique or exclusion constraint') || error.code === '42P01' || error.code === '42703') {
-            console.log("[DB] fb_chats table/columns/constraint missing. Ensuring...");
+        if (error.message.includes('no unique or exclusion constraint') || error.code === '42P01') {
+            console.log("[DB] fb_chats table or constraint missing. Ensuring...");
             await ensureFbChatsTable();
             await run();
         } else {
@@ -1446,10 +1443,8 @@ async function ensureFbChatsTable() {
             reply_by TEXT,
             token INTEGER DEFAULT 0,
             ai_model TEXT,
-            platform TEXT NOT NULL DEFAULT 'messenger',
-            sender_name TEXT
+            platform TEXT NOT NULL DEFAULT 'messenger'
             );
-        ALTER TABLE fb_chats ADD COLUMN IF NOT EXISTS sender_name TEXT;
         CREATE INDEX IF NOT EXISTS idx_fb_chats_page_sender ON fb_chats(page_id, sender_id);
     `);
 }
@@ -1797,8 +1792,8 @@ async function saveWhatsAppChat(data) {
     const run = async () => {
         await query(
             `INSERT INTO whatsapp_chats
-                (session_name, sender_id, recipient_id, message_id, text, timestamp, status, reply_by, token_usage, model_used, is_group, group_id, group_name, sender_name)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+                (session_name, sender_id, recipient_id, message_id, text, timestamp, status, reply_by, token_usage, model_used, is_group, group_id, group_name)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
              ON CONFLICT (message_id) DO UPDATE SET
                 text = EXCLUDED.text,
                 timestamp = EXCLUDED.timestamp,
@@ -1808,8 +1803,7 @@ async function saveWhatsAppChat(data) {
                 model_used = EXCLUDED.model_used,
                 is_group = EXCLUDED.is_group,
                 group_id = EXCLUDED.group_id,
-                group_name = EXCLUDED.group_name,
-                sender_name = COALESCE(EXCLUDED.sender_name, whatsapp_chats.sender_name)`,
+                group_name = EXCLUDED.group_name`,
             [
                 data.session_name,
                 data.sender_id,
@@ -1823,8 +1817,7 @@ async function saveWhatsAppChat(data) {
                 data.model_used || null,
                 data.is_group || false,
                 data.group_id || null,
-                data.group_name || null,
-                data.sender_name || null
+                data.group_name || null
             ]
         );
     };
@@ -1833,8 +1826,8 @@ async function saveWhatsAppChat(data) {
         await run();
     } catch (err) {
         // If constraint is missing, try to add it and retry
-        if (err.message.includes('no unique or exclusion constraint') || err.code === '42P01' || err.code === '42703') {
-            console.log("[DB] whatsapp_chats table/columns/constraint missing. Ensuring...");
+        if (err.message.includes('no unique or exclusion constraint') || err.code === '42P01') {
+            console.log("[DB] whatsapp_chats table or constraint missing. Ensuring...");
             await ensureWhatsAppChatsTable();
             await run();
         } else {
@@ -1861,10 +1854,8 @@ async function ensureWhatsAppChatsTable() {
             is_group BOOLEAN DEFAULT FALSE,
             group_id TEXT,
             group_name TEXT,
-            model_used TEXT,
-            sender_name TEXT
+            model_used TEXT
         );
-        ALTER TABLE whatsapp_chats ADD COLUMN IF NOT EXISTS sender_name TEXT;
         CREATE INDEX IF NOT EXISTS idx_whatsapp_chats_session_sender ON whatsapp_chats(session_name, sender_id);
         CREATE INDEX IF NOT EXISTS idx_whatsapp_chats_timestamp ON whatsapp_chats(timestamp DESC);
         

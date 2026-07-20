@@ -183,7 +183,6 @@ export default function WhatsAppOrderTrackingPage() {
 Qty: ${order.product_quantity || '1'}
 Price: ${order.price || 'N/A'}
 Location: ${order.location || 'N/A'}
-Customer Name: ${order.customer_name || 'N/A'}
 Phone: ${order.number || 'N/A'}`;
 
     navigator.clipboard.writeText(textToCopy).then(() => {
