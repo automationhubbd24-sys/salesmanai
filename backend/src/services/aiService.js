@@ -22,7 +22,8 @@ const EMBED_CACHE_TTL = 3600 * 1000;
 const PRO_PLUS_BRANDED_MODEL = 'salesmanchatbot-pro-plus';
 const BRANDED_MODELS = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite', PRO_PLUS_BRANDED_MODEL];
 const DEFAULT_PRO_PLUS_PRIMARY_MODEL = 'gemini-3.5-flash';
-let loggedProPlusPrimaryModel = null;
+let proPlusEndpointCursor = 0;
+let loggedProPlusEndpointSignature = null;
 
 function getCachedEmbedding(text) {
     const key = text.trim().toLowerCase();
@@ -175,24 +176,9 @@ function isProPlusMode(config = {}) {
     return config && config.cheap_engine !== false && (isTruthyFlag(config.pro_plus_mode) || isProPlusModel);
 }
 
-function getProPlusBaseUrl() {
-    const raw = process.env.AISTUDIO_OPENAI_BASE_URL ||
-        process.env.AISTUDIO_API_BASE_URL ||
-        'https://gemini.salesmanchatbot.online/v1';
-    return String(raw).replace(/\/+$/, '');
-}
-
-function getProPlusApiKeys() {
-    const raw = process.env.AISTUDIOAPIKEY ||
-        process.env.AISTUDIOAPIEKEY ||
-        process.env.AISTUDIO_API_KEY ||
-        process.env.AISTUDIO_API_EKEY ||
-        process.env.aistudioapiekey ||
-        '';
-    return String(raw)
-        .split(',')
-        .map(key => key.trim())
-        .filter(Boolean);
+function normalizeProPlusBaseUrl(baseUrl) {
+    const normalized = String(baseUrl || '').trim().replace(/\/+$/, '');
+    return normalized || null;
 }
 
 function normalizeProPlusPinnedModel(modelName) {
@@ -201,21 +187,71 @@ function normalizeProPlusPinnedModel(modelName) {
     return normalized || null;
 }
 
-function getProPlusPrimaryModel() {
-    const envPinnedModel = normalizeProPlusPinnedModel(
-        process.env.PRO_PLUS_PINNED_MODEL || process.env.PRO_PLUS_PRIMARY_MODEL
-    );
-    const selectedModel = envPinnedModel || DEFAULT_PRO_PLUS_PRIMARY_MODEL;
+function getFirstEnvValue(names) {
+    for (const name of names) {
+        const value = process.env[name];
+        if (String(value || '').trim()) return String(value).trim();
+    }
+    return '';
+}
 
-    if (loggedProPlusPrimaryModel !== selectedModel) {
-        console.log(
-            `[Pro Plus] Using pinned model: ${selectedModel} ` +
-            `(source: ${envPinnedModel ? 'env' : 'default'})`
-        );
-        loggedProPlusPrimaryModel = selectedModel;
+function getProPlusEndpoints() {
+    const indexes = new Set();
+    for (const key of Object.keys(process.env)) {
+        const match = key.match(/^(AISTUDIO_OPENAI_BASE_URL|AISTUDIO_INTERNAL_KEY|PRO_PLUS_PINNED_MODEL)_(\d+)$/);
+        if (match) indexes.add(Number(match[2]));
     }
 
-    return selectedModel;
+    const endpoints = [...indexes]
+        .sort((a, b) => a - b)
+        .map(index => {
+            const baseURL = normalizeProPlusBaseUrl(process.env[`AISTUDIO_OPENAI_BASE_URL_${index}`]);
+            const apiKey = String(process.env[`AISTUDIO_INTERNAL_KEY_${index}`] || '').trim();
+            const model = normalizeProPlusPinnedModel(process.env[`PRO_PLUS_PINNED_MODEL_${index}`]) || DEFAULT_PRO_PLUS_PRIMARY_MODEL;
+            if (!baseURL || !apiKey) return null;
+            return { index, baseURL, apiKey, model };
+        })
+        .filter(Boolean);
+
+    if (endpoints.length > 0) return endpoints;
+
+    const fallbackBaseURL = normalizeProPlusBaseUrl(
+        getFirstEnvValue(['AISTUDIO_OPENAI_BASE_URL', 'AISTUDIO_API_BASE_URL']) || 'https://gemini.salesmanchatbot.online/v1'
+    );
+    const fallbackApiKey = getFirstEnvValue([
+        'AISTUDIO_INTERNAL_KEY',
+        'AISTUDIOAPIKEY',
+        'AISTUDIOAPIEKEY',
+        'AISTUDIO_API_KEY',
+        'AISTUDIO_API_EKEY',
+        'aistudioapiekey'
+    ]);
+    if (!fallbackApiKey) return [];
+
+    return [{
+        index: 0,
+        baseURL: fallbackBaseURL,
+        apiKey: fallbackApiKey,
+        model: normalizeProPlusPinnedModel(process.env.PRO_PLUS_PINNED_MODEL || process.env.PRO_PLUS_PRIMARY_MODEL) || DEFAULT_PRO_PLUS_PRIMARY_MODEL
+    }];
+}
+
+function getNextProPlusEndpoint() {
+    const endpoints = getProPlusEndpoints();
+    if (endpoints.length === 0) {
+        throw new Error('AISTUDIO_INTERNAL_KEY env is missing for Pro Plus mode. Use AISTUDIO_INTERNAL_KEY or indexed AISTUDIO_INTERNAL_KEY_1, AISTUDIO_INTERNAL_KEY_2, etc.');
+    }
+
+    const signature = endpoints.map(endpoint => `${endpoint.index}:${endpoint.baseURL}:${endpoint.model}`).join('|');
+    if (loggedProPlusEndpointSignature !== signature) {
+        console.log(`[Pro Plus] Loaded ${endpoints.length} AIStudio endpoint(s): ${endpoints.map(endpoint => `#${endpoint.index || 1}:${endpoint.model}`).join(', ')}`);
+        loggedProPlusEndpointSignature = signature;
+    }
+
+    const endpoint = endpoints[proPlusEndpointCursor % endpoints.length];
+    proPlusEndpointCursor = (proPlusEndpointCursor + 1) % endpoints.length;
+    console.log(`[Pro Plus] Routing request to endpoint #${endpoint.index || 1} (${endpoint.model})`);
+    return endpoint;
 }
 
 function isRetryableManagedError(error) {
@@ -2119,61 +2155,40 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
 }
 
 async function runProPlusChatChain({ messages, pageConfig, totalTokenUsage, userId, pageId, temperature = 0.2, topP = 0.9, requestDeadlineAt = null }) {
-    const apiKeys = getProPlusApiKeys();
-    if (apiKeys.length === 0) {
-        throw new Error('AISTUDIOAPIKEY/AISTUDIOAPIEKEY env is missing for Pro Plus mode.');
-    }
+    const endpoint = getNextProPlusEndpoint();
 
-    const baseURL = getProPlusBaseUrl();
-    const currentModel = getProPlusPrimaryModel();
-    let lastError = null;
+    try {
+        const result = await runAgentLoop({
+            apiKey: endpoint.apiKey,
+            baseURL: endpoint.baseURL,
+            model: endpoint.model,
+            messages: [...messages],
+            tools: [],
+            pageConfig,
+            proxyAgent: null,
+            totalTokenUsage,
+            foundProducts: [],
+            userId,
+            temperature,
+            top_p: topP,
+            pageId,
+            requestDeadlineAt
+        });
 
-    console.log(`[Pro Plus] Trying primary model via AI Studio: ${currentModel}`);
-
-    for (const apiKey of apiKeys) {
-        // [Pro Plus] Note: Model locking/cooldown is managed by the external AIStudioToAPI project.
-        // We do not skip models or lock them globally on this backend for Pro Plus.
-
-        try {
-            const result = await runAgentLoop({
-                apiKey,
-                baseURL,
-                model: currentModel,
-                messages: [...messages],
-                tools: [],
-                pageConfig,
-                proxyAgent: null,
-                totalTokenUsage,
-                foundProducts: [],
-                userId,
-                temperature,
-                top_p: topP,
-                pageId,
-                requestDeadlineAt
-            });
-
-            let tokensToRecord = result.token_usage || 0;
-            if (tokensToRecord === 0 && result.reply) {
-                tokensToRecord = estimateTokenUsage(messages, result.reply, 0);
-            }
-
-            return {
-                ...result,
-                token_usage: tokensToRecord,
-                model: currentModel
-            };
-        } catch (err) {
-            lastError = err;
-            await handleAiError(err, apiKey, currentModel, 'text');
-            const decision = getProPlusErrorDecision(err);
-            if (decision.hardFail) {
-                throw err;
-            }
-            // [Pro Plus] No global locking here; the external project handles its own limits.
+        let tokensToRecord = result.token_usage || 0;
+        if (tokensToRecord === 0 && result.reply) {
+            tokensToRecord = estimateTokenUsage(messages, result.reply, 0);
         }
-    }
 
-    throw lastError || new Error(`Pro Plus primary model ${currentModel} failed.`);
+        return {
+            ...result,
+            token_usage: tokensToRecord,
+            model: endpoint.model
+        };
+    } catch (err) {
+        await handleAiError(err, endpoint.apiKey, endpoint.model, 'text');
+        throw err;
+    }
 }
 
 // Step 2: Business Logic / AI Brain
@@ -3436,49 +3451,31 @@ Example format: T-shirt, navy blue, horizontal stripes, short sleeves, crew neck
     if (isProPlusMode(pageConfig)) {
         try {
             await ensureBase64();
-            const apiKeys = getProPlusApiKeys();
-            const baseURL = getProPlusBaseUrl();
-            const currentModel = getProPlusPrimaryModel();
-            let lastError = null;
-
-            for (const apiKey of apiKeys) {
-                // [Pro Plus] No internal locking for vision; managed by AIStudioToAPI.
-                try {
-                    const payload = {
-                        model: currentModel,
-                        messages: [
-                                {
-                                    role: "user",
-                                    content: [
-                                        { type: "text", text: systemPrompt },
-                                        { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Image}` } }
-                                    ]
-                                }
-                            ]
-                        };
-
-                        const res = await axios.post(`${baseURL}/chat/completions`, payload, {
-                            headers: getStealthHeaders(apiKey, 'openai'),
-                            proxy: false,
-                            timeout: 120000
-                        });
-
-                        const resultText = res.data?.choices?.[0]?.message?.content;
-                        const usageTokens = res.data?.usage?.total_tokens || 0;
-                        if (!resultText) throw new Error(`Empty response from Pro Plus model ${currentModel}`);
-
-                        return { text: resultText, usage: usageTokens, model: PRO_PLUS_BRANDED_MODEL };
-                    } catch (err) {
-                        lastError = err;
-                        await handleAiError(err, apiKey, currentModel, 'vision');
-                        const decision = getProPlusErrorDecision(err);
-                        if (decision.hardFail) throw err;
-                        // [Pro Plus] No global locking here; external project handles its own limits.
-                        break;
+            const endpoint = getNextProPlusEndpoint();
+            const payload = {
+                model: endpoint.model,
+                messages: [
+                    {
+                        role: "user",
+                        content: [
+                            { type: "text", text: systemPrompt },
+                            { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Image}` } }
+                        ]
                     }
-            }
+                ]
+            };
 
-            throw lastError || new Error('All Pro Plus vision models failed.');
+            const res = await axios.post(`${endpoint.baseURL}/chat/completions`, payload, {
+                headers: getStealthHeaders(endpoint.apiKey, 'openai'),
+                proxy: false,
+                timeout: 120000
+            });
+
+            const resultText = res.data?.choices?.[0]?.message?.content;
+            const usageTokens = res.data?.usage?.total_tokens || 0;
+            if (!resultText) throw new Error(`Empty response from Pro Plus model ${endpoint.model}`);
+
+            return { text: resultText, usage: usageTokens, model: PRO_PLUS_BRANDED_MODEL };
         } catch (error) {
             console.error(`[Vision][Pro Plus] Unexpected Error:`, error.message);
             return { text: `[Vision Analysis Failed] Error: ${error.message}`, usage: 0, model: PRO_PLUS_BRANDED_MODEL };
@@ -3869,60 +3866,41 @@ async function transcribeAudio(audioUrl, config) {
     const isOwnAPI = safeConfig.cheap_engine === false;
 
     if (isProPlusMode(safeConfig)) {
-        const apiKeys = getProPlusApiKeys();
-        const baseURL = getProPlusBaseUrl();
-        const currentModel = getProPlusPrimaryModel();
-        let lastError = null;
+        const endpoint = getNextProPlusEndpoint();
 
-        for (const apiKey of apiKeys) {
-            if (keyService.isModelLocked(currentModel, apiKey)) {
-                continue;
-            }
-
-            try {
-                const chatPayload = {
-                    model: currentModel,
-                    messages: [{
-                            role: 'user',
-                            content: [
-                                { type: 'text', text: "Transcribe this audio. Priority languages: Bangla (including regional dialects like Sylheti, Dhakaiya, Chattogrami, Barishali, Rangpuri, etc.), then English, then Hindi. Output ONLY the transcription text." },
-                                {
-                                    type: 'input_audio',
-                                    input_audio: {
-                                        data: audioBuffer.toString('base64'),
-                                        format: mimeType === 'audio/mpeg' ? 'mp3' : (mimeType.split('/')[1] || 'mp3')
-                                    }
-                                }
-                            ]
-                        }]
-                    };
-
-                    const res = await axios.post(`${baseURL}/chat/completions`, chatPayload, {
-                        headers: getStealthHeaders(apiKey, 'openai'),
-                        proxy: false,
-                        timeout: 120000
-                    });
-
-                    const transcribedText = res.data?.choices?.[0]?.message?.content;
-                    const usageTokens = res.data?.usage?.total_tokens || 0;
-                    if (!transcribedText) throw new Error(`Empty response from Pro Plus audio model ${currentModel}`);
-
-                    return { text: transcribedText.trim(), usage: usageTokens, model: PRO_PLUS_BRANDED_MODEL };
-                } catch (err) {
-                    lastError = err;
-                    await handleAiError(err, apiKey, currentModel, 'voice');
-                    const decision = getProPlusErrorDecision(err);
-                    if (decision.hardFail) throw err;
-                    if (decision.skipModel) {
-                        if (shouldRememberProPlusModelLimit(err) && keyService.lockGlobalModel) {
-                            await keyService.lockGlobalModel(currentModel, undefined, 'pro_plus_voice_model_limit_reached');
+        try {
+            const chatPayload = {
+                model: endpoint.model,
+                messages: [{
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: "Transcribe this audio. Priority languages: Bangla (including regional dialects like Sylheti, Dhakaiya, Chattogrami, Barishali, Rangpuri, etc.), then English, then Hindi. Output ONLY the transcription text." },
+                        {
+                            type: 'input_audio',
+                            input_audio: {
+                                data: audioBuffer.toString('base64'),
+                                format: mimeType === 'audio/mpeg' ? 'mp3' : (mimeType.split('/')[1] || 'mp3')
+                            }
                         }
-                        break;
-                    }
-                }
-            }
+                    ]
+                }]
+            };
 
-        return { text: `[Audio Transcription Failed] Error: ${lastError?.message || 'Unknown'}`, usage: 0, model: PRO_PLUS_BRANDED_MODEL };
+            const res = await axios.post(`${endpoint.baseURL}/chat/completions`, chatPayload, {
+                headers: getStealthHeaders(endpoint.apiKey, 'openai'),
+                proxy: false,
+                timeout: 120000
+            });
+
+            const transcribedText = res.data?.choices?.[0]?.message?.content;
+            const usageTokens = res.data?.usage?.total_tokens || 0;
+            if (!transcribedText) throw new Error(`Empty response from Pro Plus audio model ${endpoint.model}`);
+
+            return { text: transcribedText.trim(), usage: usageTokens, model: PRO_PLUS_BRANDED_MODEL };
+        } catch (err) {
+            await handleAiError(err, endpoint.apiKey, endpoint.model, 'voice');
+            return { text: `[Audio Transcription Failed] Error: ${err?.message || 'Unknown'}`, usage: 0, model: PRO_PLUS_BRANDED_MODEL };
+        }
     }
 
     let resolved = null;
