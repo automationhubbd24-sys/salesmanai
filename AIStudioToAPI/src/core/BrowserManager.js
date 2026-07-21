@@ -1773,14 +1773,10 @@ class BrowserManager {
         // that will be immediately removed by the new rebalance after switch
         await this.abortBackgroundPreload();
 
-        // Test: Check if initializingContexts is empty after aborting background task
         if (this.initializingContexts.size > 0) {
             const initializingList = [...this.initializingContexts].join(", ");
-            this.logger.error(
-                `[ContextPool] Pre-cleanup ERROR: initializingContexts not empty after aborting background task! Contexts still initializing: [${initializingList}]`
-            );
-            throw new Error(
-                `Pre-cleanup failed: initializingContexts not empty (${initializingList}). This should not happen after aborting background task.`
+            this.logger.warn(
+                `[ContextPool] Pre-cleanup continuing while context initialization is still finishing: [${initializingList}]`
             );
         }
 
