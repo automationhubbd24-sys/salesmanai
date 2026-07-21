@@ -47,8 +47,9 @@ class RequestHandler {
         this.retryDelay = this.config.retryDelay;
         this.needsSwitchingAfterRequest = false;
 
-        // Round-robin index for context selection
+        // Round-robin indices for account/context selection
         this._roundRobinIndex = -1;
+        this._rotationSelectionIndex = -1;
 
         // Timeout settings
         this.timeouts = {
@@ -58,68 +59,64 @@ class RequestHandler {
     }
 
     /**
-     * Select next auth index for load balancing across available contexts
-     * Uses least-loaded first, then round-robin
+     * Select next auth index from the full rotation list, not only loaded contexts.
+     * This keeps distribution fair when there are many accounts but a smaller context pool.
      * @returns {number} selected auth index
      */
     _selectNextAuthIndex() {
-        // Get all available auth indices from the context pool
-        const availableIndices = [...this.browserManager.contexts.keys()];
-        const connectedIndices = availableIndices.filter(idx => Boolean(this.connectionRegistry.getConnectionByAuth(idx, false)));
-        const eligibleConnectedIndices = connectedIndices.filter(
-            idx => !this.authSwitcher.isAuthTemporarilyUnavailable(idx)
+        const rotationIndices = this.authSource?.rotationIndices || [];
+        const eligibleRotationIndices = rotationIndices.filter(idx => !this.authSwitcher.isAuthTemporarilyUnavailable(idx));
+        const selectionPool = eligibleRotationIndices.length > 0 ? eligibleRotationIndices : rotationIndices;
+        const availableContextIndices = [...this.browserManager.contexts.keys()];
+        const connectedContextIndices = availableContextIndices.filter(idx =>
+            Boolean(this.connectionRegistry.getConnectionByAuth(idx, false))
         );
-        const eligibleAvailableIndices = availableIndices.filter(idx => !this.authSwitcher.isAuthTemporarilyUnavailable(idx));
-        const selectionPool =
-            eligibleConnectedIndices.length > 0
-                ? eligibleConnectedIndices
-                : eligibleAvailableIndices.length > 0
-                  ? eligibleAvailableIndices
-                  : connectedIndices.length > 0
-                    ? connectedIndices
-                    : availableIndices;
+
         this.logger.debug(
-            `[LoadBalancer] Selection snapshot: available=[${availableIndices.join(", ")}], connected=[${connectedIndices.join(
+            `[LoadBalancer] Selection snapshot: rotation=[${rotationIndices.join(", ")}], eligibleRotation=[${selectionPool.join(
                 ", "
-            )}], eligible=[${selectionPool.join(", ")}], current=${this.currentAuthIndex}`
+            )}], contexts=[${availableContextIndices.join(", ")}], connected=[${connectedContextIndices.join(
+                ", "
+            )}], current=${this.currentAuthIndex}`
         );
-        
-        // If no available contexts, fall back to current auth index
+
         if (selectionPool.length === 0) {
-            this.logger.debug(`[LoadBalancer] No available contexts, using current: ${this.currentAuthIndex}`);
+            this.logger.debug(`[LoadBalancer] No rotation accounts, using current: ${this.currentAuthIndex}`);
             return this.currentAuthIndex;
         }
 
-        // If only one context available, use it
-        if (selectionPool.length === 1) {
-            this.logger.debug(`[LoadBalancer] Only one eligible context available: ${selectionPool[0]}`);
-            return selectionPool[0];
+        for (let i = 0; i < selectionPool.length; i++) {
+            this._rotationSelectionIndex = (this._rotationSelectionIndex + 1) % selectionPool.length;
+            const selectedIndex = selectionPool[this._rotationSelectionIndex];
+            if (!this.connectionRegistry.hasMessageQueueForAuth(selectedIndex)) {
+                this.logger.debug(
+                    `[LoadBalancer] Selected rotation account: ${selectedIndex} (rotation cursor: ${this._rotationSelectionIndex})`
+                );
+                return selectedIndex;
+            }
         }
 
-        // First, try to find the least loaded context (based on active message queues)
-        const indexLoads = selectionPool.map(idx => ({
-            index: idx,
-            load: this.connectionRegistry.hasMessageQueueForAuth(idx) ? 1 : 0 // Simple load: 1 if busy, 0 if free
-        }));
-
-        // Sort by load (ascending), then by index (ascending)
-        indexLoads.sort((a, b) => a.load - b.load || a.index - b.index);
-
-        // Check if there are any free contexts (load === 0)
-        const freeIndices = indexLoads.filter(x => x.load === 0);
-        if (freeIndices.length > 0) {
-            // Round-robin through free indices
-            this._roundRobinIndex = (this._roundRobinIndex + 1) % freeIndices.length;
-            const selectedIndex = freeIndices[this._roundRobinIndex].index;
-            this.logger.debug(`[LoadBalancer] Selected free context: ${selectedIndex} (round-robin: ${this._roundRobinIndex})`);
-            return selectedIndex;
-        }
-
-        // If all are busy, round-robin through all available indices
-        this._roundRobinIndex = (this._roundRobinIndex + 1) % selectionPool.length;
-        const selectedIndex = selectionPool[this._roundRobinIndex];
-        this.logger.debug(`[LoadBalancer] All contexts busy, selected: ${selectedIndex} (round-robin: ${this._roundRobinIndex})`);
+        this._rotationSelectionIndex = (this._rotationSelectionIndex + 1) % selectionPool.length;
+        const selectedIndex = selectionPool[this._rotationSelectionIndex];
+        this.logger.debug(
+            `[LoadBalancer] All rotation accounts busy, selected: ${selectedIndex} (rotation cursor: ${this._rotationSelectionIndex})`
+        );
         return selectedIndex;
+    }
+
+    async _prepareSelectedAuthContext(authIndex) {
+        if (this.connectionRegistry.getConnectionByAuth(authIndex, false)) {
+            return;
+        }
+
+        this.logger.info(`[LoadBalancer] Preparing context for selected account #${authIndex}...`);
+        await this.browserManager.preCleanupForSwitch(authIndex);
+        await this.browserManager.launchOrSwitchContext(authIndex);
+        await this.browserManager.rebalanceContextPool();
+
+        if (!this.connectionRegistry.getConnectionByAuth(authIndex, false)) {
+            throw new Error(`Selected account #${authIndex} has no WebSocket connection after context preparation.`);
+        }
     }
 
     // Delegate properties to AuthSwitcher
@@ -1108,6 +1105,7 @@ class RequestHandler {
 
             // Select auth index for this specific request
             const authIndex = this._selectNextAuthIndex();
+            await this._prepareSelectedAuthContext(authIndex);
 
             // Handle usage-based account switching
             const isGenerativeRequest =
@@ -1207,6 +1205,7 @@ class RequestHandler {
 
             // Select auth index for this specific request
             const authIndex = this._selectNextAuthIndex();
+            await this._prepareSelectedAuthContext(authIndex);
 
             const { cleanModelName, googleRequest, path } = this.formatConverter.translateOpenAIEmbeddingsToGoogle(
                 req.body
@@ -1271,6 +1270,7 @@ class RequestHandler {
 
             // Select auth index for this specific request
             const authIndex = this._selectNextAuthIndex();
+            await this._prepareSelectedAuthContext(authIndex);
 
             const proxyRequest = {
                 body_b64: req.rawBody ? req.rawBody.toString("base64") : undefined,
@@ -1327,6 +1327,7 @@ class RequestHandler {
 
             // Select auth index for this specific request
             const authIndex = this._selectNextAuthIndex();
+            await this._prepareSelectedAuthContext(authIndex);
 
             const isOpenAIStream = req.body.stream === true;
             const systemStreamMode = this.serverSystem.streamingMode;
@@ -1684,6 +1685,7 @@ class RequestHandler {
 
             // Select auth index for this specific request
             const authIndex = this._selectNextAuthIndex();
+            await this._prepareSelectedAuthContext(authIndex);
 
             const isOpenAIStream = req.body.stream === true;
             const normalizeInstructions = value => {
@@ -2114,6 +2116,7 @@ class RequestHandler {
 
             // Select auth index for this specific request
             const authIndex = this._selectNextAuthIndex();
+            await this._prepareSelectedAuthContext(authIndex);
 
             const isClaudeStream = req.body.stream === true;
             const systemStreamMode = this.serverSystem.streamingMode;
@@ -2461,6 +2464,7 @@ class RequestHandler {
 
             // Select auth index for this specific request
             const authIndex = this._selectNextAuthIndex();
+            await this._prepareSelectedAuthContext(authIndex);
 
             // Translate Claude format to Google format
             let googleBody, model;
@@ -2600,6 +2604,7 @@ class RequestHandler {
 
             // Select auth index for this specific request
             const authIndex = this._selectNextAuthIndex();
+            await this._prepareSelectedAuthContext(authIndex);
 
             // Translate OpenAI Response format to Google format (so we can use Gemini countTokens)
             let googleBody, model;

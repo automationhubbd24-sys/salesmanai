@@ -40,6 +40,21 @@ async function getPageByPageId(pageId, userId, userEmail) {
     return rows[0] || null;
 }
 
+async function subscribeMessengerPage(pageId, pageAccessToken) {
+    const fields = ['messages', 'messaging_postbacks', 'message_deliveries', 'message_reads', 'message_echoes', 'feed'];
+    try {
+        await axios.post(`https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/${pageId}/subscribed_apps`, null, {
+            params: { access_token: pageAccessToken, subscribed_fields: fields.join(',') },
+            timeout: 15000
+        });
+        console.log(`[Messenger] Subscribed app to page ${pageId} fields: ${fields.join(',')}`);
+        return true;
+    } catch (error) {
+        console.warn(`[Messenger] Page subscription failed for ${pageId}:`, error.response?.data?.error?.message || error.message);
+        return false;
+    }
+}
+
 async function verifyFacebookPageAccessToken(pageId, pageAccessToken) {
     console.log('🔍 [DEBUG] verifyFacebookPageAccessToken called for page ID:', pageId);
     try {
@@ -306,6 +321,8 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
                 'active'
             ]
         );
+
+        await subscribeMessengerPage(String(page_id), page_access_token);
 
         // SYNC ALL PRODUCTS TO THIS NEW PAGE ID (Automatic)
         try {

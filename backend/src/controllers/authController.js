@@ -548,8 +548,7 @@ exports.startFacebookAuth = async (req, res) => {
             });
         } else {
             redirectUri = `${frontendOrigin}/auth/facebook/messenger/callback`;
-          //  scope = 'pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_read_user_content';
-            scope = 'email,public_profile,pages_show_list,pages_messaging,pages_read_engagement';
+            scope = 'email,public_profile,pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_read_user_content';
         } 
 
         let baseHost = 'm.facebook.com';
