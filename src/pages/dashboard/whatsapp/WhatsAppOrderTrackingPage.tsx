@@ -179,7 +179,8 @@ export default function WhatsAppOrderTrackingPage() {
   };
 
   const handleCopy = (order: Order) => {
-    const textToCopy = `Product: ${order.product_name || 'N/A'}
+    const textToCopy = `Customer Name: ${order.customer_name || 'N/A'}
+Product: ${order.product_name || 'N/A'}
 Qty: ${order.product_quantity || '1'}
 Price: ${order.price || 'N/A'}
 Location: ${order.location || 'N/A'}
