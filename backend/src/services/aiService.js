@@ -1468,14 +1468,24 @@ async function getEmbedding(text, customApiKey = null) {
         if (!apiKey) throw new Error('OpenRouter embedding API key is not configured');
 
         const modelName = (config && config.model) || 'qwen/qwen3-embedding-8b';
-        const baseURL = (config && config.base_url) || 'https://openrouter.ai/api/v1';
-        const openai = new OpenAI({ apiKey, baseURL });
-        const res = await openai.embeddings.create({
-            model: modelName,
-            input: text.replace(/\n/g, ' '),
-            encoding_format: "float",
+        const baseURL = ((config && config.base_url) || 'https://openrouter.ai/api/v1').replace(/\/+$/, '');
+        const response = await fetch(`${baseURL}/embeddings`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: modelName,
+                input: text.replace(/\n/g, ' '),
+                encoding_format: 'float'
+            })
         });
-        const vector = normalizeEmbeddingVector(res.data[0].embedding, modelName);
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(body?.error?.message || `Embedding request failed with status ${response.status}`);
+        }
+        const vector = normalizeEmbeddingVector(body.data?.[0]?.embedding, modelName);
 
         if (vector) {
             setCachedEmbedding(text, vector);
