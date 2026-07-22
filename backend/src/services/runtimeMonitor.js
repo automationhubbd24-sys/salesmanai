@@ -51,7 +51,14 @@ function recordLatency(platform, event = {}) {
         historyCount: event.historyCount || null,
         processedHistoryCount: event.processedHistoryCount || null,
         messageCount: event.messageCount || null,
-        toolCount: event.toolCount || null
+        toolCount: event.toolCount || null,
+        resourceCount: event.resourceCount || null,
+        rowCount: event.rowCount || null,
+        resultCount: event.resultCount || null,
+        filteredCount: event.filteredCount || null,
+        rankedCount: event.rankedCount || null,
+        reason: event.reason || null,
+        errorType: event.errorType || null
     });
 }
 
@@ -76,6 +83,7 @@ function inWindow(items, windowMs) {
 function summarizeLatency(events) {
     const messenger = events.filter((event) => event.platform === 'messenger');
     const aiRuntime = events.filter((event) => event.platform === 'ai');
+    const productSearch = events.filter((event) => event.platform === 'product_search');
     const completedReplies = messenger.filter((event) => event.stage === 'text_send_finished');
     const visionEvents = messenger.filter((event) => event.stage === 'vision_analysis_finished');
     const aiFinished = messenger.filter((event) => event.stage === 'ai_finished');
@@ -90,7 +98,8 @@ function summarizeLatency(events) {
     const slowVision = visionEvents.filter((event) => event.elapsedMs > 30000);
     const slowAi = aiFinished.filter((event) => event.elapsedMs > 60000);
     const slowAiRuntime = aiRuntime.filter((event) => event.elapsedMs > 30000);
-    const slowEvents = [...slowCompletedReplies, ...slowVision, ...slowAi, ...slowAiRuntime]
+    const slowProductSearch = productSearch.filter((event) => event.elapsedMs > 30000);
+    const slowEvents = [...slowCompletedReplies, ...slowVision, ...slowAi, ...slowAiRuntime, ...slowProductSearch]
         .sort((a, b) => b.elapsedMs - a.elapsedMs)
         .slice(0, 10)
         .map((event) => ({
@@ -123,6 +132,11 @@ function summarizeLatency(events) {
             internalEvents: aiRuntime.length,
             internalSlowCount: slowAiRuntime.length,
             internalMaxMs: aiRuntime.reduce((max, event) => Math.max(max, event.elapsedMs), 0)
+        },
+        productSearch: {
+            events: productSearch.length,
+            slowCount: slowProductSearch.length,
+            maxMs: productSearch.reduce((max, event) => Math.max(max, event.elapsedMs), 0)
         },
         recentSlowSessions: slowEvents
     };
@@ -166,6 +180,7 @@ function getHealth(options = {}) {
     if (latency.vision.slowCount > 0) warnings.push('slow_vision_analysis_detected');
     if (latency.ai.slowCount > 0) warnings.push('slow_ai_responses_detected');
     if (latency.ai.internalSlowCount > 0) warnings.push('slow_ai_internal_stages_detected');
+    if (latency.productSearch.slowCount > 0) warnings.push('slow_product_search_detected');
 
     const status = errors.crashes > 0 || errors.visionAuthFailures > 0
         ? 'critical'
@@ -193,6 +208,7 @@ function getHealth(options = {}) {
         },
         messenger: latency.messenger,
         ai: latency.ai,
+        productSearch: latency.productSearch,
         warnings,
         recentSlowSessions: latency.recentSlowSessions,
         recentErrors: errors.recent

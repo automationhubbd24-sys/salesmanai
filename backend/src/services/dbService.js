@@ -1,4 +1,16 @@
 const { query } = require('./pgClient');
+const runtimeMonitor = require('./runtimeMonitor');
+
+const productResourceSearchInFlight = new Map();
+
+function recordProductSearchStage(pageId, stage, startedAt, extra = {}) {
+    runtimeMonitor.recordLatency('product_search', {
+        sessionId: `product:${pageId || 'unknown'}`,
+        stage,
+        elapsedMs: Date.now() - startedAt,
+        ...extra
+    });
+}
 
 // Helper function to check and expire monthly plans
 async function checkAndExpirePlan(userId) {
@@ -5304,13 +5316,29 @@ function isVectorDimensionMismatchError(error) {
 }
 
 async function searchProductsForResource(queryText, pageId = null) {
+    const cleanQuery = (queryText || '').trim();
+    const cacheKey = `${pageId || 'unknown'}:${cleanQuery.slice(0, 500)}`;
+    if (productResourceSearchInFlight.has(cacheKey)) {
+        return productResourceSearchInFlight.get(cacheKey);
+    }
+
+    const promise = searchProductsForResourceInternal(cleanQuery, pageId).finally(() => {
+        productResourceSearchInFlight.delete(cacheKey);
+    });
+    productResourceSearchInFlight.set(cacheKey, promise);
+    return promise;
+}
+
+async function searchProductsForResourceInternal(cleanQuery, pageId = null) {
+    const searchStartedAt = Date.now();
     try {
         if (!pageId) return [];
 
+        recordProductSearchStage(pageId, 'resource_context_started', searchStartedAt);
         const { isWhatsapp, resourceIds, ownerUserId } = await resolveResourceSearchContext(pageId);
+        recordProductSearchStage(pageId, 'resource_context_finished', searchStartedAt, { resourceCount: resourceIds.length, isWhatsapp });
         if (resourceIds.length === 0) return [];
 
-        const cleanQuery = (queryText || '').trim();
         const queryTokens = extractSearchTokens(cleanQuery);
         const queryNumberTokens = queryTokens.filter((token) => /^\d+$/.test(token));
         const applyExactNumberPreference = (products = []) => {
@@ -5329,7 +5357,8 @@ async function searchProductsForResource(queryText, pageId = null) {
                 .sort((a, b) => Number(a?.distance ?? 999) - Number(b?.distance ?? 999));
         };
 
-        const lexicalFallback = async () => {
+        const lexicalFallback = async (reason = 'fallback') => {
+            recordProductSearchStage(pageId, 'lexical_fallback_started', searchStartedAt, { reason });
             let fallbackSql = `
                 SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, additional_images, product_mode, attribute_schema, sku_matrix, searchable_text
                 FROM products
@@ -5340,6 +5369,7 @@ async function searchProductsForResource(queryText, pageId = null) {
             fallbackSql += ` ORDER BY id DESC LIMIT 100`;
 
             const fallbackRes = await query(fallbackSql, fallbackParams);
+            recordProductSearchStage(pageId, 'lexical_query_finished', searchStartedAt, { reason, rowCount: fallbackRes.rows?.length || 0 });
             const normalizedProducts = (fallbackRes.rows || []).map(normalizeProductRecord);
             const ranked = normalizedProducts
                 .map((product) => {
@@ -5389,6 +5419,7 @@ async function searchProductsForResource(queryText, pageId = null) {
             if (preferred.length > 0) {
                 console.log(`[DB] searchProductsForResource lexical fallback matched ${preferred.length} product(s) for "${cleanQuery}"`);
             }
+            recordProductSearchStage(pageId, 'lexical_ranking_finished', searchStartedAt, { reason, rankedCount: preferred.length });
             return preferred;
         };
 
@@ -5397,20 +5428,25 @@ async function searchProductsForResource(queryText, pageId = null) {
             let params = [];
             ({ sql, params } = appendAssignmentFilter(sql, params, isWhatsapp, resourceIds, ownerUserId));
             sql += ` ORDER BY id DESC LIMIT 5`;
+            recordProductSearchStage(pageId, 'empty_query_latest_started', searchStartedAt);
             const res = await query(sql, params);
+            recordProductSearchStage(pageId, 'empty_query_latest_finished', searchStartedAt, { rowCount: res.rows?.length || 0 });
             return (res.rows || []).map(normalizeProductRecord);
         }
 
         const aiService = require('./aiService');
         let queryVector = null;
         try {
+            recordProductSearchStage(pageId, 'embedding_started', searchStartedAt);
             queryVector = await aiService.getEmbedding(cleanQuery);
+            recordProductSearchStage(pageId, 'embedding_finished', searchStartedAt, { hasVector: Boolean(queryVector) });
         } catch (embeddingError) {
+            recordProductSearchStage(pageId, 'embedding_failed', searchStartedAt, { errorType: embeddingError?.code || 'error' });
             console.warn(`[DB] Embedding generation failed for "${cleanQuery}", using lexical fallback: ${embeddingError.message}`);
         }
 
         if (!queryVector) {
-            return await lexicalFallback();
+            return await lexicalFallback('no_vector');
         }
 
         let sql = `
@@ -5428,11 +5464,14 @@ async function searchProductsForResource(queryText, pageId = null) {
         const start = Date.now();
         let result;
         try {
+            recordProductSearchStage(pageId, 'vector_query_started', searchStartedAt);
             result = await query(sql, params);
+            recordProductSearchStage(pageId, 'vector_query_finished', searchStartedAt, { rowCount: result.rows?.length || 0 });
         } catch (vectorError) {
             if (isVectorDimensionMismatchError(vectorError)) {
+                recordProductSearchStage(pageId, 'vector_query_failed', searchStartedAt, { errorType: 'dimension_mismatch' });
                 console.warn(`[DB] searchProductsForResource vector mismatch for "${cleanQuery}". Falling back to lexical ranking: ${vectorError.message}`);
-                return await lexicalFallback();
+                return await lexicalFallback('vector_mismatch');
             }
             throw vectorError;
         }
@@ -5449,9 +5488,10 @@ async function searchProductsForResource(queryText, pageId = null) {
                 return Number.isFinite(numericDistance) && numericDistance < 0.4;
             });
         filtered = applyExactNumberPreference(filtered);
+        recordProductSearchStage(pageId, 'vector_filter_finished', searchStartedAt, { filteredCount: filtered.length });
 
         if (filtered.length < 3) {
-            const lexicalMatches = await lexicalFallback();
+            const lexicalMatches = await lexicalFallback('merge_low_vector_results');
             if (lexicalMatches.length > 0) {
                 const seen = new Set(filtered.map((item) => String(item.id)));
                 lexicalMatches.forEach((item) => {
@@ -5466,7 +5506,7 @@ async function searchProductsForResource(queryText, pageId = null) {
         
         // --- FALLBACK: If semantic results are weak or missing, try lexical ranking over searchable text ---
         if (filtered.length === 0) {
-            const lexicalMatches = await lexicalFallback();
+            const lexicalMatches = await lexicalFallback('empty_vector_results');
             if (lexicalMatches.length > 0) {
                 return lexicalMatches;
             }
@@ -5480,11 +5520,14 @@ async function searchProductsForResource(queryText, pageId = null) {
                 let fallbackParams = [];
                 ({ sql: fallbackSql, params: fallbackParams } = appendAssignmentFilter(fallbackSql, fallbackParams, isWhatsapp, resourceIds, ownerUserId));
                 fallbackSql += ` ORDER BY id DESC LIMIT 5`;
+                recordProductSearchStage(pageId, 'generic_latest_started', searchStartedAt);
                 const fallbackRes = await query(fallbackSql, fallbackParams);
+                recordProductSearchStage(pageId, 'generic_latest_finished', searchStartedAt, { rowCount: fallbackRes.rows?.length || 0 });
                 return (fallbackRes.rows || []).map(normalizeProductRecord);
             }
         }
 
+        recordProductSearchStage(pageId, 'search_products_for_resource_finished', searchStartedAt, { resultCount: filtered.length });
         return filtered;
     } catch (error) {
         console.error("[DB] searchProductsForResource Error:", error.message);
