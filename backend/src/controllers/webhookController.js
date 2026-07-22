@@ -5,6 +5,7 @@ const aiService = require('../services/aiService');
 const facebookService = require('../services/facebookService');
 const commentAutomationService = require('../services/commentAutomationService');
 const incomingImageAnalysisService = require('../services/incomingImageAnalysisService');
+const runtimeMonitor = require('../services/runtimeMonitor');
 const { runMessengerWorkflow } = require('../services/messenger_workflow');
 const { runWhatsAppWorkflow } = require('../services/whatsapp_workflow');
 const { buildResolvedProductMediaContext } = require('../utils/productMediaResolver');
@@ -829,7 +830,9 @@ const AI_REQUEST_BUDGET_MS = process.env.AI_REQUEST_BUDGET_MS ? parseInt(process
 
 // #region debug-point messenger-latency
 function logMessengerLatency(sessionId, stage, startedAt, extra = {}) {
-    console.info(`[Latency][Messenger] ${JSON.stringify({ sessionId, stage, elapsedMs: Date.now() - startedAt, ...extra })}`);
+    const event = { sessionId, stage, elapsedMs: Date.now() - startedAt, ...extra };
+    runtimeMonitor.recordLatency('messenger', event);
+    console.info(`[Latency][Messenger] ${JSON.stringify(event)}`);
 }
 // #endregion debug-point messenger-latency
 
@@ -844,10 +847,12 @@ function schedulePageTask(pageId, task) {
         let watchdog = null;
         try {
             watchdog = setTimeout(() => {
+                runtimeMonitor.recordError('messenger_burst_queue', `Task running longer than ${AI_REQUEST_BUDGET_MS}ms`, { type: 'slow_task', platform: 'messenger' });
                 console.error(`[BurstQueue] Task warning (Page ${pageId}): Task running longer than ${AI_REQUEST_BUDGET_MS}ms`);
             }, AI_REQUEST_BUDGET_MS);
             await task();
         } catch (e) {
+            runtimeMonitor.recordError('messenger_burst_queue', e, { platform: 'messenger', stage: 'page_task' });
             console.error(`[BurstQueue] Task error (Page ${pageId}):`, e.message || e);
         } finally {
             if (watchdog) clearTimeout(watchdog);

@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const aiService = require('./aiService');
 const dbService = require('./dbService');
+const runtimeMonitor = require('./runtimeMonitor');
 
 async function buildImageHash(imageUrl) {
     const normalizedUrl = String(imageUrl || '').trim();
@@ -338,6 +339,7 @@ async function analyzeIncomingImageBatchMerged({
             userImageUrls: uniqueUserImageUrls
         };
     } catch (error) {
+        runtimeMonitor.recordError('image_batch_ab', error, { platform: 'messenger', stage: 'image_batch_ab' });
         console.warn(`[Image Batch AB] Failed: ${error.message}`);
         return null;
     }
@@ -417,6 +419,7 @@ async function analyzeIncomingImageBatchIndependent({
             mode: 'ab_independent'
         };
     } catch (error) {
+        runtimeMonitor.recordError('image_batch_ab_independent', error, { platform: 'messenger', stage: 'image_batch_ab_independent' });
         console.warn(`[Image Batch AB Independent] Failed: ${error.message}`);
         return null;
     }
@@ -635,6 +638,7 @@ async function analyzeAndMatchIncomingImage({
             }
         }
     } catch (matchErr) {
+        runtimeMonitor.recordError('direct_image_evidence', matchErr, { platform, stage: 'direct_image_evidence' });
         console.warn(`[${platform}] Direct image embedding evidence failed: ${matchErr.message}`);
     }
 

@@ -18,6 +18,8 @@ const statsRoutes = require('./routes/statsRoutes');
 const aiRoutes = require('./routes/aiRoutes');
 const marketingRoutes = require('./routes/marketingRoutes');
 const shopifyRoutes = require('./routes/shopifyRoutes');
+const runtimeHealthRoutes = require('./routes/runtimeHealthRoutes');
+const runtimeMonitor = require('./services/runtimeMonitor');
 
 const path = require('path');
 const app = express();
@@ -81,6 +83,7 @@ app.use('/api/stats', statsRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/marketing', marketingRoutes);
 app.use('/api/shopify', shopifyRoutes);
+app.use('/api/runtime-health', runtimeHealthRoutes);
 
 // Basic health check
 app.get('/', (req, res) => {
@@ -89,6 +92,7 @@ app.get('/', (req, res) => {
 
 // Global Error Handler
 app.use((err, req, res, next) => {
+    runtimeMonitor.recordError('express_global_error', err, { type: 'runtime_exception' });
     console.error('Unhandled Application Error:', err);
     res.status(500).json({ error: 'Internal Server Error', message: err.message });
 });
