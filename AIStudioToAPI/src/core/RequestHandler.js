@@ -67,8 +67,10 @@ class RequestHandler {
         const rotationIndices = this.authSource?.rotationIndices || [];
         const eligibleRotationIndices = rotationIndices.filter(idx => !this.authSwitcher.isAuthTemporarilyUnavailable(idx));
         const rotationPool = eligibleRotationIndices.length > 0 ? eligibleRotationIndices : rotationIndices;
+        const rotationIndexSet = new Set(rotationPool);
         const connectedContextIndices = [...this.browserManager.contexts.keys()].filter(
             idx =>
+                rotationIndexSet.has(idx) &&
                 Boolean(this.connectionRegistry.getConnectionByAuth(idx, false)) &&
                 !this.authSwitcher.isAuthTemporarilyUnavailable(idx)
         );
