@@ -102,6 +102,34 @@ function reportVariantDebug(hypothesisId, location, msg, data = {}) {
 }
 // #endregion
 
+// #region debug-point A:comment-webhook-reporter
+function reportCommentWebhookDebug(hypothesisId, location, msg, data = {}) {
+    try {
+        const envPath = path.join(__dirname, '../../.dbg/comment-reply-webhook.env');
+        let debugUrl = 'http://127.0.0.1:7777/event';
+        let sessionId = 'comment-reply-webhook';
+        try {
+            const envContent = fs.readFileSync(envPath, 'utf8');
+            debugUrl = envContent.match(/DEBUG_SERVER_URL=(.+)/)?.[1]?.trim() || debugUrl;
+            sessionId = envContent.match(/DEBUG_SESSION_ID=(.+)/)?.[1]?.trim() || sessionId;
+        } catch (_) {}
+        fetch(debugUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                sessionId,
+                runId: 'pre-fix',
+                hypothesisId,
+                location,
+                msg: `[DEBUG] ${msg}`,
+                data,
+                ts: Date.now()
+            })
+        }).catch(() => {});
+    } catch (_) {}
+}
+// #endregion
+
 function matchesCachedConfigKey(config, lookupKey) {
     if (!config || !lookupKey) return false;
 
@@ -888,6 +916,16 @@ const instagramController = require('./instagramController');
 const handleWebhook = async (req, res) => {
     const body = req.body;
     console.log(`[Webhook] Incoming POST Request. Object: ${body.object}`); 
+    // #region debug-point A:webhook-ingress
+    reportCommentWebhookDebug('A', 'webhookController.handleWebhook:890', 'webhook ingress received', {
+        object: body.object,
+        entryCount: Array.isArray(body.entry) ? body.entry.length : 0,
+        entryIds: (body.entry || []).map(entry => entry.id),
+        fields: (body.entry || []).flatMap(entry => (entry.changes || []).map(change => change.field)),
+        hasMessaging: (body.entry || []).some(entry => Array.isArray(entry.messaging)),
+        hasStandby: (body.entry || []).some(entry => Array.isArray(entry.standby))
+    });
+    // #endregion
     // console.log('Webhook Body Received:', JSON.stringify(body, null, 2)); // Too verbose for production
 
     // Log incoming payload to monitor cache (In-Memory)
@@ -979,6 +1017,20 @@ const handleWebhook = async (req, res) => {
                     
                     // 2. Handle Changes Events (Comments / Feed)
                     if (entry.changes) {
+                        // #region debug-point B:changes-branch
+                        reportCommentWebhookDebug('B', 'webhookController.handleWebhook:981', 'entry changes branch reached', {
+                            pageId,
+                            changeCount: entry.changes.length,
+                            changes: entry.changes.map(change => ({
+                                field: change.field,
+                                item: change.value?.item,
+                                verb: change.value?.verb,
+                                hasCommentId: Boolean(change.value?.comment_id || change.value?.id),
+                                postId: change.value?.post_id || change.value?.media_id || change.value?.media?.id,
+                                message: change.value?.message || change.value?.text
+                            }))
+                        });
+                        // #endregion
                         for (const change of entry.changes) {
                             if (change.field === 'feed') {
                                 await processCommentEvent(change.value, pageId);
@@ -4862,17 +4914,44 @@ STRICT RULES:
 // Handle Comments (n8n "OnComment" Logic)
 async function processCommentEvent(changeValue, entryPageId = null) {
     try {
-        if (changeValue.item !== 'comment' || changeValue.verb !== 'add') return;
+        // #region debug-point C:comment-event-entry
+        reportCommentWebhookDebug('C', 'webhookController.processCommentEvent:4863', 'comment processor entered', {
+            entryPageId,
+            item: changeValue?.item,
+            verb: changeValue?.verb,
+            fieldKeys: changeValue ? Object.keys(changeValue) : [],
+            commentId: changeValue?.comment_id || changeValue?.id,
+            senderId: changeValue?.from?.id || changeValue?.sender_id,
+            postId: changeValue?.post_id,
+            message: changeValue?.message || changeValue?.text
+        });
+        // #endregion
+        if (changeValue.item !== 'comment' || changeValue.verb !== 'add') {
+            reportCommentWebhookDebug('D', 'webhookController.processCommentEvent:4865', 'comment processor skipped non-add-comment', { item: changeValue?.item, verb: changeValue?.verb });
+            return;
+        }
         const commentId = changeValue.comment_id;
         const message = changeValue.message;
         const senderId = changeValue.from?.id;
         const postId = changeValue.post_id;
         const pageId = entryPageId || postId?.split('_')?.[0];
-        if (!commentId || !senderId || !postId || !pageId || senderId === pageId) return;
+        if (!commentId || !senderId || !postId || !pageId || senderId === pageId) {
+            reportCommentWebhookDebug('D', 'webhookController.processCommentEvent:4871', 'comment processor skipped missing/self fields', { commentId, senderId, postId, pageId, senderEqualsPage: senderId === pageId });
+            return;
+        }
 
         const pageConfig = await dbService.getPageConfig(pageId);
-        if (!pageConfig || pageConfig.subscription_status === 'banned' || !pageConfig.page_access_token) return;
+        if (!pageConfig || pageConfig.subscription_status === 'banned' || !pageConfig.page_access_token) {
+            reportCommentWebhookDebug('E', 'webhookController.processCommentEvent:4874', 'comment processor skipped page config/token', {
+                pageId,
+                hasConfig: Boolean(pageConfig),
+                subscriptionStatus: pageConfig?.subscription_status,
+                hasToken: Boolean(pageConfig?.page_access_token)
+            });
+            return;
+        }
 
+        reportCommentWebhookDebug('C', 'webhookController.processCommentEvent:4876', 'comment automation dispatching', { pageId, postId, commentId, senderId, message });
         await commentAutomationService.processCommentAutomationEvent({
             platform: 'messenger',
             accountId: pageId,
