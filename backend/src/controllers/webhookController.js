@@ -2872,6 +2872,9 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
     const pageData = await getCachedPageData(pageId);
     const pageConfig = pageData?.config;
     const pagePrompts = pageData?.prompts;
+    // #region debug-point messenger-pre-ai-latency
+    logMessengerLatency(sessionId, 'config_cache_finished', triggerTimestamp);
+    // #endregion debug-point messenger-pre-ai-latency
     
     if (!pageConfig) {
         console.warn(`[AI] Page ${pageId} config not found in cache. This might be a temporary error.`);
@@ -2937,6 +2940,9 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                     question: cacheQuery,
                     threshold
                 });
+                // #region debug-point messenger-pre-ai-latency
+                logMessengerLatency(sessionId, 'semantic_cache_finished', triggerTimestamp, { hit: Boolean(cached) });
+                // #endregion debug-point messenger-pre-ai-latency
 
                 if (cached) {
                     console.log(`[FB] ⚡ INSTANT CACHE HIT!`);
@@ -3033,6 +3039,9 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
     // If the message contains a lock emoji, we want to allow it through to process the lock logic,
     // but still block other pure emoji messages.
     const pageDataForEmoji = await getCachedPageData(pageId);
+    // #region debug-point messenger-pre-ai-latency
+    logMessengerLatency(sessionId, 'emoji_config_finished', triggerTimestamp);
+    // #endregion debug-point messenger-pre-ai-latency
     const lockList = [pageDataForEmoji?.prompts?.block_emoji, pageDataForEmoji?.prompts?.lock_emojis, pageDataForEmoji?.prompts?.block_emojis].filter(Boolean).join(',').split(/[, ]+/).map(e => normalizeText(e.trim())).filter(e => e);
     const hasLockEmoji = lockList.some(e => normalizeText(normalizedForEmojiCheck).includes(e));
 
@@ -3120,6 +3129,9 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         // Handover lock should ONLY block if it was manually set by admin or emoji, 
         // NOT just because a lead was captured.
         const isLocked = await dbService.checkFbLockStatus(pageId, senderId);
+        // #region debug-point messenger-pre-ai-latency
+        logMessengerLatency(sessionId, 'handover_lock_check_finished', triggerTimestamp, { isLocked });
+        // #endregion debug-point messenger-pre-ai-latency
         if (isLocked) {
             const logMsg = `[Handover Lock] AI is permanently disabled for ${senderId} on Page ${pageId}.`;
             console.log(logMsg);
@@ -3172,6 +3184,12 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             facebookService.getConversationMessages(pageId, senderId, pageConfig.page_access_token, 10), // For Handover Check
             dbService.getChatHistory(sessionId, historyLimit)
         ]);
+        // #region debug-point messenger-pre-ai-latency
+        logMessengerLatency(sessionId, 'parallel_context_finished', triggerTimestamp, {
+            historyCount: history.length,
+            fbMessageCount: fbMessages?.length || 0
+        });
+        // #endregion debug-point messenger-pre-ai-latency
 
         // --- FETCH SMART AD CONTEXT ---
         let smartAdContext = "";
@@ -3277,6 +3295,9 @@ STRICT RULES:
                     prompt: productAnalysisPrompt,
                     batchId
                 });
+                // #region debug-point messenger-pre-ai-latency
+                logMessengerLatency(sessionId, 'vision_analysis_finished', triggerTimestamp, { imageCount: allImages.length });
+                // #endregion debug-point messenger-pre-ai-latency
                 const imageAnalysisResults = analyzedImages.results;
                 const aggregateImageAnalysis = analyzedImages.aggregateResult;
                 const combinedImageAnalysis = analyzedImages.combinedImageAnalysis;
@@ -3339,6 +3360,9 @@ STRICT RULES:
                 const audioResultsRaw = await Promise.all(
                     audioJobs.map(job => aiService.transcribeAudio(job.url, pageConfig))
                 );
+                // #region debug-point messenger-pre-ai-latency
+                logMessengerLatency(sessionId, 'audio_transcription_finished', triggerTimestamp, { audioCount: audioJobs.length });
+                // #endregion debug-point messenger-pre-ai-latency
                 
                 let lastAudioModel = 'whisper-large-v3';
                 const transcriptsByMessage = new Map();
@@ -3501,6 +3525,9 @@ STRICT RULES:
         let replyContext = "";
         if (replyToId) {
             let originalText = await dbService.getMessageById(replyToId);
+            // #region debug-point messenger-pre-ai-latency
+            logMessengerLatency(sessionId, 'reply_context_db_finished', triggerTimestamp, { found: Boolean(originalText) });
+            // #endregion debug-point messenger-pre-ai-latency
             
             // Fallback: Fetch from Facebook if not in DB
             if (!originalText) {
@@ -3549,6 +3576,12 @@ STRICT RULES:
                         }
                     } catch (e) {}
                 }
+                // #region debug-point messenger-pre-ai-latency
+                logMessengerLatency(sessionId, 'prompt_product_lookup_finished', triggerTimestamp, {
+                    requestedCount: uniqueNames.length,
+                    foundCount: Object.keys(promptProductMap).length
+                });
+                // #endregion debug-point messenger-pre-ai-latency
                 const promptProducts = Object.values(promptProductMap);
                 if (promptProducts.length > 0) {
                     promptProductContext = "\n[Instruction Products]\n";
