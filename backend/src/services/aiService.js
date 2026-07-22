@@ -1478,17 +1478,27 @@ async function getEmbedding(text, customApiKey = null) {
             model: modelName,
             provider: baseURL.includes('openrouter.ai') ? 'openrouter' : 'openai-compatible'
         });
+        const requestBody = {
+            model: modelName,
+            input: text.replace(/\n/g, ' '),
+            encoding_format: 'float'
+        };
+        if (baseURL.includes('openrouter.ai')) {
+            const providerOrder = (process.env.EMBEDDING_OPENROUTER_PROVIDER_ORDER || 'Nebius AI Studio,Token Factory')
+                .split(',')
+                .map(provider => provider.trim())
+                .filter(Boolean);
+            if (providerOrder.length > 0) {
+                requestBody.provider = { order: providerOrder };
+            }
+        }
         const response = await fetch(embeddingsURL, {
             method: 'POST',
             headers: {
                 Authorization: `Bearer ${apiKey}`,
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
-                model: modelName,
-                input: text.replace(/\n/g, ' '),
-                encoding_format: 'float'
-            })
+            body: JSON.stringify(requestBody)
         });
         const body = await response.json().catch(() => ({}));
         runtimeMonitor.recordLatency('product_search', {
