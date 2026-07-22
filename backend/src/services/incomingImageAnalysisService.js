@@ -184,23 +184,8 @@ function mergeBatchCandidates(perImageCandidates, topK = 5) {
         .slice(0, Math.max(1, Number(topK) || 5));
 }
 
-function resolveOpenAiCompatibleVisionConfig(pageConfig = {}) {
-    const model = pageConfig.vision_model || pageConfig.chat_model || pageConfig.chatmodel || process.env.VISION_MODEL || process.env.DEFAULT_VISION_MODEL || 'gemini-3.5-flash';
-    const apiKey = pageConfig.api_key || process.env.VISION_API_KEY || process.env.OPENAI_API_KEY || process.env.OPENROUTER_API_KEY;
-    let baseURL = pageConfig.custom_base_url || pageConfig.base_url || process.env.VISION_BASE_URL || process.env.OPENAI_BASE_URL || '';
-    const provider = (pageConfig.ai_provider || pageConfig.ai || '').toLowerCase();
-
-    if (!baseURL) {
-        if (provider === 'google' || (apiKey && String(apiKey).startsWith('AIza'))) baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai';
-        else if (provider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
-        else baseURL = 'https://openrouter.ai/api/v1';
-    }
-
-    return {
-        apiKey,
-        model,
-        baseURL: String(baseURL).replace(/\/+$/, '')
-    };
+async function resolveOpenAiCompatibleVisionConfig(pageConfig = {}) {
+    return aiService.resolveOpenAiCompatibleVisionConfig(pageConfig);
 }
 
 function resolveImageMatchingMode(pageConfig = {}) {
@@ -305,7 +290,7 @@ async function analyzeIncomingImageBatchMerged({
     const mergedCandidates = mergeBatchCandidates(perImageCandidates, topK);
     if (mergedCandidates.length === 0) return null;
 
-    const config = resolveOpenAiCompatibleVisionConfig(pageConfig);
+    const config = await resolveOpenAiCompatibleVisionConfig(pageConfig);
     if (!config.apiKey || !config.baseURL || !config.model) return null;
 
     const content = [{ type: 'text', text: buildBatchReasoningPrompt(uniqueUserImageUrls, mergedCandidates, candidateImageLimit) }];
@@ -400,7 +385,7 @@ async function analyzeIncomingImageBatchIndependent({
     const usableResults = (results || []).filter((result) => result && result.imageUrl);
     if (usableResults.length < 2) return null;
 
-    const config = resolveOpenAiCompatibleVisionConfig(pageConfig);
+    const config = await resolveOpenAiCompatibleVisionConfig(pageConfig);
     if (!config.apiKey || !config.baseURL || !config.model) return null;
 
     try {

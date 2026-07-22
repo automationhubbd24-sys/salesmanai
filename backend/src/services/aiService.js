@@ -4447,9 +4447,11 @@ Schema:
 module.exports = {
     generateReply,
     generateResponse,
-    getEmbedding,
+    generateImage,
+    transcribeAudio,
     getImageEmbedding,
     getDirectImageEmbedding,
+    resolveOpenAiCompatibleVisionConfig,
     reasonImageProductMatchWithVision,
     handleAiError,
     formatBrandedError,
