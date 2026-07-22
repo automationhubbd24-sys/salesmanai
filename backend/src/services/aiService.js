@@ -1469,7 +1469,16 @@ async function getEmbedding(text, customApiKey = null) {
 
         const modelName = (config && config.model) || 'qwen/qwen3-embedding-8b';
         const baseURL = ((config && config.base_url) || 'https://openrouter.ai/api/v1').replace(/\/+$/, '');
-        const response = await fetch(`${baseURL}/embeddings`, {
+        const embeddingsURL = baseURL.endsWith('/embeddings') ? baseURL : `${baseURL}/embeddings`;
+        const embeddingFetchStartedAt = Date.now();
+        runtimeMonitor.recordLatency('product_search', {
+            sessionId: 'embedding:request',
+            stage: 'embedding_fetch_started',
+            elapsedMs: 0,
+            model: modelName,
+            provider: baseURL.includes('openrouter.ai') ? 'openrouter' : 'openai-compatible'
+        });
+        const response = await fetch(embeddingsURL, {
             method: 'POST',
             headers: {
                 Authorization: `Bearer ${apiKey}`,
@@ -1482,8 +1491,18 @@ async function getEmbedding(text, customApiKey = null) {
             })
         });
         const body = await response.json().catch(() => ({}));
+        runtimeMonitor.recordLatency('product_search', {
+            sessionId: 'embedding:request',
+            stage: 'embedding_fetch_finished',
+            elapsedMs: Date.now() - embeddingFetchStartedAt,
+            model: modelName,
+            provider: baseURL.includes('openrouter.ai') ? 'openrouter' : 'openai-compatible',
+            errorType: response.ok ? null : String(response.status)
+        });
         if (!response.ok) {
-            throw new Error(body?.error?.message || `Embedding request failed with status ${response.status}`);
+            const rawProviderMessage = body?.error?.message || body?.message || '';
+            const providerMessage = rawProviderMessage || (Object.keys(body || {}).length ? JSON.stringify(body).slice(0, 180) : '');
+            throw new Error(providerMessage || `Embedding request failed with status ${response.status}`);
         }
         const vector = normalizeEmbeddingVector(body.data?.[0]?.embedding, modelName);
 
