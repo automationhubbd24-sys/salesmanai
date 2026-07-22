@@ -2636,7 +2636,9 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         }
     };
 
+    recordAiRuntimeStage(pageConfig, 'product_snapshot_started', aiTraceStartedAt, { phase: 'initial' });
     productContext = await buildPromptProductSnapshot(cleanUserMessage);
+    recordAiRuntimeStage(pageConfig, 'product_snapshot_finished', aiTraceStartedAt, { phase: 'initial', hasProductContext: Boolean(productContext) });
 
     // --- SMART HISTORY PROCESSOR ---
     const processedHistory = [];
@@ -2658,6 +2660,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
 ${productContext}`;
     */
 
+    recordAiRuntimeStage(pageConfig, 'history_processing_started', aiTraceStartedAt, { historyCount: Array.isArray(history) ? history.length : 0 });
     for (const msg of (history || [])) {
         if (msg.role === 'system') {
             pendingSystemNotes.push(msg.content);
@@ -2703,6 +2706,8 @@ ${productContext}`;
          throw new Error("Chat Model not configured. Please select a model in settings.");
     }
 
+    recordAiRuntimeStage(pageConfig, 'history_processing_finished', aiTraceStartedAt, { processedHistoryCount: processedHistory.length });
+
     let defaultProvider = userProvider;
     let defaultModel = userModel;
 
@@ -2735,6 +2740,7 @@ ${productContext}`;
     let mediaContext = "";
     
     if (imageUrls && imageUrls.length > 0) {
+        recordAiRuntimeStage(pageConfig, 'media_image_processing_started', aiTraceStartedAt, { imageCount: imageUrls.length });
         console.log(`[AI] Processing ${imageUrls.length} images...`);
         // Use per-page vision prompt if available (no backend default)
         const visionPrompt = pagePrompts && (pagePrompts.image_prompt || pagePrompts.vision_prompt)
@@ -2743,6 +2749,7 @@ ${productContext}`;
         const imageResults = await Promise.all(
             imageUrls.map(url => processImageWithVision(url, pageConfig, { prompt: visionPrompt }))
         );
+        recordAiRuntimeStage(pageConfig, 'media_image_processing_finished', aiTraceStartedAt, { imageCount: imageUrls.length });
         
         // Extract text and usage
         const strictVisionStop = pageConfig && (pageConfig.vision_strict_stop === true || pageConfig.vision_strict_mode === true);
@@ -2775,6 +2782,7 @@ ${productContext}`;
     }
 
     if (audioUrls && audioUrls.length > 0) {
+        recordAiRuntimeStage(pageConfig, 'media_audio_processing_started', aiTraceStartedAt, { audioCount: audioUrls.length });
         console.log(`[AI] Processing ${audioUrls.length} audio files...`);
         const audioResults = await Promise.all(audioUrls.map(async url => {
             // User Request: "automatic na ami ovveride korle work korbe"
@@ -2789,6 +2797,7 @@ ${productContext}`;
             }
             return res;
         }));
+        recordAiRuntimeStage(pageConfig, 'media_audio_processing_finished', aiTraceStartedAt, { audioCount: audioUrls.length });
         mediaContext += "\n[System Note: User sent audio messages:]\n" + audioResults.join("\n");
     }
 
@@ -2809,12 +2818,16 @@ ${productContext}`;
 
         cleanUserMessage += `\n\n[INTERNAL VISUAL EVIDENCE - UNTRUSTED]\n${mediaContext.trim()}\n[END INTERNAL VISUAL EVIDENCE]`;
         console.log(`[AI] Added media context to user message. Total Tokens so far: ${totalTokenUsage}`);
+        recordAiRuntimeStage(pageConfig, 'product_snapshot_started', aiTraceStartedAt, { phase: 'media' });
         productContext = await buildPromptProductSnapshot(cleanUserMessage);
+        recordAiRuntimeStage(pageConfig, 'product_snapshot_finished', aiTraceStartedAt, { phase: 'media', hasProductContext: Boolean(productContext) });
     }
 
     // --- MEDIA HANDLING COMPLETED ABOVE ---
     // (Consolidated into Pre-process Media step to ensure correct token tracking)
     // ----------------------------------------
+
+    recordAiRuntimeStage(pageConfig, 'prompt_build_started', aiTraceStartedAt);
 
     // --- PROMPT & MESSAGE CONSTRUCTION ---
     let messages = [];
@@ -3005,6 +3018,8 @@ ${productContext || "No specific product context provided yet."}
             messages.push({ role: 'user', content: cleanUserMessage });
         }
     }
+
+    recordAiRuntimeStage(pageConfig, 'prompt_build_finished', aiTraceStartedAt, { messageCount: messages.length, toolCount: Array.isArray(tools) ? tools.length : 0 });
 
     // --- UNIFIED AI REQUEST LOGIC ---
     const isOurOwnProvider = defaultProvider === 'salesmanchatbot' || defaultProvider === 'system';

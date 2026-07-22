@@ -45,7 +45,13 @@ function recordLatency(platform, event = {}) {
         provider: event.provider || null,
         endpointIndex: event.endpointIndex || null,
         loopCount: event.loopCount || null,
-        tokenUsage: event.tokenUsage || null
+        tokenUsage: event.tokenUsage || null,
+        phase: event.phase || null,
+        hasProductContext: event.hasProductContext === undefined ? undefined : Boolean(event.hasProductContext),
+        historyCount: event.historyCount || null,
+        processedHistoryCount: event.processedHistoryCount || null,
+        messageCount: event.messageCount || null,
+        toolCount: event.toolCount || null
     });
 }
 
