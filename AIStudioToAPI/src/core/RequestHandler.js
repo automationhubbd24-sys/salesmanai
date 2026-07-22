@@ -59,47 +59,46 @@ class RequestHandler {
     }
 
     /**
-     * Select next auth index from the full rotation list, not only loaded contexts.
-     * This keeps distribution fair when there are many accounts but a smaller context pool.
+     * Select next auth index for fast request handling.
+     * Warm connected contexts are used first; cold rotation accounts are used only when needed.
      * @returns {number} selected auth index
      */
     _selectNextAuthIndex() {
         const rotationIndices = this.authSource?.rotationIndices || [];
         const eligibleRotationIndices = rotationIndices.filter(idx => !this.authSwitcher.isAuthTemporarilyUnavailable(idx));
-        const selectionPool = eligibleRotationIndices.length > 0 ? eligibleRotationIndices : rotationIndices;
-        const availableContextIndices = [...this.browserManager.contexts.keys()];
-        const connectedContextIndices = availableContextIndices.filter(idx =>
-            Boolean(this.connectionRegistry.getConnectionByAuth(idx, false))
+        const rotationPool = eligibleRotationIndices.length > 0 ? eligibleRotationIndices : rotationIndices;
+        const connectedContextIndices = [...this.browserManager.contexts.keys()].filter(
+            idx =>
+                Boolean(this.connectionRegistry.getConnectionByAuth(idx, false)) &&
+                !this.authSwitcher.isAuthTemporarilyUnavailable(idx)
         );
 
         this.logger.debug(
-            `[LoadBalancer] Selection snapshot: rotation=[${rotationIndices.join(", ")}], eligibleRotation=[${selectionPool.join(
+            `[LoadBalancer] Selection snapshot: rotation=[${rotationIndices.join(", ")}], eligibleRotation=[${rotationPool.join(
                 ", "
-            )}], contexts=[${availableContextIndices.join(", ")}], connected=[${connectedContextIndices.join(
-                ", "
-            )}], current=${this.currentAuthIndex}`
+            )}], connected=[${connectedContextIndices.join(", ")}], current=${this.currentAuthIndex}`
         );
 
-        if (selectionPool.length === 0) {
+        if (connectedContextIndices.length > 0) {
+            const freeConnected = connectedContextIndices.filter(idx => !this.connectionRegistry.hasMessageQueueForAuth(idx));
+            const warmPool = freeConnected.length > 0 ? freeConnected : connectedContextIndices;
+            this._roundRobinIndex = (this._roundRobinIndex + 1) % warmPool.length;
+            const selectedIndex = warmPool[this._roundRobinIndex];
+            this.logger.debug(
+                `[LoadBalancer] Selected warm context: ${selectedIndex} (free=${freeConnected.length}, cursor=${this._roundRobinIndex})`
+            );
+            return selectedIndex;
+        }
+
+        if (rotationPool.length === 0) {
             this.logger.debug(`[LoadBalancer] No rotation accounts, using current: ${this.currentAuthIndex}`);
             return this.currentAuthIndex;
         }
 
-        for (let i = 0; i < selectionPool.length; i++) {
-            this._rotationSelectionIndex = (this._rotationSelectionIndex + 1) % selectionPool.length;
-            const selectedIndex = selectionPool[this._rotationSelectionIndex];
-            if (!this.connectionRegistry.hasMessageQueueForAuth(selectedIndex)) {
-                this.logger.debug(
-                    `[LoadBalancer] Selected rotation account: ${selectedIndex} (rotation cursor: ${this._rotationSelectionIndex})`
-                );
-                return selectedIndex;
-            }
-        }
-
-        this._rotationSelectionIndex = (this._rotationSelectionIndex + 1) % selectionPool.length;
-        const selectedIndex = selectionPool[this._rotationSelectionIndex];
+        this._rotationSelectionIndex = (this._rotationSelectionIndex + 1) % rotationPool.length;
+        const selectedIndex = rotationPool[this._rotationSelectionIndex];
         this.logger.debug(
-            `[LoadBalancer] All rotation accounts busy, selected: ${selectedIndex} (rotation cursor: ${this._rotationSelectionIndex})`
+            `[LoadBalancer] No warm context available, selected cold account: ${selectedIndex} (rotation cursor: ${this._rotationSelectionIndex})`
         );
         return selectedIndex;
     }

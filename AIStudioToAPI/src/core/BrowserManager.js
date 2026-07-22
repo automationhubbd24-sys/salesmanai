@@ -2644,6 +2644,13 @@ class BrowserManager {
     async closeContext(authIndex) {
         this.pendingContextClosures.delete(authIndex);
 
+        if (this._hasActiveQueueForAuth(authIndex)) {
+            this.logger.warn(
+                `[Browser] Refusing to close context #${authIndex} because active request queue(s) are present; deferring close.`
+            );
+            return this._scheduleContextClosureWhenIdle(authIndex, "active_queue_guard");
+        }
+
         // If context is being initialized in background, signal abort and wait
         if (this.initializingContexts.has(authIndex)) {
             this.logger.info(`[Browser] Context #${authIndex} is being initialized, marking for abort and waiting...`);

@@ -827,6 +827,12 @@ const pageQueueMap = new Map();
 const MAX_CONCURRENT_PER_PAGE = 5;
 const AI_REQUEST_BUDGET_MS = process.env.AI_REQUEST_BUDGET_MS ? parseInt(process.env.AI_REQUEST_BUDGET_MS) : 180000;
 
+// #region debug-point messenger-latency
+function logMessengerLatency(sessionId, stage, startedAt, extra = {}) {
+    console.info(`[Latency][Messenger] ${JSON.stringify({ sessionId, stage, elapsedMs: Date.now() - startedAt, ...extra })}`);
+}
+// #endregion debug-point messenger-latency
+
 function schedulePageTask(pageId, task) {
     const key = String(pageId);
     let state = pageQueueMap.get(key);
@@ -2762,11 +2768,22 @@ async function queueMessage(event, entryPageId = null) {
         timestamp: triggerTimestamp
     });
 
+    // #region debug-point messenger-latency
+    logMessengerLatency(sessionId, 'queued', triggerTimestamp, {
+        bufferSize: sessionData.messages.length,
+        isProcessing: sessionData.isProcessing,
+        imageCount: thisMsgImages.length,
+        audioCount: thisMsgAudios.length
+    });
+    // #endregion debug-point messenger-latency
     console.log(`Queued message for ${sessionId}. Buffer size: ${sessionData.messages.length} (Processing: ${sessionData.isProcessing})`);
     
     // If we are currently processing this session, just append the message to the buffer.
     // The existing 'finally' block in processBufferedMessages will pick it up after finishing the current call.
     if (sessionData.isProcessing) {
+        // #region debug-point messenger-latency
+        logMessengerLatency(sessionId, 'buffered_while_busy', triggerTimestamp, { bufferSize: sessionData.messages.length });
+        // #endregion debug-point messenger-latency
         console.log(`[Debounce] Session ${sessionId} is busy processing. Message appended to current buffer.`);
         return;
     }
@@ -2843,12 +2860,18 @@ async function queueMessage(event, entryPageId = null) {
 
 // Core Logic Function (Debounced)
 async function processBufferedMessages(sessionId, pageId, senderId, messages) {
+    const triggerTimestamp = messages[0]?.timestamp || Date.now();
+    // #region debug-point messenger-latency
+    logMessengerLatency(sessionId, 'batch_started', triggerTimestamp, {
+        messageCount: messages.length,
+        imageCount: messages.reduce((count, message) => count + (message.images?.length || 0), 0),
+        audioCount: messages.reduce((count, message) => count + (message.audios?.length || 0), 0)
+    });
+    // #endregion debug-point messenger-latency
     // 1. Fetch Config (Fast Path)
     const pageData = await getCachedPageData(pageId);
     const pageConfig = pageData?.config;
     const pagePrompts = pageData?.prompts;
-    // Get trigger timestamp from first message
-    const triggerTimestamp = messages[0]?.timestamp || Date.now();
     
     if (!pageConfig) {
         console.warn(`[AI] Page ${pageId} config not found in cache. This might be a temporary error.`);
@@ -3589,6 +3612,9 @@ STRICT RULES:
 
         let aiResponse;
         try {
+            // #region debug-point messenger-latency
+            logMessengerLatency(sessionId, 'ai_started', triggerTimestamp, { imageCount: allImages.length, audioCount: allAudios.length });
+            // #endregion debug-point messenger-latency
             aiResponse = await aiService.generateResponse({
                 pageId: pageId,
                 userId: senderId,
@@ -3627,6 +3653,9 @@ STRICT RULES:
             };
         }
         
+        // #region debug-point messenger-latency
+        logMessengerLatency(sessionId, 'ai_finished', triggerTimestamp, { model: aiResponse?.model || null, hasReply: Boolean(aiResponse?.reply) });
+        // #endregion debug-point messenger-latency
         if (aiResponse == null) {
              console.error(`[Webhook] AI generation failed or returned NULL for ${senderId}. Using fallback reply.`);
              aiResponse = {
@@ -4502,7 +4531,13 @@ STRICT RULES:
                 trackBotReply(senderId, replyText);
                 
                 try {
+                    // #region debug-point messenger-latency
+                    logMessengerLatency(sessionId, 'text_send_started', triggerTimestamp, { replyLength: replyText.length });
+                    // #endregion debug-point messenger-latency
                     await facebookService.sendMessage(pageId, senderId, replyText, pageConfig.page_access_token);
+                    // #region debug-point messenger-latency
+                    logMessengerLatency(sessionId, 'text_send_finished', triggerTimestamp, { replyLength: replyText.length });
+                    // #endregion debug-point messenger-latency
                     await saveFbOutgoingLog({
                         pageId,
                         recipientId: senderId,
