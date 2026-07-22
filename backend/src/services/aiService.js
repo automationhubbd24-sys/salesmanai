@@ -2,6 +2,7 @@ const keyService = require('./keyService');
 const dbService = require('./dbService'); // Added for Product Search Tool
 const orderService = require('./orderService');
 const commandApiService = require('./commandApiService'); // Command API Table Strategy
+const runtimeMonitor = require('./runtimeMonitor');
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const OpenAI = require('openai');
@@ -457,6 +458,18 @@ function releaseAiSlot(lane = 'other') {
     const aiLane = normalizeAiLane(lane);
     activeAiCalls = Math.max(0, activeAiCalls - 1);
     activeAiCallsByLane.set(aiLane, Math.max(0, getActiveAiLaneCalls(aiLane) - 1));
+}
+
+function recordAiRuntimeStage(pageConfig = {}, stage, startedAt, extra = {}) {
+    runtimeMonitor.recordLatency('ai', {
+        sessionId: `${pageConfig.platform || 'ai'}:${pageConfig.page_id || pageConfig.session_name || 'unknown'}`,
+        stage,
+        elapsedMs: Date.now() - startedAt,
+        model: extra.model || pageConfig.display_model || pageConfig.chat_model || pageConfig.chatmodel || null,
+        imageCount: Number(extra.imageCount || 0),
+        audioCount: Number(extra.audioCount || 0),
+        ...extra
+    });
 }
 // -------------------------------
 
@@ -1214,6 +1227,13 @@ async function fetchOgImage(url) {
 
 // Wrapper for Controller Consistency
 async function generateResponse({ pageId, userId, userMessage, history, imageUrls, audioUrls, config, platform, extraTokenUsage = 0, senderName: explicitSenderName = null, ownerName = null }) {
+    const aiTraceStartedAt = Date.now();
+    recordAiRuntimeStage(config || {}, 'generate_response_entered', aiTraceStartedAt, {
+        platform,
+        pageId,
+        imageCount: Array.isArray(imageUrls) ? imageUrls.length : 0,
+        audioCount: Array.isArray(audioUrls) ? audioUrls.length : 0
+    });
     // 1. Ensure config has essential IDs
     if (config) {
         if (pageId && !config.page_id) config.page_id = pageId;
@@ -1266,7 +1286,8 @@ async function generateResponse({ pageId, userId, userMessage, history, imageUrl
         audioUrls,
         extraTokenUsage, // Pass initial usage (e.g. from Vision API in Controller)
         userId, // Pass actual Customer ID
-        pageId // Pass Page ID for order tracking
+        pageId, // Pass Page ID for order tracking
+        aiTraceStartedAt
     );
 }
 
@@ -1777,7 +1798,7 @@ function parsePrice(value) {
 }
 
 // --- AGENTIC LOOP EXECUTION ---
-async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfig, proxyAgent, totalTokenUsage, foundProducts, userId, temperature = 0.7, top_p = 0.9, pageId = null, requestDeadlineAt = null }) {
+async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfig, proxyAgent, totalTokenUsage, foundProducts, userId, temperature = 0.7, top_p = 0.9, pageId = null, requestDeadlineAt = null, aiTraceStartedAt = Date.now() }) {
     let loopCount = 0;
     const MAX_LOOP = 3;
     let totalTokensInLoop = totalTokenUsage;
@@ -1940,7 +1961,9 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 };
             }
 
+            recordAiRuntimeStage(pageConfig, 'http_request_started', aiTraceStartedAt, { model, provider: isGoogle ? 'google' : 'openai-compatible', loopCount });
             const completion = await openai.chat.completions.create(params);
+            recordAiRuntimeStage(pageConfig, 'http_response_received', aiTraceStartedAt, { model, provider: isGoogle ? 'google' : 'openai-compatible', loopCount, tokenUsage: completion.usage?.total_tokens || 0 });
 
             responseMessage = completion.choices[0].message;
             toolCalls = responseMessage.tool_calls;
@@ -2184,8 +2207,9 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
     };
 }
 
-async function runProPlusChatChain({ messages, pageConfig, totalTokenUsage, userId, pageId, temperature = 0.2, topP = 0.9, requestDeadlineAt = null }) {
+async function runProPlusChatChain({ messages, pageConfig, totalTokenUsage, userId, pageId, temperature = 0.2, topP = 0.9, requestDeadlineAt = null, aiTraceStartedAt = Date.now() }) {
     const endpoint = getNextProPlusEndpoint();
+    recordAiRuntimeStage(pageConfig, 'pro_plus_endpoint_selected', aiTraceStartedAt, { model: endpoint.model, endpointIndex: endpoint.index || 1 });
 
     try {
         const result = await runAgentLoop({
@@ -2202,7 +2226,8 @@ async function runProPlusChatChain({ messages, pageConfig, totalTokenUsage, user
             temperature,
             top_p: topP,
             pageId,
-            requestDeadlineAt
+            requestDeadlineAt,
+            aiTraceStartedAt
         });
 
         let tokensToRecord = result.token_usage || 0;
@@ -2222,7 +2247,7 @@ async function runProPlusChatChain({ messages, pageConfig, totalTokenUsage, user
 }
 
 // Step 2: Business Logic / AI Brain
-async function generateReply(userMessage, pageConfig, pagePrompts, history = [], senderName = 'Customer', ownerName = 'Automation Hub BD', senderGender = null, imageUrls = [], audioUrls = [], extraTokenUsage = 0, userId = null, pageId = null) {
+async function generateReply(userMessage, pageConfig, pagePrompts, history = [], senderName = 'Customer', ownerName = 'Automation Hub BD', senderGender = null, imageUrls = [], audioUrls = [], extraTokenUsage = 0, userId = null, pageId = null, aiTraceStartedAt = Date.now()) {
     // --- SAFETY FIX: Ensure names are not null ---
     if (!senderName || senderName === 'null') senderName = 'Customer';
     if (!ownerName || ownerName === 'null') ownerName = 'Automation Hub BD';
@@ -2244,6 +2269,11 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
 
     // 0. Unified Logger Helper (Defined at top to avoid Hoisting/Initialization errors)
     const finalize = async (result) => {
+        recordAiRuntimeStage(pageConfig, 'generate_response_finalizing', aiTraceStartedAt, {
+            hasReply: Boolean(result?.reply),
+            model: result?.model || null,
+            tokenUsage: result?.token_usage || 0
+        });
         // Release slot before finishing
         safeReleaseAiSlot();
 
@@ -2437,8 +2467,10 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
     }
 
     // --- 3. ACQUIRE AI SLOT (Only for actual LLM calls) ---
+    recordAiRuntimeStage(pageConfig, 'slot_wait_started', aiTraceStartedAt, { lane: aiLane });
     await acquireAiSlot(getRemainingBudgetMs(requestDeadlineAt, 1000), aiLane);
     aiSlotAcquired = true;
+    recordAiRuntimeStage(pageConfig, 'slot_acquired', aiTraceStartedAt, { lane: aiLane });
 
     // --- PRODUCT SNAPSHOT INJECTION (Prompt-Only Mode) ---
     let productContext = "";
@@ -2997,7 +3029,9 @@ ${productContext || "No specific product context provided yet."}
             };
             
             console.log(`[AI] SalesmanChatbot Own API: Calling ${base} with model=${modelToUse}`);
+            recordAiRuntimeStage(pageConfig, 'own_api_request_started', aiTraceStartedAt, { model: modelToUse, provider: 'salesmanchatbot' });
             const resp = await axios.post(base, payload, { headers, timeout: 300000 }); // 5 minutes
+            recordAiRuntimeStage(pageConfig, 'own_api_response_received', aiTraceStartedAt, { model: modelToUse, provider: 'salesmanchatbot', tokenUsage: resp.data?.usage?.total_tokens || 0 });
             const data = resp.data;
             let aiText = data?.choices?.[0]?.message?.content || null;
             const tokenUsage = data?.usage?.total_tokens || 0;
@@ -3148,7 +3182,8 @@ ${productContext || "No specific product context provided yet."}
                     foundProducts: [],
                     userId: userId,
                     temperature: (pageConfig.is_external_api ? 0.7 : 0.2), // Low temp for format adherence
-                    requestDeadlineAt
+                    requestDeadlineAt,
+                    aiTraceStartedAt
                 });
 
                 return finalize({ ...result, sentiment: 'neutral' });
@@ -3211,7 +3246,8 @@ ${productContext || "No specific product context provided yet."}
                 pageId,
                 temperature: (pageConfig.temperature !== undefined && pageConfig.temperature !== null ? Number(pageConfig.temperature) : (pageConfig.is_external_api ? 0.7 : 0.2)),
                 topP: (pageConfig.top_p !== undefined && pageConfig.top_p !== null ? Number(pageConfig.top_p) : 0.9),
-                requestDeadlineAt
+                requestDeadlineAt,
+                aiTraceStartedAt
             });
             return finalize({ ...result, sentiment: 'neutral' });
         } catch (err) {
@@ -3308,7 +3344,8 @@ ${productContext || "No specific product context provided yet."}
                     temperature: (pageConfig.temperature !== undefined && pageConfig.temperature !== null ? Number(pageConfig.temperature) : (pageConfig.is_external_api ? 0.7 : 0.2)),
                     top_p: (pageConfig.top_p !== undefined && pageConfig.top_p !== null ? Number(pageConfig.top_p) : 0.9),
                     pageId: pageId,
-                    requestDeadlineAt
+                    requestDeadlineAt,
+                    aiTraceStartedAt
                 });
 
                 // --- RECORD SUCCESSFUL USAGE ---

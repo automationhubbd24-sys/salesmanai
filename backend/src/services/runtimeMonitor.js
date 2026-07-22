@@ -40,7 +40,12 @@ function recordLatency(platform, event = {}) {
         audioCount: Number(event.audioCount || 0),
         isLocked: event.isLocked === undefined ? undefined : Boolean(event.isLocked),
         hasReply: event.hasReply === undefined ? undefined : Boolean(event.hasReply),
-        model: event.model || null
+        model: event.model || null,
+        lane: event.lane || null,
+        provider: event.provider || null,
+        endpointIndex: event.endpointIndex || null,
+        loopCount: event.loopCount || null,
+        tokenUsage: event.tokenUsage || null
     });
 }
 
@@ -64,6 +69,7 @@ function inWindow(items, windowMs) {
 
 function summarizeLatency(events) {
     const messenger = events.filter((event) => event.platform === 'messenger');
+    const aiRuntime = events.filter((event) => event.platform === 'ai');
     const completedReplies = messenger.filter((event) => event.stage === 'text_send_finished');
     const visionEvents = messenger.filter((event) => event.stage === 'vision_analysis_finished');
     const aiFinished = messenger.filter((event) => event.stage === 'ai_finished');
@@ -77,7 +83,8 @@ function summarizeLatency(events) {
     const slowCompletedReplies = completedReplies.filter((event) => event.elapsedMs > 45000);
     const slowVision = visionEvents.filter((event) => event.elapsedMs > 30000);
     const slowAi = aiFinished.filter((event) => event.elapsedMs > 60000);
-    const slowEvents = [...slowCompletedReplies, ...slowVision, ...slowAi]
+    const slowAiRuntime = aiRuntime.filter((event) => event.elapsedMs > 30000);
+    const slowEvents = [...slowCompletedReplies, ...slowVision, ...slowAi, ...slowAiRuntime]
         .sort((a, b) => b.elapsedMs - a.elapsedMs)
         .slice(0, 10)
         .map((event) => ({
@@ -106,7 +113,10 @@ function summarizeLatency(events) {
         ai: {
             completed: aiFinished.length,
             slowCount: slowAi.length,
-            maxMs: aiFinished.reduce((max, event) => Math.max(max, event.elapsedMs), 0)
+            maxMs: aiFinished.reduce((max, event) => Math.max(max, event.elapsedMs), 0),
+            internalEvents: aiRuntime.length,
+            internalSlowCount: slowAiRuntime.length,
+            internalMaxMs: aiRuntime.reduce((max, event) => Math.max(max, event.elapsedMs), 0)
         },
         recentSlowSessions: slowEvents
     };
@@ -149,6 +159,7 @@ function getHealth(options = {}) {
     if (latency.messenger.slowReplies > 0) warnings.push('slow_messenger_replies_detected');
     if (latency.vision.slowCount > 0) warnings.push('slow_vision_analysis_detected');
     if (latency.ai.slowCount > 0) warnings.push('slow_ai_responses_detected');
+    if (latency.ai.internalSlowCount > 0) warnings.push('slow_ai_internal_stages_detected');
 
     const status = errors.crashes > 0 || errors.visionAuthFailures > 0
         ? 'critical'
