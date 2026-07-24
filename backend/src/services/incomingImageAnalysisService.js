@@ -610,7 +610,7 @@ async function analyzeAndMatchIncomingImage({
 
     // Always run vector search even if initial vision fails (e.g. timeout), so we still have embedding fallback
     try {
-        const directImageVector = await aiService.getDirectImageEmbedding(imageUrl, { log: false });
+        const directImageVector = await aiService.getDirectImageEmbedding(imageUrl, { cache: true, log: false });
         const directImageMatches = directImageVector
             ? await dbService.searchProductByDirectImageVector(directImageVector, pageId)
             : [];

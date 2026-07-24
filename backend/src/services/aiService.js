@@ -17,9 +17,13 @@ const { spawn } = require('child_process');
 // --- Simple In-Memory Embedding Cache (500 items, 1 hour TTL) ---
 const embeddingCache = new Map();
 const imageEmbeddingCache = new Map();
+const visionImageDataCache = new Map();
 const EMBED_CACHE_MAX = 500;
 const IMAGE_EMBED_CACHE_MAX = 200;
+const VISION_IMAGE_DATA_CACHE_MAX = Number(process.env.VISION_IMAGE_DATA_CACHE_MAX || 300);
 const EMBED_CACHE_TTL = 3600 * 1000;
+const VISION_IMAGE_DATA_CACHE_TTL = Number(process.env.VISION_IMAGE_DATA_CACHE_TTL_MS || 6 * 3600 * 1000);
+const VISION_IMAGE_DATA_CACHE_MAX_BYTES = Number(process.env.VISION_IMAGE_DATA_CACHE_MAX_BYTES || 4 * 1024 * 1024);
 const PRO_PLUS_BRANDED_MODEL = 'salesmanchatbot-pro-plus';
 const BRANDED_MODELS = ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite', PRO_PLUS_BRANDED_MODEL];
 const DEFAULT_PRO_PLUS_PRIMARY_MODEL = 'gemini-3.5-flash';
@@ -60,6 +64,28 @@ function setCachedImageEmbedding(cacheKey, vector) {
         imageEmbeddingCache.delete(firstKey);
     }
     imageEmbeddingCache.set(key, { vector, timestamp: Date.now() });
+}
+
+function getCachedVisionImageData(imageUrl) {
+    const key = String(imageUrl || '').trim();
+    if (!key) return null;
+    const entry = visionImageDataCache.get(key);
+    if (!entry) return null;
+    if (Date.now() - entry.timestamp > VISION_IMAGE_DATA_CACHE_TTL) {
+        visionImageDataCache.delete(key);
+        return null;
+    }
+    return entry.dataUrl;
+}
+
+function setCachedVisionImageData(imageUrl, dataUrl) {
+    const key = String(imageUrl || '').trim();
+    if (!key || !dataUrl) return;
+    if (visionImageDataCache.size >= VISION_IMAGE_DATA_CACHE_MAX) {
+        const firstKey = visionImageDataCache.keys().next().value;
+        visionImageDataCache.delete(firstKey);
+    }
+    visionImageDataCache.set(key, { dataUrl, timestamp: Date.now() });
 }
 
 function normalizeEmbeddingVector(vector, modelName = '') {
@@ -4495,6 +4521,35 @@ function collectVisionCandidateImages(candidate, limit = 3) {
     return urls.slice(0, Math.max(1, Number(limit) || 3));
 }
 
+async function getVisionImageContentUrl(imageUrl) {
+    const cleanUrl = normalizeVisionCandidateUrl(imageUrl);
+    if (!cleanUrl || cleanUrl.startsWith('data:')) return cleanUrl;
+
+    const cached = getCachedVisionImageData(cleanUrl);
+    if (cached) return cached;
+
+    try {
+        const response = await axios.get(cleanUrl, {
+            responseType: 'arraybuffer',
+            headers: { 'User-Agent': 'Mozilla/5.0' },
+            timeout: Number(process.env.VISION_IMAGE_DATA_FETCH_TIMEOUT_MS || 8000),
+            maxContentLength: VISION_IMAGE_DATA_CACHE_MAX_BYTES,
+            maxBodyLength: VISION_IMAGE_DATA_CACHE_MAX_BYTES,
+            proxy: false
+        });
+        const buffer = Buffer.from(response.data);
+        if (buffer.length > VISION_IMAGE_DATA_CACHE_MAX_BYTES) return cleanUrl;
+        const mimeType = response.headers['content-type'] || 'image/jpeg';
+        if (!String(mimeType).startsWith('image/')) return cleanUrl;
+        const dataUrl = `data:${mimeType};base64,${buffer.toString('base64')}`;
+        setCachedVisionImageData(cleanUrl, dataUrl);
+        return dataUrl;
+    } catch (error) {
+        console.warn(`[Vision Image Cache] Failed for ${cleanUrl}: ${error.message}`);
+        return cleanUrl;
+    }
+}
+
 async function reasonImageProductMatchWithVision(imageUrl, candidates = [], pageConfig = {}, options = {}) {
     const usableCandidates = (candidates || [])
         .filter(candidate => candidate && candidate.product_id && Number(candidate.match_score || candidate.direct_image_score || 0) >= 50)
@@ -4521,14 +4576,14 @@ Schema:
     const content = [{ type: 'text', text: prompt }];
     content.push({ type: 'text', text: 'USER IMAGE:' });
     content.push({ type: 'image_url', image_url: { url: imageUrl } });
-    usableCandidates.forEach((candidate, idx) => {
+    for (const [idx, candidate] of usableCandidates.entries()) {
         const candidateImageUrls = collectVisionCandidateImages(candidate, Number(options.candidateImageLimit || process.env.PRODUCT_VISION_REASONING_CANDIDATE_IMAGES || 3));
         content.push({ type: 'text', text: `CANDIDATE ${idx + 1}: product_id=${candidate.product_id}, product_name=${candidate.name || candidate.product_name || 'Unknown'}, image_score=${candidate.match_score || candidate.direct_image_score || 0}%` });
-        candidateImageUrls.forEach((candidateImageUrl, imageIdx) => {
+        for (const [imageIdx, candidateImageUrl] of candidateImageUrls.entries()) {
             content.push({ type: 'text', text: `Candidate ${idx + 1} image ${imageIdx + 1}` });
-            content.push({ type: 'image_url', image_url: { url: candidateImageUrl } });
-        });
-    });
+            content.push({ type: 'image_url', image_url: { url: await getVisionImageContentUrl(candidateImageUrl) } });
+        }
+    }
 
     try {
         const res = await axios.post(`${config.baseURL}/chat/completions`, {
