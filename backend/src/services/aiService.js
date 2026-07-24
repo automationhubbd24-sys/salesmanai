@@ -3954,6 +3954,17 @@ Example format: T-shirt, navy blue, horizontal stripes, short sleeves, crew neck
   }
 }
 
+function isUnusableAudioTranscription(text) {
+    const value = String(text || '').toLowerCase();
+    return !value.trim() ||
+        value.includes('no audio') ||
+        value.includes('audio was not attached') ||
+        value.includes('cannot access the audio') ||
+        value.includes("can't access the audio") ||
+        value.includes('unable to transcribe') ||
+        value.includes('please provide the audio');
+}
+
 // --- HELPER: Transcribe Audio (Multi-Engine Priority) ---
 async function transcribeAudio(audioUrl, config) {
     console.log(`[Audio] Processing: ${audioUrl.substring(0, 50)}...`);
@@ -4036,7 +4047,7 @@ async function transcribeAudio(audioUrl, config) {
                 messages: [{
                     role: 'user',
                     content: [
-                        { type: 'text', text: "Transcribe this audio. Priority languages: Bangla (including regional dialects like Sylheti, Dhakaiya, Chattogrami, Barishali, Rangpuri, etc.), then English, then Hindi. Output ONLY the transcription text." },
+                        { type: 'text', text: "Transcribe the attached audio exactly. The speaker is most likely using Bangla/Bengali, including Bangladeshi colloquial speech and regional dialects such as Sylheti, Dhakaiya, Chattogrami, Barishali, Rangpuri, Noakhali, or mixed Bangla-English. Do not translate or summarize. Keep Bangla words in Bangla script when possible. Output ONLY the transcription text." },
                         {
                             type: 'input_audio',
                             input_audio: {
@@ -4056,12 +4067,12 @@ async function transcribeAudio(audioUrl, config) {
 
             const transcribedText = res.data?.choices?.[0]?.message?.content;
             const usageTokens = res.data?.usage?.total_tokens || 0;
-            if (!transcribedText) throw new Error(`Empty response from Pro Plus audio model ${endpoint.model}`);
+            if (!transcribedText || isUnusableAudioTranscription(transcribedText)) throw new Error(`Unusable response from Pro Plus audio model ${endpoint.model}`);
 
             return { text: transcribedText.trim(), usage: usageTokens, model: PRO_PLUS_BRANDED_MODEL };
         } catch (err) {
             await handleAiError(err, endpoint.apiKey, endpoint.model, 'voice');
-            return { text: `[Audio Transcription Failed] Error: ${err?.message || 'Unknown'}`, usage: 0, model: PRO_PLUS_BRANDED_MODEL };
+            console.warn(`[Audio] Pro Plus audio failed, falling back to regular voice chain: ${err?.message || 'Unknown'}`);
         }
     }
 
@@ -4249,7 +4260,7 @@ async function transcribeAudio(audioUrl, config) {
 
                 let transcribedText = null;
                 let usageTokens = 0;
-                const voicePrompt = config.voice_prompt || (config.page_prompts && config.page_prompts.voice_prompt) || "Transcribe this audio. Priority languages: Bangla (including regional dialects like Sylheti, Dhakaiya, Chattogrami, Barishali, Rangpuri, etc.), then English, then Hindi. Output ONLY the transcription text.";
+                const voicePrompt = config.voice_prompt || (config.page_prompts && config.page_prompts.voice_prompt) || "Transcribe the attached audio exactly. The speaker is most likely using Bangla/Bengali, including Bangladeshi colloquial speech and regional dialects such as Sylheti, Dhakaiya, Chattogrami, Barishali, Rangpuri, Noakhali, or mixed Bangla-English. Do not translate or summarize. Keep Bangla words in Bangla script when possible. If a word is unclear, infer from Bangladeshi customer-chat context. Output ONLY the transcription text.";
 
                 // --- PROVIDER DISPATCH ---
                 if (option.provider === 'openai') {
@@ -4260,6 +4271,7 @@ async function transcribeAudio(audioUrl, config) {
                     formData.append('file', audioBuffer, { filename: `audio.${fileExt}`, contentType: mimeType });
                     formData.append('model', 'whisper-1');
                     formData.append('language', 'bn');
+                    formData.append('prompt', 'Bangladeshi Bangla customer voice note. Possible dialects: Sylheti, Dhakaiya, Chattogrami, Barishali, Rangpuri, Noakhali. Mixed Bangla-English is common.');
 
                     const res = await axios.post('https://api.openai.com/v1/audio/transcriptions', formData, {
                         headers: { ...formData.getHeaders(), 'Authorization': `Bearer ${apiKey}` },
@@ -4302,6 +4314,7 @@ async function transcribeAudio(audioUrl, config) {
                     formData.append('file', audioBuffer, { filename: `audio.${fileExt}`, contentType: mimeType });
                     formData.append('model', option.model || 'whisper-large-v3');
                     formData.append('language', 'bn');
+                    formData.append('prompt', 'Bangladeshi Bangla customer voice note. Possible dialects: Sylheti, Dhakaiya, Chattogrami, Barishali, Rangpuri, Noakhali. Mixed Bangla-English is common.');
 
                     const res = await axios.post('https://api.groq.com/openai/v1/audio/transcriptions', formData, {
                         headers: { ...formData.getHeaders(), 'Authorization': `Bearer ${apiKey}` },
@@ -4320,6 +4333,7 @@ async function transcribeAudio(audioUrl, config) {
                         formData.append('file', audioBuffer, { filename: `audio.${fileExt}`, contentType: mimeType });
                         formData.append('model', selectedModel);
                         formData.append('language', 'bn');
+                        formData.append('prompt', 'Bangladeshi Bangla customer voice note. Possible dialects: Sylheti, Dhakaiya, Chattogrami, Barishali, Rangpuri, Noakhali. Mixed Bangla-English is common.');
 
                         return axios.post(`${normalizedBaseURL}/audio/transcriptions`, formData, {
                             headers: { ...formData.getHeaders(), 'Authorization': `Bearer ${apiKey}` },
@@ -4392,14 +4406,14 @@ async function transcribeAudio(audioUrl, config) {
                     }
                 }
 
-                if (transcribedText) {
+                if (transcribedText && !isUnusableAudioTranscription(transcribedText)) {
                     console.log(`[Audio] Success with ${option.name}: "${transcribedText.substring(0, 30)}..."`);
                     if (apiKey && usageTokens > 0) {
                         keyService.recordKeyUsage(apiKey, usageTokens, option.model).catch(() => {});
                     }
                     return { text: transcribedText.trim(), usage: usageTokens, model: option.model };
                 }
-                throw new Error(`Empty response from ${option.provider}`);
+                throw new Error(transcribedText ? `Unusable transcription from ${option.provider}` : `Empty response from ${option.provider}`);
 
             } catch (err) {
                 lastError = err;
