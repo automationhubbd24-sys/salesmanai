@@ -4590,12 +4590,19 @@ Schema:
     const content = [{ type: 'text', text: prompt }];
     content.push({ type: 'text', text: 'USER IMAGE:' });
     content.push({ type: 'image_url', image_url: { url: imageUrl } });
-    for (const [idx, candidate] of usableCandidates.entries()) {
+
+    const candidateImageGroups = await Promise.all(usableCandidates.map(async (candidate) => {
         const candidateImageUrls = collectVisionCandidateImages(candidate, Number(options.candidateImageLimit || process.env.PRODUCT_VISION_REASONING_CANDIDATE_IMAGES || 3));
+        const preparedImageUrls = await Promise.all(candidateImageUrls.map(getVisionImageContentUrl));
+        return { candidate, preparedImageUrls };
+    }));
+
+    for (const [idx, group] of candidateImageGroups.entries()) {
+        const candidate = group.candidate;
         content.push({ type: 'text', text: `CANDIDATE ${idx + 1}: product_id=${candidate.product_id}, product_name=${candidate.name || candidate.product_name || 'Unknown'}, image_score=${candidate.match_score || candidate.direct_image_score || 0}%` });
-        for (const [imageIdx, candidateImageUrl] of candidateImageUrls.entries()) {
+        for (const [imageIdx, candidateImageUrl] of group.preparedImageUrls.entries()) {
             content.push({ type: 'text', text: `Candidate ${idx + 1} image ${imageIdx + 1}` });
-            content.push({ type: 'image_url', image_url: { url: await getVisionImageContentUrl(candidateImageUrl) } });
+            content.push({ type: 'image_url', image_url: { url: candidateImageUrl } });
         }
     }
 
