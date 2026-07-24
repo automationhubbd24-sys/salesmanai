@@ -732,14 +732,6 @@ export default function WhatsAppSettingsPage() {
         </div>
         <div className="flex gap-2">
             <Button 
-                onClick={() => setIsLabelDialogOpen(true)} 
-                variant="outline"
-                className="border-primary/30 hover:border-primary hover:bg-primary/5 transition-all shadow-sm"
-            >
-                <Tags className="mr-2 h-4 w-4 text-primary" />
-                Label & List Management
-            </Button>
-            <Button 
                 onClick={() => handleOpenPrompt("text")} 
                 variant="outline"
             >
