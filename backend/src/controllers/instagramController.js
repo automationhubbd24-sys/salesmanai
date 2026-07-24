@@ -4,6 +4,28 @@ const commentAutomationService = require('../services/commentAutomationService')
 
 const facebookService = require('../services/facebookService');
 const pgClient = require('../services/pgClient');
+const fs = require('fs');
+const path = require('path');
+
+// #region debug-point ads-product-routing:reporter
+function reportAdsProductRoutingDebug(hypothesisId, location, msg, data = {}) {
+    try {
+        const envPath = path.join(__dirname, '../../.dbg/ads-product-routing.env');
+        let debugUrl = 'http://127.0.0.1:7777/event';
+        let sessionId = 'ads-product-routing';
+        try {
+            const envContent = fs.readFileSync(envPath, 'utf8');
+            debugUrl = envContent.match(/DEBUG_SERVER_URL=(.+)/)?.[1]?.trim() || debugUrl;
+            sessionId = envContent.match(/DEBUG_SESSION_ID=(.+)/)?.[1]?.trim() || sessionId;
+        } catch (_) {}
+        fetch(debugUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId, runId: 'pre-fix', hypothesisId, location, msg: `[DEBUG] ${msg}`, data, ts: Date.now() })
+        }).catch(() => {});
+    } catch (_) {}
+}
+// #endregion
 
 const recentInstagramWebhookLogs = [];
 const MAX_INSTAGRAM_WEBHOOK_LOGS = 50;
@@ -89,6 +111,17 @@ async function processInstagramWebhook(body) {
             const senderId = String(event.sender.id);
             const messageId = String(event.message.mid || `instagram_${Date.now()}_${senderId}`);
             const text = String(event.message.text || '').trim();
+            // #region debug-point ads-product-routing:instagram-incoming
+            reportAdsProductRoutingDebug('H4', 'instagramController.js:processInstagramWebhook.incoming', 'instagram incoming payload ad/referral fields', {
+                accountId,
+                senderId,
+                messageId,
+                textPreview: text.substring(0, 500),
+                referral: event.referral || event.postback?.referral || event.message?.referral || null,
+                eventKeys: Object.keys(event || {}).filter(k => /ref|ad|source|context/i.test(k)),
+                messageKeys: Object.keys(event.message || {}).filter(k => /ref|ad|source|context/i.test(k))
+            });
+            // #endregion
             const imageUrls = normalizeAttachments(event.message);
             if (!text && !imageUrls.length) continue;
 
@@ -107,6 +140,16 @@ async function processInstagramWebhook(body) {
 
             if (!text && imageUrls.length && !config.image_detection) continue;
             const history = await dbService.getFbChatHistory(accountId, senderId, 12, 'instagram');
+            // #region debug-point ads-product-routing:instagram-final-ai-context
+            reportAdsProductRoutingDebug('H4', 'instagramController.js:processInstagramWebhook.finalContext', 'instagram final AI context before generation', {
+                accountId,
+                senderId,
+                messageId,
+                userMessagePreview: String(text || 'The customer sent an image.').substring(0, 1500),
+                imageCount: imageUrls.length,
+                hasConfig: Boolean(config)
+            });
+            // #endregion
             const result = await aiService.generateResponse({
                 pageId: accountId,
                 userId: senderId,

@@ -131,6 +131,26 @@ function reportCommentWebhookDebug(hypothesisId, location, msg, data = {}) {
 }
 // #endregion
 
+// #region debug-point ads-product-routing:reporter
+function reportAdsProductRoutingDebug(hypothesisId, location, msg, data = {}) {
+    try {
+        const envPath = path.join(__dirname, '../../.dbg/ads-product-routing.env');
+        let debugUrl = 'http://127.0.0.1:7777/event';
+        let sessionId = 'ads-product-routing';
+        try {
+            const envContent = fs.readFileSync(envPath, 'utf8');
+            debugUrl = envContent.match(/DEBUG_SERVER_URL=(.+)/)?.[1]?.trim() || debugUrl;
+            sessionId = envContent.match(/DEBUG_SESSION_ID=(.+)/)?.[1]?.trim() || sessionId;
+        } catch (_) {}
+        fetch(debugUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId, runId: 'pre-fix', hypothesisId, location, msg: `[DEBUG] ${msg}`, data, ts: Date.now() })
+        }).catch(() => {});
+    } catch (_) {}
+}
+// #endregion
+
 function matchesCachedConfigKey(config, lookupKey) {
     if (!config || !lookupKey) return false;
 
@@ -2628,6 +2648,18 @@ async function queueMessage(event, entryPageId = null) {
         const adRef = referralData.ref || 'unknown';
         const adId = referralData.ad_id || 'unknown';
         console.log(`[Webhook] Referral/Ad Detected. Source: ${adSource}, Ref: ${adRef}, Ad ID: ${adId}`);
+        // #region debug-point ads-product-routing:messenger-referral
+        reportAdsProductRoutingDebug('H1', 'webhookController.js:processMessageEvent.referral', 'messenger referral extracted', {
+            pageId,
+            senderId,
+            messageId,
+            adSource,
+            adRef,
+            adId,
+            referralKeys: Object.keys(referralData || {}),
+            referralData
+        });
+        // #endregion
         
         // Append to text for AI visibility (if not already there)
         // We push this as a separate system note in the buffer logic
@@ -2958,6 +2990,17 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
             hasPostback = workflowResult.hasPostback || false;
             adContext = workflowResult.adContext || "";
             adId = workflowResult.adId || null;
+            // #region debug-point ads-product-routing:messenger-workflow
+            reportAdsProductRoutingDebug('H1', 'webhookController.js:messenger.workflow', 'messenger workflow ad context', {
+                pageId,
+                senderId,
+                messageCount: messages.length,
+                adId,
+                adContext,
+                combinedTextPreview: combinedText.substring(0, 500),
+                referralItems: messages.filter(m => m.referral).map(m => ({ id: m.id, referral: m.referral }))
+            });
+            // #endregion
 
             const allStickers = messages.filter(m => m.isSticker);
             const hasOnlyStickers = allStickers.length > 0 && 
@@ -3254,6 +3297,16 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         if (adId && adId !== 'N/A') {
             try {
                 const adData = await dbService.getAdContext(adId, pageId);
+                // #region debug-point ads-product-routing:messenger-ad-lookup
+                reportAdsProductRoutingDebug('H2', 'webhookController.js:messenger.getAdContext', 'messenger ad lookup result', {
+                    pageId,
+                    senderId,
+                    adId,
+                    found: Boolean(adData),
+                    linkedProductIds: adData?.linked_product_ids || null,
+                    description: adData?.description || null
+                });
+                // #endregion
                 if (adData) {
                     let contextObj = {
                         type: 'ad_referral',
@@ -3276,6 +3329,15 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                         }
                     }
                     smartAdContext = `\n<system_hidden_context>\n${JSON.stringify(contextObj, null, 2)}\nInstruction: The user clicked on this ad. Treat the linked products as current context. If they ask about price/details without specifying a product, assume they mean these linked products.\n</system_hidden_context>\n`;
+                    // #region debug-point ads-product-routing:messenger-smart-context
+                    reportAdsProductRoutingDebug('H5', 'webhookController.js:messenger.smartAdContext', 'messenger smart ad context built', {
+                        pageId,
+                        senderId,
+                        adId,
+                        linkedProducts: contextObj.linked_products,
+                        smartAdContextPreview: smartAdContext.substring(0, 1000)
+                    });
+                    // #endregion
                     console.log(`[Ad Library] Injected smart context for Ad ID: ${adId}`);
                 }
             } catch (adErr) {
@@ -3663,6 +3725,16 @@ STRICT RULES:
         }
         
         const finalUserMessage = `${smartAdContext}${replyContext}${combinedText}${promptProductContext}`;
+        // #region debug-point ads-product-routing:messenger-final-ai-context
+        reportAdsProductRoutingDebug('H5', 'webhookController.js:messenger.finalUserMessage', 'messenger final AI context before generation', {
+            pageId,
+            senderId,
+            adId,
+            hasSmartAdContext: Boolean(smartAdContext),
+            finalUserMessagePreview: finalUserMessage.substring(0, 1500),
+            promptProductContextPreview: promptProductContext.substring(0, 1000)
+        });
+        // #endregion
         if (hasAudioTurn) {
             await dbService.saveChatMessage(sessionId, 'user', finalUserMessage, delayedAudioHistoryMessageId);
         }

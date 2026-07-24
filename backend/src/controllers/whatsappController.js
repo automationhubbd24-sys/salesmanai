@@ -55,6 +55,26 @@ function reportVariantDebug(hypothesisId, location, msg, data = {}) {
 }
 // #endregion
 
+// #region debug-point ads-product-routing:reporter
+function reportAdsProductRoutingDebug(hypothesisId, location, msg, data = {}) {
+    try {
+        const envPath = path.join(__dirname, '../../.dbg/ads-product-routing.env');
+        let debugUrl = 'http://127.0.0.1:7777/event';
+        let sessionId = 'ads-product-routing';
+        try {
+            const envContent = fs.readFileSync(envPath, 'utf8');
+            debugUrl = envContent.match(/DEBUG_SERVER_URL=(.+)/)?.[1]?.trim() || debugUrl;
+            sessionId = envContent.match(/DEBUG_SESSION_ID=(.+)/)?.[1]?.trim() || sessionId;
+        } catch (_) {}
+        fetch(debugUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId, runId: 'pre-fix', hypothesisId, location, msg: `[DEBUG] ${msg}`, data, ts: Date.now() })
+        }).catch(() => {});
+    } catch (_) {}
+}
+// #endregion
+
 function normalizeProductMediaUrl(url) {
     if (!url || url === 'N/A') return 'N/A';
     if (String(url).startsWith('http')) return url;
@@ -1334,6 +1354,19 @@ const handleWebhook = async (req, res) => {
 async function queueMessage(session, messagePayload) {
     let senderId = messagePayload.from; // e.g., 12345678@c.us
     let messageText = messagePayload.body || '';
+    // #region debug-point ads-product-routing:whatsapp-incoming
+    reportAdsProductRoutingDebug('H4', 'whatsappController.js:queueMessage.incoming', 'whatsapp incoming payload ad/referral fields', {
+        session,
+        senderId,
+        messageId: typeof messagePayload.id === 'object' ? (messagePayload.id?._serialized || messagePayload.id?.id) : messagePayload.id,
+        bodyPreview: String(messagePayload.body || '').substring(0, 500),
+        type: messagePayload.type || null,
+        referral: messagePayload.referral || messagePayload._data?.referral || messagePayload._data?.message?.referral || null,
+        contextInfo: messagePayload._data?.message?.extendedTextMessage?.contextInfo || messagePayload._data?.message?.contextInfo || null,
+        adLikeKeys: Object.keys(messagePayload || {}).filter(k => /ref|ad|source|context/i.test(k)),
+        dataAdLikeKeys: Object.keys(messagePayload._data || {}).filter(k => /ref|ad|source|context/i.test(k))
+    });
+    // #endregion
     let lockSenderId = resolveLockUserId(senderId, messagePayload);
     if (lockSenderId && lockSenderId.includes('@lid')) {
         try {
@@ -2549,6 +2582,17 @@ STRICT RULES:
             console.warn(`[WA] Admin reply check failed: ${e.message}`);
         }
         // ----------------------------------------------------
+
+        // #region debug-point ads-product-routing:whatsapp-final-ai-context
+        reportAdsProductRoutingDebug('H4', 'whatsappController.js:processBufferedMessages.finalOutput', 'whatsapp final AI context before generation', {
+            sessionName,
+            senderId,
+            pageId,
+            messageCount: messages.length,
+            messagesPreview: messages.map(m => ({ id: m.id, text: String(m.text || '').substring(0, 500), imageCount: m.images?.length || 0, audioCount: m.audios?.length || 0 })),
+            finalOutputPreview: String(finalOutput || '').substring(0, 1500)
+        });
+        // #endregion
 
         // 4. Generate Response (AI)
         console.log(`[AI] Generating response for ${senderId} (Session: ${sessionName})...`);
