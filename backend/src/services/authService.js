@@ -187,12 +187,6 @@ function extractEmailAddress(value) {
     return (match ? match[1] : input).trim().toLowerCase();
 }
 
-function getEmailDomain(value) {
-    const email = extractEmailAddress(value);
-    const atIndex = email.lastIndexOf('@');
-    return atIndex === -1 ? '' : email.slice(atIndex + 1);
-}
-
 function formatSender(name, email) {
     const cleanEmail = extractEmailAddress(email);
     if (!cleanEmail) return '';
@@ -207,32 +201,17 @@ function resolveMailSender() {
 
     const authAddress = extractEmailAddress(smtpUser);
     const fromAddress = extractEmailAddress(smtpFrom);
-    const authDomain = getEmailDomain(smtpUser);
-    const fromDomain = getEmailDomain(smtpFrom);
 
-    if (!fromAddress) {
+    if (fromAddress) {
         return {
-            from: formatSender(smtpFromName, authAddress),
-            replyTo: undefined
-        };
-    }
-
-    const isSameAddress = authAddress && fromAddress === authAddress;
-    const isSameDomain = authDomain && fromDomain && authDomain === fromDomain;
-
-    if (!isSameAddress && !isSameDomain) {
-        console.warn(
-            `[AuthMail] SMTP_FROM (${fromAddress}) does not align with SMTP_USER (${authAddress}). Using authenticated sender for better inbox placement.`
-        );
-        return {
-            from: formatSender(smtpFromName, authAddress),
-            replyTo: smtpFrom
+            from: formatSender(smtpFromName, fromAddress),
+            replyTo: authAddress && authAddress !== fromAddress ? authAddress : undefined
         };
     }
 
     return {
-        from: formatSender(smtpFromName, smtpFrom),
-        replyTo: authAddress && fromAddress !== authAddress ? authAddress : undefined
+        from: formatSender(smtpFromName, authAddress),
+        replyTo: undefined
     };
 }
 
@@ -261,7 +240,7 @@ async function sendOtpEmail(email, code) {
             </div>
         </div>
     `;
-    await transporter.sendMail({
+    const info = await transporter.sendMail({
         from,
         replyTo,
         to: email,
@@ -273,6 +252,7 @@ async function sendOtpEmail(email, code) {
             'Auto-Submitted': 'auto-generated'
         }
     });
+    console.log(`[AuthMail] OTP email accepted for ${email}: ${info.messageId}`);
 }
 
 module.exports = {

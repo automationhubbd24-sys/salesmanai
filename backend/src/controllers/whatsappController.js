@@ -1,6 +1,7 @@
 const whatsappService = require('../services/whatsappService');
 const aiService = require('../services/aiService');
 const dbService = require('../services/dbService');
+const datasetCollectorService = require('../services/datasetCollectorService');
 const incomingImageAnalysisService = require('../services/incomingImageAnalysisService');
 const orderService = require('../services/orderService');
 const pgClient = require('../services/pgClient');
@@ -3310,6 +3311,20 @@ STRICT RULES:
                          tokenUsage: aiResponse.token_usage || 0,
                          modelUsed: modelLabel
                      });
+                     datasetCollectorService.collectTrainingSample({
+                         platform: 'whatsapp',
+                         businessId: sessionName,
+                         userId: senderId,
+                         systemPrompt: aiResponse?.agent_trace?.system_prompt || aiConfig.text_prompt || '',
+                         conversationHistory: history,
+                         userMessage: finalOutput,
+                         assistantReply: finalReplyText,
+                         aiResponse,
+                         availableTools: aiService.functionTools,
+                         modelUsed: modelLabel,
+                         sourceMessageId: sentMessageId,
+                         metadata: { token_usage: aiResponse.token_usage || 0 }
+                     }).catch((err) => console.warn(`[Dataset Collector] WhatsApp sample skipped: ${err.message}`));
                  } catch (sendErr) {
                      await saveWhatsAppOutgoingLog({
                          sessionName,

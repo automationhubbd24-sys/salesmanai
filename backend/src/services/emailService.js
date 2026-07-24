@@ -11,17 +11,8 @@ const resolveSender = () => {
     const smtpUser = process.env.SMTP_USER;
     const configuredFrom = process.env.SMTP_FROM;
     const fromName = process.env.SMTP_FROM_NAME || 'SalesmanChatbot';
-    let fromAddress = configuredFrom || smtpUser;
-    let replyTo;
-
-    if (configuredFrom && smtpUser) {
-        const fromDomain = configuredFrom.split('@')[1]?.toLowerCase();
-        const userDomain = smtpUser.split('@')[1]?.toLowerCase();
-        if (fromDomain && userDomain && fromDomain !== userDomain) {
-            replyTo = configuredFrom;
-            fromAddress = smtpUser;
-        }
-    }
+    const fromAddress = configuredFrom || smtpUser;
+    const replyTo = configuredFrom && smtpUser && configuredFrom !== smtpUser ? smtpUser : undefined;
 
     return {
         from: `"${fromName}" <${fromAddress}>`,

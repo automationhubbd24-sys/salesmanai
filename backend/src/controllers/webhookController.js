@@ -6,6 +6,7 @@ const facebookService = require('../services/facebookService');
 const commentAutomationService = require('../services/commentAutomationService');
 const incomingImageAnalysisService = require('../services/incomingImageAnalysisService');
 const runtimeMonitor = require('../services/runtimeMonitor');
+const datasetCollectorService = require('../services/datasetCollectorService');
 const { runMessengerWorkflow } = require('../services/messenger_workflow');
 const { runWhatsAppWorkflow } = require('../services/whatsapp_workflow');
 const { buildResolvedProductMediaContext } = require('../utils/productMediaResolver');
@@ -4638,6 +4639,20 @@ STRICT RULES:
                         token: aiResponse.token_usage || 0,
                         aiModel: aiModelLabel
                     });
+                    datasetCollectorService.collectTrainingSample({
+                        platform: 'messenger',
+                        businessId: pageId,
+                        userId: senderId,
+                        systemPrompt: aiResponse?.agent_trace?.system_prompt || aiConfig.text_prompt || finalPrompt || '',
+                        conversationHistory: effectiveHistory,
+                        userMessage: finalUserMessage,
+                        assistantReply: replyText,
+                        aiResponse,
+                        availableTools: aiService.functionTools,
+                        modelUsed: aiModelLabel,
+                        sourceMessageId: botMessageId,
+                        metadata: { token_usage: aiResponse.token_usage || 0 }
+                    }).catch((err) => console.warn(`[Dataset Collector] Messenger sample skipped: ${err.message}`));
                 } catch (sendErr) {
                     console.error(`[FB Send Error] Failed to send message to ${senderId}:`, sendErr.message);
                     if (typeof logToFile === 'function') logToFile(`[FB Send Error] ${sendErr.message}`);

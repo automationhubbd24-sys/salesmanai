@@ -22,6 +22,7 @@ const ForgotPassword = () => {
       toast.error(t("Please enter your email", "অনুগ্রহ করে আপনার ইমেইল দিন"));
       return;
     }
+    const normalizedEmail = email.trim().toLowerCase();
     setLoading(true);
     try {
       const res = await fetch(`${BACKEND_URL}/api/auth/password/reset/request`, {
@@ -29,7 +30,7 @@ const ForgotPassword = () => {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email: normalizedEmail }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok || !body.success) {
@@ -41,7 +42,7 @@ const ForgotPassword = () => {
           "এই ইমেইলে অ্যাকাউন্ট থাকলে পাসওয়ার্ড রিসেট কোড পাঠানো হয়েছে।"
         )
       );
-      navigate(`/reset-password?email=${encodeURIComponent(email)}`);
+      navigate(`/reset-password?email=${encodeURIComponent(normalizedEmail)}`);
     } catch (err: any) {
       toast.error(
         err.message ||

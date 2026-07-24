@@ -58,6 +58,7 @@ const Register = () => {
     setLoading(true);
 
     try {
+      const normalizedEmail = formData.email.trim().toLowerCase();
       const res = await fetch(`${BACKEND_URL}/api/auth/register`, {
         method: "POST",
         headers: {
@@ -66,7 +67,7 @@ const Register = () => {
         body: JSON.stringify({
           fullName: formData.fullName,
           phone: formData.phone,
-          email: formData.email,
+          email: normalizedEmail,
           password: formData.password,
         }),
       });
@@ -80,7 +81,7 @@ const Register = () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          email: formData.email,
+          email: normalizedEmail,
         }),
       });
       const otpBody = await otpRes.json().catch(() => ({}));

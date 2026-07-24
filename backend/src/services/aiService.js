@@ -1842,6 +1842,12 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
     const MAX_LOOP = 3;
     let totalTokensInLoop = totalTokenUsage;
     const platform = pageConfig?.platform || 'external_api';
+    const agentTrace = {
+        system_prompt: Array.isArray(messages) ? (messages.find((message) => message.role === 'system')?.content || '') : '',
+        available_tools: Array.isArray(tools) ? tools : [],
+        tool_calls: [],
+        tool_results: []
+    };
 
     const isGoogle = baseURL && (baseURL.includes('generativelanguage.googleapis.com') || baseURL.includes('google'));
 
@@ -2039,7 +2045,9 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 
                 // Execute tools in background (don't wait for 2nd LLM call if we have a reply)
                 for (const toolCall of toolCalls) {
+                    agentTrace.tool_calls.push(toolCall);
                     const result = await executeTool(toolCall, pageConfig, userId, platform);
+                    agentTrace.tool_results.push({ tool_call: toolCall, result });
                     if (result.product) foundProducts.push(result.product);
                 }
 
@@ -2059,7 +2067,8 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                         order_details: structured.order_details || null,
                         token_usage: (completionUsage?.total_tokens || 0) + totalTokensInLoop, 
                         model: model, 
-                        foundProducts 
+                        foundProducts,
+                        agent_trace: agentTrace
                     };
                 }
                 
@@ -2174,7 +2183,8 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                                 product_id: null,
                                 token_usage: tokenUsage + totalTokensInLoop, 
                                 model: model, 
-                                foundProducts 
+                                foundProducts,
+                                agent_trace: agentTrace
                             };
                         }
 
@@ -2189,7 +2199,8 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                             order_details: structuredFinal.order_details || null,
                             token_usage: tokenUsage + totalTokensInLoop, 
                             model: model, 
-                            foundProducts 
+                            foundProducts,
+                            agent_trace: agentTrace
                         };
                     }
                 } else if (aiTextFinal.trim().length > 0) {
@@ -2205,7 +2216,8 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                             product_id: null,
                             token_usage: tokenUsage + totalTokensInLoop,
                             model: model,
-                            foundProducts
+                            foundProducts,
+                            agent_trace: agentTrace
                         };
                     }
 
@@ -2216,7 +2228,8 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                         product_id: null,
                         token_usage: tokenUsage + totalTokensInLoop,
                         model: model,
-                        foundProducts
+                        foundProducts,
+                        agent_trace: agentTrace
                     };
                 }
             } catch (parseErr) {
@@ -2228,7 +2241,8 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 reply: aiTextFinal, 
                 token_usage: tokenUsage + totalTokensInLoop, 
                 model: model, 
-                foundProducts 
+                foundProducts,
+                agent_trace: agentTrace
             };
 
         } catch (loopError) {
@@ -4552,5 +4566,6 @@ module.exports = {
     clearBrandedEngineCache,
     clearGlobalConfigCache,
     getProxyUrl,
-    createProxyAgent
+    createProxyAgent,
+    functionTools
 };
