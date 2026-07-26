@@ -13,7 +13,6 @@ import { BACKEND_URL, EXTERNAL_API_BASE } from "@/config";
 const token = () => localStorage.getItem("auth_token") || "";
 const authHeaders = () => ({ Authorization: `Bearer ${token()}` });
 const apiBase = BACKEND_URL.endsWith("/api") ? BACKEND_URL.replace(/\/api$/, "") : BACKEND_URL;
-const BDT_RATE = 125;
 
 type ApiKeyRow = {
     id: string;
@@ -32,6 +31,18 @@ type ModelRow = {
     pricing?: { prompt?: number; completion?: number; cached_prompt?: number };
     context_length?: number;
     released?: string;
+    release_note?: string;
+    provider?: string;
+    limits?: {
+        max_output_tokens?: number;
+        requests_per_day?: number;
+        tokens_per_day?: number;
+        remaining_requests?: number | null;
+        remaining_tokens?: number | null;
+        used_requests?: number;
+        used_tokens?: number;
+        unavailable?: boolean;
+    };
     upstream_model?: string;
 };
 
@@ -50,7 +61,7 @@ export default function DeveloperPage() {
     const [models, setModels] = useState<ModelRow[]>([]);
     const [usageStats, setUsageStats] = useState<any[]>([]);
     const [modelBreakdown, setModelBreakdown] = useState<any[]>([]);
-    const [summary, setSummary] = useState<any>({ total_cost: 0, total_tokens: 0, total_requests: 0 });
+    const [summary, setSummary] = useState<any>({ total_cost: 0, input_tokens: 0, output_tokens: 0, total_tokens: 0, total_requests: 0 });
     const [accountBalance, setAccountBalance] = useState(0);
     const [loading, setLoading] = useState(true);
     const [newKey, setNewKey] = useState<string | null>(null);
@@ -195,7 +206,7 @@ export default function DeveloperPage() {
 
     const formatNum = (value: any) => Number(value || 0).toLocaleString();
     const formatBDT = (value: any) => `৳${Number(value || 0).toLocaleString("en-BD", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    const formatMoney = (value: any) => formatBDT(Number(value || 0) * BDT_RATE);
+    const formatMoney = (value: any) => formatBDT(value);
     const formatDateTime = (value: any) => value ? new Date(value).toLocaleString() : "-";
     const clearUsageFilter = () => {
         setUsageFrom("");
@@ -331,13 +342,22 @@ export default function DeveloperPage() {
                         </div>
                         <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
                             {filteredModels.map(model => (
-                                <button key={model.id} onClick={() => setSelectedModel(model)} className="w-full text-left rounded-2xl border border-white/10 bg-white/[0.025] hover:bg-white/[0.05] p-3 transition-all">
-                                    <div className="flex items-center justify-between gap-3">
+                                <button key={model.id} onClick={() => setSelectedModel(model)} className={`w-full text-left rounded-2xl border p-3 transition-all ${model.limits?.unavailable ? "border-red-500/20 bg-red-500/[0.04] opacity-70" : "border-white/10 bg-white/[0.025] hover:bg-white/[0.05]"}`}>
+                                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                         <div className="min-w-0">
-                                            <h3 className="truncate text-white font-semibold text-sm">{model.name}</h3>
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <h3 className="truncate text-white font-semibold text-sm">{model.name}</h3>
+                                                <Badge className={model.limits?.unavailable ? "bg-red-500/10 text-red-300" : "bg-primary/10 text-primary"}>{model.limits?.unavailable ? "Unavailable" : "Available"}</Badge>
+                                            </div>
                                             <p className="truncate text-primary font-mono text-xs mt-0.5">{model.id}</p>
+                                            {model.release_note && <p className="mt-2 text-xs text-slate-500">{model.release_note}</p>}
                                         </div>
-                                        <Badge className="shrink-0 bg-white/10 text-slate-300">{formatNum(model.context_length || 0)}</Badge>
+                                        <div className="grid grid-cols-2 gap-2 text-xs sm:min-w-[260px]">
+                                            <span className="rounded-lg bg-black/30 px-2 py-1 text-slate-400">Provider: <b className="text-slate-200">{model.provider || "-"}</b></span>
+                                            <span className="rounded-lg bg-black/30 px-2 py-1 text-slate-400">Max out: <b className="text-slate-200">{model.limits?.max_output_tokens ? formatNum(model.limits.max_output_tokens) : "Unlimited"}</b></span>
+                                            <span className="rounded-lg bg-black/30 px-2 py-1 text-slate-400">Req left: <b className="text-slate-200">{model.limits?.remaining_requests === null ? "Unlimited" : formatNum(model.limits?.remaining_requests)}</b></span>
+                                            <span className="rounded-lg bg-black/30 px-2 py-1 text-slate-400">Tok left: <b className="text-slate-200">{model.limits?.remaining_tokens === null ? "Unlimited" : formatNum(model.limits?.remaining_tokens)}</b></span>
+                                        </div>
                                     </div>
                                 </button>
                             ))}
@@ -413,10 +433,12 @@ export default function DeveloperPage() {
                                 {liveUsage ? "Stop Live" : "Start Live"}
                             </Button>
                         </div>
-                        <div className="grid gap-3 sm:grid-cols-3">
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                             <StatCard label="Filtered Cost" value={formatMoney(summary.total_cost)} description="Selected time range" />
-                            <StatCard label="Filtered Requests" value={formatNum(summary.total_requests)} description="Matching log records" />
-                            <StatCard label="Filtered Tokens" value={formatNum(summary.total_tokens)} description="Matching token usage" />
+                            <StatCard label="Requests" value={formatNum(summary.total_requests)} description="Matching log records" />
+                            <StatCard label="Input Tokens" value={formatNum(summary.input_tokens)} description="Prompt tokens" />
+                            <StatCard label="Output Tokens" value={formatNum(summary.output_tokens)} description="Completion tokens" />
+                            <StatCard label="Total Tokens" value={formatNum(summary.total_tokens)} description="Input + output" />
                         </div>
                         <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
                             <div className="mb-3 text-xs font-medium uppercase tracking-[0.18em] text-slate-500">Model use count</div>
@@ -424,7 +446,7 @@ export default function DeveloperPage() {
                                 <div className="flex flex-wrap gap-2">
                                     {modelBreakdown.map(row => (
                                         <button key={row.model} onClick={() => { setUsageModel(row.model); fetchUsage(usageFrom, usageTo, row.model); }} className="rounded-full border border-white/10 bg-black/30 px-3 py-1.5 text-xs text-slate-300 hover:border-primary/30 hover:text-primary">
-                                            <span className="font-mono">{row.model}</span> <span className="text-white">{row.requests} use</span>
+                                            <span className="font-mono">{row.model}</span> <span className="text-white">{row.requests} use</span> <span>in {formatNum(row.input_tokens)} / out {formatNum(row.output_tokens)}</span>
                                         </button>
                                     ))}
                                 </div>
@@ -438,7 +460,9 @@ export default function DeveloperPage() {
                                     <TableRow className="border-white/10 hover:bg-transparent">
                                         <TableHead className="text-slate-400">Time</TableHead>
                                         <TableHead className="text-slate-400">Model</TableHead>
-                                        <TableHead className="text-right text-slate-400">Tokens</TableHead>
+                                        <TableHead className="text-right text-slate-400">Input</TableHead>
+                                        <TableHead className="text-right text-slate-400">Output</TableHead>
+                                        <TableHead className="text-right text-slate-400">Total</TableHead>
                                         <TableHead className="text-right text-slate-400">Cached</TableHead>
                                         <TableHead className="text-right text-slate-400">Cost (BDT)</TableHead>
                                     </TableRow>
@@ -448,6 +472,8 @@ export default function DeveloperPage() {
                                         <TableRow key={row.id} className="border-white/10 hover:bg-white/[0.02]">
                                             <TableCell className="text-slate-400 text-xs whitespace-nowrap">{formatDateTime(row.created_at)}</TableCell>
                                             <TableCell className="text-white font-mono text-xs">{row.model}</TableCell>
+                                            <TableCell className="text-right text-slate-300 text-xs">{formatNum(row.prompt_tokens)}</TableCell>
+                                            <TableCell className="text-right text-slate-300 text-xs">{formatNum(row.completion_tokens)}</TableCell>
                                             <TableCell className="text-right text-slate-300 text-xs">{formatNum(row.total_tokens)}</TableCell>
                                             <TableCell className="text-right text-slate-300 text-xs">{formatNum(row.cached_tokens)}</TableCell>
                                             <TableCell className="text-right text-primary text-xs font-bold">{formatMoney(row.cost)}</TableCell>
@@ -455,7 +481,7 @@ export default function DeveloperPage() {
                                     ))}
                                     {!usageStats.length && (
                                         <TableRow className="border-white/10 hover:bg-transparent">
-                                            <TableCell colSpan={5} className="py-8 text-center text-sm text-slate-500">No usage logs found for this range.</TableCell>
+                                            <TableCell colSpan={7} className="py-8 text-center text-sm text-slate-500">No usage logs found for this range.</TableCell>
                                         </TableRow>
                                     )}
                                 </TableBody>

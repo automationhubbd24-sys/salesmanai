@@ -169,6 +169,8 @@ type DeveloperModelConfig = {
   context_length?: number;
   max_tokens?: number;
   max_requests_per_day?: number;
+  max_tokens_per_day?: number;
+  released?: string;
   cache_enabled?: boolean;
   status?: string;
 };
@@ -317,12 +319,14 @@ export default function AdminPage() {
     name: "",
     upstream_model: "",
     upstream_type: "gemini",
-    input_price: "0",
-    output_price: "0",
-    cached_input_price: "0",
-    context_length: "1000000",
-    max_tokens: "0",
-    max_requests_per_day: "0",
+    input_price: "",
+    output_price: "",
+    cached_input_price: "",
+    context_length: "",
+    max_tokens: "",
+    max_requests_per_day: "",
+    max_tokens_per_day: "",
+    released: "",
     cache_enabled: true
   });
   const [developerServerForm, setDeveloperServerForm] = useState({
@@ -1626,13 +1630,15 @@ export default function AdminPage() {
           context_length: Number(developerModelForm.context_length),
           max_tokens: Number(developerModelForm.max_tokens),
           max_requests_per_day: Number(developerModelForm.max_requests_per_day),
+          max_tokens_per_day: Number(developerModelForm.max_tokens_per_day),
+          released: developerModelForm.released,
           modalities_in: ["text"],
           modalities_out: ["text"]
         })
       });
       if (!res.ok) throw new Error((await res.json()).error || "Failed to save model");
       toast.success("Developer model published");
-      setDeveloperModelForm(prev => ({ ...prev, id: "", name: "", upstream_model: "" }));
+      setDeveloperModelForm(prev => ({ ...prev, id: "", name: "", upstream_model: "", released: "" }));
       fetchDeveloperRequests();
     } catch (error: any) {
       toast.error(error.message || "Failed to save model");
@@ -4777,7 +4783,7 @@ export default function AdminPage() {
                     <Input type="number" placeholder="0" value={developerModelForm.input_price} onChange={e => setDeveloperModelForm({ ...developerModelForm, input_price: e.target.value })} />
                   </div>
                   <div className="space-y-1.5">
-                    <Label>Output price / 1M tokens</Label>
+                    <Label>Output price / 1M tokens (BDT)</Label>
                     <p className="text-xs text-muted-foreground">Response token cost. Empty/0 = free.</p>
                     <Input type="number" placeholder="0" value={developerModelForm.output_price} onChange={e => setDeveloperModelForm({ ...developerModelForm, output_price: e.target.value })} />
                   </div>
@@ -4801,13 +4807,23 @@ export default function AdminPage() {
                     <p className="text-xs text-muted-foreground">Per user daily request limit. Empty = unlimited.</p>
                     <Input type="number" placeholder="empty = unlimited" value={developerModelForm.max_requests_per_day} onChange={e => setDeveloperModelForm({ ...developerModelForm, max_requests_per_day: e.target.value })} />
                   </div>
+                  <div className="space-y-1.5">
+                    <Label>Max tokens/day</Label>
+                    <p className="text-xs text-muted-foreground">Per user daily token quota. Empty = unlimited.</p>
+                    <Input type="number" placeholder="empty = unlimited" value={developerModelForm.max_tokens_per_day} onChange={e => setDeveloperModelForm({ ...developerModelForm, max_tokens_per_day: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5 md:col-span-2">
+                    <Label>Release note</Label>
+                    <p className="text-xs text-muted-foreground">Model card-e short update/status note show hobe.</p>
+                    <Input placeholder="example: Stable for automation, supports text chat" value={developerModelForm.released} onChange={e => setDeveloperModelForm({ ...developerModelForm, released: e.target.value })} />
+                  </div>
                 </div>
                 <div className="flex items-center justify-between rounded-lg border border-white/10 p-3">
                   <div><Label>Backend cache support</Label><p className="text-xs text-muted-foreground">Repeated same prompt response cache kore cached token bill korbe.</p></div>
                   <Switch checked={developerModelForm.cache_enabled} onCheckedChange={v => setDeveloperModelForm({ ...developerModelForm, cache_enabled: Boolean(v) })} />
                 </div>
                 <div className="rounded-lg border border-white/10 bg-black/20 p-3 text-xs text-muted-foreground">
-                  <b className="text-foreground">Note:</b> Price fields are per 1M tokens. Context window means model total context. Max output/request and requests/day empty thakle unlimited.
+                  <b className="text-foreground">Note:</b> Price fields are BDT per 1M tokens. Context window means model total context. Max output/request and requests/day empty thakle unlimited.
                 </div>
                 <Button onClick={saveDeveloperModel} className="bg-[#00ff88] text-black hover:bg-[#00ff88]/80">Publish / Update Model</Button>
               </CardContent>

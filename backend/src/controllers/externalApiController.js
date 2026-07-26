@@ -48,6 +48,7 @@ async function ensureDeveloperApiSchema() {
     `);
     await pgClient.query(`ALTER TABLE developer_api_models ADD COLUMN IF NOT EXISTS max_tokens INTEGER DEFAULT 0`);
     await pgClient.query(`ALTER TABLE developer_api_models ADD COLUMN IF NOT EXISTS max_requests_per_day INTEGER DEFAULT 0`);
+    await pgClient.query(`ALTER TABLE developer_api_models ADD COLUMN IF NOT EXISTS max_tokens_per_day INTEGER DEFAULT 0`);
     await pgClient.query(`ALTER TABLE developer_api_models ADD COLUMN IF NOT EXISTS cache_enabled BOOLEAN DEFAULT true`);
     await pgClient.query(`ALTER TABLE developer_api_models ADD COLUMN IF NOT EXISTS admin_published BOOLEAN DEFAULT false`);
 
@@ -288,6 +289,31 @@ function calculateCost(modelRow, usage) {
     return Number((inputCost + cachedCost + outputCost).toFixed(8));
 }
 
+function estimateRequestCost(modelRow, body = {}) {
+    const maxOutputTokens = Number(body.max_tokens || modelRow.max_tokens || 0);
+    if (maxOutputTokens <= 0) return 0;
+    return Number(((maxOutputTokens / 1000000) * Number(modelRow.output_price || 0)).toFixed(8));
+}
+
+async function reserveUserBalance(userId, amount) {
+    if (amount <= 0) return true;
+    const result = await pgClient.query(
+        `UPDATE user_configs
+         SET balance = balance - $1
+         WHERE user_id = $2::uuid AND COALESCE(balance, 0) >= $1
+         RETURNING balance`,
+        [amount, userId]
+    );
+    return result.rowCount > 0;
+}
+
+async function adjustReservedBalance(userId, reservedAmount, actualCost) {
+    const delta = Number((reservedAmount - actualCost).toFixed(8));
+    if (delta !== 0) {
+        await pgClient.query('UPDATE user_configs SET balance = balance + $1 WHERE user_id = $2::uuid', [delta, userId]);
+    }
+}
+
 function buildCacheKey(modelRow, body) {
     const payload = JSON.stringify({ model: modelRow.id, messages: body.messages, temperature: body.temperature || 0, tools: body.tools || null });
     return crypto.createHash('sha256').update(payload).digest('hex');
@@ -377,6 +403,8 @@ async function logUsage({ userConfig, modelRow, usage, serverId = null }) {
 }
 
 exports.handleChatCompletion = async (req, res) => {
+    let reservedCost = 0;
+    let reservedUserId = null;
     try {
         const { userConfig, error } = await validateDeveloperApiKey(req);
         if (error) return res.status(error.status).json({ error: { message: error.message, type: error.type, code: error.code } });
@@ -403,8 +431,24 @@ exports.handleChatCompletion = async (req, res) => {
                 return res.status(429).json({ error: { message: `Daily request limit reached for ${modelRow.id}`, type: 'rate_limit_error', code: 'model_daily_limit' } });
             }
         }
+        if (Number(modelRow.max_tokens_per_day || 0) > 0) {
+            const usedTokens = await pgClient.query(
+                `SELECT COALESCE(SUM(total_tokens), 0)::int AS tokens FROM developer_api_usage WHERE user_id = $1::uuid AND model = $2 AND created_at >= CURRENT_DATE`,
+                [userConfig.user_id, modelRow.id]
+            );
+            if (Number(usedTokens.rows[0]?.tokens || 0) >= Number(modelRow.max_tokens_per_day)) {
+                return res.status(429).json({ error: { message: `Daily token limit reached for ${modelRow.id}`, type: 'rate_limit_error', code: 'model_token_daily_limit' } });
+            }
+        }
         if (Number(modelRow.max_tokens || 0) > 0) {
             req.body.max_tokens = Math.min(Number(req.body.max_tokens || modelRow.max_tokens), Number(modelRow.max_tokens));
+        }
+
+        reservedCost = estimateRequestCost(modelRow, req.body);
+        reservedUserId = userConfig.user_id;
+        const reserved = await reserveUserBalance(userConfig.user_id, reservedCost);
+        if (!reserved) {
+            return res.status(402).json({ error: { message: 'Insufficient balance. Please add funds to continue.', type: 'insufficient_quota', code: 'insufficient_balance' } });
         }
 
         const cacheKey = !req.body.stream && modelRow.cache_enabled ? buildCacheKey(modelRow, req.body) : null;
@@ -421,6 +465,8 @@ exports.handleChatCompletion = async (req, res) => {
                     cache_hit: true
                 };
                 const cost = await logUsage({ userConfig, modelRow, usage: data.usage });
+                await adjustReservedBalance(userConfig.user_id, reservedCost, cost);
+                reservedCost = 0;
                 data.usage.cost = cost;
                 return res.json(data);
             }
@@ -452,8 +498,10 @@ exports.handleChatCompletion = async (req, res) => {
                 validateStatus: () => true
             });
             if (response.status >= 400) {
-                return res.status(response.status).json(publicApiError(response.status).body);
-            }
+            if (reservedCost > 0 && reservedUserId) await adjustReservedBalance(reservedUserId, reservedCost, 0);
+            reservedCost = 0;
+            return res.status(response.status).json(publicApiError(response.status).body);
+        }
             res.setHeader('Content-Type', 'text/event-stream');
             res.setHeader('Cache-Control', 'no-cache');
             res.setHeader('Connection', 'keep-alive');
@@ -475,12 +523,20 @@ exports.handleChatCompletion = async (req, res) => {
         if (data.model) data.model = modelRow.id;
         if (data.usage) {
             const cost = await logUsage({ userConfig, modelRow, usage: data.usage, serverId: upstream.id || null });
+            await adjustReservedBalance(userConfig.user_id, reservedCost, cost);
+            reservedCost = 0;
             data.usage.cost = cost;
+        } else if (reservedCost > 0) {
+            await adjustReservedBalance(userConfig.user_id, reservedCost, 0);
+            reservedCost = 0;
         }
         if (cacheKey) await writeCachedResponse(cacheKey, modelRow, data);
 
         return res.json(data);
     } catch (error) {
+        if (reservedCost > 0 && reservedUserId) {
+            await adjustReservedBalance(reservedUserId, reservedCost, 0).catch(err => console.error('[DeveloperAPI] Reserve refund failed:', err));
+        }
         return sendPublicApiError(res, error, 500);
     }
 };
@@ -528,7 +584,38 @@ exports.listModels = async (req, res) => {
 exports.listDashboardModels = async (req, res) => {
     try {
         const rows = await fetchPublishedModels();
-        res.json({ object: 'list', data: rows.map(formatModel) });
+        const usageResult = await pgClient.query(
+            `SELECT model, COUNT(*)::int AS requests, COALESCE(SUM(total_tokens), 0)::int AS tokens
+             FROM developer_api_usage
+             WHERE user_id = $1::uuid AND created_at >= CURRENT_DATE
+             GROUP BY model`,
+            [req.user.id]
+        );
+        const usageMap = new Map(usageResult.rows.map(row => [row.model, row]));
+        const data = rows.map(row => {
+            const usage = usageMap.get(row.id) || { requests: 0, tokens: 0 };
+            const requestLimit = Number(row.max_requests_per_day || 0);
+            const tokenLimit = Number(row.max_tokens_per_day || 0);
+            const remainingRequests = requestLimit > 0 ? Math.max(requestLimit - Number(usage.requests || 0), 0) : null;
+            const remainingTokens = tokenLimit > 0 ? Math.max(tokenLimit - Number(usage.tokens || 0), 0) : null;
+            const unavailable = remainingRequests === 0 || remainingTokens === 0;
+            return {
+                ...formatModel(row),
+                limits: {
+                    max_output_tokens: Number(row.max_tokens || 0),
+                    requests_per_day: requestLimit,
+                    tokens_per_day: tokenLimit,
+                    remaining_requests: remainingRequests,
+                    remaining_tokens: remainingTokens,
+                    used_requests: Number(usage.requests || 0),
+                    used_tokens: Number(usage.tokens || 0),
+                    unavailable
+                },
+                provider: row.upstream_type,
+                release_note: row.released || ''
+            };
+        });
+        res.json({ object: 'list', data });
     } catch (error) {
         res.status(500).json({ error: 'Failed to load models' });
     }
@@ -549,14 +636,14 @@ exports.getModelDetails = async (req, res) => {
 exports.createModel = async (req, res) => {
     try {
         await ensureDeveloperApiSchema();
-        const { id, name, description, modalities_in, modalities_out, input_price, output_price, cached_input_price, context_length, released, upstream_model, upstream_type, max_tokens, max_requests_per_day, cache_enabled } = req.body || {};
+        const { id, name, description, modalities_in, modalities_out, input_price, output_price, cached_input_price, context_length, released, upstream_model, upstream_type, max_tokens, max_requests_per_day, max_tokens_per_day, cache_enabled } = req.body || {};
         if (!id || !name || !upstream_model) return res.status(400).json({ error: 'id, name and upstream_model are required' });
         const normalizedUpstreamType = ['aistudio', 'codex', 'gemini', 'gpt', 'custom'].includes(upstream_type) ? upstream_type : 'custom';
 
         const result = await pgClient.query(
             `INSERT INTO developer_api_models
-             (id, name, description, modalities_in, modalities_out, input_price, output_price, cached_input_price, context_length, released, upstream_model, upstream_type, max_tokens, max_requests_per_day, cache_enabled, admin_published)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,true)
+             (id, name, description, modalities_in, modalities_out, input_price, output_price, cached_input_price, context_length, released, upstream_model, upstream_type, max_tokens, max_requests_per_day, max_tokens_per_day, cache_enabled, admin_published)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,true)
              ON CONFLICT (id) DO UPDATE SET
                 name = EXCLUDED.name,
                 description = EXCLUDED.description,
@@ -571,12 +658,13 @@ exports.createModel = async (req, res) => {
                 upstream_type = EXCLUDED.upstream_type,
                 max_tokens = EXCLUDED.max_tokens,
                 max_requests_per_day = EXCLUDED.max_requests_per_day,
+                max_tokens_per_day = EXCLUDED.max_tokens_per_day,
                 cache_enabled = EXCLUDED.cache_enabled,
                 admin_published = true,
                 status = 'active',
                 updated_at = NOW()
              RETURNING *`,
-            [id, name, description || '', modalities_in || ['text'], modalities_out || ['text'], input_price || 0, output_price || 0, cached_input_price || 0, context_length || 0, released || '', upstream_model, normalizedUpstreamType, max_tokens || 0, max_requests_per_day || 0, cache_enabled !== false]
+            [id, name, description || '', modalities_in || ['text'], modalities_out || ['text'], input_price || 0, output_price || 0, cached_input_price || 0, context_length || 0, released || '', upstream_model, normalizedUpstreamType, max_tokens || 0, max_requests_per_day || 0, max_tokens_per_day || 0, cache_enabled !== false]
         );
         res.json({ success: true, model: result.rows[0] });
     } catch (error) {
@@ -772,6 +860,8 @@ exports.getUsageStats = async (req, res) => {
         const summaryResult = await pgClient.query(
             `SELECT
                 COALESCE(SUM(cost), 0)::float AS total_cost,
+                COALESCE(SUM(prompt_tokens), 0)::int AS input_tokens,
+                COALESCE(SUM(completion_tokens), 0)::int AS output_tokens,
                 COALESCE(SUM(total_tokens), 0)::int AS total_tokens,
                 COUNT(*)::int AS total_requests
              FROM developer_api_usage WHERE ${whereClause}`,
@@ -781,6 +871,8 @@ exports.getUsageStats = async (req, res) => {
             `SELECT
                 model,
                 COUNT(*)::int AS requests,
+                COALESCE(SUM(prompt_tokens), 0)::int AS input_tokens,
+                COALESCE(SUM(completion_tokens), 0)::int AS output_tokens,
                 COALESCE(SUM(total_tokens), 0)::int AS total_tokens,
                 COALESCE(SUM(cost), 0)::float AS total_cost
              FROM developer_api_usage
@@ -795,7 +887,7 @@ exports.getUsageStats = async (req, res) => {
             stats: statsResult.rows,
             model_breakdown: modelBreakdownResult.rows,
             pagination: { total_records: total, total_pages: Math.max(Math.ceil(total / limit), 1), current_page: page, limit },
-            summary: summaryResult.rows[0] || { total_cost: 0, total_tokens: 0, total_requests: 0 }
+            summary: summaryResult.rows[0] || { total_cost: 0, input_tokens: 0, output_tokens: 0, total_tokens: 0, total_requests: 0 }
         });
     } catch (error) {
         res.status(500).json({ error: 'Failed to fetch usage statistics', details: error.message });
