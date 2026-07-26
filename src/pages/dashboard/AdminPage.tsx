@@ -4747,20 +4747,60 @@ export default function AdminPage() {
                 <CardDescription>Only ekhane publish kora model-i Developer page-e available hobe. Optional limit field empty thakle unlimited.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid gap-3 md:grid-cols-2">
-                  <Input placeholder="Public model id" value={developerModelForm.id} onChange={e => setDeveloperModelForm({ ...developerModelForm, id: e.target.value })} />
-                  <Input placeholder="Display name" value={developerModelForm.name} onChange={e => setDeveloperModelForm({ ...developerModelForm, name: e.target.value })} />
-                  <Input placeholder="Upstream model" value={developerModelForm.upstream_model} onChange={e => setDeveloperModelForm({ ...developerModelForm, upstream_model: e.target.value })} />
-                  <Select value={developerModelForm.upstream_type} onValueChange={v => setDeveloperModelForm({ ...developerModelForm, upstream_type: v })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent><SelectItem value="gemini">Gemini</SelectItem><SelectItem value="gpt">GPT</SelectItem><SelectItem value="aistudio">AIStudio</SelectItem><SelectItem value="codex">Codex</SelectItem><SelectItem value="custom">Custom</SelectItem></SelectContent>
-                  </Select>
-                  <Input type="number" placeholder="Input price / 1M tokens (optional)" value={developerModelForm.input_price} onChange={e => setDeveloperModelForm({ ...developerModelForm, input_price: e.target.value })} />
-                  <Input type="number" placeholder="Output price / 1M" value={developerModelForm.output_price} onChange={e => setDeveloperModelForm({ ...developerModelForm, output_price: e.target.value })} />
-                  <Input type="number" placeholder="Cached input price / 1M (optional)" value={developerModelForm.cached_input_price} onChange={e => setDeveloperModelForm({ ...developerModelForm, cached_input_price: e.target.value })} />
-                  <Input type="number" placeholder="Context window tokens (optional)" value={developerModelForm.context_length} onChange={e => setDeveloperModelForm({ ...developerModelForm, context_length: e.target.value })} />
-                  <Input type="number" placeholder="Max output tokens/request (empty = unlimited)" value={developerModelForm.max_tokens} onChange={e => setDeveloperModelForm({ ...developerModelForm, max_tokens: e.target.value })} />
-                  <Input type="number" placeholder="Max requests/day (empty = unlimited)" value={developerModelForm.max_requests_per_day} onChange={e => setDeveloperModelForm({ ...developerModelForm, max_requests_per_day: e.target.value })} />
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label>Public model ID</Label>
+                    <p className="text-xs text-muted-foreground">User-ra API call-e ei model name use korbe.</p>
+                    <Input placeholder="example: salesman-gemini-pro" value={developerModelForm.id} onChange={e => setDeveloperModelForm({ ...developerModelForm, id: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Display name</Label>
+                    <p className="text-xs text-muted-foreground">Developer page-e readable model name.</p>
+                    <Input placeholder="example: Gemini Pro" value={developerModelForm.name} onChange={e => setDeveloperModelForm({ ...developerModelForm, name: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Upstream model</Label>
+                    <p className="text-xs text-muted-foreground">Internal server-e real model id.</p>
+                    <Input placeholder="example: gemini-1.5-pro" value={developerModelForm.upstream_model} onChange={e => setDeveloperModelForm({ ...developerModelForm, upstream_model: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Provider type</Label>
+                    <p className="text-xs text-muted-foreground">Kon server group use hobe.</p>
+                    <Select value={developerModelForm.upstream_type} onValueChange={v => setDeveloperModelForm({ ...developerModelForm, upstream_type: v })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent><SelectItem value="gemini">Gemini</SelectItem><SelectItem value="gpt">GPT</SelectItem><SelectItem value="aistudio">AIStudio</SelectItem><SelectItem value="codex">Codex</SelectItem><SelectItem value="custom">Custom</SelectItem></SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Input price / 1M tokens</Label>
+                    <p className="text-xs text-muted-foreground">Prompt token cost. Empty/0 = free.</p>
+                    <Input type="number" placeholder="0" value={developerModelForm.input_price} onChange={e => setDeveloperModelForm({ ...developerModelForm, input_price: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Output price / 1M tokens</Label>
+                    <p className="text-xs text-muted-foreground">Response token cost. Empty/0 = free.</p>
+                    <Input type="number" placeholder="0" value={developerModelForm.output_price} onChange={e => setDeveloperModelForm({ ...developerModelForm, output_price: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Cached input price / 1M</Label>
+                    <p className="text-xs text-muted-foreground">Cache hit prompt token cost. Empty/0 = free.</p>
+                    <Input type="number" placeholder="0" value={developerModelForm.cached_input_price} onChange={e => setDeveloperModelForm({ ...developerModelForm, cached_input_price: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Context window</Label>
+                    <p className="text-xs text-muted-foreground">Model total token capacity.</p>
+                    <Input type="number" placeholder="example: 128000" value={developerModelForm.context_length} onChange={e => setDeveloperModelForm({ ...developerModelForm, context_length: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Max output tokens/request</Label>
+                    <p className="text-xs text-muted-foreground">Per request output limit. Empty = unlimited.</p>
+                    <Input type="number" placeholder="empty = unlimited" value={developerModelForm.max_tokens} onChange={e => setDeveloperModelForm({ ...developerModelForm, max_tokens: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Max requests/day</Label>
+                    <p className="text-xs text-muted-foreground">Per user daily request limit. Empty = unlimited.</p>
+                    <Input type="number" placeholder="empty = unlimited" value={developerModelForm.max_requests_per_day} onChange={e => setDeveloperModelForm({ ...developerModelForm, max_requests_per_day: e.target.value })} />
+                  </div>
                 </div>
                 <div className="flex items-center justify-between rounded-lg border border-white/10 p-3">
                   <div><Label>Backend cache support</Label><p className="text-xs text-muted-foreground">Repeated same prompt response cache kore cached token bill korbe.</p></div>

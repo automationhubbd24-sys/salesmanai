@@ -475,7 +475,7 @@ exports.listModels = async (req, res) => {
     try {
         await ensureDeveloperApiSchema();
         const result = await pgClient.query(
-            `SELECT * FROM developer_api_models WHERE status = 'active' ORDER BY name ASC`
+            `SELECT * FROM developer_api_models WHERE status = 'active' AND COALESCE(admin_published, false) = true ORDER BY name ASC`
         );
         res.json({
             object: 'list',
