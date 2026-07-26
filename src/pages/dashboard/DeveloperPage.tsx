@@ -272,7 +272,7 @@ export default function DeveloperPage() {
                 <Card className="xl:col-span-2 bg-[#0e0e12] border-white/10 rounded-3xl overflow-hidden">
                     <CardHeader>
                         <CardTitle className="text-white flex items-center gap-2"><Key className="h-5 w-5 text-primary" /> API Keys</CardTitle>
-                        <CardDescription>Create, disable, delete and monitor user API keys.</CardDescription>
+                        <CardDescription>Create keys for external clients. Keys start with salesmanchatbot-key.</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <div className="flex gap-2">
@@ -363,7 +363,7 @@ export default function DeveloperPage() {
                             <Button size="icon" onClick={() => copy(`${EXTERNAL_API_BASE}/v1`, "Base URL copied")} className="bg-white text-black rounded-xl"><Copy className="h-4 w-4" /></Button>
                         </div>
                         <pre className="rounded-2xl bg-black/60 border border-white/10 p-4 text-xs text-slate-300 overflow-x-auto">{`curl ${EXTERNAL_API_BASE}/v1/chat/completions \\
-  -H "Authorization: Bearer sk-scb-..." \\
+  -H "Authorization: Bearer salesmanchatbot-key-..." \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "your-admin-added-model-id",

@@ -115,7 +115,7 @@ function maskKey(key) {
 }
 
 function createUserApiKey() {
-    return `sk-scb-${crypto.randomBytes(32).toString('hex')}`;
+    return `salesmanchatbot-key-${crypto.randomBytes(32).toString('hex')}`;
 }
 
 function getAuthBearer(req) {
@@ -130,6 +130,9 @@ async function validateDeveloperApiKey(req) {
     if (!apiKey) {
         return { error: { status: 401, message: 'Missing or invalid Authorization header', type: 'invalid_request_error', code: 'unauthorized' } };
     }
+    if (!apiKey.startsWith('salesmanchatbot-key-')) {
+        return { error: { status: 401, message: 'Incorrect API key provided', type: 'invalid_request_error', code: 'invalid_api_key' } };
+    }
 
     const result = await pgClient.query(
         `SELECT k.id AS api_key_id, k.user_id, k.status, uc.balance
@@ -142,13 +145,32 @@ async function validateDeveloperApiKey(req) {
 
     const row = result.rows[0];
     if (!row) {
-        return { error: { status: 401, message: 'Invalid API key', type: 'invalid_request_error', code: 'invalid_api_key' } };
+        return { error: { status: 401, message: 'Incorrect API key provided', type: 'invalid_request_error', code: 'invalid_api_key' } };
     }
     if (row.status !== 'active') {
         return { error: { status: 403, message: 'API key is disabled', type: 'invalid_request_error', code: 'key_disabled' } };
     }
 
     return { userConfig: row };
+}
+
+function publicApiError(status = 500, code = 'api_error', message = 'The service was not able to process your request') {
+    return { status, body: { error: { message, type: 'api_error', code } } };
+}
+
+function sendPublicApiError(res, error, fallbackStatus = 500) {
+    console.error('[DeveloperAPI] Internal error:', error);
+    const status = Number(error?.response?.status || error?.status || fallbackStatus);
+    if (status === 401 || status === 403) {
+        return res.status(status).json({ error: { message: 'Authentication failed', type: 'authentication_error', code: 'authentication_failed' } });
+    }
+    if (status === 404) {
+        return res.status(404).json({ error: { message: 'The requested resource was not found', type: 'invalid_request_error', code: 'not_found' } });
+    }
+    if (status === 429) {
+        return res.status(429).json({ error: { message: 'Rate limit exceeded. Please try again later.', type: 'rate_limit_error', code: 'rate_limit_exceeded' } });
+    }
+    return res.status(status >= 400 && status < 600 ? status : 500).json(publicApiError(status).body);
 }
 
 function readEnv(name) {
@@ -216,11 +238,10 @@ async function pickProxyUpstream(modelRow) {
     const normalizedType = modelRow.upstream_type === 'codex' ? 'codex' : 'aistudio';
     const upstreams = getProxyUpstreams(normalizedType);
     if (upstreams.length === 0) {
-        throw new Error(
-            normalizedType === 'codex'
-                ? 'No codex-proxy upstream configured. Add an admin server or set CODEX_PROXY_BASE_URL_1 and CODEX_PROXY_INTERNAL_KEY_1.'
-                : 'No AIStudio proxy upstream configured. Add an admin server or set AISTUDIO_PROXY_BASE_URL_1 and AISTUDIO_PROXY_INTERNAL_KEY_1.'
-        );
+        const error = new Error('Upstream is not available');
+        error.status = 503;
+        error.code = 'service_unavailable';
+        throw error;
     }
     const selected = upstreams[upstreamCursors[normalizedType] % upstreams.length];
     upstreamCursors[normalizedType] = (upstreamCursors[normalizedType] + 1) % upstreams.length;
@@ -230,7 +251,7 @@ async function pickProxyUpstream(modelRow) {
 async function getModel(modelId) {
     await ensureDeveloperApiSchema();
     const result = await pgClient.query(
-        `SELECT * FROM developer_api_models WHERE id = $1 AND status = 'active' LIMIT 1`,
+        `SELECT * FROM developer_api_models WHERE id = $1 AND status = 'active' AND COALESCE(admin_published, false) = true LIMIT 1`,
         [modelId]
     );
     return result.rows[0] || null;
@@ -431,13 +452,7 @@ exports.handleChatCompletion = async (req, res) => {
                 validateStatus: () => true
             });
             if (response.status >= 400) {
-                const chunks = [];
-                response.data.on('data', chunk => chunks.push(chunk));
-                response.data.on('end', () => {
-                    const text = Buffer.concat(chunks).toString('utf8');
-                    res.status(response.status).send(text);
-                });
-                return;
+                return res.status(response.status).json(publicApiError(response.status).body);
             }
             res.setHeader('Content-Type', 'text/event-stream');
             res.setHeader('Cache-Control', 'no-cache');
@@ -466,13 +481,14 @@ exports.handleChatCompletion = async (req, res) => {
 
         return res.json(data);
     } catch (error) {
-        console.error('[DeveloperAPI] Chat error:', error);
-        return res.status(500).json({ error: { message: error.message, type: 'api_error' } });
+        return sendPublicApiError(res, error, 500);
     }
 };
 
 exports.listModels = async (req, res) => {
     try {
+        const auth = await validateDeveloperApiKey(req);
+        if (auth.error) return res.status(auth.error.status).json({ error: auth.error });
         await ensureDeveloperApiSchema();
         const result = await pgClient.query(
             `SELECT * FROM developer_api_models WHERE status = 'active' AND COALESCE(admin_published, false) = true ORDER BY name ASC`
@@ -499,17 +515,19 @@ exports.listModels = async (req, res) => {
             }))
         });
     } catch (error) {
-        res.status(500).json({ error: { message: error.message, type: 'api_error' } });
+        return sendPublicApiError(res, error, 500);
     }
 };
 
 exports.getModelDetails = async (req, res) => {
     try {
+        const auth = await validateDeveloperApiKey(req);
+        if (auth.error) return res.status(auth.error.status).json({ error: auth.error });
         const model = await getModel(req.params.modelId);
         if (!model) return res.status(404).json({ error: 'Model not found' });
         res.json(model);
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        return sendPublicApiError(res, error, 500);
     }
 };
 
