@@ -485,37 +485,52 @@ exports.handleChatCompletion = async (req, res) => {
     }
 };
 
+function formatModel(row) {
+    return {
+        id: row.id,
+        object: 'model',
+        created: Math.floor(new Date(row.created_at).getTime() / 1000),
+        owned_by: 'salesmanchatbot',
+        name: row.name,
+        description: row.description,
+        modalities: { input: row.modalities_in || [], output: row.modalities_out || [] },
+        pricing: {
+            prompt: Number(row.input_price || 0),
+            completion: Number(row.output_price || 0),
+            cached_prompt: Number(row.cached_input_price || 0)
+        },
+        context_length: Number(row.context_length || 0),
+        released: row.released,
+        upstream_model: row.upstream_model,
+        upstream_type: row.upstream_type || 'aistudio'
+    };
+}
+
+async function fetchPublishedModels() {
+    await ensureDeveloperApiSchema();
+    const result = await pgClient.query(
+        `SELECT * FROM developer_api_models WHERE status = 'active' AND COALESCE(admin_published, false) = true ORDER BY name ASC`
+    );
+    return result.rows;
+}
+
 exports.listModels = async (req, res) => {
     try {
         const auth = await validateDeveloperApiKey(req);
         if (auth.error) return res.status(auth.error.status).json({ error: auth.error });
-        await ensureDeveloperApiSchema();
-        const result = await pgClient.query(
-            `SELECT * FROM developer_api_models WHERE status = 'active' AND COALESCE(admin_published, false) = true ORDER BY name ASC`
-        );
-        res.json({
-            object: 'list',
-            data: result.rows.map(row => ({
-                id: row.id,
-                object: 'model',
-                created: Math.floor(new Date(row.created_at).getTime() / 1000),
-                owned_by: 'salesmanchatbot',
-                name: row.name,
-                description: row.description,
-                modalities: { input: row.modalities_in || [], output: row.modalities_out || [] },
-                pricing: {
-                    prompt: Number(row.input_price || 0),
-                    completion: Number(row.output_price || 0),
-                    cached_prompt: Number(row.cached_input_price || 0)
-                },
-                context_length: Number(row.context_length || 0),
-                released: row.released,
-                upstream_model: row.upstream_model,
-                upstream_type: row.upstream_type || 'aistudio'
-            }))
-        });
+        const rows = await fetchPublishedModels();
+        res.json({ object: 'list', data: rows.map(formatModel) });
     } catch (error) {
         return sendPublicApiError(res, error, 500);
+    }
+};
+
+exports.listDashboardModels = async (req, res) => {
+    try {
+        const rows = await fetchPublishedModels();
+        res.json({ object: 'list', data: rows.map(formatModel) });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to load models' });
     }
 };
 

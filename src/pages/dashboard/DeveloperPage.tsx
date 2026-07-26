@@ -103,7 +103,7 @@ export default function DeveloperPage() {
 
     const fetchModels = async () => {
         try {
-            const res = await fetch(`${apiBase}/v1/models`, { headers: authHeaders() });
+            const res = await fetch(`${apiBase}/api/external/catalog/models`, { headers: authHeaders() });
             const data = await res.json();
             setModels(data.data || []);
         } catch (error) {

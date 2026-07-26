@@ -15,6 +15,7 @@ router.get(/^\/models\/(.+)$/, (req, res) => {
 });
 
 // Management Endpoints (Protected by User Auth AND Developer Approval)
+router.get('/catalog/models', authMiddleware, developerAuthMiddleware, externalApiController.listDashboardModels);
 router.get('/key', authMiddleware, developerAuthMiddleware, externalApiController.getApiKey);
 router.post('/key/regenerate', authMiddleware, developerAuthMiddleware, externalApiController.regenerateApiKey);
 router.get('/keys', authMiddleware, developerAuthMiddleware, externalApiController.getApiKeys);
