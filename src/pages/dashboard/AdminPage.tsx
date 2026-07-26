@@ -331,11 +331,11 @@ export default function AdminPage() {
     base_url: "",
     api_key: "",
     supported_models: "",
-    max_tokens: "0",
-    max_requests_per_minute: "0",
-    max_requests_per_hour: "0",
-    max_requests_per_day: "0",
-    max_tokens_per_day: "0"
+    max_tokens: "",
+    max_requests_per_minute: "",
+    max_requests_per_hour: "",
+    max_requests_per_day: "",
+    max_tokens_per_day: ""
   });
 
   // API Engine State
@@ -4744,7 +4744,7 @@ export default function AdminPage() {
             <Card className="bg-card/40 backdrop-blur-md border-white/5">
               <CardHeader>
                 <CardTitle>Publish Available Model</CardTitle>
-                <CardDescription>Developer page-e kon model available thakbe seta ekhane publish/control korun.</CardDescription>
+                <CardDescription>Only ekhane publish kora model-i Developer page-e available hobe. Optional limit field empty thakle unlimited.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid gap-3 md:grid-cols-2">
@@ -4755,16 +4755,19 @@ export default function AdminPage() {
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent><SelectItem value="gemini">Gemini</SelectItem><SelectItem value="gpt">GPT</SelectItem><SelectItem value="aistudio">AIStudio</SelectItem><SelectItem value="codex">Codex</SelectItem><SelectItem value="custom">Custom</SelectItem></SelectContent>
                   </Select>
-                  <Input type="number" placeholder="Input price / 1M" value={developerModelForm.input_price} onChange={e => setDeveloperModelForm({ ...developerModelForm, input_price: e.target.value })} />
+                  <Input type="number" placeholder="Input price / 1M tokens (optional)" value={developerModelForm.input_price} onChange={e => setDeveloperModelForm({ ...developerModelForm, input_price: e.target.value })} />
                   <Input type="number" placeholder="Output price / 1M" value={developerModelForm.output_price} onChange={e => setDeveloperModelForm({ ...developerModelForm, output_price: e.target.value })} />
-                  <Input type="number" placeholder="Cached price / 1M" value={developerModelForm.cached_input_price} onChange={e => setDeveloperModelForm({ ...developerModelForm, cached_input_price: e.target.value })} />
-                  <Input type="number" placeholder="Context length" value={developerModelForm.context_length} onChange={e => setDeveloperModelForm({ ...developerModelForm, context_length: e.target.value })} />
-                  <Input type="number" placeholder="Max output tokens" value={developerModelForm.max_tokens} onChange={e => setDeveloperModelForm({ ...developerModelForm, max_tokens: e.target.value })} />
-                  <Input type="number" placeholder="Max requests/day" value={developerModelForm.max_requests_per_day} onChange={e => setDeveloperModelForm({ ...developerModelForm, max_requests_per_day: e.target.value })} />
+                  <Input type="number" placeholder="Cached input price / 1M (optional)" value={developerModelForm.cached_input_price} onChange={e => setDeveloperModelForm({ ...developerModelForm, cached_input_price: e.target.value })} />
+                  <Input type="number" placeholder="Context window tokens (optional)" value={developerModelForm.context_length} onChange={e => setDeveloperModelForm({ ...developerModelForm, context_length: e.target.value })} />
+                  <Input type="number" placeholder="Max output tokens/request (empty = unlimited)" value={developerModelForm.max_tokens} onChange={e => setDeveloperModelForm({ ...developerModelForm, max_tokens: e.target.value })} />
+                  <Input type="number" placeholder="Max requests/day (empty = unlimited)" value={developerModelForm.max_requests_per_day} onChange={e => setDeveloperModelForm({ ...developerModelForm, max_requests_per_day: e.target.value })} />
                 </div>
                 <div className="flex items-center justify-between rounded-lg border border-white/10 p-3">
                   <div><Label>Backend cache support</Label><p className="text-xs text-muted-foreground">Repeated same prompt response cache kore cached token bill korbe.</p></div>
                   <Switch checked={developerModelForm.cache_enabled} onCheckedChange={v => setDeveloperModelForm({ ...developerModelForm, cache_enabled: Boolean(v) })} />
+                </div>
+                <div className="rounded-lg border border-white/10 bg-black/20 p-3 text-xs text-muted-foreground">
+                  <b className="text-foreground">Note:</b> Price fields are per 1M tokens. Context window means model total context. Max output/request and requests/day empty thakle unlimited.
                 </div>
                 <Button onClick={saveDeveloperModel} className="bg-[#00ff88] text-black hover:bg-[#00ff88]/80">Publish / Update Model</Button>
               </CardContent>
@@ -4773,7 +4776,7 @@ export default function AdminPage() {
             <Card className="bg-card/40 backdrop-blur-md border-white/5">
               <CardHeader>
                 <CardTitle>Internal Base URL & API Key Server</CardTitle>
-                <CardDescription>Gemini/GPT/custom multiple server add kore model, token and request limits control korun.</CardDescription>
+                <CardDescription>Each server = one base URL + API key. Limit fields empty thakle unlimited.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid gap-3 md:grid-cols-2">
@@ -4785,11 +4788,14 @@ export default function AdminPage() {
                   <Input placeholder="Base URL" value={developerServerForm.base_url} onChange={e => setDeveloperServerForm({ ...developerServerForm, base_url: e.target.value })} />
                   <Input placeholder="Internal API key" type="password" value={developerServerForm.api_key} onChange={e => setDeveloperServerForm({ ...developerServerForm, api_key: e.target.value })} />
                   <Input className="md:col-span-2" placeholder="Supported models comma separated, blank = all" value={developerServerForm.supported_models} onChange={e => setDeveloperServerForm({ ...developerServerForm, supported_models: e.target.value })} />
-                  <Input type="number" placeholder="Max tokens/request" value={developerServerForm.max_tokens} onChange={e => setDeveloperServerForm({ ...developerServerForm, max_tokens: e.target.value })} />
-                  <Input type="number" placeholder="Max requests/min" value={developerServerForm.max_requests_per_minute} onChange={e => setDeveloperServerForm({ ...developerServerForm, max_requests_per_minute: e.target.value })} />
-                  <Input type="number" placeholder="Max requests/hour" value={developerServerForm.max_requests_per_hour} onChange={e => setDeveloperServerForm({ ...developerServerForm, max_requests_per_hour: e.target.value })} />
-                  <Input type="number" placeholder="Max requests/day" value={developerServerForm.max_requests_per_day} onChange={e => setDeveloperServerForm({ ...developerServerForm, max_requests_per_day: e.target.value })} />
-                  <Input type="number" placeholder="Max tokens/day" value={developerServerForm.max_tokens_per_day} onChange={e => setDeveloperServerForm({ ...developerServerForm, max_tokens_per_day: e.target.value })} />
+                  <Input type="number" placeholder="Max tokens/request (empty = unlimited)" value={developerServerForm.max_tokens} onChange={e => setDeveloperServerForm({ ...developerServerForm, max_tokens: e.target.value })} />
+                  <Input type="number" placeholder="Max requests/minute (empty = unlimited)" value={developerServerForm.max_requests_per_minute} onChange={e => setDeveloperServerForm({ ...developerServerForm, max_requests_per_minute: e.target.value })} />
+                  <Input type="number" placeholder="Max requests/hour (empty = unlimited)" value={developerServerForm.max_requests_per_hour} onChange={e => setDeveloperServerForm({ ...developerServerForm, max_requests_per_hour: e.target.value })} />
+                  <Input type="number" placeholder="Max requests/day (empty = unlimited)" value={developerServerForm.max_requests_per_day} onChange={e => setDeveloperServerForm({ ...developerServerForm, max_requests_per_day: e.target.value })} />
+                  <Input type="number" placeholder="Max tokens/day (empty = unlimited)" value={developerServerForm.max_tokens_per_day} onChange={e => setDeveloperServerForm({ ...developerServerForm, max_tokens_per_day: e.target.value })} />
+                </div>
+                <div className="rounded-lg border border-white/10 bg-black/20 p-3 text-xs text-muted-foreground">
+                  <b className="text-foreground">Note:</b> Supported models blank thakle server sob model handle korbe. Rate/token limits empty thakle unlimited. API key table-e show hobe na.
                 </div>
                 <Button onClick={saveDeveloperServer} className="bg-[#00ff88] text-black hover:bg-[#00ff88]/80">Add Server</Button>
               </CardContent>

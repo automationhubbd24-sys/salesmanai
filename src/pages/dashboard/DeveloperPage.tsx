@@ -234,8 +234,8 @@ export default function DeveloperPage() {
                 </Button>
             </div>
 
-            <Card className="relative z-10 overflow-hidden rounded-3xl border-white/10 bg-[#0d0f14] shadow-sm">
-                <CardContent className="grid gap-6 p-6 lg:grid-cols-[1.1fr_1fr] lg:p-8">
+            <Card className="relative z-10 overflow-hidden rounded-2xl md:rounded-3xl border-white/10 bg-[#0d0f14] shadow-sm">
+                <CardContent className="grid gap-5 p-4 sm:p-5 lg:grid-cols-[1.1fr_1fr] lg:p-8">
                     <div className="space-y-5">
                         <div className="flex items-center gap-3">
                             <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
@@ -291,7 +291,7 @@ export default function DeveloperPage() {
                             </div>
                         )}
 
-                        <div className="rounded-2xl border border-white/10 overflow-hidden">
+                        <div className="rounded-2xl border border-white/10 overflow-x-auto">
                             <Table>
                                 <TableHeader>
                                     <TableRow className="border-white/10 hover:bg-transparent">
@@ -319,33 +319,33 @@ export default function DeveloperPage() {
                     </CardContent>
                 </Card>
 
-                <Card className="xl:col-span-3 overflow-hidden rounded-[1.75rem] border-white/10 bg-[#0e0e12]/90 shadow-[0_25px_70px_rgba(0,0,0,0.28)]">
+                <Card className="xl:col-span-3 overflow-hidden rounded-3xl border-white/10 bg-[#0e0e12]">
                     <CardHeader>
-                        <CardTitle className="text-white">Models</CardTitle>
-                        <CardDescription>Admin-managed model catalog. Click a model to view modalities, cache pricing, context and upstream info.</CardDescription>
+                        <CardTitle className="text-white">Available Models</CardTitle>
+                        <CardDescription>Only admin-published models appear here.</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <div className="relative">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
                             <Input value={query} onChange={e => setQuery(e.target.value)} className="pl-9 bg-black/40 border-white/10 text-white rounded-xl" placeholder="Search models" />
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[520px] overflow-y-auto pr-1">
+                        <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
                             {filteredModels.map(model => (
-                                <button key={model.id} onClick={() => setSelectedModel(model)} className="text-left rounded-2xl border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] hover:border-primary/30 p-4 transition-all">
-                                    <div className="flex items-start justify-between gap-2">
-                                        <div>
-                                            <h3 className="text-white font-bold text-sm">{model.name}</h3>
-                                            <p className="text-primary font-mono text-xs mt-1">{model.id}</p>
+                                <button key={model.id} onClick={() => setSelectedModel(model)} className="w-full text-left rounded-2xl border border-white/10 bg-white/[0.025] hover:bg-white/[0.05] p-3 transition-all">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <div className="min-w-0">
+                                            <h3 className="truncate text-white font-semibold text-sm">{model.name}</h3>
+                                            <p className="truncate text-primary font-mono text-xs mt-0.5">{model.id}</p>
                                         </div>
-                                        <Badge className="bg-white/10 text-slate-300">{formatNum(model.context_length)}</Badge>
-                                    </div>
-                                    <p className="text-slate-400 text-xs mt-3 line-clamp-2">{model.description}</p>
-                                    <div className="flex flex-wrap gap-1 mt-3">
-                                        {(model.modalities?.input || []).map(item => <Badge key={item} className="bg-blue-500/10 text-blue-300">in {item}</Badge>)}
-                                        {(model.modalities?.output || []).map(item => <Badge key={item} className="bg-purple-500/10 text-purple-300">out {item}</Badge>)}
+                                        <Badge className="shrink-0 bg-white/10 text-slate-300">{formatNum(model.context_length || 0)}</Badge>
                                     </div>
                                 </button>
                             ))}
+                            {!filteredModels.length && (
+                                <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-6 text-center text-sm text-slate-500">
+                                    No model published by admin yet.
+                                </div>
+                            )}
                         </div>
                     </CardContent>
                 </Card>
@@ -420,11 +420,11 @@ export default function DeveloperPage() {
                         </div>
                         <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
                             <div className="mb-3 text-xs font-medium uppercase tracking-[0.18em] text-slate-500">Model use count</div>
-                            {modelUsageCounts.length ? (
+                            {modelBreakdown.length ? (
                                 <div className="flex flex-wrap gap-2">
-                                    {modelUsageCounts.map(([modelId, count]) => (
-                                        <button key={modelId} onClick={() => { setUsageModel(modelId); fetchUsage(usageFrom, usageTo, modelId); }} className="rounded-full border border-white/10 bg-black/30 px-3 py-1.5 text-xs text-slate-300 hover:border-primary/30 hover:text-primary">
-                                            <span className="font-mono">{modelId}</span> <span className="text-white">{count} use</span>
+                                    {modelBreakdown.map(row => (
+                                        <button key={row.model} onClick={() => { setUsageModel(row.model); fetchUsage(usageFrom, usageTo, row.model); }} className="rounded-full border border-white/10 bg-black/30 px-3 py-1.5 text-xs text-slate-300 hover:border-primary/30 hover:text-primary">
+                                            <span className="font-mono">{row.model}</span> <span className="text-white">{row.requests} use</span>
                                         </button>
                                     ))}
                                 </div>

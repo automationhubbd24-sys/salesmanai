@@ -49,6 +49,7 @@ async function ensureDeveloperApiSchema() {
     await pgClient.query(`ALTER TABLE developer_api_models ADD COLUMN IF NOT EXISTS max_tokens INTEGER DEFAULT 0`);
     await pgClient.query(`ALTER TABLE developer_api_models ADD COLUMN IF NOT EXISTS max_requests_per_day INTEGER DEFAULT 0`);
     await pgClient.query(`ALTER TABLE developer_api_models ADD COLUMN IF NOT EXISTS cache_enabled BOOLEAN DEFAULT true`);
+    await pgClient.query(`ALTER TABLE developer_api_models ADD COLUMN IF NOT EXISTS admin_published BOOLEAN DEFAULT false`);
 
     await pgClient.query(`
         CREATE TABLE IF NOT EXISTS developer_api_servers (
@@ -98,32 +99,7 @@ async function ensureDeveloperApiSchema() {
 
     await pgClient.query(`ALTER TABLE developer_api_usage ADD COLUMN IF NOT EXISTS server_id UUID`);
 
-    await pgClient.query(`
-        INSERT INTO developer_api_models (
-            id, name, description, modalities_in, modalities_out,
-            input_price, output_price, cached_input_price, context_length, released, upstream_model, upstream_type
-        ) VALUES
-        ('gemini-3.1-pro-preview', 'gemini-3.1-pro-preview', 'AIStudioToProxy Gemini Pro preview model.', ARRAY['text','image','audio','video','pdf'], ARRAY['text'], 2.00, 12.00, 0.20, 1000000, 'Feb 19, 2026', 'gemini-3.1-pro-preview', 'aistudio'),
-        ('gemini-3.5-flash', 'gemini-3.5-flash', 'AIStudioToProxy Gemini Flash model.', ARRAY['text','image','audio','video','pdf'], ARRAY['text'], 1.50, 9.00, 0.15, 1000000, 'May 19, 2026', 'gemini-3.5-flash', 'aistudio'),
-        ('gemini-3-flash-preview', 'gemini-3-flash-preview', 'AIStudioToProxy Gemini Flash preview model.', ARRAY['text','image','audio','video','pdf'], ARRAY['text'], 0.50, 3.00, 0.05, 1000000, 'Dec 17, 2025', 'gemini-3-flash-preview', 'aistudio'),
-        ('gpt-5.5', 'gpt-5.5', 'codex-proxy GPT model.', ARRAY['text','image'], ARRAY['text'], 5.00, 30.00, 0.50, 1000000, 'Apr 25, 2026', 'gpt-5.5', 'codex'),
-        ('gpt-5.4-mini', 'gpt-5.4-mini', 'codex-proxy GPT mini model.', ARRAY['text','image'], ARRAY['text'], 0.75, 4.50, 0.075, 400000, 'Mar 17, 2026', 'gpt-5.4-mini', 'codex'),
-        ('codex-auto-review', 'codex-auto-review', 'codex-proxy automated code review model.', ARRAY['text'], ARRAY['text'], 0.75, 4.50, 0.075, 400000, 'custom', 'codex-auto-review', 'codex')
-        ON CONFLICT (id) DO UPDATE SET
-            name = EXCLUDED.name,
-            description = EXCLUDED.description,
-            modalities_in = EXCLUDED.modalities_in,
-            modalities_out = EXCLUDED.modalities_out,
-            input_price = EXCLUDED.input_price,
-            output_price = EXCLUDED.output_price,
-            cached_input_price = EXCLUDED.cached_input_price,
-            context_length = EXCLUDED.context_length,
-            released = EXCLUDED.released,
-            upstream_model = EXCLUDED.upstream_model,
-            upstream_type = EXCLUDED.upstream_type,
-            status = 'active',
-            updated_at = NOW()
-    `);
+    await pgClient.query(`UPDATE developer_api_models SET status = 'deleted' WHERE COALESCE(admin_published, false) = false`);
 
     schemaReady = true;
 }
@@ -546,8 +522,8 @@ exports.createModel = async (req, res) => {
 
         const result = await pgClient.query(
             `INSERT INTO developer_api_models
-             (id, name, description, modalities_in, modalities_out, input_price, output_price, cached_input_price, context_length, released, upstream_model, upstream_type, max_tokens, max_requests_per_day, cache_enabled)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+             (id, name, description, modalities_in, modalities_out, input_price, output_price, cached_input_price, context_length, released, upstream_model, upstream_type, max_tokens, max_requests_per_day, cache_enabled, admin_published)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,true)
              ON CONFLICT (id) DO UPDATE SET
                 name = EXCLUDED.name,
                 description = EXCLUDED.description,
@@ -563,6 +539,7 @@ exports.createModel = async (req, res) => {
                 max_tokens = EXCLUDED.max_tokens,
                 max_requests_per_day = EXCLUDED.max_requests_per_day,
                 cache_enabled = EXCLUDED.cache_enabled,
+                admin_published = true,
                 status = 'active',
                 updated_at = NOW()
              RETURNING *`,
@@ -587,7 +564,7 @@ exports.deleteModel = async (req, res) => {
 exports.adminListModels = async (req, res) => {
     try {
         await ensureDeveloperApiSchema();
-        const result = await pgClient.query(`SELECT * FROM developer_api_models WHERE status <> 'deleted' ORDER BY updated_at DESC`);
+        const result = await pgClient.query(`SELECT * FROM developer_api_models WHERE status <> 'deleted' AND COALESCE(admin_published, false) = true ORDER BY updated_at DESC`);
         res.json({ models: result.rows });
     } catch (error) {
         res.status(500).json({ error: error.message });
