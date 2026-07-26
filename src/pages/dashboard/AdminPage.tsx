@@ -158,6 +158,35 @@ type EngineTestResult = {
   preview: string | null;
 };
 
+type DeveloperModelConfig = {
+  id: string;
+  name: string;
+  upstream_model: string;
+  upstream_type: string;
+  input_price?: number;
+  output_price?: number;
+  cached_input_price?: number;
+  context_length?: number;
+  max_tokens?: number;
+  max_requests_per_day?: number;
+  cache_enabled?: boolean;
+  status?: string;
+};
+
+type DeveloperServerConfig = {
+  id: string;
+  name: string;
+  provider: string;
+  base_url: string;
+  supported_models: string[];
+  max_tokens?: number;
+  max_requests_per_minute?: number;
+  max_requests_per_hour?: number;
+  max_requests_per_day?: number;
+  max_tokens_per_day?: number;
+  status?: string;
+};
+
 interface ModelListEditorProps {
   modality: 'text' | 'vision' | 'voice';
   title: string;
@@ -279,9 +308,35 @@ export default function AdminPage() {
   const [topupAmount, setTopupAmount] = useState("");
   const [topupLoading, setTopupLoading] = useState(false);
 
-  // Developer State
-  const [developerRequests, setDeveloperRequests] = useState<any[]>([]);
+  // Developer API Control State
+  const [developerModels, setDeveloperModels] = useState<DeveloperModelConfig[]>([]);
+  const [developerServers, setDeveloperServers] = useState<DeveloperServerConfig[]>([]);
   const [loadingDevelopers, setLoadingDevelopers] = useState(false);
+  const [developerModelForm, setDeveloperModelForm] = useState({
+    id: "",
+    name: "",
+    upstream_model: "",
+    upstream_type: "gemini",
+    input_price: "0",
+    output_price: "0",
+    cached_input_price: "0",
+    context_length: "1000000",
+    max_tokens: "0",
+    max_requests_per_day: "0",
+    cache_enabled: true
+  });
+  const [developerServerForm, setDeveloperServerForm] = useState({
+    name: "",
+    provider: "gemini",
+    base_url: "",
+    api_key: "",
+    supported_models: "",
+    max_tokens: "0",
+    max_requests_per_minute: "0",
+    max_requests_per_hour: "0",
+    max_requests_per_day: "0",
+    max_tokens_per_day: "0"
+  });
 
   // API Engine State
   const [engineStats, setEngineStats] = useState<EngineStats | null>(null);
@@ -1544,44 +1599,81 @@ export default function AdminPage() {
     try {
       setLoadingDevelopers(true);
       const token = getAdminToken();
-      const res = await fetch(`${BACKEND_URL}/api/auth/admin/developer/requests`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const data = await res.json();
-      if (res.ok && Array.isArray(data.requests)) {
-        setDeveloperRequests(data.requests);
-      }
+      const [modelsRes, serversRes] = await Promise.all([
+        fetch(`${BACKEND_URL}/api/external/admin/models`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${BACKEND_URL}/api/external/admin/servers`, { headers: { Authorization: `Bearer ${token}` } })
+      ]);
+      const modelsData = await modelsRes.json();
+      const serversData = await serversRes.json();
+      if (modelsRes.ok) setDeveloperModels(modelsData.models || []);
+      if (serversRes.ok) setDeveloperServers(serversData.servers || []);
     } finally {
       setLoadingDevelopers(false);
     }
   };
 
-  const handleApproveDeveloper = async (requestId: string) => {
-    const devId = prompt("Enter Developer ID for this user:");
-    const devPass = prompt("Enter Developer Password for this user:");
-    
-    if (!devId || !devPass) {
-      toast.error("Developer ID and Password are required");
-      return;
-    }
-
+  const saveDeveloperModel = async () => {
     try {
       const token = getAdminToken();
-      const res = await fetch(`${BACKEND_URL}/api/auth/admin/developer/requests/${requestId}/approve`, {
+      const res = await fetch(`${BACKEND_URL}/api/external/admin/models`, {
         method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}` 
-        },
-        body: JSON.stringify({ devId, devPass })
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          ...developerModelForm,
+          input_price: Number(developerModelForm.input_price),
+          output_price: Number(developerModelForm.output_price),
+          cached_input_price: Number(developerModelForm.cached_input_price),
+          context_length: Number(developerModelForm.context_length),
+          max_tokens: Number(developerModelForm.max_tokens),
+          max_requests_per_day: Number(developerModelForm.max_requests_per_day),
+          modalities_in: ["text"],
+          modalities_out: ["text"]
+        })
       });
-      if (res.ok) {
-        toast.success("Developer approved with credentials");
-        fetchDeveloperRequests();
-      }
-    } catch (err) {
-      toast.error("Failed to approve developer");
+      if (!res.ok) throw new Error((await res.json()).error || "Failed to save model");
+      toast.success("Developer model published");
+      setDeveloperModelForm(prev => ({ ...prev, id: "", name: "", upstream_model: "" }));
+      fetchDeveloperRequests();
+    } catch (error: any) {
+      toast.error(error.message || "Failed to save model");
     }
+  };
+
+  const saveDeveloperServer = async () => {
+    try {
+      const token = getAdminToken();
+      const res = await fetch(`${BACKEND_URL}/api/external/admin/servers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          ...developerServerForm,
+          supported_models: developerServerForm.supported_models.split(',').map(v => v.trim()).filter(Boolean),
+          max_tokens: Number(developerServerForm.max_tokens),
+          max_requests_per_minute: Number(developerServerForm.max_requests_per_minute),
+          max_requests_per_hour: Number(developerServerForm.max_requests_per_hour),
+          max_requests_per_day: Number(developerServerForm.max_requests_per_day),
+          max_tokens_per_day: Number(developerServerForm.max_tokens_per_day)
+        })
+      });
+      if (!res.ok) throw new Error((await res.json()).error || "Failed to save server");
+      toast.success("Developer server saved");
+      setDeveloperServerForm(prev => ({ ...prev, name: "", base_url: "", api_key: "", supported_models: "" }));
+      fetchDeveloperRequests();
+    } catch (error: any) {
+      toast.error(error.message || "Failed to save server");
+    }
+  };
+
+  const deleteDeveloperModel = async (modelId: string) => {
+    const token = getAdminToken();
+    await fetch(`${BACKEND_URL}/api/external/admin/models/${encodeURIComponent(modelId)}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    fetchDeveloperRequests();
+  };
+
+  const deleteDeveloperServer = async (serverId: string) => {
+    const token = getAdminToken();
+    await fetch(`${BACKEND_URL}/api/external/admin/servers/${serverId}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    fetchDeveloperRequests();
   };
 
   const fetchCoupons = async () => {
@@ -4647,61 +4739,75 @@ export default function AdminPage() {
           <OpenRouterConfigPage />
         </TabsContent>
 
-        <TabsContent value="developers">
+        <TabsContent value="developers" className="space-y-6">
+          <div className="grid gap-6 xl:grid-cols-2">
+            <Card className="bg-card/40 backdrop-blur-md border-white/5">
+              <CardHeader>
+                <CardTitle>Publish Available Model</CardTitle>
+                <CardDescription>Developer page-e kon model available thakbe seta ekhane publish/control korun.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <Input placeholder="Public model id" value={developerModelForm.id} onChange={e => setDeveloperModelForm({ ...developerModelForm, id: e.target.value })} />
+                  <Input placeholder="Display name" value={developerModelForm.name} onChange={e => setDeveloperModelForm({ ...developerModelForm, name: e.target.value })} />
+                  <Input placeholder="Upstream model" value={developerModelForm.upstream_model} onChange={e => setDeveloperModelForm({ ...developerModelForm, upstream_model: e.target.value })} />
+                  <Select value={developerModelForm.upstream_type} onValueChange={v => setDeveloperModelForm({ ...developerModelForm, upstream_type: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="gemini">Gemini</SelectItem><SelectItem value="gpt">GPT</SelectItem><SelectItem value="aistudio">AIStudio</SelectItem><SelectItem value="codex">Codex</SelectItem><SelectItem value="custom">Custom</SelectItem></SelectContent>
+                  </Select>
+                  <Input type="number" placeholder="Input price / 1M" value={developerModelForm.input_price} onChange={e => setDeveloperModelForm({ ...developerModelForm, input_price: e.target.value })} />
+                  <Input type="number" placeholder="Output price / 1M" value={developerModelForm.output_price} onChange={e => setDeveloperModelForm({ ...developerModelForm, output_price: e.target.value })} />
+                  <Input type="number" placeholder="Cached price / 1M" value={developerModelForm.cached_input_price} onChange={e => setDeveloperModelForm({ ...developerModelForm, cached_input_price: e.target.value })} />
+                  <Input type="number" placeholder="Context length" value={developerModelForm.context_length} onChange={e => setDeveloperModelForm({ ...developerModelForm, context_length: e.target.value })} />
+                  <Input type="number" placeholder="Max output tokens" value={developerModelForm.max_tokens} onChange={e => setDeveloperModelForm({ ...developerModelForm, max_tokens: e.target.value })} />
+                  <Input type="number" placeholder="Max requests/day" value={developerModelForm.max_requests_per_day} onChange={e => setDeveloperModelForm({ ...developerModelForm, max_requests_per_day: e.target.value })} />
+                </div>
+                <div className="flex items-center justify-between rounded-lg border border-white/10 p-3">
+                  <div><Label>Backend cache support</Label><p className="text-xs text-muted-foreground">Repeated same prompt response cache kore cached token bill korbe.</p></div>
+                  <Switch checked={developerModelForm.cache_enabled} onCheckedChange={v => setDeveloperModelForm({ ...developerModelForm, cache_enabled: Boolean(v) })} />
+                </div>
+                <Button onClick={saveDeveloperModel} className="bg-[#00ff88] text-black hover:bg-[#00ff88]/80">Publish / Update Model</Button>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card/40 backdrop-blur-md border-white/5">
+              <CardHeader>
+                <CardTitle>Internal Base URL & API Key Server</CardTitle>
+                <CardDescription>Gemini/GPT/custom multiple server add kore model, token and request limits control korun.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <Input placeholder="Server name" value={developerServerForm.name} onChange={e => setDeveloperServerForm({ ...developerServerForm, name: e.target.value })} />
+                  <Select value={developerServerForm.provider} onValueChange={v => setDeveloperServerForm({ ...developerServerForm, provider: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="gemini">Gemini</SelectItem><SelectItem value="gpt">GPT</SelectItem><SelectItem value="aistudio">AIStudio</SelectItem><SelectItem value="codex">Codex</SelectItem><SelectItem value="custom">Custom</SelectItem></SelectContent>
+                  </Select>
+                  <Input placeholder="Base URL" value={developerServerForm.base_url} onChange={e => setDeveloperServerForm({ ...developerServerForm, base_url: e.target.value })} />
+                  <Input placeholder="Internal API key" type="password" value={developerServerForm.api_key} onChange={e => setDeveloperServerForm({ ...developerServerForm, api_key: e.target.value })} />
+                  <Input className="md:col-span-2" placeholder="Supported models comma separated, blank = all" value={developerServerForm.supported_models} onChange={e => setDeveloperServerForm({ ...developerServerForm, supported_models: e.target.value })} />
+                  <Input type="number" placeholder="Max tokens/request" value={developerServerForm.max_tokens} onChange={e => setDeveloperServerForm({ ...developerServerForm, max_tokens: e.target.value })} />
+                  <Input type="number" placeholder="Max requests/min" value={developerServerForm.max_requests_per_minute} onChange={e => setDeveloperServerForm({ ...developerServerForm, max_requests_per_minute: e.target.value })} />
+                  <Input type="number" placeholder="Max requests/hour" value={developerServerForm.max_requests_per_hour} onChange={e => setDeveloperServerForm({ ...developerServerForm, max_requests_per_hour: e.target.value })} />
+                  <Input type="number" placeholder="Max requests/day" value={developerServerForm.max_requests_per_day} onChange={e => setDeveloperServerForm({ ...developerServerForm, max_requests_per_day: e.target.value })} />
+                  <Input type="number" placeholder="Max tokens/day" value={developerServerForm.max_tokens_per_day} onChange={e => setDeveloperServerForm({ ...developerServerForm, max_tokens_per_day: e.target.value })} />
+                </div>
+                <Button onClick={saveDeveloperServer} className="bg-[#00ff88] text-black hover:bg-[#00ff88]/80">Add Server</Button>
+              </CardContent>
+            </Card>
+          </div>
+
           <Card className="bg-card/40 backdrop-blur-md border-white/5">
-            <CardHeader>
-              <CardTitle>Developer API Registration Requests</CardTitle>
-              <CardDescription>Approve users who paid 5,000 BDT for developer access.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>User</TableHead>
-                    <TableHead>Method</TableHead>
-                    <TableHead>TrxID</TableHead>
-                    <TableHead>Amount</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Action</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {loadingDevelopers ? (
-                    <TableRow><TableCell colSpan={7} className="text-center">Loading...</TableCell></TableRow>
-                  ) : developerRequests.length === 0 ? (
-                    <TableRow><TableCell colSpan={7} className="text-center">No pending requests</TableCell></TableRow>
-                  ) : developerRequests.map((req) => (
-                    <TableRow key={req.id}>
-                      <TableCell>
-                        <div className="font-bold">{req.full_name || 'N/A'}</div>
-                        <div className="text-xs text-muted-foreground">{req.email}</div>
-                      </TableCell>
-                      <TableCell className="uppercase">{req.payment_method}</TableCell>
-                      <TableCell className="font-mono">{req.transaction_id}</TableCell>
-                      <TableCell>{req.amount} BDT</TableCell>
-                      <TableCell>
-                        <Badge variant={req.status === 'approved' ? 'default' : 'secondary'}>
-                          {req.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>{new Date(req.created_at).toLocaleDateString()}</TableCell>
-                      <TableCell>
-                        {req.status === 'pending' && (
-                          <Button 
-                            size="sm" 
-                            className="bg-[#00ff88] text-black hover:bg-[#00ff88]/80"
-                            onClick={() => handleApproveDeveloper(req.id)}
-                          >
-                            Approve
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
+            <CardHeader><CardTitle>Published Models</CardTitle><CardDescription>Developer API users only active published models dekhbe.</CardDescription></CardHeader>
+            <CardContent><Table><TableHeader><TableRow><TableHead>Model</TableHead><TableHead>Provider</TableHead><TableHead>Limits</TableHead><TableHead>Cache</TableHead><TableHead></TableHead></TableRow></TableHeader><TableBody>
+              {loadingDevelopers ? <TableRow><TableCell colSpan={5}>Loading...</TableCell></TableRow> : developerModels.map(model => <TableRow key={model.id}><TableCell><div className="font-mono text-xs">{model.id}</div><div className="text-xs text-muted-foreground">{model.upstream_model}</div></TableCell><TableCell>{model.upstream_type}</TableCell><TableCell className="text-xs">{model.max_tokens || 0} tokens / {model.max_requests_per_day || 0} req-day</TableCell><TableCell><Badge>{model.cache_enabled ? 'Enabled' : 'Off'}</Badge></TableCell><TableCell><Button size="sm" variant="ghost" onClick={() => deleteDeveloperModel(model.id)}><Trash2 className="h-4 w-4" /></Button></TableCell></TableRow>)}
+            </TableBody></Table></CardContent>
+          </Card>
+
+          <Card className="bg-card/40 backdrop-blur-md border-white/5">
+            <CardHeader><CardTitle>Internal Servers</CardTitle><CardDescription>API keys masked thakbe; edit korte same server abar add/update korte parben.</CardDescription></CardHeader>
+            <CardContent><Table><TableHeader><TableRow><TableHead>Server</TableHead><TableHead>Provider</TableHead><TableHead>Base URL</TableHead><TableHead>Models</TableHead><TableHead>Limits</TableHead><TableHead></TableHead></TableRow></TableHeader><TableBody>
+              {developerServers.map(server => <TableRow key={server.id}><TableCell>{server.name}</TableCell><TableCell>{server.provider}</TableCell><TableCell className="font-mono text-xs">{server.base_url}</TableCell><TableCell className="text-xs">{server.supported_models?.length ? server.supported_models.join(', ') : 'All'}</TableCell><TableCell className="text-xs">{server.max_requests_per_minute || 0}/min, {server.max_requests_per_day || 0}/day, {server.max_tokens_per_day || 0} tok/day</TableCell><TableCell><Button size="sm" variant="ghost" onClick={() => deleteDeveloperServer(server.id)}><Trash2 className="h-4 w-4" /></Button></TableCell></TableRow>)}
+            </TableBody></Table></CardContent>
           </Card>
         </TabsContent>
 
