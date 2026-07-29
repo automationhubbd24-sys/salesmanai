@@ -1,0 +1,30 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "হ্যালো আপু কেমন আছেন?",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1784962499,
+  "id": "chatcmpl-1784962499859_iu2vnwxokta",
+  "model": "gemini-3.6-flash",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 175,
+    "completion_tokens_details": {
+      "image_tokens": 0,
+      "output_text_tokens": 6,
+      "reasoning_tokens": 169
+    },
+    "prompt_tokens": 91,
+    "prompt_tokens_details": {
+      "text_tokens": 91,
+      "tool_tokens": 0
+    },
+    "total_tokens": 266
+  }
+}
