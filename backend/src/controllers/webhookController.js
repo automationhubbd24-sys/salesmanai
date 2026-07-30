@@ -3350,7 +3350,7 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         const senderGender = userProfile.gender || null;
         dbService.updateFbChatSenderName(pageId, senderId, senderName)
             .catch(err => console.error(`Error updating Messenger sender name (Page: ${pageId}, Sender: ${senderId}):`, err.message));
-        
+
         // --------------------------------------------
 
         // --- BATCH PROCESSING: IMAGES & AUDIO ---

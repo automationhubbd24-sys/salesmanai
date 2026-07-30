@@ -13,7 +13,7 @@ const PLATFORM_CONFIG = {
         resourceColumn: "session_name",
         orderTable: "whatsapp_order_tracking",
         timestampExpression: "COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000)",
-        senderNameExpression: "NULL::text",
+        senderNameExpression: "CASE WHEN LOWER(BTRIM(COALESCE(sender_name, ''))) <> 'unknown' THEN NULLIF(BTRIM(sender_name), '') END",
         conversationNameJoin: `
             LEFT JOIN LATERAL (
                 SELECT NULLIF(BTRIM(wc.name), '') AS name
@@ -21,6 +21,7 @@ const PLATFORM_CONFIG = {
                 WHERE wc.session_name = $1
                   AND (wc.phone_number = COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id)
                        OR wc.lid = COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id))
+                  AND NULLIF(BTRIM(COALESCE(wc.name, '')), '') IS NOT NULL
                   AND LOWER(BTRIM(COALESCE(wc.name, ''))) <> 'unknown'
                 ORDER BY wc.last_interaction DESC NULLS LAST
                 LIMIT 1
@@ -32,16 +33,40 @@ const PLATFORM_CONFIG = {
         resourceColumn: "page_id",
         orderTable: "fb_order_tracking",
         timestampExpression: "COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000)",
-        senderNameExpression: "NULLIF(BTRIM(sender_name), '')",
-        chatPlatformCondition: "platform = 'messenger'"
+        senderNameExpression: "CASE WHEN LOWER(BTRIM(COALESCE(sender_name, ''))) NOT IN ('unknown', 'customer', 'null', 'undefined') THEN NULLIF(BTRIM(sender_name), '') END",
+        chatPlatformCondition: "platform = 'messenger'",
+        conversationNameJoin: `
+            LEFT JOIN LATERAL (
+                SELECT NULLIF(BTRIM(fc.name), '') AS name
+                FROM fb_contacts fc
+                WHERE fc.page_id = $1
+                  AND fc.sender_id = COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id)
+                  AND NULLIF(BTRIM(COALESCE(fc.name, '')), '') IS NOT NULL
+                  AND LOWER(BTRIM(COALESCE(fc.name, ''))) NOT IN ('unknown', 'customer', 'null', 'undefined')
+                ORDER BY fc.last_interaction DESC NULLS LAST, fc.updated_at DESC NULLS LAST
+                LIMIT 1
+            ) fc ON TRUE`,
+        conversationNameExpression: "COALESCE(fc.name, lsn.sender_name)"
     },
     instagram: {
         chatsTable: "fb_chats",
         resourceColumn: "page_id",
         orderTable: "fb_order_tracking",
         timestampExpression: "COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000)",
-        senderNameExpression: "NULLIF(BTRIM(sender_name), '')",
-        chatPlatformCondition: "platform = 'instagram'"
+        senderNameExpression: "CASE WHEN LOWER(BTRIM(COALESCE(sender_name, ''))) NOT IN ('unknown', 'customer', 'null', 'undefined') THEN NULLIF(BTRIM(sender_name), '') END",
+        chatPlatformCondition: "platform = 'instagram'",
+        conversationNameJoin: `
+            LEFT JOIN LATERAL (
+                SELECT NULLIF(BTRIM(fc.name), '') AS name
+                FROM fb_contacts fc
+                WHERE fc.page_id = $1
+                  AND fc.sender_id = COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id)
+                  AND NULLIF(BTRIM(COALESCE(fc.name, '')), '') IS NOT NULL
+                  AND LOWER(BTRIM(COALESCE(fc.name, ''))) NOT IN ('unknown', 'customer', 'null', 'undefined')
+                ORDER BY fc.last_interaction DESC NULLS LAST, fc.updated_at DESC NULLS LAST
+                LIMIT 1
+            ) fc ON TRUE`,
+        conversationNameExpression: "COALESCE(fc.name, lsn.sender_name)"
     }
 };
 

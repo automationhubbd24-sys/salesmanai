@@ -661,7 +661,9 @@ async function initTables() {
                 id SERIAL PRIMARY KEY,
                 page_id TEXT NOT NULL,
                 sender_id TEXT NOT NULL,
+                name TEXT,
                 is_locked BOOLEAN DEFAULT FALSE,
+                last_interaction TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                 UNIQUE(page_id, sender_id)
             );
@@ -913,8 +915,16 @@ async function initTables() {
         await query(`
             DO $$ 
             BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_contacts' AND column_name='name') THEN
+                    ALTER TABLE fb_contacts ADD COLUMN name TEXT;
+                END IF;
+
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_contacts' AND column_name='is_locked') THEN
                     ALTER TABLE fb_contacts ADD COLUMN is_locked BOOLEAN DEFAULT FALSE;
+                END IF;
+
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_contacts' AND column_name='last_interaction') THEN
+                    ALTER TABLE fb_contacts ADD COLUMN last_interaction TIMESTAMP WITH TIME ZONE DEFAULT NOW();
                 END IF;
                 
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_contacts' AND column_name='updated_at') THEN
@@ -1433,23 +1443,37 @@ async function updateFbChatSenderName(pageId, senderId, name) {
         return;
     }
 
-    const run = () => query(
-        `UPDATE fb_chats
-         SET sender_name = $3
-         WHERE page_id = $1
-           AND platform = 'messenger'
-           AND (sender_id = $2 OR recipient_id = $2)`,
-        [pageId, senderId, normalizedName]
-    );
+    const run = async () => {
+        await query(
+            `INSERT INTO fb_contacts (page_id, sender_id, name, last_interaction, updated_at)
+             VALUES ($1, $2, $3, NOW(), NOW())
+             ON CONFLICT (page_id, sender_id)
+             DO UPDATE SET
+                name = EXCLUDED.name,
+                last_interaction = EXCLUDED.last_interaction,
+                updated_at = EXCLUDED.updated_at`,
+            [pageId, senderId, normalizedName]
+        );
+
+        await query(
+            `UPDATE fb_chats
+             SET sender_name = $3
+             WHERE page_id = $1
+               AND platform = 'messenger'
+               AND (sender_id = $2 OR recipient_id = $2)`,
+            [pageId, senderId, normalizedName]
+        );
+    };
 
     try {
         await run();
     } catch (error) {
         if (error.code === '42P01' || error.code === '42703') {
+            await initTables();
             await ensureFbChatsTable();
             await run();
         } else {
-            console.error(`Error updating fb_chats sender name (page: ${pageId}, sender: ${senderId}):`, error.message);
+            console.error(`Error updating Messenger sender name (page: ${pageId}, sender: ${senderId}):`, error.message);
         }
     }
 }
