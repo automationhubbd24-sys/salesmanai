@@ -673,6 +673,7 @@ async function initTables() {
                 id SERIAL PRIMARY KEY,
                 session_name TEXT NOT NULL,
                 phone_number TEXT NOT NULL,
+                lid TEXT,
                 name TEXT,
                 is_locked BOOLEAN DEFAULT FALSE,
                 last_interaction TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -686,6 +687,9 @@ async function initTables() {
             BEGIN 
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='phone_number') THEN
                     ALTER TABLE whatsapp_contacts ADD COLUMN phone_number TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='lid') THEN
+                    ALTER TABLE whatsapp_contacts ADD COLUMN lid TEXT;
                 END IF;
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='name') THEN
                     ALTER TABLE whatsapp_contacts ADD COLUMN name TEXT;
@@ -1386,14 +1390,15 @@ async function saveFbChat(data) {
         data.reply_by || 'user',
         data.token || 0,
         data.ai_model || null,
-        data.platform || 'messenger'
+        data.platform || 'messenger',
+        data.sender_name || null
     ];
 
     const run = async () => {
         await query(
             `INSERT INTO fb_chats
-                (page_id, sender_id, recipient_id, message_id, text, timestamp, status, reply_by, token, ai_model, platform)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+                (page_id, sender_id, recipient_id, message_id, text, timestamp, status, reply_by, token, ai_model, platform, sender_name)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
              ON CONFLICT (message_id) DO UPDATE SET
                 page_id = EXCLUDED.page_id,
                 sender_id = EXCLUDED.sender_id,
@@ -1403,7 +1408,8 @@ async function saveFbChat(data) {
                 status = EXCLUDED.status,
                 reply_by = EXCLUDED.reply_by,
                 token = EXCLUDED.token,
-                ai_model = EXCLUDED.ai_model`,
+                ai_model = EXCLUDED.ai_model,
+                sender_name = COALESCE(NULLIF(BTRIM(EXCLUDED.sender_name), ''), fb_chats.sender_name)`,
             params
         );
     };
@@ -1411,12 +1417,39 @@ async function saveFbChat(data) {
     try {
         await run();
     } catch (error) {
-        if (error.message.includes('no unique or exclusion constraint') || error.code === '42P01') {
-            console.log("[DB] fb_chats table or constraint missing. Ensuring...");
+        if (error.message.includes('no unique or exclusion constraint') || error.code === '42P01' || error.code === '42703') {
+            console.log("[DB] fb_chats table, column, or constraint missing. Ensuring...");
             await ensureFbChatsTable();
             await run();
         } else {
             console.error(`Error saving to fb_chats (msg: ${data.message_id}, page: ${data.page_id}):`, error.message);
+        }
+    }
+}
+
+async function updateFbChatSenderName(pageId, senderId, name) {
+    const normalizedName = typeof name === 'string' ? name.trim() : '';
+    if (!pageId || !senderId || !normalizedName || ['unknown', 'customer', 'null', 'undefined'].includes(normalizedName.toLowerCase())) {
+        return;
+    }
+
+    const run = () => query(
+        `UPDATE fb_chats
+         SET sender_name = $3
+         WHERE page_id = $1
+           AND platform = 'messenger'
+           AND (sender_id = $2 OR recipient_id = $2)`,
+        [pageId, senderId, normalizedName]
+    );
+
+    try {
+        await run();
+    } catch (error) {
+        if (error.code === '42P01' || error.code === '42703') {
+            await ensureFbChatsTable();
+            await run();
+        } else {
+            console.error(`Error updating fb_chats sender name (page: ${pageId}, sender: ${senderId}):`, error.message);
         }
     }
 }
@@ -1455,8 +1488,10 @@ async function ensureFbChatsTable() {
             reply_by TEXT,
             token INTEGER DEFAULT 0,
             ai_model TEXT,
-            platform TEXT NOT NULL DEFAULT 'messenger'
+            platform TEXT NOT NULL DEFAULT 'messenger',
+            sender_name TEXT
             );
+        ALTER TABLE fb_chats ADD COLUMN IF NOT EXISTS sender_name TEXT;
         CREATE INDEX IF NOT EXISTS idx_fb_chats_page_sender ON fb_chats(page_id, sender_id);
     `);
 }
@@ -3914,6 +3949,7 @@ module.exports = {
     getChatHistory,
     saveChatMessage,
     saveFbChat,
+    updateFbChatSenderName,
     getFbChatHistory,
     checkN8nDebounce,
     saveFbComment,

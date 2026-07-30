@@ -13,7 +13,19 @@ const PLATFORM_CONFIG = {
         resourceColumn: "session_name",
         orderTable: "whatsapp_order_tracking",
         timestampExpression: "COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000)",
-        senderNameExpression: "NULL::text"
+        senderNameExpression: "NULL::text",
+        conversationNameJoin: `
+            LEFT JOIN LATERAL (
+                SELECT NULLIF(BTRIM(wc.name), '') AS name
+                FROM whatsapp_contacts wc
+                WHERE wc.session_name = $1
+                  AND (wc.phone_number = COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id)
+                       OR wc.lid = COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id))
+                  AND LOWER(BTRIM(COALESCE(wc.name, ''))) <> 'unknown'
+                ORDER BY wc.last_interaction DESC NULLS LAST
+                LIMIT 1
+            ) wc ON TRUE`,
+        conversationNameExpression: "COALESCE(wc.name, lsn.sender_name)"
     },
     messenger: {
         chatsTable: "fb_chats",
@@ -207,7 +219,7 @@ async function getSmartInboxConversations(pgClient, platform, resourceId) {
             END AS human_transfer_selected,
             ml.order_override,
             ml.human_transfer_override,
-            lsn.sender_name AS name
+            ${config.conversationNameExpression || 'lsn.sender_name'} AS name
         FROM latest_signal ls
         FULL OUTER JOIN latest_preview lp
             ON lp.conversation_id = ls.conversation_id
@@ -219,6 +231,7 @@ async function getSmartInboxConversations(pgClient, platform, resourceId) {
             ON lo.sender_id = COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id)
         LEFT JOIN latest_sender_name lsn
             ON lsn.conversation_id = COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id)
+        ${config.conversationNameJoin || ''}
         WHERE COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id) IS NOT NULL
         ORDER BY COALESCE(lp.event_at, lf.event_at, ls.event_at) DESC
     `;
