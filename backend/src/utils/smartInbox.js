@@ -123,7 +123,14 @@ async function getSmartInboxConversations(pgClient, platform, resourceId) {
 
     await ensureSmartInboxLabelsTable(pgClient);
 
-    const queryText = `
+    const buildQuery = (includeContactName) => {
+        const conversationIdExpression = "COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id)";
+        const conversationNameJoin = includeContactName ? (config.conversationNameJoin || "") : "";
+        const conversationNameExpression = includeContactName
+            ? (config.conversationNameExpression || "lsn.sender_name")
+            : "lsn.sender_name";
+
+        return `
         WITH base_messages AS (
             SELECT
                 CASE
@@ -219,24 +226,34 @@ async function getSmartInboxConversations(pgClient, platform, resourceId) {
             END AS human_transfer_selected,
             ml.order_override,
             ml.human_transfer_override,
-            ${config.conversationNameExpression || 'lsn.sender_name'} AS name
+            ${conversationNameExpression} AS name
         FROM latest_signal ls
         FULL OUTER JOIN latest_preview lp
             ON lp.conversation_id = ls.conversation_id
         FULL OUTER JOIN latest_fallback lf
             ON lf.conversation_id = COALESCE(ls.conversation_id, lp.conversation_id)
         LEFT JOIN manual_labels ml
-            ON ml.sender_id = COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id)
+            ON ml.sender_id = ${conversationIdExpression}
         LEFT JOIN latest_orders lo
-            ON lo.sender_id = COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id)
+            ON lo.sender_id = ${conversationIdExpression}
         LEFT JOIN latest_sender_name lsn
-            ON lsn.conversation_id = COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id)
-        ${config.conversationNameJoin || ''}
-        WHERE COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id) IS NOT NULL
+            ON lsn.conversation_id = ${conversationIdExpression}
+        ${conversationNameJoin}
+        WHERE ${conversationIdExpression} IS NOT NULL
         ORDER BY COALESCE(lp.event_at, lf.event_at, ls.event_at) DESC
     `;
+    };
 
-    const result = await pgClient.query(queryText, [resourceId, platform]);
+    let result;
+    try {
+        result = await pgClient.query(buildQuery(true), [resourceId, platform]);
+    } catch (error) {
+        if (!config.conversationNameJoin || (error?.code !== '42P01' && error?.code !== '42703')) {
+            throw error;
+        }
+        result = await pgClient.query(buildQuery(false), [resourceId, platform]);
+    }
+
     return result.rows.map(buildConversationPayload);
 }
 
