@@ -247,20 +247,11 @@ async function getSmartInboxConversations(pgClient, platform, resourceId) {
     let result;
     try {
         result = await pgClient.query(buildQuery(true), [resourceId, platform]);
-        // #region debug-point A:primary-name-query-result
-        void fetch("http://192.168.0.110:7777/event", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: "smart-inbox-names", runId: "pre-fix", hypothesisId: "A", location: "smartInbox.js:getSmartInboxConversations", msg: "[DEBUG] Primary name query completed", data: { platform, resourceId, rowCount: result.rows.length, conversations: result.rows.slice(0, 10).map((row) => ({ conversationId: row.id, name: row.name || null })) }, ts: Date.now() }) }).catch(() => {});
-        // #endregion
     } catch (error) {
         if (!config.conversationNameJoin || (error?.code !== '42P01' && error?.code !== '42703')) {
             throw error;
         }
-        // #region debug-point B:schema-fallback-error
-        void fetch("http://192.168.0.110:7777/event", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: "smart-inbox-names", runId: "pre-fix", hypothesisId: "B", location: "smartInbox.js:getSmartInboxConversations", msg: "[DEBUG] Primary name query schema fallback", data: { platform, errorCode: error?.code || null, errorMessage: error?.message || null }, ts: Date.now() }) }).catch(() => {});
-        // #endregion
         result = await pgClient.query(buildQuery(false), [resourceId, platform]);
-        // #region debug-point C:fallback-name-query-result
-        void fetch("http://192.168.0.110:7777/event", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: "smart-inbox-names", runId: "pre-fix", hypothesisId: "C", location: "smartInbox.js:getSmartInboxConversations", msg: "[DEBUG] Fallback name query completed", data: { rowCount: result.rows.length, conversations: result.rows.slice(0, 10).map((row) => ({ conversationId: row.id, name: row.name || null })) }, ts: Date.now() }) }).catch(() => {});
-        // #endregion
     }
 
     return result.rows.map(buildConversationPayload);

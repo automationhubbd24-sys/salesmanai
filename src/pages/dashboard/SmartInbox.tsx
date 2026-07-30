@@ -231,6 +231,10 @@ const SmartInbox = () => {
   const pathPlatform = location.pathname.split("/")[2];
   const platform: PlatformKey = pathPlatform === "whatsapp" ? "whatsapp" : pathPlatform === "instagram" ? "instagram" : "messenger";
   const platformTheme = useMemo(() => getPlatformTheme(platform), [platform]);
+  const debugInboxEnabled = useMemo(
+    () => new URLSearchParams(location.search).get("debugInbox") === "1",
+    [location.search]
+  );
   const PlatformIcon = platformTheme.icon;
   const [selectedChat, setSelectedChat] = useState<Conversation | null>(null);
   const [isMobileListVisible, setIsMobileListVisible] = useState(true);
@@ -341,7 +345,6 @@ const SmartInbox = () => {
       }
     } catch (error) {
       if ((error as Error).name !== "AbortError") {
-        console.error("Failed to fetch chats:", error);
         if (!silent) {
           toast.error("Conversation list load korte parini");
         }
@@ -416,7 +419,6 @@ const SmartInbox = () => {
         setHasOlderMessages((data || []).length === MESSAGE_LIMIT);
       } catch (error) {
         if ((error as Error).name !== "AbortError") {
-          console.error("Failed to fetch messages:", error);
           if (!silent) {
             toast.error("Message history load korte parini");
           }
@@ -670,7 +672,6 @@ const SmartInbox = () => {
           fetchChats({ silent: true });
         }
       } catch (error) {
-        console.error("Failed to update smart inbox label:", error);
         toast.error("Label update korte parini");
         fetchChats({ silent: true });
       } finally {
@@ -779,7 +780,6 @@ const SmartInbox = () => {
       fetchMessages(selectedChat.id, { silent: true });
       fetchChats({ silent: true });
     } catch (error) {
-      console.error("Failed to send message:", error);
       toast.error("Message পাঠাতে পারিনি");
       setNewMessage(messageText);
       fetchMessages(selectedChat.id, { silent: true });
@@ -883,6 +883,25 @@ const SmartInbox = () => {
             ))}
           </div>
         </div>
+
+        {debugInboxEnabled && !loading && (
+          <div className="border-b border-amber-300/20 bg-amber-300/[0.06] px-3 py-2 text-[10px] text-amber-50 sm:px-5">
+            <div className="font-bold">Smart Inbox Debug</div>
+            <div className="mt-1 grid grid-cols-1 gap-x-3 gap-y-0.5 sm:grid-cols-3">
+              <span>Platform: {platform}</span>
+              <span>Active resource ID: {activeResourceId ?? "none"}</span>
+              <span>Conversation count: {chats.length}</span>
+            </div>
+            <div className="mt-1 text-amber-100/75">Name is exactly the API-returned value.</div>
+            <pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-words rounded border border-amber-200/15 bg-black/20 p-2 font-mono text-[10px] leading-relaxed text-amber-50">
+              {JSON.stringify(
+                chats.slice(0, 10).map(({ id, name, from }) => ({ id, name, from })),
+                null,
+                2
+              )}
+            </pre>
+          </div>
+        )}
 
         {/* Conversation List */}
         <ScrollArea className="min-w-0 flex-1 overflow-hidden">
