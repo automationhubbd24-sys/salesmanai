@@ -4585,11 +4585,15 @@ async function resolvePageContextType(pageId) {
     // 2. Check Database for WhatsApp Resource Existence
     try {
         const waRes = await query(
-            'SELECT 1 FROM whatsapp_message_database WHERE session_name = $1 OR waba_id = $1 OR phone_number_id = $1 OR name = $1 LIMIT 1',
+            'SELECT 1 FROM whatsapp_message_database WHERE session_name = $1 OR waba_id = $1 OR phone_number_id = $1 LIMIT 1',
             [sId]
         );
         if (waRes.rows.length > 0) return 'whatsapp';
-        
+    } catch (e) {
+        console.warn("[DB] resolvePageContextType DB check failed:", e.message);
+    }
+
+    try {
         const waRes2 = await query('SELECT 1 FROM whatsapp_sessions WHERE session_name = $1 LIMIT 1', [sId]);
         if (waRes2.rows.length > 0) return 'whatsapp';
     } catch (e) {
