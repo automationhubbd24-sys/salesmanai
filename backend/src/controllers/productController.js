@@ -1357,6 +1357,36 @@ exports.updateProduct = async (req, res) => {
     }
 };
 
+async function deleteProductInContext(id, userId, pageId = null) {
+    const existing = await dbService.getProductById(id, userId);
+    if (!existing) throw new Error('Product not found');
+
+    if (!pageId) {
+        await dbService.deleteProduct(id, userId);
+        await imageService.deleteProductAssets(collectProductAssetUrls(existing));
+        return 'deleted';
+    }
+
+    const isMessenger = /^\d+$/.test(String(pageId));
+    const messengerIds = parseArrayField(existing.allowed_messenger_ids).map(String);
+    const waSessions = parseArrayField(existing.allowed_wa_sessions).map(String);
+    const newMessenger = isMessenger ? messengerIds.filter(x => x !== String(pageId)) : messengerIds;
+    const newWA = !isMessenger ? waSessions.filter(x => x !== String(pageId)) : waSessions;
+
+    if (newMessenger.length === 0 && newWA.length === 0) {
+        await dbService.deleteProduct(id, userId);
+        await imageService.deleteProductAssets(collectProductAssetUrls(existing));
+        return 'deleted';
+    }
+
+    await dbService.updateProduct(id, userId, {
+        allowed_messenger_ids: newMessenger,
+        allowed_wa_sessions: newWA,
+        platform: 'restricted'
+    });
+    return 'unassigned';
+}
+
 exports.deleteProduct = async (req, res) => {
     try {
         const { id } = req.params;
@@ -1369,35 +1399,115 @@ exports.deleteProduct = async (req, res) => {
         const userId = await resolveProductOwnerUserId(req, baseUserId, pageId);
         if (!userId) return res.status(400).json({ error: "user_id is required for verification" });
 
-        const existing = await dbService.getProductById(id);
-        if (!existing) return res.status(404).json({ error: "Product not found" });
-
-        if (pageId) {
-            const isMessenger = /^\d+$/.test(String(pageId));
-            const messengerIds = Array.isArray(existing.allowed_messenger_ids) ? existing.allowed_messenger_ids : (() => { try { return JSON.parse(existing.allowed_messenger_ids || '[]'); } catch { return []; } })();
-            const waSessions = Array.isArray(existing.allowed_wa_sessions) ? existing.allowed_wa_sessions : (() => { try { return JSON.parse(existing.allowed_wa_sessions || '[]'); } catch { return []; } })();
-            const newMessenger = isMessenger ? messengerIds.filter(x => String(x) !== String(pageId)) : messengerIds;
-            const newWA = !isMessenger ? waSessions.filter(x => String(x) !== String(pageId)) : waSessions;
-            if (newMessenger.length === 0 && newWA.length === 0) {
-                await dbService.deleteProduct(id, userId);
-                await imageService.deleteProductAssets(collectProductAssetUrls(existing));
-                return res.json({ success: true, message: "Product deleted" });
-            } else {
-                const platform = 'restricted';
-                const updated = await dbService.updateProduct(id, userId, {
-                    allowed_messenger_ids: newMessenger,
-                    allowed_wa_sessions: newWA,
-                    platform
-                });
-                return res.json({ success: true, message: "Unassigned from current page/session", data: updated });
-            }
-        } else {
-            await dbService.deleteProduct(id, userId);
-            await imageService.deleteProductAssets(collectProductAssetUrls(existing));
-            return res.json({ success: true, message: "Product deleted" });
-        }
+        const outcome = await deleteProductInContext(id, userId, pageId);
+        return res.json({
+            success: true,
+            message: outcome === 'deleted' ? 'Product deleted' : 'Unassigned from current page/session'
+        });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        res.status(error.message === 'Product not found' ? 404 : 500).json({ error: error.message });
+    }
+};
+
+function normalizeImportedProduct(rawProduct, userId, pageId) {
+    if (!rawProduct || typeof rawProduct !== 'object' || Array.isArray(rawProduct)) {
+        throw new Error('Product must be an object');
+    }
+
+    const name = String(rawProduct.name || '').trim();
+    if (!name) throw new Error('Product name is required');
+
+    const variants = parseArrayField(rawProduct.variants);
+    const attributeSchema = parseArrayField(rawProduct.attribute_schema);
+    const skuMatrix = parseArrayField(rawProduct.sku_matrix);
+    const additionalImages = normalizeUniqueImageList(parseArrayField(rawProduct.additional_images), rawProduct.image_url || null);
+    const isMessenger = pageId && /^\d+$/.test(String(pageId));
+    const allowedMessengerIds = pageId && isMessenger ? [String(pageId)] : [];
+    const allowedWASessions = pageId && !isMessenger ? [String(pageId)] : [];
+
+    return {
+        user_id: userId,
+        name,
+        description: String(rawProduct.description || ''),
+        keywords: serializeLabelKeywordEntries(rawProduct.keywords),
+        visual_tags: serializeKeywordEntries(rawProduct.visual_tags),
+        image_url: rawProduct.image_url ? String(rawProduct.image_url).trim() : null,
+        video_url: rawProduct.video_url ? String(rawProduct.video_url).trim() : null,
+        additional_images: additionalImages,
+        variants,
+        is_active: rawProduct.is_active !== false,
+        price: rawProduct.price !== undefined && rawProduct.price !== null && rawProduct.price !== '' ? Number(rawProduct.price) || 0 : 0,
+        currency: String(rawProduct.currency || 'USD'),
+        allowed_messenger_ids: allowedMessengerIds,
+        allowed_wa_sessions: allowedWASessions,
+        platform: pageId ? 'restricted' : 'global',
+        is_combo: rawProduct.is_combo === true,
+        combo_items: parseArrayField(rawProduct.combo_items),
+        allow_description: rawProduct.allow_description === true,
+        isolate_sku_images: rawProduct.isolate_sku_images === true,
+        product_mode: ['simple', 'option-list', 'sku-matrix'].includes(rawProduct.product_mode)
+            ? rawProduct.product_mode
+            : (skuMatrix.length ? 'sku-matrix' : (variants.length ? 'option-list' : 'simple')),
+        attribute_schema: attributeSchema,
+        sku_matrix: skuMatrix
+    };
+}
+
+exports.importJson = async (req, res) => {
+    try {
+        const { user_id: baseUserId, page_id: pageId = null, products } = req.body || {};
+        if (!Array.isArray(products)) return res.status(400).json({ error: 'products must be an array' });
+        if (products.length > 200) return res.status(400).json({ error: 'A maximum of 200 products can be imported at once' });
+
+        const userId = await resolveProductOwnerUserId(req, baseUserId || null, pageId);
+        if (!userId) return res.status(400).json({ error: 'user_id is required' });
+
+        const created = [];
+        const failed = [];
+        for (let index = 0; index < products.length; index += 1) {
+            const rawProduct = products[index];
+            try {
+                const product = await dbService.createProduct(normalizeImportedProduct(rawProduct, userId, pageId));
+                const assignmentIds = pageId && /^\d+$/.test(String(pageId)) ? [String(pageId)] : [];
+                queueDirectProductImageEmbeddings(product, userId, assignmentIds);
+                created.push(product);
+            } catch (error) {
+                failed.push({ index, name: rawProduct?.name || null, error: error.message });
+            }
+        }
+
+        return res.status(201).json({ success: true, created, failed });
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
+};
+
+exports.bulkDelete = async (req, res) => {
+    try {
+        const { user_id: baseUserId, page_id: pageId = null, product_ids } = req.body || {};
+        if (!Array.isArray(product_ids) || product_ids.length === 0) {
+            return res.status(400).json({ error: 'product_ids must be a non-empty array' });
+        }
+
+        const userId = await resolveProductOwnerUserId(req, baseUserId || null, pageId);
+        if (!userId) return res.status(400).json({ error: 'user_id is required for verification' });
+
+        const deleted_ids = [];
+        const unassigned_ids = [];
+        const failed = [];
+        for (const id of [...new Set(product_ids)]) {
+            try {
+                const outcome = await deleteProductInContext(id, userId, pageId);
+                if (outcome === 'deleted') deleted_ids.push(id);
+                else unassigned_ids.push(id);
+            } catch (error) {
+                failed.push({ id, error: error.message });
+            }
+        }
+
+        return res.json({ success: true, deleted_ids, unassigned_ids, failed });
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
     }
 };
 

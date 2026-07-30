@@ -12,7 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Lock, Plus, Trash2, Package, Search, Image as ImageIcon, Loader2, ShoppingBag, Download, Edit, X, Video, ChevronDown, ChevronRight, Check, Eye } from "lucide-react";
+import { Lock, Plus, Trash2, Package, Search, Image as ImageIcon, Loader2, ShoppingBag, Download, Upload, Edit, X, Video, ChevronDown, ChevronRight, Check, Eye } from "lucide-react";
 import { BACKEND_URL } from "@/config";
 import { cn } from "@/lib/utils";
 
@@ -94,6 +94,9 @@ export default function ProductsPage() {
     const [loading, setLoading] = useState(true);
     const [userId, setUserId] = useState<string | null>(null);
     const [products, setProducts] = useState<Product[]>([]);
+    const [selectedProductIds, setSelectedProductIds] = useState<Set<number>>(new Set());
+    const [isBulkDeleteDialogOpen, setIsBulkDeleteDialogOpen] = useState(false);
+    const importJsonInputRef = useRef<HTMLInputElement>(null);
     const [searchQuery, setSearchQuery] = useState("");
     
     const initialPageId = getInitialPageId();
@@ -423,6 +426,7 @@ export default function ProductsPage() {
 
             if (!resolvedPageId) {
                 setProducts([]);
+                setSelectedProductIds(new Set());
                 return;
             }
 
@@ -447,12 +451,15 @@ export default function ProductsPage() {
 
             if (data && data.data && Array.isArray(data.data)) {
                 setProducts(data.data);
+                setSelectedProductIds(previous => new Set([...previous].filter(id => data.data.some((product: Product) => product.id === id))));
                 setDebugLogText(prev => `${prev}\n[Client] PRODUCTS_FETCH page=${resolvedPageId} count=${data.data.length}`);
             } else if (Array.isArray(data)) {
                 setProducts(data);
+                setSelectedProductIds(previous => new Set([...previous].filter(id => data.some((product: Product) => product.id === id))));
                 setDebugLogText(prev => `${prev}\n[Client] PRODUCTS_FETCH page=${resolvedPageId} count=${data.length}`);
             } else {
                 setProducts([]);
+                setSelectedProductIds(new Set());
                 setDebugLogText(prev => `${prev}\n[Client] PRODUCTS_FETCH page=${resolvedPageId} count=0`);
             }
         } catch (error) {
@@ -1382,6 +1389,92 @@ export default function ProductsPage() {
         }
     };
 
+    const toExportProduct = (product: Product) => ({
+        name: product.name,
+        description: product.description,
+        keywords: product.keywords ?? [],
+        visual_tags: product.visual_tags ?? [],
+        image_url: product.image_url,
+        video_url: product.video_url ?? null,
+        additional_images: product.additional_images ?? [],
+        variants: product.variants ?? [],
+        is_active: product.is_active,
+        price: product.price ?? 0,
+        currency: product.currency ?? 'USD',
+        is_combo: product.is_combo ?? false,
+        combo_items: product.combo_items ?? [],
+        allow_description: product.allow_description ?? false,
+        isolate_sku_images: product.isolate_sku_images ?? false,
+        product_mode: product.product_mode ?? 'simple',
+        attribute_schema: product.attribute_schema ?? [],
+        sku_matrix: product.sku_matrix ?? []
+    });
+
+    const downloadProductsJson = (items: Product[], filename: string) => {
+        const blob = new Blob([JSON.stringify({ products: items.map(toExportProduct) }, null, 2)], { type: 'application/json;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = filename;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(url);
+    };
+
+    const handleJsonImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        event.target.value = '';
+        if (!file || !userId) return;
+
+        try {
+            const parsed = JSON.parse(await file.text());
+            const importedProducts = Array.isArray(parsed) ? parsed : parsed?.products;
+            if (!Array.isArray(importedProducts) || importedProducts.some(product => !product || typeof product !== 'object' || Array.isArray(product) || !String(product.name || '').trim())) {
+                throw new Error('JSON must contain a product array with a name for every product');
+            }
+            const { resolvedPageId, teamOwner } = getActiveProductContext();
+            const token = localStorage.getItem('auth_token');
+            const response = await fetch(`${BACKEND_URL}/api/products/import-json`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+                body: JSON.stringify({ user_id: userId, page_id: resolvedPageId, team_owner: teamOwner || undefined, products: importedProducts })
+            });
+            const data = await response.json().catch(() => null);
+            if (!response.ok) throw new Error(data?.error || 'JSON import failed');
+            toast.success(`${data.created?.length || 0} created, ${data.failed?.length || 0} failed`);
+            setSelectedProductIds(new Set());
+            fetchProducts(userId, searchQuery, token || undefined);
+        } catch (error: any) {
+            toast.error(error.message || 'JSON import failed');
+        }
+    };
+
+    const handleBulkDelete = async () => {
+        if (!userId || selectedProductIds.size === 0) return;
+        try {
+            setIsSubmitting(true);
+            const { resolvedPageId, teamOwner } = getActiveProductContext();
+            const token = localStorage.getItem('auth_token');
+            const response = await fetch(`${BACKEND_URL}/api/products/bulk-delete`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+                body: JSON.stringify({ user_id: userId, page_id: resolvedPageId, team_owner: teamOwner || undefined, product_ids: [...selectedProductIds] })
+            });
+            const data = await response.json().catch(() => null);
+            if (!response.ok) throw new Error(data?.error || 'Bulk delete failed');
+            const successfulIds = new Set<number>([...(data.deleted_ids || []), ...(data.unassigned_ids || [])].map(Number));
+            setSelectedProductIds(previous => new Set([...previous].filter(id => !successfulIds.has(id))));
+            toast.success(`${data.deleted_ids?.length || 0} deleted, ${data.unassigned_ids?.length || 0} removed from this page, ${data.failed?.length || 0} failed`);
+            fetchProducts(userId, searchQuery, token || undefined);
+        } catch (error: any) {
+            toast.error(error.message || 'Bulk delete failed');
+        } finally {
+            setIsSubmitting(false);
+            setIsBulkDeleteDialogOpen(false);
+        }
+    };
+
     const handleToggleDescription = async (product: Product, enabled: boolean) => {
         if (!userId) return;
         try {
@@ -1526,6 +1619,15 @@ export default function ProductsPage() {
                         />
                     </div>
                     
+                    <input ref={importJsonInputRef} type="file" accept=".json,application/json" className="hidden" onChange={handleJsonImport} />
+                    <Button variant="outline" className="w-full sm:w-auto" onClick={() => importJsonInputRef.current?.click()}>
+                        <Upload className="w-4 h-4 mr-2" />
+                        Import JSON
+                    </Button>
+                    <Button variant="outline" className="w-full sm:w-auto" onClick={() => downloadProductsJson(products, 'products.json')} disabled={products.length === 0}>
+                        <Download className="w-4 h-4 mr-2" />
+                        Export current list
+                    </Button>
                     <Dialog open={isWCDialogOpen} onOpenChange={setIsWCDialogOpen}>
                         <DialogTrigger asChild>
                             <Button variant="outline" className="w-full sm:w-auto bg-[#0f0f0f]/70 border-white/10 hover:bg-[#0f0f0f]/80 rounded-full">
@@ -2790,11 +2892,30 @@ export default function ProductsPage() {
                 </div>
             </div>
 
+            {selectedProductIds.size > 0 && (
+                <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm">
+                    <span className="font-medium">{selectedProductIds.size} selected</span>
+                    <Button size="sm" variant="outline" onClick={() => downloadProductsJson(products.filter(product => selectedProductIds.has(product.id)), 'selected-products.json')}>
+                        <Download className="mr-2 h-4 w-4" /> Export selected
+                    </Button>
+                    <Button size="sm" variant="destructive" onClick={() => setIsBulkDeleteDialogOpen(true)}>
+                        <Trash2 className="mr-2 h-4 w-4" /> Delete selected
+                    </Button>
+                </div>
+            )}
+
             {/* Product Table */}
             <div className="border rounded-md">
                 <Table>
                     <TableHeader>
                         <TableRow>
+                            <TableHead className="w-[44px]">
+                                <Checkbox
+                                    checked={products.length > 0 && products.every(product => selectedProductIds.has(product.id))}
+                                    onCheckedChange={(checked) => setSelectedProductIds(checked ? new Set(products.map(product => product.id)) : new Set())}
+                                    aria-label="Select all loaded products"
+                                />
+                            </TableHead>
                             <TableHead className="w-[80px]">Image</TableHead>
                             <TableHead>Product Name</TableHead>
                             <TableHead className="hidden md:table-cell">Description</TableHead>
@@ -2807,13 +2928,24 @@ export default function ProductsPage() {
                     <TableBody>
                         {products.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={6} className="text-center py-10 text-muted-foreground">
+                                <TableCell colSpan={7} className="text-center py-10 text-muted-foreground">
                                     No products found. Add your first product or import from WooCommerce.
                                 </TableCell>
                             </TableRow>
                         ) : (
                             products.map((product) => (
                                 <TableRow key={product.id} className="group hover:bg-muted/50">
+                                    <TableCell>
+                                        <Checkbox
+                                            checked={selectedProductIds.has(product.id)}
+                                            onCheckedChange={(checked) => setSelectedProductIds(previous => {
+                                                const next = new Set(previous);
+                                                if (checked) next.add(product.id); else next.delete(product.id);
+                                                return next;
+                                            })}
+                                            aria-label={`Select ${product.name}`}
+                                        />
+                                    </TableCell>
                                     <TableCell>
                                         <div className="h-12 w-12 rounded-md bg-muted/20 overflow-hidden flex items-center justify-center border">
                                             {product.image_url ? (
@@ -2926,6 +3058,21 @@ export default function ProductsPage() {
                     </TableBody>
                 </Table>
             </div>
+
+            <Dialog open={isBulkDeleteDialogOpen} onOpenChange={setIsBulkDeleteDialogOpen}>
+                <DialogContent className="max-w-sm bg-[#0f0f0f]/90 border border-white/10 backdrop-blur-md rounded-2xl">
+                    <DialogHeader>
+                        <DialogTitle>Delete selected products</DialogTitle>
+                        <DialogDescription>
+                            This removes the selected products from the current page/session. If a product has no remaining assignments, it is fully deleted.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button type="button" variant="outline" className="border-white/20 rounded-md" onClick={() => setIsBulkDeleteDialogOpen(false)}>Cancel</Button>
+                        <Button type="button" variant="destructive" className="rounded-md" onClick={handleBulkDelete} disabled={isSubmitting}>Delete selected</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             <Dialog
                 open={isDeleteDialogOpen}

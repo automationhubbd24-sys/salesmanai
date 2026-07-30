@@ -14,6 +14,12 @@ router.post('/', productController.uploadMiddleware, productController.createPro
 // POST /api/products/extract-visuals
 router.post('/extract-visuals', productController.extractVisuals);
 
+// POST /api/products/import-json
+router.post('/import-json', productController.importJson);
+
+// POST /api/products/bulk-delete
+router.post('/bulk-delete', productController.bulkDelete);
+
 // PUT /api/products/:id (multipart/form-data)
 router.put('/:id', productController.uploadMiddleware, productController.updateProduct);
 

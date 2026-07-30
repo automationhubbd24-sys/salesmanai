@@ -3986,6 +3986,7 @@ module.exports = {
     deleteProduct,
     searchProductByImageVector,
     searchProductByDirectImageVector,
+    searchProductImageEmbeddingRowsByDirectVector,
     searchProducts,
     searchProductsForResource,
     getIncomingImageAnalysis,
@@ -4691,10 +4692,12 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
 }
 
 // 28. Get Product By ID
-async function getProductById(id) {
+async function getProductById(id, userId = null) {
     const result = await query(
-        'SELECT * FROM products WHERE id = $1 LIMIT 1',
-        [id]
+        userId
+            ? 'SELECT * FROM products WHERE id = $1 AND user_id::text = $2::text LIMIT 1'
+            : 'SELECT * FROM products WHERE id = $1 LIMIT 1',
+        userId ? [id, String(userId)] : [id]
     );
     
     if (result.rows.length === 0) return null;
@@ -5670,6 +5673,59 @@ async function searchProductByDirectImageVector(imageVector, pageId) {
             return [];
         }
         console.error("[DB] searchProductByDirectImageVector Error:", error.message);
+        return [];
+    }
+}
+
+async function searchProductImageEmbeddingRowsByDirectVector(imageVector, pageId, candidateLimit = Number(process.env.DIRECT_IMAGE_MATCH_CANDIDATE_LIMIT || 10)) {
+    try {
+        if (!imageVector || !pageId || !Array.isArray(imageVector) || imageVector.length !== 3072) return [];
+
+        const { isWhatsapp, resourceIds, ownerUserId } = await resolveResourceSearchContext(pageId);
+        if (resourceIds.length === 0) return [];
+
+        const limit = Math.max(1, Math.min(100, Number(candidateLimit) || 10));
+        let sql = `
+            SELECT p.id, p.name, p.description, p.image_url, p.additional_images, p.price, p.currency,
+                   p.variants, p.is_combo, p.combo_items, p.allow_description, p.product_mode,
+                   p.attribute_schema, p.sku_matrix, p.searchable_text, p.keywords,
+                   pie.image_role, pie.image_url AS matched_image_url, pie.visual_tags,
+                   pie.visual_fingerprint, pie.image_embedding_model,
+                   (pie.image_embedding_3072 <=> $1::vector) AS distance
+            FROM product_image_embeddings pie
+            JOIN products p ON p.id = pie.product_id
+            WHERE p.is_active = true
+              AND pie.image_embedding_3072 IS NOT NULL
+        `;
+        let params = [JSON.stringify(imageVector)];
+        ({ sql, params } = appendAssignmentFilter(sql, params, isWhatsapp, resourceIds, ownerUserId, 'p.'));
+        params.push(limit);
+        sql += ` ORDER BY distance ASC LIMIT $${params.length}`;
+
+        const result = await query(sql, params);
+        return (result.rows || [])
+            .filter(row => row.distance !== null && row.distance !== undefined)
+            .map(row => {
+                const product = normalizeProductRecord(row);
+                return {
+                    ...product,
+                    matched_image_url: row.matched_image_url,
+                    image_role: row.image_role,
+                    distance: row.distance,
+                    image_embedding_model: row.image_embedding_model,
+                    match_layer: 'direct_image_embedding_row'
+                };
+            });
+    } catch (error) {
+        if (error.code === '42703' || error.code === '42P01') {
+            console.warn(`[DB] Direct image embedding row layer not ready. Run DB init/migration first: ${error.message}`);
+            return [];
+        }
+        if (isVectorDimensionMismatchError(error)) {
+            console.warn(`[DB] searchProductImageEmbeddingRowsByDirectVector vector mismatch for page/session "${pageId}". Query vector length: ${Array.isArray(imageVector) ? imageVector.length : 'unknown'}. Error: ${error.message}`);
+            return [];
+        }
+        console.error('[DB] searchProductImageEmbeddingRowsByDirectVector Error:', error.message);
         return [];
     }
 }

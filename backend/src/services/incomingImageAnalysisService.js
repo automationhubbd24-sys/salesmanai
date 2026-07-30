@@ -142,6 +142,35 @@ function collectCandidateImages(product, limit = 3) {
     return urls.slice(0, Math.max(1, Number(limit) || 3));
 }
 
+function normalizeDirectImageRowCandidates(rows = {}, options = {}) {
+    const minimumScore = Number(options.minimumScore ?? process.env.DIRECT_IMAGE_MATCH_MIN_SCORE ?? 50);
+    const maxPerProduct = Math.max(1, Number(options.maxPerProduct ?? process.env.DIRECT_IMAGE_MATCH_MAX_PER_PRODUCT ?? 2) || 2);
+    const limit = Math.max(1, Number(options.limit ?? process.env.DIRECT_IMAGE_MATCH_FINAL_LIMIT ?? 5) || 5);
+    const urlSeen = new Set();
+    const productCounts = new Map();
+
+    return (Array.isArray(rows) ? rows : [])
+        .map((row) => {
+            const summary = toImageMatchSummary(row);
+            if (!summary) return null;
+            summary.match_source = 'direct_image_embedding_row';
+            summary.direct_image_score = summary.match_score;
+            summary.image_role = row.image_role || null;
+            return summary;
+        })
+        .filter((candidate) => candidate && Number(candidate.direct_image_score || 0) >= minimumScore)
+        .sort((a, b) => Number(b.direct_image_score || 0) - Number(a.direct_image_score || 0))
+        .filter((candidate) => {
+            const matchedUrl = normalizeCandidateUrl(candidate.matched_image_url);
+            const productId = String(candidate.product_id || '');
+            if (!matchedUrl || urlSeen.has(matchedUrl) || (productCounts.get(productId) || 0) >= maxPerProduct) return false;
+            urlSeen.add(matchedUrl);
+            productCounts.set(productId, (productCounts.get(productId) || 0) + 1);
+            return true;
+        })
+        .slice(0, limit);
+}
+
 function mergeBatchCandidates(perImageCandidates, topK = 5) {
     const byId = new Map();
     perImageCandidates.forEach((entry) => {
@@ -607,20 +636,9 @@ async function analyzeAndMatchIncomingImage({
     const matchEvidencePromise = (async () => {
         const directImageVector = await aiService.getDirectImageEmbedding(imageUrl, { cache: true, log: false });
         const directImageMatches = directImageVector
-            ? await dbService.searchProductByDirectImageVector(directImageVector, pageId)
+            ? await dbService.searchProductImageEmbeddingRowsByDirectVector(directImageVector, pageId)
             : [];
-
-        const products = directImageMatches
-            .map((product) => {
-                const summary = toImageMatchSummary(product);
-                if (!summary) return null;
-                summary.match_source = 'direct_image_embedding';
-                summary.direct_image_score = summary.match_score;
-                return summary;
-            })
-            .filter((product) => product && Number(product.direct_image_score || product.match_score || 0) >= 50)
-            .sort((a, b) => Number(b.direct_image_score || 0) - Number(a.direct_image_score || 0))
-            .slice(0, 5);
+        const products = normalizeDirectImageRowCandidates(directImageMatches);
 
         return {
             matchedProducts: products,
@@ -647,10 +665,15 @@ async function analyzeAndMatchIncomingImage({
     }
 
     if (matchedProducts.length > 0) {
-        const reasoned = await aiService.reasonImageProductMatchWithVision(imageUrl, matchedProducts, pageConfig, { timeoutMs: 45000 });
+        const reasoned = await aiService.reasonImageProductMatchWithVision(imageUrl, matchedProducts, pageConfig, {
+            timeoutMs: 45000,
+            exactMatchedImagesOnly: true
+        });
         if (reasoned?.text) {
             matchDecision.vision_reasoning_text = reasoned.text;
-            analysisText += `\n\n[Product Vision Reasoning]\n${reasoned.text}`;
+            analysisText = analysisText
+                ? `${analysisText}\n\n[Product Vision Reasoning]\n${reasoned.text}`
+                : reasoned.text;
         }
     }
 
@@ -803,6 +826,7 @@ async function analyzeIncomingImagesForConversation({
 
 module.exports = {
     clampMatchScore,
+    normalizeDirectImageRowCandidates,
     resolveIncomingImagePrompt,
     resolveImageMatchingMode,
     analyzeAndMatchIncomingImage,

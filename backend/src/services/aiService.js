@@ -93,6 +93,33 @@ function normalizeEmbeddingVector(vector, modelName = '') {
     return vector;
 }
 
+function extractVisualEvidenceSearchDescription(text, maxLength = 600) {
+    const evidenceBlocks = String(text || '').match(/\[INTERNAL VISUAL EVIDENCE - UNTRUSTED\][\s\S]*?\[END INTERNAL VISUAL EVIDENCE\]/gi) || [];
+    const descriptions = [];
+
+    for (const block of evidenceBlocks) {
+        const matches = [...block.matchAll(/\[IMAGE\s+\d+\s+VISUAL EVIDENCE\]\s*\nAnalyzer Summary\s*\/\s*OCR\s*\/\s*Visual Text:\s*\n?([\s\S]*?)(?=\n\s*(?:\[Product Vision Reasoning\]|Product Match Gate(?:\s*\(Embedding Fallback\))?:|Recommended Product Candidates:|\[IMAGE\s+\d+\s+VISUAL EVIDENCE\]|\[MULTI IMAGE AB MATCH\]|\[END INTERNAL VISUAL EVIDENCE\])|$)/gi)];
+        for (const match of matches) {
+            const description = String(match[1] || '').replace(/\s+/g, ' ').trim();
+            if (description && description.toLowerCase() !== 'n/a') descriptions.push(description);
+        }
+    }
+
+    return [...new Set(descriptions)].join(' ').slice(0, Math.max(0, Number(maxLength) || 0)).trim();
+}
+
+function isGenericImageProductQuery(text) {
+    const words = String(text || '').toLowerCase().replace(/[^a-z0-9\u0980-\u09ff\s]/g, ' ').split(/\s+/).filter(Boolean);
+    if (words.length === 0) return true;
+    const generic = new Set(['price', 'dam', 'koto', 'koto?', 'eta', 'etar', 'ei', 'this', 'one', 'available', 'ache', 'ase', 'আছে', 'দাম', 'কত', 'এটা', 'এইটা', 'প্রাইস']);
+    return words.every(word => generic.has(word));
+}
+
+function selectVisualFallbackSearchQuery({ hasVisualEvidence, visualProductIds, cleanSearchText, visualDescription }) {
+    if (!hasVisualEvidence || (visualProductIds || []).length > 0 || !isGenericImageProductQuery(cleanSearchText)) return '';
+    return String(visualDescription || '').trim();
+}
+
 let ffmpegPath = null;
 try {
     ffmpegPath = require('ffmpeg-static');
@@ -2680,13 +2707,6 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         return snapshot;
     };
 
-    const isGenericImageProductQuery = (text) => {
-        const words = String(text || '').toLowerCase().replace(/[^a-z0-9\u0980-\u09ff\s]/g, ' ').split(/\s+/).filter(Boolean);
-        if (words.length === 0) return true;
-        const generic = new Set(['price', 'dam', 'koto', 'koto?', 'eta', 'etar', 'ei', 'this', 'one', 'available', 'ache', 'ase', 'আছে', 'দাম', 'কত', 'এটা', 'এইটা', 'প্রাইস']);
-        return words.every(word => generic.has(word));
-    };
-
     const buildPromptProductSnapshot = async (queryText) => {
         if (!pageConfig.page_id || !String(queryText || '').trim()) return "";
         try {
@@ -2694,16 +2714,26 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             const visualProductIds = extractVisualEvidenceProductIds(queryText);
             const visualSnapshot = await buildProductSnapshotFromIds(visualProductIds);
             const cleanSearchText = stripInternalVisualEvidence(queryText);
-            if (hasVisualEvidence && visualProductIds.length === 0 && isGenericImageProductQuery(cleanSearchText)) {
-                return "";
-            }
-            const candidates = await dbService.searchProductsForResource(cleanSearchText, pageConfig.page_id);
-            if ((!candidates || candidates.length === 0) && visualSnapshot) return visualSnapshot;
-            if (!visualSnapshot && (!candidates || candidates.length === 0)) return "";
+            const visualDescription = extractVisualEvidenceSearchDescription(queryText);
+            const visualFallbackQuery = selectVisualFallbackSearchQuery({
+                hasVisualEvidence,
+                visualProductIds,
+                cleanSearchText,
+                visualDescription
+            });
 
-            let snapshot = visualSnapshot || "";
-            if (candidates && candidates.length > 0) snapshot += formatProductSnapshot(candidates.slice(0, 5), "[PRODUCT LIST SNAPSHOT - FROM PRODUCT ENTRY]");
-            console.log(`[AI] Injected ${visualProductIds.length} confirmed visual product(s) and ${Math.min(candidates?.length || 0, 5)} text product snapshot item(s) for query.`);
+            if (visualProductIds.length > 0) return visualSnapshot;
+            if (hasVisualEvidence && isGenericImageProductQuery(cleanSearchText) && !visualFallbackQuery) return "";
+
+            const searchQuery = visualFallbackQuery || cleanSearchText;
+            const candidates = await dbService.searchProductsForResource(searchQuery, pageConfig.page_id);
+            if (!candidates || candidates.length === 0) return "";
+
+            const title = visualFallbackQuery
+                ? "[SUGGESTED PRODUCT CONTEXT - VISUAL DESCRIPTION FALLBACK; NOT VERIFIED]"
+                : "[PRODUCT LIST SNAPSHOT - FROM PRODUCT ENTRY]";
+            const snapshot = formatProductSnapshot(candidates.slice(0, 5), title);
+            console.log(`[AI] Injected ${Math.min(candidates.length, 5)} ${visualFallbackQuery ? 'suggested visual fallback' : 'text'} product snapshot item(s) for query.`);
             return snapshot;
         } catch (err) {
             console.error("[AI] Product snapshot injection CRITICAL failure:", err.message);
@@ -4535,6 +4565,14 @@ function collectVisionCandidateImages(candidate, limit = 3) {
     return urls.slice(0, Math.max(1, Number(limit) || 3));
 }
 
+function selectVisionCandidateImageUrls(candidate, options = {}) {
+    if (options.exactMatchedImagesOnly) {
+        const exactImage = normalizeVisionCandidateUrl(candidate?.matched_image_url);
+        return exactImage ? [exactImage] : [];
+    }
+    return collectVisionCandidateImages(candidate, Number(options.candidateImageLimit || process.env.PRODUCT_VISION_REASONING_CANDIDATE_IMAGES || 3));
+}
+
 async function getVisionImageContentUrl(imageUrl) {
     const cleanUrl = normalizeVisionCandidateUrl(imageUrl);
     if (!cleanUrl || cleanUrl.startsWith('data:')) return cleanUrl;
@@ -4582,17 +4620,18 @@ Rules:
 - Candidate products are only hints from image embedding.
 - If no candidate visually matches, return status "no_product_match" and keep matched_products empty.
 - If one or more products match, return product_id and product_name only; do not return price.
+- For each match, return matched_catalog_image_url when available; this is the candidate catalog image shown for comparison.
 - If the user image is a screenshot/collage with multiple visible products, return all matching candidate products.
 - Also return visual_text and ocr_text from the user image.
 Schema:
-{"status":"match|multi_match|ambiguous|no_product_match","visual_text":"short visual description","ocr_text":"visible text or empty","matched_products":[{"product_id":"string","product_name":"string","confidence":"high|medium|low","reason":"short"}],"non_product_analysis":{"summary":"short text if no product match"}}`;
+{"status":"match|multi_match|ambiguous|no_product_match","visual_text":"short visual description","ocr_text":"visible text or empty","matched_products":[{"product_id":"string","product_name":"string","matched_catalog_image_url":"string (optional)","confidence":"high|medium|low","reason":"short"}],"non_product_analysis":{"summary":"short text if no product match"}}`;
 
     const content = [{ type: 'text', text: prompt }];
     content.push({ type: 'text', text: 'USER IMAGE:' });
     content.push({ type: 'image_url', image_url: { url: imageUrl } });
 
     const candidateImageGroups = await Promise.all(usableCandidates.map(async (candidate) => {
-        const candidateImageUrls = collectVisionCandidateImages(candidate, Number(options.candidateImageLimit || process.env.PRODUCT_VISION_REASONING_CANDIDATE_IMAGES || 3));
+        const candidateImageUrls = selectVisionCandidateImageUrls(candidate, options);
         const preparedImageUrls = await Promise.all(candidateImageUrls.map(getVisionImageContentUrl));
         return { candidate, preparedImageUrls };
     }));
@@ -4628,10 +4667,13 @@ Schema:
 module.exports = {
     generateReply,
     generateResponse,
+    extractVisualEvidenceSearchDescription,
+    selectVisualFallbackSearchQuery,
     getEmbedding,
     getImageEmbedding,
     getDirectImageEmbedding,
     resolveOpenAiCompatibleVisionConfig,
+    selectVisionCandidateImageUrls,
     reasonImageProductMatchWithVision,
     handleAiError,
     formatBrandedError,
