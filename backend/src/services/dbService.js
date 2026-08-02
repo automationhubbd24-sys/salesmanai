@@ -45,7 +45,6 @@ async function checkAndExpirePlan(userId) {
         `UPDATE user_configs
          SET daily_used = 0,
              monthly_used = 0,
-             bonus_credit = 0,
              last_reset_at = NOW(),
              last_monthly_reset_at = NOW()
          WHERE user_id::text = $1::text`,
@@ -54,7 +53,6 @@ async function checkAndExpirePlan(userId) {
       console.log(`[DB] Auto-reset daily/monthly counters for User ${userId}`);
       config.daily_used = 0;
       config.monthly_used = 0;
-      config.bonus_credit = 0;
       config.last_reset_at = now;
       config.last_monthly_reset_at = now;
     } else if (isNewDay) {
@@ -401,14 +399,13 @@ async function deductCredit(pageId, amount = 1) {
         let monthlyUsed = Number(finalConfig.monthly_used || 0);
 
         if (isNewMonth) {
-            // Reset usage counters AND Monthly Bonus for new month
             dailyUsed = 0;
             monthlyUsed = 0;
             await query(
-                'UPDATE user_configs SET daily_used = 0, monthly_used = 0, bonus_credit = 0, last_reset_at = NOW(), last_monthly_reset_at = NOW() WHERE user_id::text = $1',
+                'UPDATE user_configs SET daily_used = 0, monthly_used = 0, last_reset_at = NOW(), last_monthly_reset_at = NOW() WHERE user_id::text = $1',
                 [userIdStr]
             );
-            console.log(`[Credit] Monthly usage & Bonus reset for User ${userIdStr}`);
+            console.log(`[Credit] Monthly usage counters reset for User ${userIdStr}`);
         } else if (isNewDay) {
             dailyUsed = 0;
             await query(
@@ -2268,11 +2265,10 @@ async function deductWhatsAppCredit(sessionName, amount = 1) {
         let monthlyUsed = Number(finalConfig.monthly_used || 0);
 
         if (isNewMonth) {
-            // Reset usage counters AND Monthly Bonus for new month
             dailyUsed = 0;
             monthlyUsed = 0;
             await query(
-                'UPDATE user_configs SET daily_used = 0, monthly_used = 0, bonus_credit = 0, last_reset_at = NOW(), last_monthly_reset_at = NOW() WHERE user_id::text = $1',
+                'UPDATE user_configs SET daily_used = 0, monthly_used = 0, last_reset_at = NOW(), last_monthly_reset_at = NOW() WHERE user_id::text = $1',
                 [userIdStr]
             );
         } else if (isNewDay) {
