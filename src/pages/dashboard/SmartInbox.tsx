@@ -231,6 +231,7 @@ const SmartInbox = () => {
   const pathPlatform = location.pathname.split("/")[2];
   const platform: PlatformKey = pathPlatform === "whatsapp" ? "whatsapp" : pathPlatform === "instagram" ? "instagram" : "messenger";
   const platformTheme = useMemo(() => getPlatformTheme(platform), [platform]);
+  const senderId = useMemo(() => new URLSearchParams(location.search).get("sender_id"), [location.search]);
   const PlatformIcon = platformTheme.icon;
   const [selectedChat, setSelectedChat] = useState<Conversation | null>(null);
   const [isMobileListVisible, setIsMobileListVisible] = useState(true);
@@ -258,6 +259,7 @@ const SmartInbox = () => {
   const skipNextScrollRef = useRef(false);
   const chatsSignatureRef = useRef("");
   const messagesSignatureRef = useRef("");
+  const selectedSenderIdRef = useRef<string | null>(null);
   const [activeResourceId, setActiveResourceId] = useState<string | null>(() => getActiveResourceId(platform));
   const hasActiveResource = Boolean(activeResourceId);
 
@@ -339,6 +341,7 @@ const SmartInbox = () => {
           return lightweightData.find((item) => item.id === prev.id) || null;
         });
       }
+
     } catch (error) {
       if ((error as Error).name !== "AbortError") {
         if (!silent) {
@@ -489,6 +492,21 @@ const SmartInbox = () => {
       window.removeEventListener("storage", handleResourceChange);
     };
   }, [syncActiveResourceId]);
+
+  useEffect(() => {
+    selectedSenderIdRef.current = null;
+  }, [senderId]);
+
+  useEffect(() => {
+    if (!senderId || selectedSenderIdRef.current === senderId) return;
+
+    const targetChat = chats.find((chat) => chat.id === senderId);
+    if (targetChat) {
+      selectedSenderIdRef.current = senderId;
+      setSelectedChat(targetChat);
+      setIsMobileListVisible(false);
+    }
+  }, [chats, senderId]);
 
   useEffect(() => {
     chatsAbortRef.current?.abort();

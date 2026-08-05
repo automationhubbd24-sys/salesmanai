@@ -85,7 +85,7 @@ export default function MessengerOrderTrackingPage() {
   const isInstagram = platform === "instagram";
   const platformName = isInstagram ? "Instagram" : "Messenger";
   const botLabel = isInstagram ? "Instagram bot" : "Facebook bot";
-  const conversionPath = isInstagram ? "/dashboard/instagram/conversion" : "/dashboard/messenger/conversion";
+  const smartInboxPath = isInstagram ? "/dashboard/instagram/smart-inbox" : "/dashboard/messenger/smart-inbox";
   const exportPrefix = isInstagram ? "instagram" : "fb";
   const notificationPlatform = isInstagram ? "instagram" : "messenger";
   const { currentPage, loading: contextLoading } = useMessenger();
@@ -450,7 +450,7 @@ Phone: ${order.number || 'N/A'}`;
                                         variant="ghost"
                                         size="icon"
                                         onClick={() => handleOpenConversion(order)}
-                                        title="Open Conversion"
+                                        title="Open Smart Inbox"
                                       >
                                         <MessageSquare className="h-4 w-4 text-primary" />
                                       </Button>

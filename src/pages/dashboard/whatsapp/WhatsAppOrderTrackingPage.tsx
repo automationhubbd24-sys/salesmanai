@@ -201,7 +201,7 @@ Phone: ${order.number || 'N/A'}`;
     }
 
     const params = new URLSearchParams({ sender_id: order.sender_id });
-    navigate(`/dashboard/whatsapp/conversion?${params.toString()}`);
+    navigate(`/dashboard/whatsapp/smart-inbox?${params.toString()}`);
   };
 
   useEffect(() => {
@@ -425,7 +425,7 @@ Phone: ${order.number || 'N/A'}`;
                                         variant="ghost"
                                         size="icon"
                                         onClick={() => handleOpenConversion(order)}
-                                        title="Open Conversion"
+                                        title="Open Smart Inbox"
                                       >
                                         <MessageSquare className="h-4 w-4 text-primary" />
                                       </Button>
