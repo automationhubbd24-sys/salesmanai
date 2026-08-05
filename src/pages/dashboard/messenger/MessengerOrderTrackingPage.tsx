@@ -150,7 +150,7 @@ Phone: ${order.number || 'N/A'}`;
     }
 
     const params = new URLSearchParams({ sender_id: order.sender_id });
-    navigate(`${conversionPath}?${params.toString()}`);
+    navigate(`${smartInboxPath}?${params.toString()}`);
   };
 
   useEffect(() => {
