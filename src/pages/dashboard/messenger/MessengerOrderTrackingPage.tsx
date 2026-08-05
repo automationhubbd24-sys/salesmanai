@@ -24,7 +24,8 @@ import { Calendar as CalendarIcon, Download, ShoppingBag, Copy, Check, RefreshCw
 import { toast } from "sonner";
 import { BACKEND_URL } from "@/config";
 import { OrderNotificationModal } from "@/components/dashboard/OrderNotificationModal";
-import { useNavigate, useParams } from "react-router-dom";
+import { ConversationDialog } from "@/components/dashboard/ConversationDialog";
+import { useParams } from "react-router-dom";
 
 interface Order {
   id: string;
@@ -85,12 +86,11 @@ export default function MessengerOrderTrackingPage() {
   const isInstagram = platform === "instagram";
   const platformName = isInstagram ? "Instagram" : "Messenger";
   const botLabel = isInstagram ? "Instagram bot" : "Facebook bot";
-  const smartInboxPath = isInstagram ? "/dashboard/instagram/smart-inbox" : "/dashboard/messenger/smart-inbox";
   const exportPrefix = isInstagram ? "instagram" : "fb";
   const notificationPlatform = isInstagram ? "instagram" : "messenger";
   const { currentPage, loading: contextLoading } = useMessenger();
-  const navigate = useNavigate();
   const [orders, setOrders] = useState<Order[]>([]);
+  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [orderLoading, setOrderLoading] = useState(false);
   const [dateFilter, setDateFilter] = useState<'today' | 'yesterday' | 'custom' | 'all'>('today');
   const [date, setDate] = useState<Date | undefined>(new Date());
@@ -149,8 +149,7 @@ Phone: ${order.number || 'N/A'}`;
       return;
     }
 
-    const params = new URLSearchParams({ sender_id: order.sender_id });
-    navigate(`${smartInboxPath}?${params.toString()}`);
+    setSelectedOrder(order);
   };
 
   useEffect(() => {
@@ -450,7 +449,7 @@ Phone: ${order.number || 'N/A'}`;
                                         variant="ghost"
                                         size="icon"
                                         onClick={() => handleOpenConversion(order)}
-                                        title="Open Smart Inbox"
+                                        title="Open Conversation"
                                       >
                                         <MessageSquare className="h-4 w-4 text-primary" />
                                       </Button>
@@ -476,6 +475,14 @@ Phone: ${order.number || 'N/A'}`;
           )}
         </CardContent>
       </Card>
+      <ConversationDialog
+        open={selectedOrder !== null}
+        onOpenChange={(open) => !open && setSelectedOrder(null)}
+        platform="messenger"
+        resourceId={activePageId}
+        senderId={selectedOrder?.sender_id || null}
+        customerName={selectedOrder?.customer_name}
+      />
     </div>
   );
 }

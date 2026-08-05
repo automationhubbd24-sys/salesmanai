@@ -22,9 +22,10 @@ import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { Calendar as CalendarIcon, Download, ShoppingBag, Copy, Check, AlertCircle, RefreshCw, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { BACKEND_URL } from "@/config";
 import { OrderNotificationModal } from "@/components/dashboard/OrderNotificationModal";
+import { ConversationDialog } from "@/components/dashboard/ConversationDialog";
 
 interface Order {
   id: string;
@@ -82,8 +83,8 @@ const downloadBlob = (content: string, type: string, fileName: string) => {
 
 export default function WhatsAppOrderTrackingPage() {
   const { currentSession, loading: contextLoading } = useWhatsApp();
-  const navigate = useNavigate();
   const [orders, setOrders] = useState<Order[]>([]);
+  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [orderLoading, setOrderLoading] = useState(false);
   const [dateFilter, setDateFilter] = useState<'today' | 'yesterday' | 'custom' | 'all'>('today');
   const [date, setDate] = useState<Date | undefined>(new Date());
@@ -200,8 +201,7 @@ Phone: ${order.number || 'N/A'}`;
       return;
     }
 
-    const params = new URLSearchParams({ sender_id: order.sender_id });
-    navigate(`/dashboard/whatsapp/smart-inbox?${params.toString()}`);
+    setSelectedOrder(order);
   };
 
   useEffect(() => {
@@ -425,7 +425,7 @@ Phone: ${order.number || 'N/A'}`;
                                         variant="ghost"
                                         size="icon"
                                         onClick={() => handleOpenConversion(order)}
-                                        title="Open Smart Inbox"
+                                        title="Open Conversation"
                                       >
                                         <MessageSquare className="h-4 w-4 text-primary" />
                                       </Button>
@@ -451,6 +451,14 @@ Phone: ${order.number || 'N/A'}`;
           )}
         </CardContent>
       </Card>
+      <ConversationDialog
+        open={selectedOrder !== null}
+        onOpenChange={(open) => !open && setSelectedOrder(null)}
+        platform="whatsapp"
+        resourceId={activeSessionName}
+        senderId={selectedOrder?.sender_id || null}
+        customerName={selectedOrder?.customer_name}
+      />
     </div>
   );
 }
