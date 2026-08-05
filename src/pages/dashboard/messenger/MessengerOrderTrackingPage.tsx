@@ -482,6 +482,7 @@ Phone: ${order.number || 'N/A'}`;
         resourceId={activePageId}
         senderId={selectedOrder?.sender_id || null}
         customerName={selectedOrder?.customer_name}
+        order={selectedOrder}
       />
     </div>
   );

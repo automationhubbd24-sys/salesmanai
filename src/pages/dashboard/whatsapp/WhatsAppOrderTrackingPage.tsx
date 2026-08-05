@@ -458,6 +458,7 @@ Phone: ${order.number || 'N/A'}`;
         resourceId={activeSessionName}
         senderId={selectedOrder?.sender_id || null}
         customerName={selectedOrder?.customer_name}
+        order={selectedOrder}
       />
     </div>
   );
