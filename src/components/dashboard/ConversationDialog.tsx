@@ -20,6 +20,7 @@ import {
   CalendarDays,
   Hash,
   Inbox,
+  Instagram,
   MapPin,
   MessageCircle,
   Package,
@@ -50,7 +51,7 @@ type Message = {
 type ConversationDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  platform: "whatsapp" | "messenger";
+  platform: "whatsapp" | "messenger" | "instagram";
   resourceId: string | null;
   senderId: string | null;
   customerName?: string;
@@ -200,12 +201,14 @@ export function ConversationDialog({
   }, [loadMessages, open, resourceId, senderId, retryKey]);
 
   const title = customerName || senderId || "Conversation";
-  const platformLabel = platform === "whatsapp" ? "WhatsApp Business" : "Messenger Business";
+  const platformLabel = platform === "whatsapp" ? "WhatsApp Business" : platform === "instagram" ? "Instagram Business" : "Messenger Business";
   const platformClass = platform === "whatsapp"
     ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-    : "bg-blue-500/10 text-blue-700 dark:text-blue-400";
+    : platform === "instagram"
+      ? "bg-pink-500/10 text-pink-700 dark:text-pink-400"
+      : "bg-blue-500/10 text-blue-700 dark:text-blue-400";
   const orderDate = formatDate(order?.created_at, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
-  const PlatformIcon = platform === "whatsapp" ? MessageCircle : Send;
+  const PlatformIcon = platform === "whatsapp" ? MessageCircle : platform === "instagram" ? Instagram : Send;
 
   const handleViewDetails = () => {
     if (!senderId) return;
@@ -251,7 +254,7 @@ export function ConversationDialog({
                 const isOutgoing = isBot || isAdmin;
                 const role = isBot ? "Agent" : isAdmin ? "Admin" : "Customer";
                 const time = formatDate(message.timestamp, { hour: "numeric", minute: "2-digit" });
-                const bubbleClass = isBot ? platform === "whatsapp" ? "rounded-br-md bg-gradient-to-br from-[#d9fdd3] to-[#b7f3cc] text-slate-950" : "rounded-br-md bg-gradient-to-br from-[#0084ff] to-[#0069d9] text-white" : isAdmin ? "rounded-br-md bg-gradient-to-br from-[#0b8bdc] to-[#0566b3] text-white" : "rounded-bl-md bg-gradient-to-br from-zinc-800 to-zinc-900 text-zinc-50";
+                const bubbleClass = isBot ? platform === "whatsapp" ? "rounded-br-md bg-gradient-to-br from-[#d9fdd3] to-[#b7f3cc] text-slate-950" : platform === "instagram" ? "rounded-br-md bg-gradient-to-br from-pink-500 to-fuchsia-600 text-white" : "rounded-br-md bg-gradient-to-br from-[#0084ff] to-[#0069d9] text-white" : isAdmin ? "rounded-br-md bg-gradient-to-br from-[#0b8bdc] to-[#0566b3] text-white" : "rounded-bl-md bg-gradient-to-br from-zinc-800 to-zinc-900 text-zinc-50";
                 const mutedTextClass = isBot && platform === "whatsapp" ? "text-black/65" : "text-white/70";
                 const analysisLabel = isTranscriptMessage ? "Voice transcript" : lowerBody.includes("voice") ? "Voice analysis" : "Image analysis";
                 return <div key={`${normalizeTimestamp(message.timestamp) || "message"}-${index}`} className={cn("flex gap-2.5", isOutgoing ? "justify-end" : "justify-start")}>

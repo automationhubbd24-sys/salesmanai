@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Menu } from "lucide-react";
 import { WhatsAppProvider } from "@/context/WhatsAppContext";
 import { MessengerProvider } from "@/context/MessengerContext";
+import { InstagramProvider } from "@/context/InstagramContext";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -162,6 +163,14 @@ export function DashboardLayout() {
       <MessengerProvider key={reloadKey}>
         {LayoutContent}
       </MessengerProvider>
+    );
+  }
+
+  if (platform === 'instagram') {
+    return (
+      <InstagramProvider key={reloadKey}>
+        {LayoutContent}
+      </InstagramProvider>
     );
   }
 

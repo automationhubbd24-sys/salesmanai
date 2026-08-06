@@ -9,8 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { BACKEND_URL } from "@/config";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
-
-type InstagramAccount = { page_id: string; name: string; id?: number; db_id?: number };
+import { useInstagram, type InstagramAccount } from "@/context/InstagramContext";
 
 declare global {
   interface Window { fbAsyncInit: () => void; FB: any; }
@@ -18,31 +17,13 @@ declare global {
 
 export default function InstagramIntegrationPage() {
   const navigate = useNavigate();
-  const [accounts, setAccounts] = useState<InstagramAccount[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { accounts, currentAccount, loading, refreshAccounts, setCurrentAccount } = useInstagram();
   const [saving, setSaving] = useState(false);
   const [autoConnecting, setAutoConnecting] = useState(false);
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [accountId, setAccountId] = useState("");
   const [accessToken, setAccessToken] = useState("");
-
-  const loadAccounts = async () => {
-    setLoading(true);
-    try {
-      const token = localStorage.getItem("auth_token");
-      const response = await fetch(`${BACKEND_URL}/api/instagram/pages`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || "Instagram accounts load করা যায়নি");
-      }
-      setAccounts(await response.json());
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Instagram accounts load করা যায়নি");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   useEffect(() => {
     window.fbAsyncInit = function () {
@@ -54,7 +35,6 @@ export default function InstagramIntegrationPage() {
       script.src = "https://connect.facebook.net/en_US/sdk.js";
       document.body.appendChild(script);
     }
-    void loadAccounts();
   }, []);
 
   const handleAutoConnect = async () => {
@@ -97,15 +77,12 @@ export default function InstagramIntegrationPage() {
       if (!response.ok) throw new Error(data.error || "Instagram auto connect করা যায়নি");
 
       const connected = Array.isArray(data.connected) ? data.connected : [];
+      await refreshAccounts();
       if (connected.length === 0) {
         toast.warning("Linked Instagram Professional account পাওয়া যায়নি। Manual connect ব্যবহার করুন।");
       } else {
-        const first = connected[0];
-        localStorage.setItem("active_ig_account_id", first.page_id);
-        localStorage.setItem("active_ig_db_id", String(first.db_id || ""));
-        window.dispatchEvent(new Event("instagram-account-changed"));
+        setCurrentAccount(connected[0]);
         toast.success(`${connected.length} Instagram account auto connected`);
-        await loadAccounts();
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Instagram auto connect failed");
@@ -130,21 +107,18 @@ export default function InstagramIntegrationPage() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || "Instagram account connect করা যায়নি");
-      localStorage.setItem("active_ig_account_id", accountId.trim());
-      localStorage.setItem("active_ig_db_id", String(data.id || data.db_id || ""));
-      window.dispatchEvent(new Event("instagram-account-changed"));
+      const account: InstagramAccount = { page_id: accountId.trim(), name: name.trim(), id: data.id, db_id: data.db_id };
+      await refreshAccounts();
+      setCurrentAccount(account);
       toast.success("Instagram Professional account connected");
       setOpen(false); setName(""); setAccountId(""); setAccessToken("");
-      await loadAccounts();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Instagram account connect করা যায়নি");
     } finally { setSaving(false); }
   };
 
   const selectAccount = (account: InstagramAccount) => {
-    localStorage.setItem("active_ig_account_id", account.page_id);
-    localStorage.setItem("active_ig_db_id", String(account.db_id || account.id || ""));
-    window.dispatchEvent(new Event("instagram-account-changed"));
+    setCurrentAccount(account);
     navigate("/dashboard/instagram/control");
   };
 
@@ -154,10 +128,12 @@ export default function InstagramIntegrationPage() {
       const token = localStorage.getItem("auth_token");
       const response = await fetch(`${BACKEND_URL}/api/instagram/pages/${account.page_id}`, { method: "DELETE", headers: token ? { Authorization: `Bearer ${token}` } : {} });
       if (!response.ok) throw new Error("Account disconnect করা যায়নি");
-      if (localStorage.getItem("active_ig_account_id") === account.page_id) {
-        localStorage.removeItem("active_ig_account_id"); localStorage.removeItem("active_ig_db_id");
-      }
-      toast.success("Instagram account disconnected"); await loadAccounts();
+      const nextAccount = currentAccount?.page_id === account.page_id
+        ? accounts.find((item) => item.page_id !== account.page_id) || null
+        : currentAccount;
+      await refreshAccounts();
+      setCurrentAccount(nextAccount);
+      toast.success("Instagram account disconnected");
     } catch (error) { toast.error(error instanceof Error ? error.message : "Account disconnect করা যায়নি"); }
   };
 

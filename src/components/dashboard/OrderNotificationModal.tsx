@@ -10,7 +10,7 @@ import { BACKEND_URL } from "@/config";
 
 interface OrderNotificationModalProps {
     dbId: number;
-    platform: 'messenger' | 'whatsapp';
+    platform: 'messenger' | 'whatsapp' | 'instagram';
     trigger?: React.ReactNode;
 }
 
@@ -32,9 +32,7 @@ export function OrderNotificationModal({ dbId, platform, trigger }: OrderNotific
         setLoading(true);
         try {
             const token = localStorage.getItem("auth_token");
-            const endpoint = platform === 'messenger' 
-                ? `${BACKEND_URL}/api/messenger/config/${dbId}`
-                : `${BACKEND_URL}/api/whatsapp/config/${dbId}`;
+            const endpoint = `${BACKEND_URL}/api/${platform}/config/${dbId}`;
                 
             const res = await fetch(endpoint, {
                 headers: { Authorization: `Bearer ${token}` }
@@ -56,9 +54,7 @@ export function OrderNotificationModal({ dbId, platform, trigger }: OrderNotific
         setSaving(true);
         try {
             const token = localStorage.getItem("auth_token");
-            const endpoint = platform === 'messenger' 
-                ? `${BACKEND_URL}/api/messenger/config/${dbId}`
-                : `${BACKEND_URL}/api/whatsapp/config/${dbId}`;
+            const endpoint = `${BACKEND_URL}/api/${platform}/config/${dbId}`;
 
             const res = await fetch(endpoint, {
                 method: "PUT",
@@ -97,7 +93,7 @@ export function OrderNotificationModal({ dbId, platform, trigger }: OrderNotific
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2">
                         <Mail className="w-5 h-5 text-primary" />
-                        Order Notifications
+                        {platform === 'instagram' ? 'Instagram Order Notifications' : `${platform === 'messenger' ? 'Messenger' : 'WhatsApp'} Order Notifications`}
                     </DialogTitle>
                 </DialogHeader>
                 
