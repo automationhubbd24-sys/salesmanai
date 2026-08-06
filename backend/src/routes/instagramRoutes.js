@@ -60,6 +60,14 @@ async function ensureInstagramColumns() {
     await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS platform text NOT NULL DEFAULT 'messenger'`);
     await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS user_id text`);
     await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS platform text NOT NULL DEFAULT 'messenger'`);
+    await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS swipe_reply BOOLEAN DEFAULT FALSE`);
+    await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS audio_detection BOOLEAN DEFAULT FALSE`);
+    await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS block_emoji TEXT DEFAULT ''`);
+    await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS unblock_emoji TEXT DEFAULT ''`);
+    await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS image_prompt TEXT DEFAULT ''`);
+    await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS check_conversion INTEGER DEFAULT 20`);
+    await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS temperature NUMERIC DEFAULT 0.7`);
+    await pgClient.query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS top_p NUMERIC DEFAULT 0.9`);
     await pgClient.query(`ALTER TABLE fb_chats ADD COLUMN IF NOT EXISTS platform text NOT NULL DEFAULT 'messenger'`);
 }
 
@@ -232,7 +240,7 @@ router.get('/config/:id', authMiddleware, async (req, res) => {
 
 router.put('/config/:id', authMiddleware, async (req, res) => {
     try {
-        const allowed = ['reply_message', 'image_detection', 'image_send', 'order_tracking', 'audio_detection', 'provider', 'api_key', 'chat_model', 'text_prompt', 'wait'];
+        const allowed = ['reply_message', 'image_detection', 'image_send', 'order_tracking', 'audio_detection', 'swipe_reply', 'template', 'block_emoji', 'unblock_emoji', 'image_prompt', 'check_conversion', 'temperature', 'top_p', 'provider', 'api_key', 'chat_model', 'text_prompt', 'wait'];
         const values = Object.entries(req.body || {}).filter(([key]) => allowed.includes(key));
         if (!values.length) return res.json({ success: true });
         const assignments = values.map(([key], index) => `${key === 'provider' ? 'ai' : key} = $${index + 1}`);
