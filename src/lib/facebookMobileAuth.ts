@@ -9,8 +9,10 @@ import { BACKEND_URL } from "@/config";
 
 export const WHATSAPP_MOBILE_CALLBACK_KEY = "wa_mobile_callback_payload";
 export const MESSENGER_MOBILE_CALLBACK_KEY = "messenger_mobile_callback_payload";
+export const INSTAGRAM_MOBILE_CALLBACK_KEY = "instagram_mobile_callback_payload";
 export const WHATSAPP_MOBILE_FLOW_STATE_KEY = "wa_mobile_flow_state";
 export const MESSENGER_MOBILE_FLOW_STATE_KEY = "messenger_mobile_flow_state";
+export const INSTAGRAM_MOBILE_FLOW_STATE_KEY = "instagram_mobile_flow_state";
 
 interface FlowState {
   state: string;
@@ -68,6 +70,10 @@ export function getMessengerMobileRedirectUri(): string {
   return `${getFacebookAuthFrontendOrigin()}/auth/facebook/messenger/callback`;
 }
 
+export function getInstagramMobileRedirectUri(): string {
+  return `${getFacebookAuthFrontendOrigin()}/auth/facebook/instagram/callback`;
+}
+
 /**
  * Begin the WhatsApp Mobile OAuth flow by using a browser-only redirect flow
  */
@@ -100,7 +106,7 @@ export function beginWhatsAppMobileOAuth(): void {
 export function beginMessengerMobileOAuth(): void {
   const state = generateState();
 
-  // Store state for validation on return
+  // Store state for validation
   const flowState: FlowState = {
     state,
     returnPath: window.location.pathname,
@@ -115,6 +121,24 @@ export function beginMessengerMobileOAuth(): void {
   startUrl.searchParams.set("origin", getFacebookAuthFrontendOrigin());
 
   // SINGLE TAB REDIRECT
+  window.location.replace(startUrl.toString());
+}
+
+export function beginInstagramMobileOAuth(): void {
+  const state = generateState();
+
+  const flowState: FlowState = {
+    state,
+    returnPath: window.location.pathname,
+    timestamp: Date.now(),
+  };
+  localStorage.setItem(INSTAGRAM_MOBILE_FLOW_STATE_KEY, JSON.stringify(flowState));
+
+  const startUrl = new URL(`${BACKEND_URL}/api/auth/facebook/start`);
+  startUrl.searchParams.set("type", "instagram");
+  startUrl.searchParams.set("state", state);
+  startUrl.searchParams.set("origin", getFacebookAuthFrontendOrigin());
+
   window.location.replace(startUrl.toString());
 }
 

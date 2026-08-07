@@ -147,7 +147,8 @@ router.get('/pages', async (req, res) => {
                 `SELECT p.*, u.message_credit AS user_message_credit
                  FROM page_access_token_message p
                  LEFT JOIN user_configs u ON LOWER(u.email) = LOWER(p.email)
-                 WHERE LOWER(p.email) = LOWER($1) OR p.user_id::text = $2`,
+                 WHERE (LOWER(p.email) = LOWER($1) OR p.user_id::text = $2)
+                   AND COALESCE(p.platform, 'messenger') = 'messenger'`,
                 [userEmail, userId]
             );
             myPages = rows;
@@ -186,7 +187,8 @@ router.get('/pages', async (req, res) => {
                 `SELECT p.*, u.message_credit AS user_message_credit
                  FROM page_access_token_message p
                  LEFT JOIN user_configs u ON LOWER(u.email) = LOWER(p.email)
-                 WHERE p.page_id = ANY($1::text[])`,
+                 WHERE p.page_id = ANY($1::text[])
+                   AND COALESCE(p.platform, 'messenger') = 'messenger'`,
                 [sharedPageIds]
             );
             sharedPages = sharedData;

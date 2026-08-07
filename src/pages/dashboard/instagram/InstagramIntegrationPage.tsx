@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Facebook, Instagram, Loader2, Plus, Settings2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,6 +10,16 @@ import { BACKEND_URL } from "@/config";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { useInstagram, type InstagramAccount } from "@/context/InstagramContext";
+import { useIsMobile } from "@/hooks/use-mobile";
+import {
+  beginInstagramMobileOAuth,
+  clearFlowState,
+  consumeCallbackPayload,
+  getInstagramMobileRedirectUri,
+  INSTAGRAM_MOBILE_CALLBACK_KEY,
+  INSTAGRAM_MOBILE_FLOW_STATE_KEY,
+  readFlowState,
+} from "@/lib/facebookMobileAuth";
 
 declare global {
   interface Window { fbAsyncInit: () => void; FB: any; }
@@ -17,6 +27,8 @@ declare global {
 
 export default function InstagramIntegrationPage() {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
+  const mobileCallbackProcessedRef = useRef(false);
   const { accounts, currentAccount, loading, refreshAccounts, setCurrentAccount } = useInstagram();
   const [saving, setSaving] = useState(false);
   const [autoConnecting, setAutoConnecting] = useState(false);
@@ -37,7 +49,126 @@ export default function InstagramIntegrationPage() {
     }
   }, []);
 
+  const completeInstagramAutoConnect = async (finalToken: string) => {
+    const token = localStorage.getItem("auth_token");
+    const response = await fetch(`${BACKEND_URL}/api/instagram/pages/auto-connect`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ accessToken: finalToken }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "Instagram auto connect করা যায়নি");
+
+    const connected = Array.isArray(data.connected) ? data.connected : [];
+    await refreshAccounts();
+    if (connected.length === 0) {
+      toast.warning("Linked Instagram Professional account পাওয়া যায়নি। Manual connect ব্যবহার করুন।");
+    } else {
+      setCurrentAccount(connected[0]);
+      toast.success(`${connected.length} Instagram account auto connected`);
+    }
+  };
+
+  const handleInstagramMobileCallback = async (code: string) => {
+    const token = localStorage.getItem("auth_token");
+    if (!token) {
+      toast.error("Please login again");
+      return;
+    }
+
+    setAutoConnecting(true);
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/auth/facebook/instagram/complete-code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ code, redirectUri: getInstagramMobileRedirectUri() }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || data.details?.error?.message || "Instagram login complete করা যায়নি");
+      if (!data.access_token) throw new Error("Meta access token পাওয়া যায়নি");
+      await completeInstagramAutoConnect(data.access_token);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Instagram mobile connect failed");
+    } finally {
+      setAutoConnecting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (mobileCallbackProcessedRef.current) return;
+
+    const handleMobileMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type === "INSTAGRAM_MOBILE_CALLBACK_COMPLETE") {
+        const callbackPayload = consumeCallbackPayload(INSTAGRAM_MOBILE_CALLBACK_KEY);
+        if (callbackPayload) {
+          mobileCallbackProcessedRef.current = true;
+          if (callbackPayload.error || !callbackPayload.code) {
+            toast.error(callbackPayload.errorDescription || "Instagram login cancel হয়েছে");
+            setAutoConnecting(false);
+          } else {
+            void handleInstagramMobileCallback(callbackPayload.code);
+          }
+        }
+      }
+    };
+
+    window.addEventListener("message", handleMobileMessage);
+    let pollInterval: number | null = null;
+
+    const runPoll = async () => {
+      const flowState = readFlowState(INSTAGRAM_MOBILE_FLOW_STATE_KEY);
+      if (!flowState?.state) return;
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/auth/facebook/poll?state=${flowState.state}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.completed) {
+          mobileCallbackProcessedRef.current = true;
+          if (data.error) toast.error(data.errorDescription || "Instagram connection failed");
+          else if (data.code) void handleInstagramMobileCallback(data.code);
+          if (pollInterval) window.clearInterval(pollInterval);
+          pollInterval = null;
+          clearFlowState(INSTAGRAM_MOBILE_FLOW_STATE_KEY);
+        }
+      } catch {
+        // ignore polling errors
+      }
+    };
+
+    if (isMobile) {
+      pollInterval = window.setInterval(runPoll, 3000);
+      window.addEventListener("focus", runPoll);
+      window.addEventListener("visibilitychange", runPoll);
+      window.addEventListener("pageshow", runPoll);
+    }
+
+    const callbackPayload = consumeCallbackPayload(INSTAGRAM_MOBILE_CALLBACK_KEY);
+    if (callbackPayload) {
+      mobileCallbackProcessedRef.current = true;
+      if (callbackPayload.error || !callbackPayload.code) {
+        toast.error(callbackPayload.errorDescription || "Instagram login cancel হয়েছে");
+        setAutoConnecting(false);
+      } else {
+        void handleInstagramMobileCallback(callbackPayload.code);
+      }
+    }
+
+    return () => {
+      window.removeEventListener("message", handleMobileMessage);
+      if (pollInterval) window.clearInterval(pollInterval);
+      window.removeEventListener("focus", runPoll);
+      window.removeEventListener("visibilitychange", runPoll);
+      window.removeEventListener("pageshow", runPoll);
+    };
+  }, [isMobile]);
+
   const handleAutoConnect = async () => {
+    if (isMobile) {
+      setAutoConnecting(true);
+      beginInstagramMobileOAuth();
+      return;
+    }
     if (!window.FB) {
       toast.error("Meta SDK এখনো load হয়নি, একটু পরে আবার চেষ্টা করুন");
       return;
@@ -67,23 +198,7 @@ export default function InstagramIntegrationPage() {
         if (exchangeData.access_token) finalToken = exchangeData.access_token;
       }
 
-      const token = localStorage.getItem("auth_token");
-      const response = await fetch(`${BACKEND_URL}/api/instagram/pages/auto-connect`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ accessToken: finalToken }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || "Instagram auto connect করা যায়নি");
-
-      const connected = Array.isArray(data.connected) ? data.connected : [];
-      await refreshAccounts();
-      if (connected.length === 0) {
-        toast.warning("Linked Instagram Professional account পাওয়া যায়নি। Manual connect ব্যবহার করুন।");
-      } else {
-        setCurrentAccount(connected[0]);
-        toast.success(`${connected.length} Instagram account auto connected`);
-      }
+      await completeInstagramAutoConnect(finalToken);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Instagram auto connect failed");
     } finally {

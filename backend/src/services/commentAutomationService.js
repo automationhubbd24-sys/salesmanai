@@ -2,6 +2,7 @@ const pgClient = require('./pgClient');
 const dbService = require('./dbService');
 const aiService = require('./aiService');
 const facebookService = require('./facebookService');
+const instagramService = require('./instagramService');
 
 const DEFAULT_PUBLIC_REPLY = 'বিস্তারিত জানতে আপনার inbox দেখুন।';
 const DEFAULT_DM_PROMPT = `You are a sales assistant replying privately to a customer who commented on a social media post.
@@ -270,11 +271,12 @@ async function processCommentAutomationEvent(event) {
       if (!dmText) dmText = `${productSummary(context.products)}\n\nঅর্ডার করতে চাইলে আপনার নাম, ফোন নম্বর ও ঠিকানা পাঠান।`;
 
       if (platform === 'instagram') {
-        await facebookService.sendInstagramMessage(accountId, commenterId, dmText, accessToken);
+        await instagramService.sendMessage(accountId, commenterId, dmText, accessToken);
+        await dbService.saveInstagramChat({ instagram_account_id: accountId, sender_id: accountId, recipient_id: commenterId, message_id: `${platform}_comment_dm_${commentId}`, text: dmText, timestamp: Date.now(), status: 'sent', reply_by: 'bot' });
       } else {
         await facebookService.sendMessage(accountId, commenterId, dmText, accessToken);
+        await dbService.saveFbChat({ page_id: accountId, sender_id: accountId, recipient_id: commenterId, message_id: `${platform}_comment_dm_${commentId}`, text: dmText, timestamp: Date.now(), status: 'sent', reply_by: 'bot', platform });
       }
-      await dbService.saveFbChat({ page_id: accountId, sender_id: accountId, recipient_id: commenterId, message_id: `${platform}_comment_dm_${commentId}`, text: dmText, timestamp: Date.now(), status: 'sent', reply_by: 'bot', platform });
       dmStatus = 'sent';
     }
 

@@ -213,7 +213,7 @@ function resolveFrontendOrigin(req, requestedOrigin) {
 function renderFacebookBrowserRedirectPage(res, oauthUrl, type) {
     const parsedUrl = new URL(oauthUrl);
     const escapedUrl = String(oauthUrl).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-    const flowLabel = type === 'whatsapp' ? 'WhatsApp Business' : 'Messenger';
+    const flowLabel = type === 'whatsapp' ? 'WhatsApp Business' : (type === 'instagram' ? 'Instagram' : 'Messenger');
     const debugData = {
         host: parsedUrl.host,
         path: parsedUrl.pathname,
@@ -432,7 +432,7 @@ exports.exchangeToken = async (req, res) => {
     }
 };
 
-exports.completeMessengerCode = async (req, res) => {
+async function completeFacebookCode(req, res, label = 'Messenger', includePages = true) {
     try {
         const { code, redirectUri } = req.body || {};
 
@@ -463,12 +463,12 @@ exports.completeMessengerCode = async (req, res) => {
             }
         } catch (exchangeError) {
             console.warn(
-                'Long-lived token exchange failed during messenger mobile completion:',
+                `Long-lived token exchange failed during ${label.toLowerCase()} mobile completion:`,
                 exchangeError.response?.data || exchangeError.message
             );
         }
 
-        const pages = await fetchMessengerPages(finalToken);
+        const pages = includePages ? await fetchMessengerPages(finalToken) : [];
 
         return res.json({
             success: true,
@@ -477,7 +477,7 @@ exports.completeMessengerCode = async (req, res) => {
         });
     } catch (error) {
         console.error(
-            'Messenger mobile completion error:',
+            `${label} mobile completion error:`,
             error.response ? error.response.data : error.message
         );
         return res.status(502).json({
@@ -485,7 +485,10 @@ exports.completeMessengerCode = async (req, res) => {
             details: error.response ? error.response.data : error.message
         });
     }
-};
+}
+
+exports.completeMessengerCode = (req, res) => completeFacebookCode(req, res, 'Messenger', true);
+exports.completeInstagramCode = (req, res) => completeFacebookCode(req, res, 'Instagram', false);
 
 exports.startFacebookAuth = async (req, res) => {
     try {
@@ -505,7 +508,7 @@ exports.startFacebookAuth = async (req, res) => {
             return res.status(400).send('Missing OAuth state.');
         }
 
-        if (type !== 'whatsapp' && type !== 'messenger') {
+        if (type !== 'whatsapp' && type !== 'messenger' && type !== 'instagram') {
             return res.status(400).send('Invalid Facebook auth type.');
         }
 
@@ -546,6 +549,9 @@ exports.startFacebookAuth = async (req, res) => {
                 featureType: "whatsapp_business_app_onboarding",
                 sessionInfoVersion: "3"
             });
+        } else if (type === 'instagram') {
+            redirectUri = `${frontendOrigin}/auth/facebook/instagram/callback`;
+            scope = 'email,public_profile,pages_show_list,pages_read_engagement,pages_manage_metadata,pages_messaging,instagram_basic,instagram_manage_messages,business_management';
         } else {
             redirectUri = `${frontendOrigin}/auth/facebook/messenger/callback`;
             scope = 'email,public_profile,pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_read_user_content';
