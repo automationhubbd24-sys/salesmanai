@@ -436,10 +436,22 @@ export default function InstagramSettingsPage() {
     }
   };
 
+  const pink = {
+    text: "text-pink-500",
+    bg: "bg-pink-500",
+    bgSoft: "bg-pink-500/10",
+    bgHover: "hover:bg-pink-500/15",
+    border: "border-pink-500",
+    borderSoft: "border-pink-500/30",
+    borderCheck: "peer-data-[state=checked]:border-pink-500",
+    bgCheck: "peer-data-[state=checked]:bg-pink-500/10",
+    textCheck: "peer-data-[state=checked]:text-pink-500",
+  };
+
   if (accountLoading || loading) {
     return (
       <div className="flex min-h-[360px] items-center justify-center">
-        <Loader2 className="h-7 w-7 animate-spin text-primary" />
+        <Loader2 className={`h-7 w-7 animate-spin ${pink.text}`} />
       </div>
     );
   }
@@ -470,27 +482,32 @@ export default function InstagramSettingsPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => handleOpenPrompt("text")}>
-            <Bot className="mr-2 h-4 w-4" />
+            <Bot className={`mr-2 h-4 w-4 ${pink.text}`} />
             Edit System Prompt
           </Button>
           <Button variant="outline" onClick={() => handleOpenPrompt("image")}>
-            <Image className="mr-2 h-4 w-4" />
+            <Image className={`mr-2 h-4 w-4 ${pink.text}`} />
             Edit Image Prompt
           </Button>
         </div>
       </div>
 
       <div className="space-y-6">
-        <Card className="bg-background border-border">
+        <Card>
           <CardHeader>
             <CardTitle className="flex justify-between items-center">
-              AI Provider Configuration
+              <span className="flex items-center gap-2">
+                <span className={`rounded-xl p-2 ${pink.bgSoft} ${pink.text}`}>
+                  <Sparkles className="h-5 w-5" />
+                </span>
+                AI Provider Configuration
+              </span>
               {activeMode && (
                 <Badge
                   variant="outline"
                   className={
                     activeMode === 'managed'
-                      ? 'bg-primary/10 text-primary border-primary/60'
+                      ? `${pink.bgSoft} ${pink.text} ${pink.borderSoft}`
                       : 'border-border text-muted-foreground'
                   }
                 >
@@ -505,7 +522,7 @@ export default function InstagramSettingsPage() {
           <CardContent>
             {loading ? (
               <div className="flex flex-col items-center justify-center py-10 space-y-4">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <Loader2 className={`h-8 w-8 animate-spin ${pink.text}`} />
                 <p className="text-sm text-muted-foreground animate-pulse">Detecting AI Configuration...</p>
               </div>
             ) : (
@@ -522,11 +539,11 @@ export default function InstagramSettingsPage() {
                       <RadioGroupItem value="own" id="ig-own" className="peer sr-only" />
                       <Label
                         htmlFor="ig-own"
-                        className="flex h-full min-h-[80px] flex-col items-start justify-center gap-1 rounded-lg border border-border bg-secondary/60 p-3 text-sm transition-all hover:border-primary/50 hover:bg-primary/5 peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary/10 peer-data-[state=checked]:text-primary cursor-pointer"
+                        className={`flex h-full min-h-[80px] flex-col items-start justify-center gap-1 rounded-lg border border-border bg-secondary/60 p-3 text-sm transition-all hover:border-pink-500/50 hover:bg-pink-500/5 ${pink.borderCheck} ${pink.bgCheck} ${pink.textCheck} cursor-pointer`}
                       >
-                        <Key className="mb-1 h-5 w-5 transition-colors peer-data-[state=checked]:text-primary" />
+                        <Key className={`mb-1 h-5 w-5 transition-colors ${pink.textCheck}`} />
                         <span className="font-semibold">Use Own API</span>
-                        <span className="text-[11px] text-muted-foreground peer-data-[state=checked]:text-primary">
+                        <span className={`text-[11px] text-muted-foreground ${pink.textCheck}`}>
                           Use your own API Key (Gemini, GPT)
                         </span>
                       </Label>
@@ -535,11 +552,11 @@ export default function InstagramSettingsPage() {
                       <RadioGroupItem value="managed" id="ig-managed" className="peer sr-only" />
                       <Label
                         htmlFor="ig-managed"
-                        className="flex h-full min-h-[80px] flex-col items-start justify-center gap-1 rounded-lg border border-border bg-secondary/60 p-3 text-sm transition-all hover:border-primary/50 hover:bg-primary/5 peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary/10 peer-data-[state=checked]:text-primary cursor-pointer"
+                        className={`flex h-full min-h-[80px] flex-col items-start justify-center gap-1 rounded-lg border border-border bg-secondary/60 p-3 text-sm transition-all hover:border-pink-500/50 hover:bg-pink-500/5 ${pink.borderCheck} ${pink.bgCheck} ${pink.textCheck} cursor-pointer`}
                       >
-                        <Sparkles className="mb-1 h-5 w-5 transition-colors peer-data-[state=checked]:text-primary" />
+                        <Sparkles className={`mb-1 h-5 w-5 transition-colors ${pink.textCheck}`} />
                         <span className="font-semibold">User Cloud API</span>
-                        <span className="text-[11px] text-muted-foreground peer-data-[state=checked]:text-primary">
+                        <span className={`text-[11px] text-muted-foreground ${pink.textCheck}`}>
                           Hassle-free, High Speed Engine
                         </span>
                       </Label>
@@ -614,7 +631,10 @@ export default function InstagramSettingsPage() {
                           name="api_key"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>API Key</FormLabel>
+                              <FormLabel className="flex items-center gap-2">
+                                <Key className={`h-4 w-4 ${pink.text}`} />
+                                API Key
+                              </FormLabel>
                               <FormControl>
                                 <Input placeholder="sk-..." type="password" {...field} />
                               </FormControl>
@@ -665,8 +685,8 @@ export default function InstagramSettingsPage() {
                       </>
                     ) : (
                       <div className="space-y-6">
-                        <div className="rounded-lg border border-emerald-200 bg-emerald-50/30 p-4 dark:border-emerald-800/30 dark:bg-emerald-900/10 shadow-sm transition-all hover:shadow-md">
-                          <div className="mb-4 flex items-center justify-between gap-4 rounded-xl border border-emerald-500/20 bg-secondary/40 p-3">
+                        <div className={`rounded-lg shadow-sm transition-all hover:shadow-md rounded-xl border ${pink.borderSoft} ${pink.bgSoft}/20`}>
+                          <div className={`mb-4 flex items-center justify-between gap-4 rounded-xl border ${pink.borderSoft} bg-secondary/40 p-3`}>
                             <div>
                               <div className="text-sm font-semibold">Switch Pro Plus Mode</div>
                               <p className="text-xs text-muted-foreground">
@@ -675,7 +695,7 @@ export default function InstagramSettingsPage() {
                             <div className="flex items-center gap-3">
                               <Badge
                                 variant="outline"
-                                className={proPlusMode ? "border-primary/60 text-primary" : "border-border text-muted-foreground"}
+                                className={proPlusMode ? `${pink.borderSoft} ${pink.text}` : "border-border text-muted-foreground"}
                               >
                                 {proPlusMode ? PRO_PLUS_MANAGED_MODEL : "Standard Cloud"}
                               </Badge>
@@ -684,12 +704,12 @@ export default function InstagramSettingsPage() {
                           </div>
                           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                             <div className="flex items-center gap-4">
-                              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/50">
-                                <Sparkles className="h-6 w-6 text-emerald-600 dark:text-emerald-400" />
+                              <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full ${pink.bgSoft}`}>
+                                <Sparkles className={`h-6 w-6 ${pink.text}`} />
                               </div>
                               <div>
-                                <h3 className="font-bold text-emerald-900 dark:text-emerald-100">User Cloud API</h3>
-                                <p className="text-xs text-emerald-700 dark:text-emerald-300 font-medium">
+                                <h3 className={`font-bold ${pink.text}`}>User Cloud API</h3>
+                                <p className={`text-xs font-medium ${pink.text} dark:opacity-80`}>
                                   {proPlusMode ? "SalesmanChatbot Pro Plus routing with smart fallback." : "High-speed engine. No setup required."}
                                 </p>
                               </div>
@@ -704,7 +724,7 @@ export default function InstagramSettingsPage() {
                         type="submit"
                         size="lg"
                         disabled={loading}
-                        className="bg-primary hover:bg-primary/90 w-full md:w-auto"
+                        className={`${pink.bg} hover:opacity-90 text-white w-full md:w-auto`}
                       >
                         {loading ? (
                           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -721,9 +741,14 @@ export default function InstagramSettingsPage() {
           </CardContent>
         </Card>
 
-        <Card className="bg-background border-border">
+        <Card>
           <CardHeader>
-            <CardTitle>Response Behavior</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              <span className={`rounded-xl p-2 ${pink.bgSoft} ${pink.text}`}>
+                <Sparkles className="h-5 w-5" />
+              </span>
+              Response Behavior
+            </CardTitle>
             <CardDescription>Control how and when the AI replies.</CardDescription>
           </CardHeader>
           <CardContent>
@@ -822,8 +847,7 @@ export default function InstagramSettingsPage() {
                 <Button
                   onClick={handleSaveBehavior}
                   disabled={behaviorSaving}
-                  className="w-full md:w-auto"
-                  variant="secondary"
+                  className={`w-full md:w-auto ${pink.bg} hover:opacity-90 text-white`}
                 >
                   {behaviorSaving ? "Saving..." : "Update Behavior"}
                 </Button>
@@ -836,7 +860,12 @@ export default function InstagramSettingsPage() {
       <Dialog open={isPromptOpen} onOpenChange={setIsPromptOpen}>
         <DialogContent className="max-w-5xl h-[90vh] flex flex-col bg-card border-border text-foreground">
           <DialogHeader>
-            <DialogTitle>Edit AI Instructions</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              <span className={`rounded-xl p-2 ${pink.bgSoft} ${pink.text}`}>
+                <Sparkles className="h-5 w-5" />
+              </span>
+              Edit AI Instructions
+            </DialogTitle>
             <DialogDescription className="text-muted-foreground">
               Define your AI's persona and how it handles images.
             </DialogDescription>
@@ -878,7 +907,7 @@ export default function InstagramSettingsPage() {
                         </Button>
                       </div>
                     </div>
-                    <div className="flex flex-wrap gap-2 max-h-24 overflow-y-auto border border-border rounded-md bg-secondary/40 p-2">
+                    <div className={`flex flex-wrap gap-2 max-h-24 overflow-y-auto border ${pink.borderSoft} rounded-md ${pink.bgSoft} p-2`}>
                       {productLoading && (
                         <span className="text-xs text-muted-foreground">
                           Loading products...
@@ -904,7 +933,7 @@ export default function InstagramSettingsPage() {
                               key={p.id}
                               type="button"
                               onClick={() => handleInsertProductIntoPrompt(p)}
-                              className="text-xs px-2 py-1 rounded-full border border-primary/30 bg-primary/5 hover:bg-primary/15 hover:border-primary transition-colors text-foreground"
+                              className={`text-xs px-2 py-1 rounded-full border ${pink.borderSoft} ${pink.bgSoft} ${pink.bgHover} transition-colors text-foreground`}
                             >
                               {p.name || "Untitled"}
                             </button>
@@ -924,7 +953,7 @@ export default function InstagramSettingsPage() {
 
               <TabsContent value="image" className="flex-1 mt-4 h-full">
                 <div className="space-y-2 h-full flex flex-col">
-                  <div className="bg-secondary/40 p-4 rounded-lg text-sm text-muted-foreground border border-border">
+                  <div className={`${pink.bgSoft} p-4 rounded-lg text-sm text-muted-foreground border ${pink.borderSoft}`}>
                     <p className="font-semibold mb-1 text-foreground">How Image Detection Works:</p>
                     <p>When a user sends an image, the AI will first "see" it using this prompt. The result is then passed to the main chat AI.</p>
                     <p className="mt-2 italic">Example: "Analyze this image. If it's a product, identify the name, price, and color. If it's a payment screenshot, extract the transaction ID."</p>
@@ -945,7 +974,7 @@ export default function InstagramSettingsPage() {
                 Cancel
               </Button>
             </div>
-            <Button onClick={handleSavePrompt} disabled={promptSaving || optimizing}>
+            <Button onClick={handleSavePrompt} disabled={promptSaving || optimizing} className={`${pink.bg} hover:opacity-90 text-white`}>
               {promptSaving ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : (
