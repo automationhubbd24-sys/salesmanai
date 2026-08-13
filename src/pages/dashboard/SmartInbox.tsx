@@ -1026,7 +1026,7 @@ const SmartInbox = () => {
       </div>
 
       {/* Chat Area */}
-      <div className={cn("flex min-w-0 flex-1 flex-col bg-[#050810]", isMobileListVisible && "hidden sm:flex")}>
+      <div className={cn("relative flex min-w-0 max-w-full flex-1 flex-col overflow-hidden bg-[#050810]", isMobileListVisible && "hidden sm:flex")}>
         {selectedChat ? (
           <>
             {/* Chat Header */}
@@ -1142,7 +1142,7 @@ const SmartInbox = () => {
             </div>
 
             {/* Messages */}
-            <ScrollArea ref={scrollRef} className="flex-1 bg-gradient-to-b from-transparent to-black/10">
+            <ScrollArea ref={scrollRef} className="relative min-w-0 max-w-full flex-1 overflow-hidden bg-gradient-to-b from-transparent to-black/10">
               {msgLoading ? (
                 <div className="space-y-2.5 p-2.5 sm:p-4 md:p-5">
                   {Array.from({ length: 5 }).map((_, index) => (
@@ -1199,7 +1199,7 @@ const SmartInbox = () => {
                     return (
                       <div
                         key={`${normalizeTimestamp(message.timestamp) || index}-${index}`}
-                        className={cn("flex w-full min-w-0 overflow-hidden gap-3 items-end animate-in fade-in slide-in-from-bottom-2 duration-500", isOutgoing ? "justify-end" : "justify-start")}
+                        className={cn("flex w-full min-w-0 max-w-full overflow-hidden gap-3 items-end animate-in fade-in slide-in-from-bottom-2 duration-500", isOutgoing ? "justify-end" : "justify-start")}
                       >
                         {!isOutgoing && (
                           <Avatar className="hidden sm:flex h-9 w-9 border border-white/10 shrink-0">
@@ -1211,7 +1211,7 @@ const SmartInbox = () => {
 
                         <div
                           className={cn(
-                            "max-w-[min(86vw,320px)] rounded-[1.25rem] px-3 py-2.5 text-sm sm:max-w-[min(78%,420px)] sm:px-3.5 sm:py-3 md:max-w-[min(70%,560px)] lg:max-w-[min(58%,620px)] shadow-lg transition-all duration-200 hover:shadow-xl", 
+                            "min-w-0 max-w-[min(86%,320px)] overflow-hidden rounded-[1.25rem] px-3 py-2.5 text-sm sm:max-w-[min(78%,420px)] sm:px-3.5 sm:py-3 md:max-w-[min(70%,560px)] lg:max-w-[min(58%,620px)] shadow-lg transition-all duration-200 hover:shadow-xl", 
                             isOutgoing
                               ? isBot
                                 ? platform === "whatsapp"
@@ -1261,7 +1261,7 @@ const SmartInbox = () => {
                               </p>
                             </details>
                           ) : (
-                            <p className="whitespace-pre-wrap break-words leading-relaxed text-[14px]">
+                            <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-[14px]">
                               {body}
                             </p>
                           )}
@@ -1319,7 +1319,7 @@ const SmartInbox = () => {
                 </div>
               )}
               <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageSelect} />
-              <div className="flex items-end gap-2 rounded-[1.35rem] border border-white/10 bg-white/[0.03] p-2 backdrop-blur-sm sm:gap-2.5 sm:rounded-[1.5rem] sm:p-2.5">
+              <div className="flex min-w-0 max-w-full items-end gap-2 overflow-hidden rounded-[1.35rem] border border-white/10 bg-white/[0.03] p-2 backdrop-blur-sm sm:gap-2.5 sm:rounded-[1.5rem] sm:p-2.5">
                 <Button
                   size="icon"
                   variant="ghost"
@@ -1339,7 +1339,7 @@ const SmartInbox = () => {
                     }
                   }}
                   placeholder="Type message or attach image..."
-                  className="h-10 sm:h-12 border-none bg-transparent text-sm text-white placeholder:text-white/30 focus-visible:ring-0 resize-none"
+                  className="h-10 min-w-0 flex-1 sm:h-12 border-none bg-transparent text-sm text-white placeholder:text-white/30 focus-visible:ring-0 resize-none"
                 />
                 <Button
                   size="icon"
@@ -1370,7 +1370,7 @@ const SmartInbox = () => {
 
       {/* Desktop Right Panel */}
       {selectedChat && (
-        <div className="hidden min-w-0 w-[clamp(240px,22vw,320px)] overflow-hidden border-l border-white/5 bg-gradient-to-b from-[#070a14] to-[#050812] lg:flex lg:flex-col">
+        <div className="relative z-10 hidden min-w-0 shrink-0 w-[clamp(240px,22vw,320px)] overflow-hidden border-l border-white/5 bg-gradient-to-b from-[#070a14] to-[#050812] lg:flex lg:flex-col">
           {/* Profile Header */}
           <div className="min-w-0 overflow-hidden border-b border-white/5 p-4 xl:p-5 bg-gradient-to-b from-white/[0.02] to-transparent">
             <div className="flex min-w-0 max-w-full flex-col items-center overflow-hidden text-center">
