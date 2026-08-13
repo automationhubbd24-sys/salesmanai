@@ -43,6 +43,8 @@ type Conversation = {
   id: string;
   from: string;
   name: string | null;
+  display_name?: string | null;
+  contact?: string | null;
   body: string;
   timestamp: number | null;
   reply_by: string | null;
@@ -222,9 +224,18 @@ const shouldHideMessage = (message: MessageItem) => {
   return isInternalNoise && !hasImage && !isBotImage;
 };
 
+const isValidContactName = (value: unknown) => {
+  if (typeof value !== "string") return false;
+  const name = value.trim().replace(/\s+/g, " ");
+  return Boolean(name) &&
+    !["unknown", "unknown user", "customer", "whatsapp user", "messenger user", "null", "undefined"].includes(name.toLowerCase()) &&
+    !/^\d+$/.test(name);
+};
+
 const getDisplayName = (chat: Conversation | null) => {
   if (!chat) return "";
-  return chat.name || chat.from;
+  const name = [chat.display_name, chat.contact, chat.name].find(isValidContactName);
+  return name || chat.from;
 };
 
 const SmartInbox = () => {
@@ -955,7 +966,7 @@ const SmartInbox = () => {
                           "bg-gradient-to-br from-white/10 to-white/5 text-white/60",
                           isActive && "from-[#00ff88]/20 to-[#00ff88]/10"
                         )}>
-                          <UserIcon size={18} className="sm:w-5 sm:h-5" />
+                          {getDisplayName(chat).substring(0, 2).toUpperCase()}
                         </AvatarFallback>
                       </Avatar>
 
@@ -1045,7 +1056,7 @@ const SmartInbox = () => {
                   <div className="relative">
                     <Avatar className="h-10 w-10 sm:h-12 sm:w-12 border border-white/10 shadow-lg">
                       <AvatarFallback className="bg-gradient-to-br from-white/10 to-white/5 text-white/60">
-                        <UserIcon size={18} className="sm:w-5 sm:h-5" />
+                        {getDisplayName(selectedChat).substring(0, 2).toUpperCase()}
                       </AvatarFallback>
                     </Avatar>
                     <span
@@ -1377,7 +1388,7 @@ const SmartInbox = () => {
               <div className="relative">
                 <Avatar className="h-16 w-16 xl:h-20 xl:w-20 border-2 shadow-[0_0_30px_rgba(0,0,0,0.25)]" style={{ borderColor: platformTheme.accentBorder }}>
                   <AvatarFallback className="bg-gradient-to-br from-white/10 to-white/5 text-white/70">
-                    <UserIcon size={28} />
+                    {getDisplayName(selectedChat).substring(0, 2).toUpperCase()}
                   </AvatarFallback>
                 </Avatar>
                 <span className="absolute bottom-0 right-0 flex h-6 w-6 items-center justify-center rounded-full border-2 border-[#070a14] text-white shadow-lg" style={{ background: platformTheme.accent }}>

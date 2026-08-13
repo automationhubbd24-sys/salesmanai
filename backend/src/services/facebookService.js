@@ -450,9 +450,8 @@ async function getUserProfile(userId, accessToken) {
         const response = await axios.get(url, { timeout: 10000 });
         return response.data;
     } catch (error) {
-        // console.error(`Error fetching user profile ${userId}:`, error.message);
-        // Fail silently, return default
-        return { name: 'Customer' };
+        // Fail silently so callers preserve any stored contact name.
+        return {};
     }
 }
 

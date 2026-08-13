@@ -13,16 +13,23 @@ const PLATFORM_CONFIG = {
         resourceColumn: "session_name",
         orderTable: "whatsapp_order_tracking",
         timestampExpression: "COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000)",
-        senderNameExpression: "CASE WHEN LOWER(BTRIM(COALESCE(sender_name, ''))) <> 'unknown' THEN NULLIF(BTRIM(sender_name), '') END",
+        senderNameExpression: "CASE WHEN BTRIM(COALESCE(sender_name, '')) !~ '^[0-9]+$' AND LOWER(BTRIM(COALESCE(sender_name, ''))) NOT IN ('', 'unknown', 'unknown user', 'customer', 'whatsapp user', 'messenger user', 'null', 'undefined') THEN NULLIF(BTRIM(sender_name), '') END",
         conversationNameJoin: `
             LEFT JOIN LATERAL (
-                SELECT NULLIF(BTRIM(wc.name), '') AS name
+                SELECT CASE
+                    WHEN wc.is_locked OR wc.name_source IN ('manual', 'custom')
+                         OR (wc.name_source IS NULL
+                             AND BTRIM(COALESCE(wc.name, '')) <> ''
+                             AND BTRIM(COALESCE(wc.name, '')) !~ '^[0-9]+$'
+                             AND LOWER(BTRIM(COALESCE(wc.name, ''))) NOT IN ('unknown', 'unknown user', 'customer', 'whatsapp user', 'messenger user', 'null', 'undefined')) THEN wc.name
+                    ELSE COALESCE(wc.profile_name, wc.name)
+                END AS name
                 FROM whatsapp_contacts wc
                 WHERE wc.session_name = $1
                   AND (wc.phone_number = COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id)
                        OR wc.lid = COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id))
-                  AND NULLIF(BTRIM(COALESCE(wc.name, '')), '') IS NOT NULL
-                  AND LOWER(BTRIM(COALESCE(wc.name, ''))) <> 'unknown'
+                  AND BTRIM(COALESCE(CASE WHEN wc.is_locked OR wc.name_source IN ('manual', 'custom') OR (wc.name_source IS NULL AND BTRIM(COALESCE(wc.name, '')) <> '' AND BTRIM(COALESCE(wc.name, '')) !~ '^[0-9]+$' AND LOWER(BTRIM(COALESCE(wc.name, ''))) NOT IN ('unknown', 'unknown user', 'customer', 'whatsapp user', 'messenger user', 'null', 'undefined')) THEN wc.name ELSE COALESCE(wc.profile_name, wc.name) END, '')) !~ '^[0-9]+$'
+                  AND LOWER(BTRIM(COALESCE(CASE WHEN wc.is_locked OR wc.name_source IN ('manual', 'custom') OR (wc.name_source IS NULL AND BTRIM(COALESCE(wc.name, '')) <> '' AND BTRIM(COALESCE(wc.name, '')) !~ '^[0-9]+$' AND LOWER(BTRIM(COALESCE(wc.name, ''))) NOT IN ('unknown', 'unknown user', 'customer', 'whatsapp user', 'messenger user', 'null', 'undefined')) THEN wc.name ELSE COALESCE(wc.profile_name, wc.name) END, ''))) NOT IN ('', 'unknown', 'unknown user', 'customer', 'whatsapp user', 'messenger user', 'null', 'undefined')
                 ORDER BY wc.last_interaction DESC NULLS LAST
                 LIMIT 1
             ) wc ON TRUE`,
@@ -33,16 +40,23 @@ const PLATFORM_CONFIG = {
         resourceColumn: "page_id",
         orderTable: "fb_order_tracking",
         timestampExpression: "COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000)",
-        senderNameExpression: "CASE WHEN LOWER(BTRIM(COALESCE(sender_name, ''))) NOT IN ('unknown', 'customer', 'null', 'undefined') THEN NULLIF(BTRIM(sender_name), '') END",
+        senderNameExpression: "CASE WHEN BTRIM(COALESCE(sender_name, '')) !~ '^[0-9]+$' AND LOWER(BTRIM(COALESCE(sender_name, ''))) NOT IN ('', 'unknown', 'unknown user', 'customer', 'whatsapp user', 'messenger user', 'null', 'undefined') THEN NULLIF(BTRIM(sender_name), '') END",
         chatPlatformCondition: "platform = 'messenger'",
         conversationNameJoin: `
             LEFT JOIN LATERAL (
-                SELECT NULLIF(BTRIM(fc.name), '') AS name
+                SELECT CASE
+                    WHEN fc.is_locked OR fc.name_source IN ('manual', 'custom')
+                         OR (fc.name_source IS NULL
+                             AND BTRIM(COALESCE(fc.name, '')) <> ''
+                             AND BTRIM(COALESCE(fc.name, '')) !~ '^[0-9]+$'
+                             AND LOWER(BTRIM(COALESCE(fc.name, ''))) NOT IN ('unknown', 'unknown user', 'customer', 'whatsapp user', 'messenger user', 'null', 'undefined')) THEN fc.name
+                    ELSE COALESCE(fc.profile_name, fc.name)
+                END AS name
                 FROM fb_contacts fc
                 WHERE fc.page_id = $1
                   AND fc.sender_id = COALESCE(lp.conversation_id, lf.conversation_id, ls.conversation_id)
-                  AND NULLIF(BTRIM(COALESCE(fc.name, '')), '') IS NOT NULL
-                  AND LOWER(BTRIM(COALESCE(fc.name, ''))) NOT IN ('unknown', 'customer', 'null', 'undefined')
+                  AND BTRIM(COALESCE(CASE WHEN fc.is_locked OR fc.name_source IN ('manual', 'custom') OR (fc.name_source IS NULL AND BTRIM(COALESCE(fc.name, '')) <> '' AND BTRIM(COALESCE(fc.name, '')) !~ '^[0-9]+$' AND LOWER(BTRIM(COALESCE(fc.name, ''))) NOT IN ('unknown', 'unknown user', 'customer', 'whatsapp user', 'messenger user', 'null', 'undefined')) THEN fc.name ELSE COALESCE(fc.profile_name, fc.name) END, '')) !~ '^[0-9]+$'
+                  AND LOWER(BTRIM(COALESCE(CASE WHEN fc.is_locked OR fc.name_source IN ('manual', 'custom') OR (fc.name_source IS NULL AND BTRIM(COALESCE(fc.name, '')) <> '' AND BTRIM(COALESCE(fc.name, '')) !~ '^[0-9]+$' AND LOWER(BTRIM(COALESCE(fc.name, ''))) NOT IN ('unknown', 'unknown user', 'customer', 'whatsapp user', 'messenger user', 'null', 'undefined')) THEN fc.name ELSE COALESCE(fc.profile_name, fc.name) END, ''))) NOT IN ('', 'unknown', 'unknown user', 'customer', 'whatsapp user', 'messenger user', 'null', 'undefined')
                 ORDER BY fc.last_interaction DESC NULLS LAST, fc.updated_at DESC NULLS LAST
                 LIMIT 1
             ) fc ON TRUE`,
@@ -109,6 +123,8 @@ function buildConversationPayload(row) {
     return {
         id: row.id,
         from: row.id,
+        display_name: row.name || null,
+        contact: row.name || null,
         name: row.name || null,
         body: row.body || "",
         timestamp: row.timestamp ? Number(row.timestamp) : null,

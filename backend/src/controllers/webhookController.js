@@ -10,6 +10,7 @@ const datasetCollectorService = require('../services/datasetCollectorService');
 const { runMessengerWorkflow } = require('../services/messenger_workflow');
 const { runWhatsAppWorkflow } = require('../services/whatsapp_workflow');
 const { buildResolvedProductMediaContext } = require('../utils/productMediaResolver');
+const { isValidContactName } = require('../utils/contactName');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -1404,6 +1405,14 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     if (allImages.length > 0) inboundLogParts.push(`[Image URLs]: ${allImages.join(', ')}`);
     if (allAudios.length > 0) inboundLogParts.push(`[Audio URLs]: ${allAudios.join(', ')}`);
     const inboundLogText = inboundLogParts.join('\n\n').trim();
+
+    if (isValidContactName(senderName)) {
+        await dbService.saveWhatsAppContact({
+            session_name: effectiveSessionName,
+            phone_number: senderId,
+            name: senderName
+        });
+    }
 
     if (inboundLogText) {
         await dbService.saveWhatsAppChat({
@@ -3341,10 +3350,12 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
         }
         // ------------------------------
 
-        const senderName = userProfile.name || 'Customer';
+        const senderName = isValidContactName(userProfile.name) ? userProfile.name.trim() : null;
         const senderGender = userProfile.gender || null;
-        dbService.updateFbChatSenderName(pageId, senderId, senderName)
-            .catch(err => console.error(`Error updating Messenger sender name (Page: ${pageId}, Sender: ${senderId}):`, err.message));
+        if (senderName) {
+            dbService.updateFbChatSenderName(pageId, senderId, senderName)
+                .catch(err => console.error(`Error updating Messenger sender name (Page: ${pageId}, Sender: ${senderId}):`, err.message));
+        }
 
         // --------------------------------------------
 

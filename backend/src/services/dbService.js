@@ -1,5 +1,6 @@
 const { query } = require('./pgClient');
 const runtimeMonitor = require('./runtimeMonitor');
+const { normalizeContactName, isValidContactName } = require('../utils/contactName');
 
 const productResourceSearchInFlight = new Map();
 
@@ -659,6 +660,8 @@ async function initTables() {
                 page_id TEXT NOT NULL,
                 sender_id TEXT NOT NULL,
                 name TEXT,
+                profile_name TEXT,
+                name_source TEXT,
                 is_locked BOOLEAN DEFAULT FALSE,
                 last_interaction TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -674,6 +677,8 @@ async function initTables() {
                 phone_number TEXT NOT NULL,
                 lid TEXT,
                 name TEXT,
+                profile_name TEXT,
+                name_source TEXT,
                 is_locked BOOLEAN DEFAULT FALSE,
                 last_interaction TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                 UNIQUE(session_name, phone_number)
@@ -692,6 +697,12 @@ async function initTables() {
                 END IF;
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='name') THEN
                     ALTER TABLE whatsapp_contacts ADD COLUMN name TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='profile_name') THEN
+                    ALTER TABLE whatsapp_contacts ADD COLUMN profile_name TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='name_source') THEN
+                    ALTER TABLE whatsapp_contacts ADD COLUMN name_source TEXT;
                 END IF;
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='is_locked') THEN
                     ALTER TABLE whatsapp_contacts ADD COLUMN is_locked BOOLEAN DEFAULT FALSE;
@@ -914,6 +925,12 @@ async function initTables() {
             BEGIN 
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_contacts' AND column_name='name') THEN
                     ALTER TABLE fb_contacts ADD COLUMN name TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_contacts' AND column_name='profile_name') THEN
+                    ALTER TABLE fb_contacts ADD COLUMN profile_name TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_contacts' AND column_name='name_source') THEN
+                    ALTER TABLE fb_contacts ADD COLUMN name_source TEXT;
                 END IF;
 
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_contacts' AND column_name='is_locked') THEN
@@ -1435,18 +1452,34 @@ async function saveFbChat(data) {
 }
 
 async function updateFbChatSenderName(pageId, senderId, name) {
-    const normalizedName = typeof name === 'string' ? name.trim() : '';
-    if (!pageId || !senderId || !normalizedName || ['unknown', 'customer', 'null', 'undefined'].includes(normalizedName.toLowerCase())) {
+    const normalizedName = normalizeContactName(name);
+    if (!pageId || !senderId || !isValidContactName(normalizedName)) {
         return;
     }
 
     const run = async () => {
         await query(
-            `INSERT INTO fb_contacts (page_id, sender_id, name, last_interaction, updated_at)
-             VALUES ($1, $2, $3, NOW(), NOW())
+            `INSERT INTO fb_contacts (page_id, sender_id, name, profile_name, name_source, last_interaction, updated_at)
+             VALUES ($1, $2, $3, $3, 'profile', NOW(), NOW())
              ON CONFLICT (page_id, sender_id)
              DO UPDATE SET
-                name = EXCLUDED.name,
+                profile_name = EXCLUDED.profile_name,
+                name = CASE
+                    WHEN fb_contacts.is_locked OR fb_contacts.name_source IN ('manual', 'custom') THEN fb_contacts.name
+                    WHEN fb_contacts.name_source = 'profile'
+                         OR BTRIM(COALESCE(fb_contacts.name, '')) = ''
+                         OR BTRIM(COALESCE(fb_contacts.name, '')) ~ '^[0-9]+$'
+                         OR LOWER(BTRIM(COALESCE(fb_contacts.name, ''))) IN ('unknown', 'unknown user', 'customer', 'whatsapp user', 'messenger user', 'null', 'undefined') THEN EXCLUDED.name
+                    ELSE fb_contacts.name
+                END,
+                name_source = CASE
+                    WHEN fb_contacts.is_locked OR fb_contacts.name_source IN ('manual', 'custom') THEN fb_contacts.name_source
+                    WHEN fb_contacts.name_source = 'profile'
+                         OR BTRIM(COALESCE(fb_contacts.name, '')) = ''
+                         OR BTRIM(COALESCE(fb_contacts.name, '')) ~ '^[0-9]+$'
+                         OR LOWER(BTRIM(COALESCE(fb_contacts.name, ''))) IN ('unknown', 'unknown user', 'customer', 'whatsapp user', 'messenger user', 'null', 'undefined') THEN 'profile'
+                    ELSE fb_contacts.name_source
+                END,
                 last_interaction = EXCLUDED.last_interaction,
                 updated_at = EXCLUDED.updated_at`,
             [pageId, senderId, normalizedName]
@@ -1457,7 +1490,10 @@ async function updateFbChatSenderName(pageId, senderId, name) {
              SET sender_name = $3
              WHERE page_id = $1
                AND platform = 'messenger'
-               AND (sender_id = $2 OR recipient_id = $2)`,
+               AND (sender_id = $2 OR recipient_id = $2)
+               AND (BTRIM(COALESCE(sender_name, '')) = ''
+                    OR BTRIM(COALESCE(sender_name, '')) ~ '^[0-9]+$'
+                    OR LOWER(BTRIM(COALESCE(sender_name, ''))) IN ('unknown', 'unknown user', 'customer', 'whatsapp user', 'messenger user', 'null', 'undefined'))`,
             [pageId, senderId, normalizedName]
         );
     };
@@ -2428,45 +2464,44 @@ async function deductWhatsAppCredit(sessionName, amount = 1) {
 // 19. Save WhatsApp Contact (Lead)
 async function saveWhatsAppContact(data) {
     const { query } = require('./pgClient');
+    const profileName = normalizeContactName(data.name);
+    const hasProfileName = isValidContactName(profileName);
     const run = async () => {
-        const existingResult = await query(
-            'SELECT name FROM whatsapp_contacts WHERE session_name = $1 AND phone_number = $2 LIMIT 1',
-            [data.session_name, data.phone_number]
-        );
-
-        const updates = {
-            session_name: data.session_name,
-            phone_number: data.phone_number,
-            last_interaction: new Date().toISOString()
-        };
-
-        if (data.lid) {
-            updates.lid = data.lid;
-        }
-
-        if (data.name && data.name !== 'Unknown' && data.name.trim() !== '') {
-            updates.name = data.name;
-        } else if (existingResult.rows.length === 0) {
-            updates.name = 'Unknown';
-        }
-
-        const params = [
-            updates.session_name,
-            updates.phone_number,
-            updates.lid || null,
-            updates.name || null,
-            updates.last_interaction
-        ];
-
         await query(
             `INSERT INTO whatsapp_contacts
-                (session_name, phone_number, lid, name, last_interaction)
-             VALUES ($1,$2,$3,$4,$5)
+                (session_name, phone_number, lid, name, profile_name, name_source, last_interaction)
+             VALUES ($1, $2, $3, $4, $4, CASE WHEN $4 IS NULL THEN NULL ELSE 'profile' END, $5)
              ON CONFLICT (session_name, phone_number) DO UPDATE SET
-                name = COALESCE(EXCLUDED.name, whatsapp_contacts.name),
+                profile_name = COALESCE(EXCLUDED.profile_name, whatsapp_contacts.profile_name),
+                name = CASE
+                    WHEN whatsapp_contacts.is_locked OR whatsapp_contacts.name_source IN ('manual', 'custom') THEN whatsapp_contacts.name
+                    WHEN EXCLUDED.profile_name IS NOT NULL AND (
+                        whatsapp_contacts.name_source = 'profile'
+                        OR BTRIM(COALESCE(whatsapp_contacts.name, '')) = ''
+                        OR BTRIM(COALESCE(whatsapp_contacts.name, '')) ~ '^[0-9]+$'
+                        OR LOWER(BTRIM(COALESCE(whatsapp_contacts.name, ''))) IN ('unknown', 'unknown user', 'customer', 'whatsapp user', 'messenger user', 'null', 'undefined')
+                    ) THEN EXCLUDED.profile_name
+                    ELSE whatsapp_contacts.name
+                END,
+                name_source = CASE
+                    WHEN whatsapp_contacts.is_locked OR whatsapp_contacts.name_source IN ('manual', 'custom') THEN whatsapp_contacts.name_source
+                    WHEN EXCLUDED.profile_name IS NOT NULL AND (
+                        whatsapp_contacts.name_source = 'profile'
+                        OR BTRIM(COALESCE(whatsapp_contacts.name, '')) = ''
+                        OR BTRIM(COALESCE(whatsapp_contacts.name, '')) ~ '^[0-9]+$'
+                        OR LOWER(BTRIM(COALESCE(whatsapp_contacts.name, ''))) IN ('unknown', 'unknown user', 'customer', 'whatsapp user', 'messenger user', 'null', 'undefined')
+                    ) THEN 'profile'
+                    ELSE whatsapp_contacts.name_source
+                END,
                 lid = COALESCE(EXCLUDED.lid, whatsapp_contacts.lid),
                 last_interaction = EXCLUDED.last_interaction`,
-            params
+            [
+                data.session_name,
+                data.phone_number,
+                data.lid || null,
+                hasProfileName ? profileName : null,
+                new Date().toISOString()
+            ]
         );
     };
 
@@ -2492,6 +2527,8 @@ async function ensureWhatsAppContactsTable() {
             phone_number TEXT NOT NULL,
             lid TEXT,
             name TEXT,
+            profile_name TEXT,
+            name_source TEXT,
             is_locked BOOLEAN DEFAULT FALSE,
             last_interaction TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
             UNIQUE(session_name, phone_number)
@@ -2510,6 +2547,12 @@ async function ensureWhatsAppContactsTable() {
             END IF;
             IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='name') THEN
                 ALTER TABLE whatsapp_contacts ADD COLUMN name TEXT;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='profile_name') THEN
+                ALTER TABLE whatsapp_contacts ADD COLUMN profile_name TEXT;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='name_source') THEN
+                ALTER TABLE whatsapp_contacts ADD COLUMN name_source TEXT;
             END IF;
             IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='is_locked') THEN
                 ALTER TABLE whatsapp_contacts ADD COLUMN is_locked BOOLEAN DEFAULT FALSE;
