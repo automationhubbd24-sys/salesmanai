@@ -1,0 +1,3786 @@
+const whatsappService = require('../services/whatsappService');
+const aiService = require('../services/aiService');
+const dbService = require('../services/dbService');
+const datasetCollectorService = require('../services/datasetCollectorService');
+const incomingImageAnalysisService = require('../services/incomingImageAnalysisService');
+const orderService = require('../services/orderService');
+const pgClient = require('../services/pgClient');
+const fs = require('fs');
+const path = require('path');
+const { buildResolvedProductMediaContext } = require('../utils/productMediaResolver');
+const WAHA_BASE_URL = process.env.WAHA_BASE_URL || 'https://wahubbd.salesmanchatbot.online';
+const AI_REQUEST_BUDGET_MS = process.env.AI_REQUEST_BUDGET_MS ? parseInt(process.env.AI_REQUEST_BUDGET_MS) : 180000;
+
+function logDebug(msg) {
+    try {
+        const logDir = path.join(__dirname, '../../logs');
+        if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+        
+        fs.appendFileSync(path.join(logDir, 'whatsapp.log'), new Date().toISOString() + ' [WA] ' + msg + '\n');
+    } catch (e) {
+        console.error("Failed to write debug log:", e);
+    }
+}
+
+// Helper to log to file
+function logToFile(message) {
+    logDebug(message);
+}
+
+// #region debug-point A:variant-media-reporter
+function reportVariantDebug(hypothesisId, location, msg, data = {}) {
+    try {
+        const envPath = path.join(__dirname, '../../.dbg/whatsapp-variant-spam.env');
+        let debugUrl = 'http://127.0.0.1:7777/event';
+        let sessionId = 'whatsapp-variant-spam';
+        try {
+            const envContent = fs.readFileSync(envPath, 'utf8');
+            debugUrl = envContent.match(/DEBUG_SERVER_URL=(.+)/)?.[1]?.trim() || debugUrl;
+            sessionId = envContent.match(/DEBUG_SESSION_ID=(.+)/)?.[1]?.trim() || sessionId;
+        } catch (_) {}
+        fetch(debugUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                sessionId,
+                runId: 'pre-fix',
+                hypothesisId,
+                location,
+                msg: `[DEBUG] ${msg}`,
+                data,
+                ts: Date.now()
+            })
+        }).catch(() => {});
+    } catch (_) {}
+}
+// #endregion
+
+// #region debug-point ads-product-routing:reporter
+function reportAdsProductRoutingDebug(hypothesisId, location, msg, data = {}) {
+    try {
+        const envPath = path.join(__dirname, '../../.dbg/ads-product-routing.env');
+        let debugUrl = 'http://127.0.0.1:7777/event';
+        let sessionId = 'ads-product-routing';
+        try {
+            const envContent = fs.readFileSync(envPath, 'utf8');
+            debugUrl = envContent.match(/DEBUG_SERVER_URL=(.+)/)?.[1]?.trim() || debugUrl;
+            sessionId = envContent.match(/DEBUG_SESSION_ID=(.+)/)?.[1]?.trim() || sessionId;
+        } catch (_) {}
+        fetch(debugUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId, runId: 'pre-fix', hypothesisId, location, msg: `[DEBUG] ${msg}`, data, ts: Date.now() })
+        }).catch(() => {});
+    } catch (_) {}
+}
+// #endregion
+
+function normalizeProductMediaUrl(url) {
+    if (!url || url === 'N/A') return 'N/A';
+    if (String(url).startsWith('http')) return url;
+    const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
+    const cleanPath = String(url).startsWith('/') ? String(url) : `/${url}`;
+    return `${baseUrl.replace(/\/$/, '')}${cleanPath}`;
+}
+
+function clampMatchScore(value) {
+    const score = Number(value || 0);
+    if (!Number.isFinite(score)) return 0;
+    return Math.max(0, Math.min(100, Number(score.toFixed(1))));
+}
+
+function formatMatchSignals(product = {}) {
+    const signals = [];
+    if (product.match_source) signals.push(`source ${product.match_source}`);
+    if (product.direct_image_score !== undefined) signals.push(`image ${clampMatchScore(product.direct_image_score)}%`);
+    if (product.old_vector_score !== undefined) signals.push(`old ${clampMatchScore(product.old_vector_score)}%`);
+    if (product.text_match_score !== undefined) signals.push(`text ${clampMatchScore(product.text_match_score)}%`);
+    return signals.length ? ` [${signals.join(', ')}]` : '';
+}
+
+function toWhatsAppImageMatchSummary(product) {
+    if (!product || !product.id) return null;
+    const score = product.distance !== undefined && product.distance !== null
+        ? clampMatchScore((1 - Number(product.distance)) * 100)
+        : clampMatchScore(product.match_score || 0);
+    return {
+        product_id: String(product.id),
+        name: product.name || null,
+        price: product.price || null,
+        currency: product.currency || 'BDT',
+        description: product.description || null,
+        image_url: normalizeProductMediaUrl(product.image_url),
+        matched_image_url: normalizeProductMediaUrl(product.matched_image_url || product.image_url),
+        additional_images: Array.isArray(product.additional_images) ? product.additional_images.map(normalizeProductMediaUrl).filter(Boolean) : [],
+        match_score: score,
+        base_match_score: score,
+        visual_fingerprint: product.visual_fingerprint || {},
+        visual_tags: product.visual_tags || [],
+        searchable_text: product.searchable_text || '',
+        keywords: product.keywords || ''
+    };
+}
+
+function normalizeMediaUrl(value) {
+    if (!value) return null;
+    let url = String(value).trim();
+    url = url.replace(/^`+|`+$/g, '');
+    url = url.replace(/^"+|"+$/g, '');
+    url = url.replace(/^'+|'+$/g, '');
+    url = url.trim();
+    if (!url) return null;
+    if (!url.startsWith('http') && url.startsWith('/')) {
+        url = `${WAHA_BASE_URL}${url}`;
+    }
+    return url;
+}
+
+function extractMessageTextFromPayload(messagePayload) {
+    const candidates = [
+        messagePayload?.body,
+        messagePayload?._data?.body,
+        messagePayload?.caption,
+        messagePayload?._data?.caption,
+        messagePayload?._data?.message?.conversation,
+        messagePayload?._data?.message?.extendedTextMessage?.text,
+        messagePayload?._data?.message?.imageMessage?.caption,
+        messagePayload?._data?.message?.videoMessage?.caption,
+        messagePayload?._data?.message?.documentWithCaptionMessage?.message?.documentMessage?.caption,
+        messagePayload?._data?.quotedMsg?.body,
+        messagePayload?._data?.quotedMsg?.caption
+    ];
+
+    for (const candidate of candidates) {
+        if (typeof candidate === 'string' && candidate.trim()) {
+            return candidate.trim();
+        }
+    }
+
+    return '';
+}
+
+function collectNestedMediaCandidates(source, bucket, depth = 0) {
+    if (!source || depth > 4) return;
+
+    if (Array.isArray(source)) {
+        source.forEach((item) => collectNestedMediaCandidates(item, bucket, depth + 1));
+        return;
+    }
+
+    if (typeof source !== 'object') return;
+
+    const candidateKeys = ['mediaUrl', 'url', 'clientUrl', 'deprecatedMms3Url'];
+    candidateKeys.forEach((key) => {
+        const value = source[key];
+        if (typeof value === 'string' && value.trim()) {
+            bucket.push(value);
+        }
+    });
+
+    Object.values(source).forEach((value) => {
+        if (value && typeof value === 'object') {
+            collectNestedMediaCandidates(value, bucket, depth + 1);
+        }
+    });
+}
+
+function extractIncomingMediaUrls(messagePayload) {
+    const candidates = [];
+    collectNestedMediaCandidates(messagePayload, candidates);
+
+    if (typeof messagePayload?.body === 'string') {
+        candidates.push(messagePayload.body);
+    }
+    if (typeof messagePayload?._data?.body === 'string') {
+        candidates.push(messagePayload._data.body);
+    }
+
+    return Array.from(new Set(
+        candidates
+            .map((value) => normalizeMediaUrl(value))
+            .filter((value) => typeof value === 'string' && (value.startsWith('http') || value.startsWith('data:')))
+    ));
+}
+
+function detectImageMode(promptText) {
+    const text = String(promptText || '');
+    const tagMatch = text.match(/\[(?:IMAGE_MODE|MODE):\s*(image_only|image_title|title_desc|full_product)\s*\]/i);
+    if (tagMatch) return tagMatch[1].toLowerCase();
+    if (/(image\s*only|only\s*image|only\s*picture|only\s*photo|শুধু\s*(ইমেজ|ছবি|সবি)|sudu\s*sobi)/i.test(text)) return 'image_only';
+    if (/(image\s*(and|&)\s*title|title\s*(and|&)\s*image|ছবি\s*.*টাইটেল|ইমেজ\s*.*টাইটেল)/i.test(text)) return 'image_title';
+    if (/(title\s*(and|&)\s*description|description\s*(and|&)\s*title|টাইটেল\s*.*ডেসক্রিপশন|টাইটেল\s*.*বর্ণনা)/i.test(text)) return 'title_desc';
+    if (/(full\s*product|title\s*description\s*price|সব\s*দাও|সব\s*দেবে|সম্পূর্ণ)/i.test(text)) return 'full_product';
+    return null;
+}
+
+function resolveLockUserId(senderId, payload) {
+    if (senderId && senderId.includes('@lid')) {
+        const alt = payload?._data?.key?.remoteJidAlt || payload?._data?.key?.remoteJid;
+        if (alt && !String(alt).includes('@lid')) {
+            return alt;
+        }
+    }
+    return senderId;
+}
+
+function extractDecisionMode(text) {
+    if (!text || typeof text !== 'string') return { mode: null, cleaned: text };
+    const match = text.match(/\[(?:IMAGE_DECISION|DECISION_MODE):\s*(image_only|image_title|title_desc|full_product)\s*\]/i);
+    if (!match) return { mode: null, cleaned: text };
+    const mode = match[1].toLowerCase();
+    const cleaned = text.replace(match[0], '').trim();
+    return { mode, cleaned };
+}
+
+function parsePrice(value) {
+    if (typeof value === 'number') return value;
+    if (!value) return 0;
+    const cleanValue = String(value).replace(/[^\d.]/g, '');
+    const num = parseFloat(cleanValue);
+    return isFinite(num) ? num : 0;
+}
+
+function buildResolvedProductContext(product, queryText = '', preferredSkuKey = null) {
+    const resolved = buildResolvedProductMediaContext(product, {
+        queryText,
+        preferredSkuKey,
+        normalizeImageUrl,
+        resolveProductSkuSelection: dbService.resolveProductSkuSelection
+    });
+    const baseProduct = resolved.product || product;
+    const selectedSku = resolved.selectedSku;
+    const mediaImages = resolved.mediaImages;
+    const mediaVideos = resolved.mediaVideos;
+
+    let variantsText = '';
+    if (selectedSku) {
+        const skuPrice = parsePrice(selectedSku.price);
+        if (selectedSku.bulk_price) {
+            variantsText = ` | Exact SKU: ${selectedSku.name} (${selectedSku.sku_code || 'SKU'}) | Pricing Rule: ${selectedSku.bulk_price}`;
+        } else {
+            variantsText = ` | Exact SKU: ${selectedSku.name} (${selectedSku.sku_code || 'SKU'}) | Price: ${skuPrice > 0 ? `${skuPrice} ${selectedSku.currency || baseProduct.currency || 'BDT'}` : 'Ask for Price'}`;
+        }
+    } else if (resolved.missingAttributes.length > 0) {
+        variantsText = ' | Need: ' + resolved.missingAttributes.map((item) => `${item.label} [${item.values.join(', ')}]`).join('; ');
+    } else if (Array.isArray(baseProduct.variants) && baseProduct.variants.length > 0) {
+        variantsText = ' | Variants: ' + baseProduct.variants.map((variant) => {
+            const vPrice = parsePrice(variant.price);
+            return `${variant.name || 'Option'}:${vPrice || parsePrice(baseProduct.price)}${variant.currency || baseProduct.currency || 'BDT'}`;
+        }).join(', ');
+    }
+
+    // #region debug-point A:resolved-product-context
+    reportVariantDebug('A', 'whatsappController.js:buildResolvedProductContext', 'resolved product media context', {
+        productId: baseProduct?.id || product?.id || null,
+        preferredSkuKey: preferredSkuKey || null,
+        selectedSkuKey: selectedSku?.key || null,
+        selectedSkuName: selectedSku?.name || null,
+        hasVariantDrivenMedia: resolved.hasVariantMedia,
+        mediaImages,
+        mediaVideos,
+        missingAttributes: Array.isArray(resolved?.missingAttributes) ? resolved.missingAttributes.map((item) => item?.key || item?.label || null) : []
+    });
+    // #endregion
+
+    return {
+        product: baseProduct,
+        selectedSku,
+        variantsText,
+        mediaImages: Array.from(new Set(mediaImages.filter(Boolean))),
+        mediaVideos: Array.from(new Set(mediaVideos.filter(Boolean)))
+    };
+}
+// -----------------------------
+
+// Global Debounce Map (In-Memory)
+// Key: sessionId (session_chatId)
+const debounceMap = new Map();
+// Last user message guard (avoid reprocessing identical short texts)
+const lastUserMessageMap = new Map();
+// Admin handover map (stop AI after admin label or intervention)
+const handoverMap = new Map();
+// Session Start Time Map (for n8n-style backlog filtering)
+const sessionStartTimeMap = new Map();
+// In-memory duplicate check (faster than DB)
+const recentMessageIds = new Set();
+// Bot Message IDs (to distinguish Bot vs Admin replies)
+const botMessageIds = new Set();
+// Recent Bot Replies (Text-based Echo Guard)
+// Key: recipientId, Value: Array of { text, timestamp }
+const recentBotReplies = new Map();
+// Config Cache (In-Memory Optimization)
+const configCache = new Map(); // Key: sessionName, Value: { config, prompts, timestamp }
+
+// Helper to track bot replies for echo filtering
+function trackBotReply(senderId, text) {
+    const normalized = normalizeText(text);
+    if (!normalized) return;
+    
+    const now = Date.now();
+    let history = recentBotReplies.get(senderId) || [];
+    // Keep only last 20 seconds of replies
+    history = history.filter(r => now - r.timestamp < 20000);
+    history.push({ text: normalized, timestamp: now });
+    recentBotReplies.set(senderId, history);
+}
+
+async function saveWhatsAppOutgoingLog({
+    sessionName,
+    recipientId,
+    messageId,
+    text,
+    status = 'sending',
+    replyBy = 'bot',
+    tokenUsage = 0,
+    modelUsed = null
+}) {
+    if (!messageId || !text) return;
+
+    await dbService.saveWhatsAppChat({
+        session_name: sessionName,
+        sender_id: sessionName,
+        recipient_id: recipientId,
+        message_id: messageId,
+        text,
+        timestamp: Date.now(),
+        status,
+        reply_by: replyBy,
+        token_usage: tokenUsage,
+        model_used: modelUsed
+    });
+}
+
+// Helper to get cached page data (Fast Path)
+async function getCachedPageData(sessionName) {
+    const now = Date.now();
+    const cached = configCache.get(sessionName);
+    
+    // Refresh periodically so plan/credit changes don't stay stale in memory forever.
+    if (!cached || (now - cached.timestamp > 10 * 60 * 1000)) {
+        try {
+            const config = await dbService.getWhatsAppConfig(sessionName);
+            if (config) {
+                configCache.set(sessionName, { config, prompts: config.page_prompts || {}, timestamp: now });
+                return { config, prompts: config.page_prompts || {} };
+            }
+        } catch (e) {
+            console.warn(`[Cache] Failed to fetch WA config for ${sessionName}:`, e.message);
+        }
+    }
+    return cached || { config: null, prompts: null };
+}
+
+// --- MEMORY GARBAGE COLLECTOR (Safety for 100+ Users) ---
+// Runs every 5 minutes to clean stale data and prevent memory leaks.
+setInterval(() => {
+    const now = Date.now();
+    let cleaned = 0;
+
+    // 1. Clean recentBotReplies (Older than 3 mins)
+    for (const [key, replies] of recentBotReplies.entries()) {
+        // Filter out old replies
+        const validReplies = replies.filter(r => now - r.timestamp < 3 * 60 * 1000);
+        if (validReplies.length === 0) {
+            recentBotReplies.delete(key);
+            cleaned++;
+        } else if (validReplies.length !== replies.length) {
+            recentBotReplies.set(key, validReplies);
+        }
+    }
+
+    // 2. Clean handoverMap (Expired entries)
+    for (const [key, expiry] of handoverMap.entries()) {
+        if (now > expiry) {
+            handoverMap.delete(key);
+            cleaned++;
+        }
+    }
+
+    // 3. Clean debounceMap (Stuck entries > 5 mins)
+    for (const [key, val] of debounceMap.entries()) {
+         // debounceMap stores { timer, resolve }
+         // We can't easily check age unless we stored it. 
+         // Assuming standard flow clears it. If not, it's a small object.
+    }
+
+    if (cleaned > 0) {
+        console.log(`[WA GC] Cleaned ${cleaned} stale memory entries.`);
+    }
+}, 5 * 60 * 1000); // 5 Minutes Interval
+
+// Helper to normalize text for comparison
+const normalizeText = (text) => {
+    // Remove all whitespace and special characters to ensure robust matching
+    // Update: Support Unicode (Bengali) by using unicode property escapes
+    // Removes whitespace and punctuation, BUT KEEPS SYMBOLS/EMOJIS to prevent "🌸" becoming ""
+    return (text || '').toLowerCase().replace(/[\s\p{P}]/gu, '');
+};
+
+const extractImageUrlsFromText = (text) => {
+    const urls = [];
+    if (!text || typeof text !== 'string') return { cleanText: text || '', urls };
+    const imageUrlRegex = /https?:\/\/[^\s,)]*?\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s,)]*)?/gi;
+    const cleanText = text.replace(imageUrlRegex, match => {
+        const cleaned = match.replace(/[,.]$/, '');
+        urls.push(cleaned);
+        return '';
+    });
+    return {
+        cleanText: cleanText.trim(),
+        urls
+    };
+}
+
+const sanitizeReplyText = (text) => {
+    if (!text || typeof text !== 'string') return '';
+    return text
+        .replace(/\[[A-Z0-9_]+:[\s\S]*?\]/g, '')
+        .replace(/\[.*?\]\s*\(\s*https?:\/\/[^\s)]+\s*\)/gi, '')
+        .replace(/\[\s*\/?[^\]]*\]/gi, '')
+        .replace(/\(\s*\)/g, '')
+        .trim();
+};
+
+const extractVisionProductNames = (text) => {
+    const names = [];
+    if (!text || typeof text !== 'string') return names;
+    
+    // 1. Look for numbered list items like: ১. **The Face Shop...**
+    const listMatches = text.match(/(?:\d+|[০-৯])\.\s*\*\*([^*]+)\*\*/g) || [];
+    for (const match of listMatches) {
+        const name = match.replace(/(?:\d+|[০-৯])\.\s*\*\*/, '').replace(/\*\*/, '').trim();
+        if (name && name.length > 2) names.push(name);
+    }
+
+    // 2. Fallback to PRODUCT: format
+    if (names.length === 0) {
+        const productLines = text.match(/PRODUCT:\s*([^\n]+)/gi) || [];
+        for (const line of productLines) {
+            const name = line.split(':').slice(1).join(':').trim();
+            if (name && name.length > 2) names.push(name);
+        }
+    }
+
+    if (names.length === 0) {
+        const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+        for (const line of lines) {
+            if (line.length < 4) continue;
+            if (/price|৳|tk|bdt|\d{3,}/i.test(line)) continue;
+            names.push(line);
+            if (names.length >= 5) break;
+        }
+    }
+    return Array.from(new Set(names));
+};
+
+const normalizeImageUrl = (url) => {
+    if (!url || url === 'N/A') return null;
+    if (url.startsWith('http')) return url;
+    const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
+    const cleanPath = url.startsWith('/') ? url : `/${url}`;
+    return `${baseUrl.replace(/\/$/, '')}${cleanPath}`;
+};
+
+const pushUniqueMedia = (target, media) => {
+    if (!Array.isArray(target) || !media || !media.url) return;
+    const mediaUrl = String(media.url).trim();
+    if (!mediaUrl) return;
+    if (!target.some(item => (typeof item === 'string' ? item : item?.url) === mediaUrl)) {
+        target.push({ ...media, url: mediaUrl });
+    }
+};
+
+const appendNormalizedMediaList = (targetSet, rawValue) => {
+    if (!rawValue) return;
+    if (Array.isArray(rawValue)) {
+        rawValue
+            .map(normalizeImageUrl)
+            .filter(Boolean)
+            .forEach((url) => targetSet.add(url));
+        return;
+    }
+
+    if (typeof rawValue === 'string' && rawValue.trim()) {
+        try {
+            const parsed = JSON.parse(rawValue);
+            appendNormalizedMediaList(targetSet, parsed);
+        } catch (_) {
+            rawValue
+                .split(',')
+                .map((item) => normalizeImageUrl(item.trim()))
+                .filter(Boolean)
+                .forEach((url) => targetSet.add(url));
+        }
+    }
+};
+
+const productHasVariantMedia = (product) => (
+    (Array.isArray(product?.sku_matrix) && product.sku_matrix.length > 0) ||
+    (Array.isArray(product?.variants) && product.variants.length > 1)
+);
+
+const getAllowedResourceMediaMap = async (pageId) => {
+    const imageUrls = new Set();
+    const videoUrls = new Set();
+
+    if (!pageId) return { imageUrls, videoUrls };
+
+    const products = await dbService.getResourceProductsWithMedia(pageId);
+    for (const product of products) {
+        appendNormalizedMediaList(imageUrls, product.image_url);
+        appendNormalizedMediaList(imageUrls, product.additional_images);
+        appendNormalizedMediaList(videoUrls, product.video_url);
+
+        if (Array.isArray(product.variants)) {
+            product.variants.forEach((variant) => {
+                appendNormalizedMediaList(imageUrls, variant?.image_url);
+                appendNormalizedMediaList(imageUrls, variant?.image_urls);
+                appendNormalizedMediaList(videoUrls, variant?.video_url);
+                appendNormalizedMediaList(videoUrls, variant?.video_urls);
+            });
+        }
+
+        if (Array.isArray(product.sku_matrix)) {
+            product.sku_matrix.forEach((sku) => {
+                appendNormalizedMediaList(imageUrls, sku?.image_url);
+                appendNormalizedMediaList(imageUrls, sku?.image_urls);
+                appendNormalizedMediaList(videoUrls, sku?.video_url);
+                appendNormalizedMediaList(videoUrls, sku?.video_urls);
+            });
+        }
+    }
+
+    return { imageUrls, videoUrls };
+};
+
+const filterQueuedMediaByAllowedUrls = (queue, allowedUrls) => {
+    if (!Array.isArray(queue) || allowedUrls.size === 0) return [];
+    return queue.filter(item => {
+        const url = typeof item === 'string' ? item : item?.url;
+        return !!url && allowedUrls.has(String(url).trim());
+    });
+};
+
+const stripUnsupportedLinksFromText = (text, allowedUrls) => {
+    if (!text || typeof text !== 'string') return '';
+
+    const cleaned = text
+        .replace(/https?:\/\/[^\s)]+/gi, (match) => {
+            const trimmed = match.replace(/[.,!?]+$/, '');
+            return allowedUrls.has(trimmed) ? match : '';
+        })
+        .replace(/(?:^|\n)\s*Link:\s*(?=\n|$)/gi, '\n')
+        .replace(/[ \t]+\n/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+
+    return sanitizeReplyText(cleaned);
+};
+
+const hasQueuedMedia = (aiResponse) => {
+    const imageCount = Array.isArray(aiResponse?.images) ? aiResponse.images.length : 0;
+    const videoCount = Array.isArray(aiResponse?.videos) ? aiResponse.videos.length : 0;
+    return imageCount > 0 || videoCount > 0;
+};
+
+const hasPhotoIntent = (historyList) => {
+    if (!Array.isArray(historyList)) return false;
+    return historyList.some(item => {
+        let content = '';
+        if (typeof item === 'string') content = item;
+        else if (typeof item.content === 'string') content = item.content;
+        else if (typeof item.text === 'string') content = item.text;
+        else if (item.message && typeof item.message.content === 'string') content = item.message.content;
+        else if (item.message && typeof item.message.text === 'string') content = item.message.text;
+        return typeof content === 'string' && content.includes('[INTENT_DETECTED: USER_REQUESTED_PHOTO]');
+    });
+};
+
+const normalizePhotoDecision = (photoDecision) => {
+    if (!photoDecision || typeof photoDecision !== 'object') return null;
+    return {
+        clarification_needed: photoDecision.clarification_needed === true,
+        requested_scope: photoDecision.requested_scope === 'all' ? 'all' : 'focused',
+        target_product_id: photoDecision.target_product_id != null
+            ? (String(photoDecision.target_product_id).trim() || null)
+            : null,
+        clarification_text: typeof photoDecision.clarification_text === 'string'
+            ? photoDecision.clarification_text.trim()
+            : ''
+    };
+};
+
+const normalizeAiDeliveryItems = (aiResponse, fallbackReplyText = '') => {
+    const rawItems = Array.isArray(aiResponse?.items) ? aiResponse.items : [];
+    const normalizeItem = (item) => {
+        if (!item || typeof item !== 'object') return null;
+        const replyText = typeof item.reply_text === 'string'
+            ? item.reply_text.trim()
+            : (typeof item.reply === 'string' ? item.reply.trim() : '');
+        const productId = item.product_id != null ? (String(item.product_id).trim() || null) : null;
+        const imageUrls = Array.isArray(item.image_urls)
+            ? item.image_urls.map((url) => String(url || '').trim()).filter(Boolean)
+            : [];
+        const videoUrls = Array.isArray(item.video_urls)
+            ? item.video_urls.map((url) => String(url || '').trim()).filter(Boolean)
+            : [];
+        const action = typeof item.action === 'string' && item.action.trim() ? item.action.trim() : 'NONE';
+        const photoDecision = normalizePhotoDecision(item.photo_decision || null);
+
+        if (!replyText && !productId && imageUrls.length === 0 && videoUrls.length === 0) {
+            return null;
+        }
+
+        return {
+            reply_text: replyText,
+            product_id: productId,
+            image_urls: imageUrls,
+            video_urls: videoUrls,
+            action,
+            photo_decision: photoDecision
+        };
+    };
+
+    const items = rawItems.map(normalizeItem).filter(Boolean);
+    if (items.length > 0) return items;
+
+    const fallbackItem = normalizeItem({
+        reply_text: fallbackReplyText,
+        product_id: aiResponse?.product_id || null,
+        image_urls: aiResponse?.image_urls || [],
+        video_urls: aiResponse?.video_urls || [],
+        action: aiResponse?.action || 'NONE',
+        photo_decision: aiResponse?.photo_decision || null
+    });
+
+    return fallbackItem ? [fallbackItem] : [];
+};
+
+function shouldBlockOutgoingReply(text) {
+    const trimmed = String(text || '').trim();
+    if (!trimmed) return true; // Silence if empty
+
+    // 1. Check for remaining Structural Symbols (Logic-based, no keywords)
+    const hasBrackets = trimmed.includes('[') || trimmed.includes(']');
+    const hasBraces = trimmed.includes('{') || trimmed.includes('}');
+    const hasBackslashes = trimmed.includes('\\');
+
+    if (hasBrackets || hasBraces || hasBackslashes) {
+        console.warn(`[Quality Control] Blocked unprofessional message: "${trimmed.substring(0, 50)}..."`);
+        return true; 
+    }
+
+    // 2. Original JSON check
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+        try {
+            JSON.parse(trimmed);
+            return true;
+        } catch (e) {}
+    }
+    
+    return false;
+}
+
+// Step 1: Webhook Trigger
+const handleWebhook = async (req, res) => {
+    logDebug("Webhook Hit!");
+    const body = req.body;
+    // console.log('WAHA Webhook:', JSON.stringify(body, null, 2));
+
+    // WAHA sends different events. We care about 'message' or 'message.any'
+    const event = body.event;
+    const session = body.session; // This acts as 'session_name'
+    const payload = body.payload;
+
+    if (!session || !payload) {
+        return res.sendStatus(400);
+    }
+
+// --- AUTO-REGISTER SESSION (Non-Blocking) ---
+    // User Instructions: Use in-memory check to avoid blocking the webhook.
+    const knownSession = configCache.get(session);
+    if (!knownSession) {
+        // Fire and forget registration
+        dbService.getWhatsAppConfig(session).then(existingConfig => {
+            if (!existingConfig) {
+                console.log(`[WA] Session '${session}' detected but missing in DB. Auto-registering...`);
+                return dbService.createWhatsAppEntry(session, null, 30, 'connected');
+            }
+        }).catch(e => console.error(`[WA] Session Check/Registration Failed: ${e.message}`));
+    }
+
+    // NORMALIZE MESSAGE ID (Critical for Upsert & Duplicate Check)
+    // WAHA returns id as object { fromMe: ..., remote: ..., id: ..., _serialized: ... }
+    let messageIdRaw = payload.id;
+    if (typeof messageIdRaw === 'object' && messageIdRaw !== null) {
+        messageIdRaw = messageIdRaw._serialized || messageIdRaw.id; 
+    }
+    
+    // [FIX] Ensure messageIdRaw is a string and handle deep nesting
+    if (typeof messageIdRaw === 'object' && messageIdRaw !== null) {
+        messageIdRaw = messageIdRaw._serialized || messageIdRaw.id || JSON.stringify(messageIdRaw);
+    }
+    
+    // [DEBUG] Log fromMe status and sender details for "Bot vs User" debugging
+    const senderIdDebug = payload.from;
+    console.log(`[WA Debug] Message ${messageIdRaw} | From: ${senderIdDebug} | FromMe: ${payload.fromMe} | Body: "${(payload.body || '').substring(0, 20)}..."`);
+    // Update payload.id to be the string version for downstream consistency
+    if (payload.id && typeof payload.id === 'object') {
+        payload.id = messageIdRaw;
+    }
+
+    // Acknowledge immediately
+    res.send('OK');
+
+    if (event === 'message' || event === 'message.any') {
+        // --- CHECK FOR ADMIN MESSAGES (Echo from WAHA) ---
+    // If the message is fromME (sent by bot/admin from phone), we need to check if it contains lock emojis
+    if (payload.fromMe) {
+        const messageText = payload.body || '';
+        const sessionName = session;
+
+        // 1. Strict ID Match (Fastest)
+        if (botMessageIds.has(messageIdRaw)) {
+            console.log(`[WA] Ignoring fromMe message (BotID Match): ${messageIdRaw}`);
+            botMessageIds.delete(messageIdRaw);
+            return;
+        }
+
+        // 2. Database Existence Check (Prevent overwriting 'bot' with 'admin')
+        const existingChat = await dbService.getWhatsAppChatById(messageIdRaw);
+        if (existingChat && (existingChat.reply_by === 'bot' || existingChat.reply_by === 'system')) {
+            console.log(`[WA] Skipping Admin save (Bot/System already in DB): ${messageIdRaw}`);
+            return;
+        }
+
+        let recipientId = payload.to;
+        if (!recipientId && payload._data && payload._data.to) {
+            recipientId = payload._data.to.remote || payload._data.to;
+        }
+        if (!recipientId) {
+            recipientId = payload.from;
+        }
+
+        const normalizedIncoming = normalizeText(messageText);
+        if (recipientId && normalizedIncoming) {
+            const keysToCheck = [recipientId];
+            if (recipientId.includes('@')) keysToCheck.push(recipientId.split('@')[0]);
+            let recentReplies = [];
+            for (const key of keysToCheck) {
+                const found = recentBotReplies.get(key);
+                if (found && Array.isArray(found)) {
+                    recentReplies = found;
+                    break;
+                }
+            }
+            const matchedRecent = recentReplies.find(reply => {
+                const timeDiff = Date.now() - reply.timestamp;
+                if (timeDiff >= 30000) return false; // Increased window to 30s
+                const stored = reply.text;
+                return normalizedIncoming === stored || 
+                       (normalizedIncoming.length > 5 && normalizedIncoming.includes(stored)) || 
+                       (stored.length > 5 && stored.includes(normalizedIncoming));
+            });
+            if (matchedRecent) {
+                console.log(`[WA] Ignoring fromMe message (Text Match): "${messageText.substring(0,30)}..."`);
+                return;
+            }
+
+            // 4. Tertiary DB-Based Echo Guard (Wait & Check History)
+            await new Promise(resolve => setTimeout(resolve, 2000)); // Increased wait to 2s
+            try {
+                const lastMessages = await dbService.getLastNWhatsAppMessages(sessionName, recipientId, 20);
+                const isEcho = lastMessages.some(msg => {
+                    if (msg.reply_by !== 'bot') return false;
+                    const dbBody = normalizeText(msg.text);
+                    return dbBody === normalizedIncoming;
+                });
+                if (isEcho) {
+                    console.log(`[WA] Ignoring fromMe message (DB Echo Match): "${messageText.substring(0,30)}..."`);
+                    return;
+                }
+            } catch (err) {
+                console.warn(`[WA] DB Echo check failed: ${err.message}`);
+            }
+        }
+
+        try {
+            const pageData = await getCachedPageData(sessionName);
+            const config = pageData?.config;
+            if (config) {
+                const prompts = pageData.prompts || {};
+                const normalizeEmojiText = (str) => (str || '').replace(/\uFE0F/g, '').normalize('NFC');
+                
+                const lockList = [
+                    prompts.block_emoji, 
+                    prompts.lock_emojis, 
+                    config.lock_emojis, 
+                    config.block_emoji
+                ].filter(Boolean).join(' ').split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
+
+                const unlockList = [
+                    prompts.unblock_emoji, 
+                    prompts.unlock_emojis, 
+                    config.unlock_emojis, 
+                    config.unblock_emoji
+                ].filter(Boolean).join(' ').split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
+
+                const cleanContent = normalizeEmojiText(messageText);
+                
+                let targetUserId = recipientId;
+                
+                if (targetUserId) {
+                    if (lockList.some(e => cleanContent.includes(e))) {
+                        console.log(`[WA] Admin sent LOCK emoji to ${targetUserId}`);
+                        dbService.toggleWhatsAppLock(sessionName, targetUserId, true).catch(() => {});
+                        const chatKey = `${sessionName}_${targetUserId}`;
+                        handoverMap.set(chatKey, Date.now() + 24 * 60 * 60 * 1000);
+                        
+                        // SEND TO CUSTOMER
+                        trackBotReply(targetUserId, messageText);
+                        whatsappService.sendMessage(sessionName, targetUserId, messageText).catch(() => {});
+                    } else if (unlockList.some(e => cleanContent.includes(e))) {
+                        console.log(`[WA] Admin sent UNLOCK emoji to ${targetUserId}`);
+                        dbService.toggleWhatsAppLock(sessionName, targetUserId, false).catch(() => {});
+                        const chatKey = `${sessionName}_${targetUserId}`;
+                        handoverMap.delete(chatKey);
+
+                        // SEND TO CUSTOMER
+                        trackBotReply(targetUserId, messageText);
+                        whatsappService.sendMessage(sessionName, targetUserId, messageText).catch(() => {});
+                    }
+                }
+            }
+        } catch (e) {
+            console.error(`[WA] Failed to process Admin Emoji: ${e.message}`);
+        }
+        
+        if (messageText && messageText.trim().length > 0) {
+            const isGroup = (payload.from || '').includes('-');
+            dbService.saveWhatsAppChat({
+                session_name: sessionName,
+                sender_id: sessionName,
+                recipient_id: recipientId || payload.to || payload.from || null,
+                message_id: messageIdRaw,
+                text: messageText,
+                timestamp: Date.now(),
+                status: 'sent',
+                reply_by: 'admin',
+                is_group: isGroup,
+                group_id: isGroup ? payload.from : null,
+                group_name: isGroup ? (payload.notifyName || 'Group') : null
+            }).catch(() => {});
+        }
+        return;
+    }
+
+    // --- FAILSAFE ECHO GUARD (Even if fromMe is false) ---
+    // Checks if we just sent this exact text to this user.
+    // Solves "Infinite Loop" if WAHA echoes bot messages as incoming user messages.
+    const sender = payload.from;
+    const recentReplies = recentBotReplies.get(sender);
+    
+    if (recentReplies && Array.isArray(recentReplies)) {
+            const incomingText = normalizeText(payload.body || '');
+            
+            // Check against ALL recent replies
+            const match = recentReplies.find(reply => {
+                const timeDiff = Date.now() - reply.timestamp;
+                if (timeDiff >= 20000) return false;
+                
+                const sentText = reply.text;
+                return incomingText && sentText && (incomingText === sentText || incomingText.includes(sentText) || sentText.includes(incomingText));
+            });
+
+            if (match) {
+                console.log(`[WA] Ignoring INCOMING message (Failsafe Echo Match): "${(payload.body || '').substring(0,30)}..." from ${sender}`);
+                return;
+            }
+        }
+
+        await queueMessage(session, payload);
+    } else if (event === 'state.change') {
+        // 1. Establish Baseline (Processing Start Time) for this session
+        if (!sessionStartTimeMap.has(session)) {
+            // Check for x-webhook-timestamp header (if available from WAHA/Reverse Proxy)
+            // Otherwise default to current server time
+            const headerTime = req.headers['x-webhook-timestamp'];
+            const startTime = headerTime ? Math.floor(Number(headerTime) / 1000) : Math.floor(Date.now() / 1000);
+            sessionStartTimeMap.set(session, startTime);
+            console.log(`[WA] Session ${session} connected. Baseline Time: ${startTime}`);
+        }
+
+        const msgTimestamp = payload.timestamp || Math.floor(Date.now() / 1000);
+        const baselineTime = sessionStartTimeMap.get(session);
+
+        // 2. Filter Backlog Messages (Sent BEFORE we started processing)
+        // User Instruction: "sender realtime message korle setar ans jak"
+        // Allow 2 minutes (120s) tolerance for "realtime" definition
+        if (msgTimestamp < (baselineTime - 120)) {
+            console.log(`[WA] Ignoring BACKLOG message from ${payload.from}. MsgTime: ${msgTimestamp}, Baseline: ${baselineTime}`);
+            return;
+        }
+        // -----------------------------------
+
+    // --- IGNORE @lid (Linked Devices / Internal) ---
+    // User Update: Removed per user instruction "eta wpp r number system".
+    // Previously blocked 124532744531973@lid, but user says this blocks legitimate replies.
+    // if (payload.from && payload.from.includes('@lid')) {
+    //    console.log(`[WA] Ignoring @lid message (Internal/Linked Device): ${payload.from}`);
+    //    return;
+    // }
+    // -----------------------------------------------
+
+    // --- HANDLE ADMIN/BOT MESSAGES (fromMe) ---
+        if (payload.fromMe) {
+            // Check if this is a BOT message we just sent (ID Match)
+            // Uses Normalized ID
+            // [DEBUG] Log IDs to debug the mismatch issue
+            console.log(`[WA Debug] Checking fromMe ID: ${messageIdRaw}. BotIDs count: ${botMessageIds.size}`);
+
+            // 1. Strict ID Match (Fastest)
+            if (botMessageIds.has(messageIdRaw)) {
+                console.log(`[WA] Ignoring fromMe message (BotID Match): ${messageIdRaw}`);
+                botMessageIds.delete(messageIdRaw);
+                return;
+            }
+
+            // 2. Text-Based Echo Guard (In-Memory)
+            const recipient = payload.to || payload.from;
+            
+            if (!recipient) {
+                 console.log('[WA] Skipping Echo Guard: No recipient/sender info found.');
+                 return;
+            }
+            
+            // Check keys with and without suffix to handle WAHA format variations
+            const keysToCheck = [recipient];
+            if (recipient.includes('@')) keysToCheck.push(recipient.split('@')[0]);
+            
+            let recentReplies = [];
+            for (const k of keysToCheck) {
+                const found = recentBotReplies.get(k);
+                if (found && Array.isArray(found)) {
+                    recentReplies = found;
+                    break;
+                }
+            }
+
+            if (recentReplies && recentReplies.length > 0) {
+                const incomingText = (payload.body || '').trim();
+                const normalizedIncoming = normalizeText(incomingText);
+                
+                // Check against ALL recent replies in the window
+                const match = recentReplies.find(reply => {
+                    const timeDiff = Date.now() - reply.timestamp;
+                    if (timeDiff >= 20000) return false; // 20s Window (Increased)
+                    
+                    const normalizedStored = reply.text;
+                    // Robust Check: Exact, Includes, or 80% Similarity
+                    // If normalized text is empty (e.g. all symbols), fall back to raw length check or loose match
+                    if (!normalizedIncoming && !normalizedStored) return true; // Both empty -> Match
+                    
+                    return normalizedIncoming === normalizedStored || 
+                           (normalizedIncoming.length > 5 && normalizedIncoming.includes(normalizedStored)) || 
+                           (normalizedStored.length > 5 && normalizedStored.includes(normalizedIncoming));
+                });
+
+                if (match) {
+                    console.log(`[WA] Ignoring fromMe message (Text Match): "${incomingText.substring(0,30)}..."`);
+                    return;
+                }
+            }
+
+                // 4. TERTIARY CHECK: DB-Based Echo Guard (1.5s Wait + 20 Msg Check)
+                // User Instruction: Wait 1.5s (Reduced from 3s), then check last 20 messages in DB
+                const targetRecipient = payload.to;
+                const targetBody = normalizeText(payload.body);
+                
+                // Wait 1.5 seconds to ensure any concurrent bot reply is saved to DB via its own flow
+                await new Promise(resolve => setTimeout(resolve, 1500));
+
+                try {
+                    // Fetch last 20 messages from DB
+                    const lastMessages = await dbService.getLastNWhatsAppMessages(session, targetRecipient, 20);
+                    
+                    // Check if ANY of them match our current message AND were sent by 'bot'
+                    const isEcho = lastMessages.some(msg => {
+                        if (msg.reply_by !== 'bot') return false;
+                        const dbBody = normalizeText(msg.text);
+                        // Debug log for potential mismatches
+                        // console.log(`[WA Echo Debug] DB: ${dbBody} vs Incoming: ${targetBody}`);
+                        return dbBody === targetBody;
+                    });
+
+                    if (isEcho) {
+                        console.log(`[WA] Ignoring fromMe message (DB Echo Match): "${targetBody.substring(0, 30)}..."`);
+                        return;
+                    } else {
+                        console.log(`[WA Debug] Echo Check Failed. Incoming: "${targetBody}". Last 5 DB: ${lastMessages.slice(0, 5).map(m => m.reply_by + ':' + normalizeText(m.text)).join(' | ')}`);
+                    }
+                } catch (err) {
+                    console.warn(`[WA] DB Echo check failed: ${err.message}`);
+                }
+
+                // 5. Fallback: If still not identified as bot, assume Admin
+                
+                const messageText = payload.body || '';
+                const sessionName = session;
+                
+                // In-memory duplicate check
+                if (recentMessageIds.has(messageIdRaw)) return;
+                recentMessageIds.add(messageIdRaw);
+                setTimeout(() => recentMessageIds.delete(messageIdRaw), 10 * 60 * 1000); // Clear after 10 mins
+
+                const isDuplicate = await dbService.checkWhatsAppDuplicate(messageIdRaw);
+                if (!isDuplicate) {
+                    // Prevent saving empty messages (avoids blank rows in UI)
+                    // Check for Reactions, Protocol messages, etc.
+                    const msgType = payload.type || payload.subtype || 'chat';
+                    if (['reaction', 'e2e_notification', 'protocol', 'ciphertext', 'revoked'].includes(msgType)) {
+                        console.log(`[WA] Ignoring Admin message of type: ${msgType}`);
+                        return;
+                    }
+
+                    const hasText = messageText && messageText.trim().length > 0;
+                    const hasMedia = payload.hasMedia || (payload.media && Object.keys(payload.media).length > 0) || (payload._data && (payload._data.jpegThumbnail || payload._data.thumbnail));
+
+                    if (!hasText && !hasMedia) {
+                        console.log('[WA] Ignoring empty Admin message (no text/media).');
+                        return;
+                    }
+                    
+                    const textToSave = messageText.trim() || '[Media Sent]';
+
+                    // --- NOTE TO SELF CHECK (Testing Mode) ---
+                    // Improved extraction for robustness
+                    const senderNum = (payload.from || '').split('@')[0];
+                    let recipientNum = (payload.to || '').split('@')[0];
+                    
+                    // Fallback for recipient if payload.to is missing (happens in some WAHA versions)
+                    if (!recipientNum && payload._data && payload._data.to) {
+                         recipientNum = (payload._data.to.remote || payload._data.to || '').split('@')[0];
+                    }
+
+                    const isNoteToSelf = senderNum && recipientNum && senderNum === recipientNum;
+
+                    // [DEBUG] Log Note-to-Self Check details
+                    if (payload.fromMe) {
+                        console.log(`[WA Debug] Note-to-Self Check: Sender=${senderNum}, Recipient=${recipientNum}, Match=${isNoteToSelf}`);
+                    }
+
+                    if (isNoteToSelf) {
+                         console.log(`[WA] Note-to-Self Detected (${senderNum}). Treating as User Message.`);
+                         console.log(`[WA Debug] Note-to-Self: Skipping Admin Logic. Proceeding to Queue.`);
+                    } else {
+                    
+                    // --- ECHO GUARD START (Prevent Bot Replies from being saved as Admin) ---
+                    // Check if this "Admin" message is actually a Bot Echo
+                    // Uses 'recentBotReplies' populated in processAI
+                    const recentReplies = recentBotReplies.get(payload.to || payload.from);
+                    if (recentReplies && Array.isArray(recentReplies)) {
+                         const incomingText = normalizeText(textToSave); 
+                         
+                         const match = recentReplies.find(reply => {
+                             const timeDiff = Date.now() - reply.timestamp;
+                             if (timeDiff >= 30000) return false; // Match window with top guard
+                             
+                             const sentText = reply.text; 
+                             return incomingText === sentText || (incomingText.length > 5 && incomingText.includes(sentText)) || (sentText.length > 5 && sentText.includes(incomingText));
+                         });
+
+                         if (match) {
+                             console.log(`[WA] Ignoring Bot Echo (fromMe=true): "${(textToSave || '').substring(0,30)}..."`);
+                             return; // SKIP SAVING & HANDOVER
+                         }
+                    }
+                    // --- ECHO GUARD END ---
+
+                    const existingChat = await dbService.getWhatsAppChatById(messageIdRaw);
+                    if (existingChat && (existingChat.reply_by === 'bot' || existingChat.reply_by === 'system')) {
+                        console.log(`[WA] Skipping Admin save (Bot/System Echo): ${messageIdRaw}`);
+                        return;
+                    }
+
+                    console.log(`[WA] Admin Message Detected: "${textToSave}"`);
+                    
+                    // RE-ENABLED PER USER INSTRUCTION (Duplicate Fix: Check DB first?)
+                    // For now, we enable it because the lock logic and history depend on it.
+                    // To avoid duplicates, we rely on the fact that this is 'fromMe' handling
+                    // and 'bot' messages are handled separately or filtered by ID.
+                    
+                    try {
+                        await dbService.saveWhatsAppChat({
+                            session_name: sessionName,
+                            sender_id: sessionName, // Admin is the sender (Session Name/Page Number)
+                            recipient_id: payload.to, // User is the recipient
+                            message_id: messageIdRaw,
+                            text: textToSave,
+                            timestamp: Date.now(),
+                            status: 'sent',
+                            reply_by: 'admin' // Trigger stop logic
+                        });
+                        console.log(`[WA] Saved Admin Message: ${messageIdRaw}`);
+                    } catch (e) {
+                        console.error(`[WA] Failed to save Admin Message: ${e.message}`);
+                    }
+
+                    // --- EMOJI HANDOVER LOGIC (Admin) ---
+                    // Fetch Config for Dynamic Emojis
+                    let LOCK_EMOJIS = ['🛑', '🔒', '⛔'];
+                    let UNLOCK_EMOJIS = ['🟢', '🔓', '✅'];
+                    
+                    try {
+                        const config = await dbService.getWhatsAppConfig(sessionName);
+                        if (config) {
+                            const prompts = config.page_prompts || {};
+                            // Support both Messenger-style (single emoji) and List-style (comma separated)
+                            const locks = [];
+                            const unlocks = [];
+
+                            // 1. Messenger Style (block_emoji / unblock_emoji)
+                            if (prompts.block_emoji) locks.push(prompts.block_emoji);
+                            if (prompts.unblock_emoji) unlocks.push(prompts.unblock_emoji);
+                            if (config.block_emoji) locks.push(config.block_emoji);
+                            if (config.unblock_emoji) unlocks.push(config.unblock_emoji);
+
+                            // 2. List Style (lock_emojis / unlock_emojis)
+                            const lockCandidates = [
+                                prompts.lock_emojis,
+                                config.lock_emojis
+                            ].filter(Boolean).join(' ');
+                            const unlockCandidates = [
+                                prompts.unlock_emojis,
+                                config.unlock_emojis
+                            ].filter(Boolean).join(' ');
+
+                            if (lockCandidates.trim()) {
+                                locks.push(...lockCandidates.split(/[, ]+/).map(e => e.trim()).filter(e => e));
+                            }
+                            if (unlockCandidates.trim()) {
+                                unlocks.push(...unlockCandidates.split(/[, ]+/).map(e => e.trim()).filter(e => e));
+                            }
+
+                            // Update if we found any
+                            if (locks.length > 0) LOCK_EMOJIS = locks;
+                            if (unlocks.length > 0) UNLOCK_EMOJIS = unlocks;
+                        }
+                        console.log(`[WA Handover] Config Loaded. Lock: ${LOCK_EMOJIS.join('|')}, Unlock: ${UNLOCK_EMOJIS.join('|')}`);
+                    } catch (e) {
+                        console.warn(`[WA] Failed to fetch config for emoji check: ${e.message}`);
+                    }
+                    
+                    // Helper to strip variation selectors (VS16) and normalize
+                    // Renamed to avoid shadowing Global normalizeText
+                    const normalizeEmojiText = (str) => (str || '').replace(/\uFE0F/g, '').normalize('NFC');
+
+                    let command = null;
+                    // Check if textToSave contains any of the emojis
+                    // Use standard includes, but debug what we are checking
+                    console.log(`[WA Handover] Checking text: "${textToSave}"`);
+                    
+                    const cleanText = normalizeEmojiText(textToSave);
+
+                    for (const e of LOCK_EMOJIS) {
+                        if (cleanText.includes(normalizeEmojiText(e))) {
+                            command = 'LOCK';
+                            console.log(`[WA Handover] Matched Lock Emoji: ${e}`);
+                            break;
+                        }
+                    }
+                    if (!command) {
+                        for (const e of UNLOCK_EMOJIS) {
+                            if (cleanText.includes(normalizeEmojiText(e))) {
+                                command = 'UNLOCK';
+                                console.log(`[WA Handover] Matched Unlock Emoji: ${e}`);
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (command) {
+                        const isLocked = command === 'LOCK';
+                        console.log(`[WA] Emoji Command Detected (${command}) from Admin. Updating Lock Status...`);
+                        
+                        const targetUser = payload.to || payload._data?.key?.remoteJidAlt || payload._data?.key?.remoteJid;
+                        if (targetUser && !String(targetUser).includes('@lid') && targetUser !== sessionName) {
+                            await dbService.toggleWhatsAppLock(sessionName, targetUser, isLocked);
+                        
+                            // Update Memory Map
+                            const chatKey = `${sessionName}_${targetUser}`;
+                            if (isLocked) {
+                                handoverMap.set(chatKey, Date.now() + 24 * 60 * 60 * 1000);
+                            } else {
+                                handoverMap.delete(chatKey);
+                            }
+                        }
+                        
+                    } else {
+                        // Default Handover (5 mins) if no command
+                        const chatKey = `${sessionName}_${payload.to || payload.chatId || 'unknown'}`;
+                        handoverMap.set(chatKey, Date.now() + 5 * 60 * 1000);
+                    }
+                }
+                return; // STOP Processing
+            } // End else
+        }
+
+        // Ignore Status Updates (broadcasts)
+        if (payload.from === 'status@broadcast') return;
+
+        // --- TIMESTAMP CHECK (Ignore Old Messages > 2 Mins) ---
+        // Keeps the "Realtime" sanity check even if baseline was set long ago
+        const nowSeconds = Math.floor(Date.now() / 1000);
+        const ageSeconds = nowSeconds - msgTimestamp;
+        
+        if (ageSeconds > 120) { // 2 Minutes Tolerance
+            console.log(`[WA] Ignoring old message from ${payload.from}. Age: ${ageSeconds}s`);
+            return;
+        }
+        // -----------------------------------------------------
+
+        // --- FAILSAFE ECHO GUARD (Even if fromMe is false) ---
+        // Checks if we just sent this exact text to this user.
+        // Solves "Infinite Loop" if WAHA echoes bot messages as incoming user messages.
+        const sender = payload.from;
+        const recentReplies = recentBotReplies.get(sender);
+        
+        if (recentReplies && Array.isArray(recentReplies)) {
+             const incomingText = normalizeText(payload.body || '');
+             
+             // Check against ALL recent replies
+             const match = recentReplies.find(reply => {
+                 const timeDiff = Date.now() - reply.timestamp;
+                 if (timeDiff >= 20000) return false;
+                 
+                 const sentText = reply.text;
+                 return incomingText && sentText && (incomingText === sentText || incomingText.includes(sentText) || sentText.includes(incomingText));
+             });
+
+             if (match) {
+                 console.log(`[WA] Ignoring INCOMING message (Failsafe Echo Match): "${(payload.body || '').substring(0,30)}..." from ${sender}`);
+                 return;
+             }
+        }
+
+        await queueMessage(session, payload);
+    } else if (event === 'state.change') {
+        // Handle State Changes (WORKING, STOPPED, SCAN_QR_CODE, etc.)
+        const status = payload.body || payload.status; // WAHA payload format varies
+        console.log(`[WA Webhook] State Change for ${session}: ${status}`);
+        
+        let dbStatus = 'unknown';
+        let isActive = false;
+
+        // Map WAHA statuses to DB statuses (Consistency with IntegrationPage.tsx)
+        if (status === 'WORKING' || status === 'CONNECTED') {
+            dbStatus = 'WORKING';
+            isActive = true;
+        } else if (status === 'STOPPED') {
+            dbStatus = 'STOPPED';
+            isActive = false;
+        } else if (status === 'SCAN_QR_CODE' || status === 'SCAN_QR') {
+            dbStatus = 'scanned'; // Use 'scanned' to indicate QR is ready/needed
+            isActive = false;
+        } else if (status === 'STARTING') {
+            dbStatus = 'STARTING';
+            isActive = false;
+        } else {
+            dbStatus = (status || 'unknown');
+        }
+
+        try {
+            await dbService.updateWhatsAppEntryByName(session, {
+                status: dbStatus,
+                active: isActive
+            });
+            console.log(`[WA Webhook] DB Updated for ${session} -> Status: ${dbStatus}, Active: ${isActive}`);
+        } catch (err) {
+            console.error(`[WA Webhook] Failed to update DB status for ${session}:`, err.message);
+        }
+    } else if (event && String(event).toLowerCase().includes('label')) {
+        // Admin updated labels in WAHA UI -> treat as human handover
+        console.log(`[WA Debug] Label Event Detected: ${event}. Payload: ${JSON.stringify(payload || {})}`);
+        
+        // --- SMART LABEL HANDLING ---
+        // User Requirement: "Off er dorkar nai jodi lebel na pai se create korbe auto"
+        // Interpretation: Don't disable the handler. If label is missing (unknown), maybe create it?
+        // Logic: 
+        // 1. Identify the label from payload.
+        // 2. If it's a known "Stop" label (admin, stop, human), PAUSE AI.
+        // 3. If it's unknown/new, Log it (or create in DB if we tracked labels), but DO NOT PAUSE AI blindly.
+        
+        const sessionName = session;
+        const chatId = payload?.chatId || payload?.to || payload?.id; // WAHA payload varies
+        
+        // Extract Label Data (Best Effort)
+        // Payload might be { id: "...", labelId: "123", labelName: "Human" } or similar
+        const labelName = payload.labelName || payload.label?.name || payload.body || "Unknown Label";
+        
+        // Check if this label implies STOP
+        const hardcodedStops = ['adminhandle', 'admincall', 'stop', 'human', 'manual'];
+        const isStopLabel = hardcodedStops.some(s => labelName.toLowerCase().includes(s));
+        
+        if (isStopLabel) {
+            console.log(`[WA] Blocking Label Detected (${labelName}). Pausing AI.`);
+            const chatKey = `${sessionName}_${chatId}`;
+            handoverMap.set(chatKey, Date.now() + 60 * 60 * 1000); // 1 Hour
+            
+            // Log System Message
+            try {
+                await dbService.saveWhatsAppChat({
+                    session_name: sessionName,
+                    sender_id: sessionName,
+                    recipient_id: chatId || 'unknown',
+                    message_id: `label_${Date.now()}`,
+                    text: `[SYSTEM] Admin applied label '${labelName}'. AI paused.`,
+                    timestamp: Date.now(),
+                    status: 'system_notice',
+                    reply_by: 'admin'
+                });
+            } catch (e) {}
+        } else {
+             console.log(`[WA] Non-blocking Label Detected (${labelName}). AI continues.`);
+             // Ensure label exists? (User said "create auto")
+             // Since we don't maintain a strict "Labels Table" in our DB (we fetch dynamically),
+             // "Create Auto" might mean ensuring it's applied in WAHA? 
+             // But this is an event FROM WAHA, so it already exists there.
+             // We'll just assume "Create Auto" meant "Handle it automatically without breaking".
+        }
+    }
+};
+
+// Queue Message for Debounce
+async function queueMessage(session, messagePayload) {
+    let senderId = messagePayload.from; // e.g., 12345678@c.us
+    let messageText = messagePayload.body || '';
+    // #region debug-point ads-product-routing:whatsapp-incoming
+    reportAdsProductRoutingDebug('H4', 'whatsappController.js:queueMessage.incoming', 'whatsapp incoming payload ad/referral fields', {
+        session,
+        senderId,
+        messageId: typeof messagePayload.id === 'object' ? (messagePayload.id?._serialized || messagePayload.id?.id) : messagePayload.id,
+        bodyPreview: String(messagePayload.body || '').substring(0, 500),
+        type: messagePayload.type || null,
+        referral: messagePayload.referral || messagePayload._data?.referral || messagePayload._data?.message?.referral || null,
+        contextInfo: messagePayload._data?.message?.extendedTextMessage?.contextInfo || messagePayload._data?.message?.contextInfo || null,
+        adLikeKeys: Object.keys(messagePayload || {}).filter(k => /ref|ad|source|context/i.test(k)),
+        dataAdLikeKeys: Object.keys(messagePayload._data || {}).filter(k => /ref|ad|source|context/i.test(k))
+    });
+    // #endregion
+    let lockSenderId = resolveLockUserId(senderId, messagePayload);
+    if (lockSenderId && lockSenderId.includes('@lid')) {
+        try {
+            const mapped = await dbService.getWhatsAppContactByLid(session, lockSenderId);
+            if (mapped && mapped.phone_number) {
+                lockSenderId = mapped.phone_number;
+            }
+        } catch (e) {}
+    }
+
+    // Fix for Linked Devices (@lid)
+    // User Update: Do NOT convert @lid to @c.us. Use as is.
+    if (senderId && senderId.includes('@lid')) {
+        console.log(`[WA] Processing message from Linked Device (@lid): ${senderId}`);
+
+        // --- NOTE TO SELF CHECK (LID) ---
+        // If testing from LID to Self, treat as User Message
+        const sNum = (senderId || '').split('@')[0];
+        const rNum = (messagePayload.to || '').split('@')[0];
+        if (sNum && rNum && sNum === rNum) {
+             console.log(`[WA] Note-to-Self from LID Detected (${sNum}). Treating as User Message.`);
+             // Allow fall-through to normal processing
+        } else {
+        
+        // --- LID ADMIN GUARD (Emoji & Lock Logic) ---
+        // Handles case where WAHA reports fromMe=false for Linked Devices
+        const msgBody = (messageText || '').trim();
+        
+        // 1. Fetch Dynamic Config for Emojis
+        let LOCK_EMOJIS = ['🛑', '🔒', '⛔'];
+        let UNLOCK_EMOJIS = ['🟢', '🔓', '✅'];
+        
+        try {
+            // Use sessionName (which is passed as 'session' arg)
+            const config = await dbService.getWhatsAppConfig(session);
+            if (config) {
+                 // Support both Messenger-style (single emoji) and List-style (comma separated)
+                 const locks = [];
+                 const unlocks = [];
+
+                 // 1. Messenger Style (block_emoji / unblock_emoji)
+                 if (config.block_emoji) locks.push(config.block_emoji);
+                 if (config.unblock_emoji) unlocks.push(config.unblock_emoji);
+
+                 // 2. List Style (lock_emojis / unlock_emojis)
+                 if (config.lock_emojis && config.lock_emojis.trim()) {
+                     locks.push(...config.lock_emojis.split(/[, ]+/).map(e => e.trim()).filter(e => e));
+                 }
+                 if (config.unlock_emojis && config.unlock_emojis.trim()) {
+                     unlocks.push(...config.unlock_emojis.split(/[, ]+/).map(e => e.trim()).filter(e => e));
+                 }
+
+                 // Update if we found any
+                 if (locks.length > 0) LOCK_EMOJIS = locks;
+                 if (unlocks.length > 0) UNLOCK_EMOJIS = unlocks;
+            }
+        } catch (e) {
+            console.warn(`[WA LID] Failed to fetch config for emoji check: ${e.message}`);
+        }
+
+        // Helper to strip variation selectors (VS16) and normalize
+        const normalizeEmojiText = (str) => (str || '').replace(/\uFE0F/g, '').normalize('NFC');
+        const cleanBody = normalizeEmojiText(msgBody);
+
+        let command = null;
+        for (const e of LOCK_EMOJIS) {
+            if (cleanBody.includes(normalizeEmojiText(e))) {
+                command = 'LOCK';
+                break;
+            }
+        }
+        if (!command) {
+            for (const e of UNLOCK_EMOJIS) {
+                if (cleanBody.includes(normalizeEmojiText(e))) {
+                    command = 'UNLOCK';
+                    break;
+                }
+            }
+        }
+        
+        if (command) {
+             const isLock = command === 'LOCK';
+             console.log(`[WA] LID Admin Command Detected: ${command} from ${senderId}`);
+             
+             // Target is the Recipient (User)
+             // CAUTION: messagePayload.to might be the LID itself or the group. 
+             // For 1-on-1, 'to' is usually the user if 'from' is LID (wait, if 'from' is LID, 'to' is me? No.)
+             // If I send FROM my phone (LID), 'from' is LID. 'to' is the USER.
+             // If Note-to-Self, 'to' is ME. But we handled that above.
+             const lockTarget = messagePayload.to || messagePayload._data?.key?.remoteJidAlt || messagePayload._data?.key?.remoteJid; 
+             
+             if (lockTarget && !lockTarget.includes('@lid') && lockTarget !== session) { 
+                 try {
+                     await dbService.toggleWhatsAppLock(session, lockTarget, isLock);
+                     const ck = `${session}_${lockTarget}`;
+                     if (isLock) handoverMap.set(ck, Date.now() + 24 * 60 * 60 * 1000);
+                     else handoverMap.delete(ck);
+                     console.log(`[WA] Lock Status Updated for ${lockTarget}`);
+                     
+                     // Save this "Admin" action to DB
+                     await dbService.saveWhatsAppChat({
+                        session_name: session,
+                        sender_id: session, // Treat as Admin/Page
+                        recipient_id: lockTarget,
+                        message_id: messagePayload.id || `lid_${Date.now()}`,
+                        text: msgBody,
+                        timestamp: Date.now(),
+                        status: 'sent',
+                        reply_by: 'admin'
+                    });
+
+                 } catch (e) {
+                     console.error(`[WA] Failed to toggle lock for LID command: ${e.message}`);
+                 }
+             }
+             return; // STOP Processing (Don't Queue)
+        }
+        
+        // 2. Check for Emoji-Only Reaction (e.g. Thumbs Up)
+        // Regex for string containing ONLY emojis and whitespace (Includes Extended Pictographics)
+        const emojiRegex = /^[\p{Emoji}\p{Extended_Pictographic}\s]+$/u;
+        if (emojiRegex.test(msgBody)) {
+             console.log(`[WA] Ignoring LID Emoji Reaction: "${msgBody}" from ${senderId}`);
+             return; // STOP Processing
+        }
+
+        // 3. NORMAL ADMIN CHAT from LID (No Command, Not Reaction)
+        
+        // CHECK: Is this Note-to-Self / Incoming?
+        // If fromMe=false, it means Admin sent message TO the Bot (Note-to-Self/Test).
+        // We should treat this as a USER message so the bot replies.
+        if (!messagePayload.fromMe) {
+             console.log(`[WA] LID Message (Incoming/Note-to-Self): "${msgBody}". Treating as USER Message (Allowing Reply).`);
+             // Allow fall-through to User Logic (Do NOT return)
+        } else {
+            // fromMe=true (Outgoing / Sync)
+             // MUST SAVE AS ADMIN MESSAGE to prevent Bot Reply Loop
+             console.log(`[WA] LID Message (Normal Admin Chat): "${msgBody}" from ${senderId}`);
+             try {
+                  await dbService.saveWhatsAppChat({
+                     session_name: session,
+                     sender_id: senderId, // User Request: Use actual Sender ID (LID) instead of Session Name
+                     recipient_id: messagePayload.to,
+                     message_id: messagePayload.id || `lid_${Date.now()}`,
+                     text: msgBody,
+                     timestamp: Date.now(),
+                     status: 'sent',
+                     reply_by: 'admin'
+                 });
+            } catch (e) {
+                console.error(`[WA] Failed to save LID Admin message: ${e.message}`);
+            }
+            return; // STOP Processing (Crucial: Don't let it fall through to User Logic)
+        }
+    }
+    }
+
+    // --- FAILSAFE ECHO GUARD (For "Received" messages that are actually echoes) ---
+    // Prevents "Ami Ami Ami" Loop / Spam
+    const recentReplies = recentBotReplies.get(senderId);
+    if (recentReplies && Array.isArray(recentReplies)) {
+        const incomingText = normalizeText(messageText);
+        
+        // Check against ALL recent replies
+        const match = recentReplies.find(reply => {
+            const timeDiff = Date.now() - reply.timestamp;
+            if (timeDiff >= 20000) return false;
+            
+            const storedText = reply.text;
+            return incomingText && storedText && (incomingText === storedText || incomingText.includes(storedText) || storedText.includes(incomingText));
+        });
+
+        if (match) {
+             console.log(`[WA] Failsafe Echo Guard triggered! Ignoring message from ${senderId} (Matches recent bot reply).`);
+             return;
+        }
+    }
+
+    const sessionName = session; // Using WAHA Session as Session Name
+    
+    // Normalized ID
+    let messageId = messagePayload.id;
+    if (typeof messageId === 'object' && messageId !== null) {
+        messageId = messageId._serialized || messageId.id;
+    }
+    // Get trigger timestamp for admin check
+    const triggerTimestamp = Date.now();
+
+    // --- DEBUG: LOG FULL PAYLOAD IF TEXT IS EMPTY ---
+    if (!messageText || messageText.trim().length === 0) {
+        console.log(`[WA DEBUG] Empty Text Detected! Dumping Payload for ${messageId}:`, JSON.stringify(messagePayload, null, 2));
+
+        const extractedText = extractMessageTextFromPayload(messagePayload);
+        if (extractedText) {
+            messageText = extractedText;
+            console.log(`[WA DEBUG] Recovered text from payload fallback: "${messageText}"`);
+        } else if (messagePayload.body) {
+            // Sometimes body is there but trim failed?
+            console.log(`[WA DEBUG] messagePayload.body exists but might be empty string: "${messagePayload.body}"`);
+        }
+
+        // NEW: Fallback for Media Messages to prevent "null" save
+        const mime = messagePayload.mimetype || messagePayload.media?.mimetype || '';
+        if (mime.startsWith('audio/') || mime.includes('audio') || messagePayload.type === 'ptt') {
+            if (!messageText) messageText = '[Voice Message - Processing...]';
+        } else if (mime.startsWith('image/') || messagePayload.type === 'image') {
+            if (!messageText) messageText = '[Image Message - Processing...]';
+        }
+    }
+    // ------------------------------------------------
+
+    const isGroup = typeof senderId === 'string' && senderId.includes('@g.us');
+    const groupId = messagePayload.chatId || (isGroup ? senderId : null);
+    const groupName = messagePayload.chatName || null;
+
+    const logMsg = `[WA Webhook] Received Message. Session: ${sessionName}, Sender: ${senderId}, Text: "${messageText.substring(0, 50)}..."`;
+    console.log(logMsg);
+    logToFile(logMsg);
+
+    // --- EXTRACT MEDIA (Moved up so Smart Inbox can preview image URL immediately) ---
+    const imageUrls = [];
+    const audioUrls = [];
+
+    const inboundMediaUrls = extractIncomingMediaUrls(messagePayload);
+    if (inboundMediaUrls.length > 0) {
+        const mime = messagePayload.mimetype || messagePayload.media?.mimetype || '';
+        if (mime.startsWith('image/') || messagePayload.type === 'image') {
+            imageUrls.push(...inboundMediaUrls);
+        }
+        else if (mime.startsWith('audio/') || mime.includes('audio') || messagePayload.type === 'ptt' || messagePayload.type === 'audio') {
+            audioUrls.push(...inboundMediaUrls);
+        }
+    }
+
+    // --- SAVE USER MESSAGE TO whatsapp_chats (Background - Non-Blocking) ---
+    // User Instructions: Fire and forget to reduce latency
+    const rawWhatsAppLogText = `${messageText || (imageUrls.length ? '[Image Message]' : audioUrls.length ? '[Audio Message]' : '')}${imageUrls.length ? `\n[Image URLs]: ${imageUrls.join(', ')}` : ''}${audioUrls.length ? `\n[Audio URLs]: ${audioUrls.join(', ')}` : ''}`.trim();
+    if (rawWhatsAppLogText.length > 0) {
+        dbService.saveWhatsAppChat({
+            session_name: sessionName,
+            sender_id: senderId,
+            recipient_id: messagePayload.to,
+            message_id: messageId,
+            text: rawWhatsAppLogText,
+            timestamp: Date.now(),
+            status: 'received',
+            reply_by: 'user',
+            is_group: isGroup,
+            group_id: groupId,
+            group_name: groupName
+        }).catch(err => console.error("Error saving to whatsapp_chats:", err.message));
+
+        // Save Contact/Lead (Fire and forget)
+        let pushName = messagePayload.pushName || messagePayload._data?.notifyName || messagePayload.notifyName;
+        if (!pushName && messagePayload.sender) {
+             pushName = messagePayload.sender.pushname || messagePayload.sender.name || messagePayload.sender.shortName;
+        }
+        if (!pushName) pushName = 'Unknown';
+
+        const lidValue = (senderId && senderId.includes('@lid'))
+            ? senderId
+            : (messagePayload._data?.key?.remoteJid && String(messagePayload._data.key.remoteJid).includes('@lid'))
+                ? messagePayload._data.key.remoteJid
+                : (messagePayload._data?.key?.remoteJidAlt && String(messagePayload._data.key.remoteJidAlt).includes('@lid'))
+                    ? messagePayload._data.key.remoteJidAlt
+                    : null;
+
+        dbService.saveWhatsAppContact({
+            session_name: sessionName,
+            phone_number: lockSenderId,
+            name: pushName,
+            lid: lidValue
+        }).catch(() => {});
+    }
+
+    const sessionId = `${sessionName}_${senderId}`;
+
+    // --- EARLY SEMANTIC CACHE CHECK (ULTRA-FAST PATH) ---
+    // User Requirement: Reply in <1s for cache hits.
+    if (messageText && messageText.trim() && !imageUrls.length && !audioUrls.length) {
+        const cacheQuery = messageText.trim().replace(/\s+/g, ' ');
+        
+        // Fetch Context (last_product_id) to make cache intelligent
+        dbService.getConversationState(sessionName, senderId).then(async (state) => {
+            const contextId = state?.last_product_id || null;
+            
+            const cached = await dbService.findSemanticCache({
+                page_id: sessionName,
+                session_name: sessionName,
+                context_id: contextId,
+                question: cacheQuery,
+                threshold: 0.96
+            });
+
+            if (cached) {
+                const pageData = await getCachedPageData(sessionName);
+                const pageConfig = pageData?.config;
+                if (pageConfig && (pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1)) {
+                    const hasReplyTo = Boolean(
+                        messagePayload.replyTo
+                        || messagePayload._data?.quotedMsgId
+                        || messagePayload._data?.message?.extendedTextMessage?.contextInfo?.stanzaId
+                    );
+                    const isSwipeEnabled = pageConfig.swipe_reply !== false && pageConfig.swipe_reply !== 'false' && pageConfig.swipe_reply !== 0 && pageConfig.swipe_reply !== '0';
+                    const isReplyEnabled = pageConfig.reply_message !== false && pageConfig.reply_message !== 'false' && pageConfig.reply_message !== 0 && pageConfig.reply_message !== '0';
+
+                    if ((hasReplyTo && !isSwipeEnabled) || (!hasReplyTo && !isReplyEnabled)) {
+                        console.log(`[WA] Ultra-fast cache skipped: bot control disabled for ${senderId}`);
+                        return;
+                    }
+
+                    // Check if admin replied after last user message
+                    const lastUserTs = await dbService.getLastWhatsAppUserMessageTimestamp(sessionName, senderId);
+                    const checkTs = lastUserTs || triggerTimestamp;
+                    const hasAdminReplied = await dbService.hasWhatsAppAdminReplySince(sessionName, senderId, checkTs);
+                    
+                    if (hasAdminReplied) {
+                        console.log(`[WA] Bot skipped: Admin replied before send to ${senderId}`);
+                        const pendingMessageId = `bot_skip_${Date.now()}`;
+                        await dbService.saveWhatsAppChat({
+                            session_name: sessionName,
+                            sender_id: sessionName,
+                            recipient_id: senderId,
+                            message_id: pendingMessageId,
+                            text: '[Bot skipped: Admin replied before send]',
+                            timestamp: Date.now(),
+                            status: 'skipped_admin_reply',
+                            reply_by: 'bot'
+                        });
+                        return;
+                    }
+                    
+                    console.log(`[WA] ⚡ ULTRA-FAST CACHE HIT! (Context: ${contextId || 'None'})`);
+                    const pendingMessageId = `cache_${Date.now()}`;
+                    await saveWhatsAppOutgoingLog({
+                        sessionName,
+                        recipientId: senderId,
+                        messageId: pendingMessageId,
+                        text: cached,
+                        status: 'sending',
+                        replyBy: 'bot',
+                        modelUsed: 'semantic-cache'
+                    });
+                    if (typeof trackBotReply === 'function') trackBotReply(senderId, cached);
+                    
+                    await whatsappService.sendSeen(sessionName, senderId);
+                    await whatsappService.sendTyping(sessionName, senderId);
+                    await whatsappService.sendMessage(sessionName, senderId, cached);
+                    
+                    await saveWhatsAppOutgoingLog({
+                        sessionName,
+                        recipientId: senderId,
+                        messageId: pendingMessageId,
+                        text: cached,
+                        status: 'sent',
+                        replyBy: 'bot',
+                        modelUsed: 'semantic-cache'
+                    });
+                }
+            }
+        }).catch(e => console.warn(`[WA] Ultra-fast cache check failed:`, e.message));
+    }
+
+    // Initialize buffer if not exists
+    if (!debounceMap.has(sessionId)) {
+        debounceMap.set(sessionId, { messages: [], timer: null, pageId: messagePayload.to, lockSenderId, isProcessing: false });
+    } else {
+        const existing = debounceMap.get(sessionId);
+        if (existing && !existing.lockSenderId) {
+            existing.lockSenderId = lockSenderId;
+        }
+    }
+
+    const sessionData = debounceMap.get(sessionId);
+
+    // --- PUSH OBJECT ---
+    // Extract Quoted Message Data
+    let quotedContent = null;
+    try {
+        // Search in multiple possible locations
+        const q = messagePayload._data?.quotedMsg || messagePayload.quotedMsg || messagePayload._data?.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+        
+        if (q) {
+            if (q.body) quotedContent = q.body; // Standard Text
+            else if (q.caption) quotedContent = q.caption; // Image/Video with caption
+            else if (q.conversation) quotedContent = q.conversation; // Direct conversation text (some payloads)
+            else if (q.type === 'ptt' || q.type === 'audio') quotedContent = '[Voice Message]';
+            else if (q.type === 'image') quotedContent = '[Image Message]';
+            else if (q.type === 'sticker') quotedContent = '[Sticker]';
+            else if (q.type === 'video') quotedContent = '[Video Message]';
+            // Deep nested text check
+            else if (q.extendedTextMessage && q.extendedTextMessage.text) quotedContent = q.extendedTextMessage.text;
+        } 
+        
+        // Fallback to standard replyTo object
+        if (!quotedContent && messagePayload.replyTo && messagePayload.replyTo.body) {
+             quotedContent = messagePayload.replyTo.body;
+        }
+        
+        if (quotedContent) {
+            logDebug(`[WA] Extracted Quoted Content: "${quotedContent.substring(0,30)}..."`);
+        }
+    } catch (e) {
+        console.error('[WA] Failed to extract quoted content:', e);
+    }
+
+    // Extract Push Name for AI Context
+    let pushName = messagePayload.pushName || messagePayload._data?.notifyName || messagePayload.notifyName;
+    if (!pushName && messagePayload.sender) {
+         pushName = messagePayload.sender.pushname || messagePayload.sender.name || messagePayload.sender.shortName;
+    }
+
+    let replyToId = messagePayload.replyTo?.id || null;
+    if (replyToId && typeof replyToId === 'object') {
+        replyToId = replyToId._serialized || replyToId.id || null;
+    }
+    if (!replyToId && messagePayload.replyTo && typeof messagePayload.replyTo === 'string') {
+        replyToId = messagePayload.replyTo;
+    }
+    if (!replyToId && messagePayload._data?.quotedMsgId) {
+        replyToId = messagePayload._data.quotedMsgId;
+    }
+    if (!replyToId && messagePayload._data?.message?.extendedTextMessage?.contextInfo?.stanzaId) {
+        replyToId = messagePayload._data.message.extendedTextMessage.contextInfo.stanzaId;
+    }
+    const isSwipeReply = !!replyToId;
+
+    sessionData.messages.push({
+        id: messageId,
+        text: messageText,
+        reply_to: replyToId,
+        quoted_text: quotedContent, // <-- NEW: Store quoted text from webhook
+        sender_name: pushName || 'Unknown', // <-- NEW: Store sender name
+        images: imageUrls,
+        audios: audioUrls,
+        timestamp: triggerTimestamp
+    });
+
+    console.log(`[WA] Queued message for ${sessionId}. Buffer size: ${sessionData.messages.length} (Processing: ${sessionData.isProcessing})`);
+    
+    // If we are currently processing this session, just append the message to the buffer.
+    // The existing 'finally' block in processBufferedMessages will pick it up after finishing the current call.
+    if (sessionData.isProcessing) {
+        console.log(`[WA] Session ${sessionId} is busy processing. Message appended to current buffer.`);
+        return;
+    }
+
+    if (sessionData.timer) {
+        clearTimeout(sessionData.timer); // Reset timer on new message (Bundling: Text + Image + Swipe)
+    }
+
+    // Dynamic Debounce from Config (Fast Path)
+    const pageData = await getCachedPageData(sessionName);
+    const config = pageData?.config;
+    let debounceTime = 2000; // Default 2s (Optimized for speed)
+    
+    if (config) {
+        const prompts = pageData.prompts || {};
+        if (prompts.wait !== undefined) {
+             debounceTime = Number(prompts.wait) * 1000;
+        } else if (config.wait_time) {
+             debounceTime = Number(config.wait_time) * 1000;
+        }
+    }
+    
+    if (debounceTime < 0) debounceTime = 0;
+
+    sessionData.timer = setTimeout(async () => {
+        sessionData.isProcessing = true;
+        const messagesToProcess = [...sessionData.messages];
+        sessionData.messages = [];
+        const pageId = sessionData.pageId;
+        const lockSenderId = sessionData.lockSenderId;
+
+        try {
+            // Pass config to avoid re-fetching
+            await processBufferedMessages(sessionId, sessionName, senderId, messagesToProcess, pageId, config, lockSenderId);
+        } finally {
+            // Check if new messages arrived while we were processing
+            const remaining = debounceMap.get(sessionId);
+            if (remaining && remaining.messages.length > 0) {
+                console.log(`[WA] Session ${sessionId} has ${remaining.messages.length} new messages after processing. Re-triggering.`);
+                remaining.isProcessing = false;
+                // Trigger a short delay before next processing to allow more to group
+                remaining.timer = setTimeout(async () => {
+                    const nextBatch = [...remaining.messages];
+                    remaining.messages = [];
+                    remaining.isProcessing = true;
+                    try {
+                        await processBufferedMessages(sessionId, sessionName, senderId, nextBatch, pageId, config, lockSenderId);
+                    } finally {
+                        const stillRemaining = debounceMap.get(sessionId);
+                        if (!stillRemaining || stillRemaining.messages.length === 0) {
+                            debounceMap.delete(sessionId);
+                        } else {
+                            stillRemaining.isProcessing = false;
+                        }
+                    }
+                }, 2000); 
+            } else {
+                debounceMap.delete(sessionId);
+            }
+        }
+    }, debounceTime); 
+}
+
+// Core Logic Function (Debounced)
+async function processBufferedMessages(sessionId, sessionName, senderId, messages, pageId = null, preLoadedConfig = null, lockSenderId = null) {
+    let finalReplyText = null; 
+    const effectiveSenderId = lockSenderId || senderId;
+    // Get trigger timestamp from first message
+    const triggerTimestamp = messages[0]?.timestamp || Date.now();
+
+    // 1. Resolve Config EARLY (Optimization)
+    let pageConfig = preLoadedConfig;
+    if (!pageConfig) {
+        try {
+            pageConfig = await dbService.getWhatsAppConfig(sessionName);
+        } catch (e) {
+            console.warn(`[WA] Failed to load config for ${sessionName}: ${e.message}`);
+        }
+    }
+
+    if (!pageConfig) {
+        console.log(`[WA] Session ${sessionName} not configured. Stopping.`);
+        return;
+    }
+
+    // --- EARLY LABEL CHECK (Zero Cost Strategy) ---
+    try {
+        const latestLabels = await whatsappService.getLabels(sessionName, senderId);
+        if (latestLabels && Array.isArray(latestLabels)) {
+            const hardcodedStops = ['adminhandle', 'admincall', 'ordertrack'];
+            const shouldStop = latestLabels.some(l => {
+                const name = (typeof l === 'string' ? l : l.name || '').toLowerCase();
+                return hardcodedStops.includes(name);
+            });
+
+            const chatKey = `${sessionName}_${effectiveSenderId}`;
+
+            if (shouldStop) {
+                console.log(`[WA] Blocking Label Found at Start (${senderId}). Stopping Workflow.`);
+                handoverMap.set(chatKey, Date.now() + 60 * 60 * 1000); 
+                return; 
+            } else {
+                if (handoverMap.has(chatKey)) {
+                    console.log(`[WA] Blocking label removed (Early Check). Clearing Memory Lock.`);
+                    handoverMap.delete(chatKey);
+                }
+            }
+        }
+    } catch (e) {
+        console.warn(`[WA] Early Label Check Failed: ${e.message}`);
+    }
+
+    // 1. STICKER & EMOJI GATEKEEPER
+    const hasOnlyStickers = messages.every(m => m.isSticker === true);
+    const combinedRawText = messages.map(m => m.text).filter(Boolean).join(' ').trim();
+    // Regex for Alphanumeric or Bangla characters
+    const hasNoAlphanumeric = combinedRawText && !/[a-zA-Z0-9\u0980-\u09FF]/.test(combinedRawText);
+
+    if (hasOnlyStickers) {
+        console.log(`[Gatekeeper] Blocking reply for stickers only from ${senderId}`);
+        return;
+    }
+
+    // --- PRE-PROCESS METADATA & FEATURE FLAGS ---
+    let combinedText = "";
+    let allImages = [];
+    let allAudios = [];
+    let hasReplyTo = false;
+    let hasText = false;
+    let hasImages = false;
+    let hasAudios = false;
+
+    for (const msg of messages) {
+        if (msg.text) {
+            combinedText += msg.text + "\n";
+            if (String(msg.text).trim()) hasText = true;
+        }
+        if (msg.images && msg.images.length > 0) {
+            allImages.push(...msg.images);
+            hasImages = true;
+        }
+        if (msg.audios && msg.audios.length > 0) {
+            allAudios.push(...msg.audios);
+            hasAudios = true;
+        }
+        if (msg.reply_to || msg.quoted_text) hasReplyTo = true;
+    }
+
+    const primaryMsgId = messages.length > 0 ? messages[0].id : `usr_${Date.now()}`;
+    const inboundLogParts = [];
+    if (combinedText.trim()) inboundLogParts.push(combinedText.trim());
+    if (allImages.length > 0) inboundLogParts.push(`[Image URLs]: ${allImages.join(', ')}`);
+    if (allAudios.length > 0) inboundLogParts.push(`[Audio URLs]: ${allAudios.join(', ')}`);
+    const inboundLogText = inboundLogParts.join('\n\n').trim();
+
+    if (inboundLogText) {
+        await dbService.saveWhatsAppChat({
+            session_name: sessionName,
+            sender_id: senderId,
+            recipient_id: sessionName,
+            message_id: primaryMsgId,
+            text: inboundLogText,
+            timestamp: Date.now(),
+            status: 'received',
+            reply_by: 'user'
+        });
+    }
+
+    // --- FEATURE FLAGS CHECK (Respect Bot Control settings) ---
+    if (pageConfig) {
+        const isSwipeEnabled = pageConfig.swipe_reply !== false && pageConfig.swipe_reply !== 'false' && pageConfig.swipe_reply !== 0 && pageConfig.swipe_reply !== '0';
+        if (hasReplyTo && !isSwipeEnabled) {
+            console.log(`[WA] Swipe Reply disabled (swipe_reply=false) for session ${sessionName}. Ignoring.`);
+            await dbService.saveWhatsAppChat({
+                session_name: sessionName,
+                sender_id: sessionName,
+                recipient_id: senderId,
+                message_id: `sys_${Date.now()}`,
+                text: `[SYSTEM] Swipe Reply Disabled in Settings.`,
+                timestamp: Date.now(),
+                status: 'system_info',
+                reply_by: 'system'
+            });
+            return;
+        }
+
+        const isReplyEnabled = pageConfig.reply_message !== false && pageConfig.reply_message !== 'false' && pageConfig.reply_message !== 0 && pageConfig.reply_message !== '0';
+        if (!hasReplyTo && !isReplyEnabled) {
+            console.log(`[WA] Reply Message disabled (reply_message=false) for session ${sessionName}. Ignoring.`);
+            await dbService.saveWhatsAppChat({
+                session_name: sessionName,
+                sender_id: sessionName,
+                recipient_id: senderId,
+                message_id: `sys_${Date.now()}`,
+                text: `[SYSTEM] Reply Message Disabled in Settings.`,
+                timestamp: Date.now(),
+                status: 'system_info',
+                reply_by: 'system'
+            });
+            return;
+        }
+    }
+
+    // --- QUICK SEMANTIC CACHE CHECK (ULTRA-FAST PATH) ---
+    const semEnabled = pageConfig.semantic_cache_enabled === true || pageConfig.semantic_cache_enabled === 1;
+    const threshold = pageConfig.semantic_cache_threshold ? Math.max(0.5, Math.min(0.99, Number(pageConfig.semantic_cache_threshold))) : 0.96;
+    const isMediaTurn = allImages.length > 0 || allAudios.length > 0;
+    
+    if (semEnabled && !isMediaTurn && combinedText.trim()) {
+        try {
+            // Normalize combined text for better cache matching (Merged messages fix)
+            const cacheQuery = combinedText.trim().replace(/\s+/g, ' ');
+            
+            const cached = await dbService.findSemanticCache({
+                page_id: sessionName,
+                session_name: sessionName,
+                question: cacheQuery,
+                threshold
+            });
+
+            if (cached) {
+                console.log(`[WA] ⚡ INSTANT CACHE HIT! Replying to ${senderId}...`);
+                
+                // Check if admin replied after last user message
+                const lastUserTs = await dbService.getLastWhatsAppUserMessageTimestamp(sessionName, senderId);
+                const checkTs = lastUserTs || triggerTimestamp;
+                const hasAdminReplied = await dbService.hasWhatsAppAdminReplySince(sessionName, senderId, checkTs);
+                
+                if (hasAdminReplied) {
+                    console.log(`[WA] Bot skipped: Admin replied before send to ${senderId}`);
+                    const pendingMessageId = `bot_skip_${Date.now()}`;
+                    await dbService.saveWhatsAppChat({
+                        session_name: sessionName,
+                        sender_id: sessionName,
+                        recipient_id: senderId,
+                        message_id: pendingMessageId,
+                        text: '[Bot skipped: Admin replied before send]',
+                        timestamp: Date.now(),
+                        status: 'skipped_admin_reply',
+                        reply_by: 'bot'
+                    });
+                    return;
+                }
+                
+                if (typeof trackBotReply === 'function') {
+                    trackBotReply(senderId, cached);
+                }
+                
+                await whatsappService.sendSeen(sessionName, senderId);
+                await whatsappService.sendTyping(sessionName, senderId);
+                await whatsappService.sendMessage(sessionName, senderId, cached);
+                
+                // Fire and forget logging
+                const primaryMsgId = messages.length > 0 ? messages[0].id : `usr_${Date.now()}`;
+                dbService.saveWhatsAppChat({
+                    session_name: sessionName,
+                    sender_id: senderId,
+                    recipient_id: sessionName,
+                    message_id: primaryMsgId,
+                    text: inboundLogText || combinedText.trim(),
+                    timestamp: Date.now(),
+                    status: 'received',
+                    reply_by: 'user'
+                }).catch(() => {});
+
+                dbService.saveWhatsAppChat({
+                    session_name: sessionName,
+                    sender_id: sessionName,
+                    recipient_id: senderId,
+                    message_id: `cache_${Date.now()}`,
+                    text: cached,
+                    timestamp: Date.now(),
+                    status: 'sent',
+                    reply_by: 'bot',
+                    model_used: 'semantic-cache'
+                }).catch(() => {});
+                
+                return; 
+            }
+        } catch (cacheErr) {
+            console.warn(`[WA] Early cache check failed: ${cacheErr.message}`);
+        }
+    }
+    // ----------------------------------------------------
+
+    let replyToTextFallback = null;
+    let replyToId = null;
+    let senderName = null;
+    const isGroup = typeof senderId === 'string' && senderId.includes('@g.us');
+    
+    // Rebuild the merged text from buffered messages before adding reply context.
+    combinedText = messages
+        .map((msg) => (typeof msg.text === 'string' ? msg.text.trim() : ''))
+        .filter(Boolean)
+        .join("\n");
+
+    // Handover guard (Memory) - Late Check (Race Condition Fix)
+    // User Scenario: Admin replies during the buffer delay. We must catch it here.
+    const chatKey = `${sessionName}_${effectiveSenderId}`;
+    const handoverUntil = handoverMap.get(chatKey);
+    if (handoverUntil && handoverUntil > Date.now()) {
+        console.log(`[WA] Handover active (Memory - Late Check) for ${chatKey}. Skipping AI.`);
+        return;
+    }
+
+    // --- ENHANCED LOCK SYSTEM (3-Layer Check) ---
+    // Config for Emojis
+    let LOCK_EMOJIS = ['🛑', '🔒', '⛔'];
+    let UNLOCK_EMOJIS = ['🟢', '🔓', '✅'];
+    if (pageConfig) {
+         // Fix: Robust Splitting for Space/Comma separated emojis
+         if (pageConfig.lock_emojis) {
+             const locks = pageConfig.lock_emojis.split(/[, ]+/).map(e => e.trim()).filter(e => e && e.length > 0);
+             if (locks.length > 0) LOCK_EMOJIS = locks;
+         }
+         if (pageConfig.unlock_emojis) {
+             const unlocks = pageConfig.unlock_emojis.split(/[, ]+/).map(e => e.trim()).filter(e => e && e.length > 0);
+             if (unlocks.length > 0) UNLOCK_EMOJIS = unlocks;
+         }
+    }
+    console.log(`[WA] Using lock emojis: [${LOCK_EMOJIS.join(', ')}], unlock emojis: [${UNLOCK_EMOJIS.join(', ')}]`);
+
+    // Layer 3: Message History Scan (Self-Healing) - PRIORITY CHECK
+    // Checks last 20 messages for missed Emoji Commands. 
+    // This runs BEFORE DB check to catch "Zombie Locks" or "Missed Unlocks".
+    try {
+        const historyCheck = await dbService.checkWhatsAppEmojiLock(sessionName, [senderId, effectiveSenderId], LOCK_EMOJIS, UNLOCK_EMOJIS);
+        
+        if (historyCheck) {
+            if (historyCheck.locked) {
+                 console.log(`[WA Lock] Handover active (History Scan - Layer 3) for ${chatKey}. Found Lock Emoji at ${new Date(Number(historyCheck.timestamp)).toISOString()}`);
+                 // Sync DB & Memory
+                 await dbService.toggleWhatsAppLock(sessionName, effectiveSenderId, true);
+                 handoverMap.set(chatKey, Date.now() + 24 * 60 * 60 * 1000);
+                 return; // STOP AI
+            } else {
+                 // Explicit Unlock Found in History
+                 console.log(`[WA Lock] Unlock detected (History Scan - Layer 3). Ensuring DB is Unlocked.`);
+                 // Self-Heal: If DB was locked, this fixes it.
+                 await dbService.toggleWhatsAppLock(sessionName, effectiveSenderId, false);
+                 // Clear Memory Lock too
+                 handoverMap.delete(chatKey);
+                 // Continue to Layer 2 (which will now see Unlocked) or fall through
+            }
+        }
+    } catch (err) {
+        console.warn(`[WA] Failed to check history lock: ${err.message}`);
+    }
+
+    // Layer 2: Database Persistence Check
+    // If History was silent (null), we fallback to DB state.
+    try {
+        const contact = await dbService.getWhatsAppContact(sessionName, effectiveSenderId);
+        if (contact && contact.is_locked) {
+            console.log(`[WA] Handover active (DB Lock - Layer 2) for ${chatKey}. Skipping AI.`);
+            // Sync Memory
+            handoverMap.set(chatKey, Date.now() + 24 * 60 * 60 * 1000);
+            return; // STOP AI
+        }
+    } catch (err) {
+        console.warn(`[WA] Failed to check DB lock: ${err.message}`);
+    }
+
+    // Metadata already extracted at the top of processBufferedMessages
+    for (const msg of messages) {
+        if (msg.reply_to) {
+            replyToId = msg.reply_to; 
+            if (msg.quoted_text) replyToTextFallback = msg.quoted_text;
+        } else if (msg.quoted_text) {
+            replyToTextFallback = msg.quoted_text;
+        }
+        if (msg.sender_name && msg.sender_name !== 'Unknown') senderName = msg.sender_name;
+    }
+    // --- MERGE LOGIC (Messenger Style) ---
+    // User Update: Use simple concatenation like Messenger to fix "merge message not working"
+    // Removed complex deduplication/filtering which caused data loss
+    console.log(`[WA] Processing buffered. Text: ${combinedText.substring(0,50)}...`);
+
+    // If this is a swipe-reply, fetch quoted message text by ID for context
+    if (replyToId) {
+        logDebug(`[Swipe] Detected replyToId: ${replyToId}. Fetching context...`);
+        try {
+            let quotedText = await dbService.getMessageById(replyToId);
+            
+            // Fallback to Webhook Data (Lightweight System) - Handles Old Messages / Not in DB
+            if ((!quotedText || !quotedText.trim()) && replyToTextFallback) {
+                logDebug(`[Swipe] DB miss. Using Webhook quoted text: "${replyToTextFallback.substring(0,30)}..."`);
+                quotedText = replyToTextFallback;
+            }
+
+            logDebug(`[Swipe] Context fetch result: "${quotedText ? quotedText.substring(0,50) : 'null'}"`);
+            
+            if (quotedText && quotedText.trim()) {
+                // Formatting Context like SMS/Messenger style
+                combinedText = `[Replying to: "${quotedText.trim()}"]\n${combinedText}`;
+            } else {
+                logDebug(`[Swipe] Warning: Context was empty or null for ID ${replyToId}`);
+            }
+        } catch (e) {
+            console.warn(`[WA] Failed to fetch quoted message ${replyToId}: ${e.message}`);
+            logDebug(`[Swipe] Error fetching context: ${e.message}`);
+        }
+    } else if (replyToTextFallback && replyToTextFallback.trim()) {
+        combinedText = `[Replying to: "${replyToTextFallback.trim()}"]\n${combinedText}`;
+    }
+
+    // --- AUDIO TRANSCRIPTION (Per-Message) ---
+    // Added to fix Voice Message Reply & Swipe Reply Context
+    let audioTranscriptText = null;
+    let totalAudioTokens = 0; // Track Audio Tokens
+
+    if (hasAudios) {
+        const audioEnabled = pageConfig && pageConfig.audio_detection !== false && pageConfig.audio_detection !== 'false' && pageConfig.audio_detection !== 0 && pageConfig.audio_detection !== '0' && pageConfig.audio_detection !== null;
+        if (audioEnabled) {
+            logDebug(`[WA] Found audio messages. Starting transcription...`);
+            let collectedTranscripts = [];
+
+            for (const msg of messages) {
+                if (msg.audios && msg.audios.length > 0) {
+                    for (const audioUrl of msg.audios) {
+                        try {
+                            const transcriptData = await aiService.transcribeAudio(audioUrl, pageConfig || {});
+                            
+                            let transcript = "";
+                            let usage = 0;
+
+                            if (typeof transcriptData === 'object') {
+                                transcript = transcriptData.text;
+                                usage = transcriptData.usage || 0;
+                            } else {
+                                transcript = transcriptData;
+                            }
+
+                            logDebug(`[WA] Transcribed msg ${msg.id}: ${transcript} (Tokens: ${usage})`);
+                            
+                            if (transcript) {
+                                collectedTranscripts.push(transcript);
+                                totalAudioTokens += usage;
+                                
+                                await dbService.saveWhatsAppChat({
+                                    session_name: sessionName,
+                                    sender_id: pageId || sessionName, // Bot (Page) is sender
+                                    recipient_id: senderId, // User is recipient
+                                    message_id: `transcript_${msg.id}`,
+                                    text: `[Voice Transcript] ${transcript}`,
+                                    timestamp: Date.now(),
+                                    status: 'sent',
+                                    reply_by: 'bot', // Mark as BOT reply
+                                    is_group: isGroup,
+                                    group_id: null,
+                                    group_name: null
+                                });
+                            }
+                        } catch (e) {
+                            console.error(`[WA] Transcription failed for ${msg.id}:`, e.message);
+                            logDebug(`[WA] Transcription error: ${e.message}`);
+                        }
+                    }
+                }
+            }
+            audioTranscriptText = collectedTranscripts.join("\n").trim();
+        } else {
+            console.log(`[WA] Audio detection disabled for session ${sessionName}. Skipping transcription.`);
+            audioTranscriptText = `[System Note: User sent ${allAudios.length} voice messages. Audio detection is disabled, so they were not transcribed. Ask the user to type instead.]`;
+        }
+    }
+
+    // --- IMAGE ANALYSIS (Per-Message) ---
+    let imageAnalyzeText = null;
+    let totalVisionTokens = 0;
+    let imageDetectionEnabled = false;
+    if (hasImages) {
+        imageDetectionEnabled = pageConfig && pageConfig.image_detection !== false && pageConfig.image_detection !== 'false' && pageConfig.image_detection !== 0 && pageConfig.image_detection !== '0' && pageConfig.image_detection !== null;
+        if (!imageDetectionEnabled) {
+            imageAnalyzeText = `[System Note: User sent ${allImages.length} images. Image detection is disabled, so they were not analyzed. Ask the user to describe what they want.]`;
+        } else {
+            const productAnalysisPrompt = incomingImageAnalysisService.resolveIncomingImagePrompt({
+                pageConfig,
+                fallbackPrompt: `Analyze this image with extreme precision for a strict visual search.
+STRICT RULES:
+1. FOCUS ONLY on the main products in the foreground (e.g., being held in hand or placed at the front).
+2. Describe the EXACT visual characteristics: color, shape, pattern, print, fabric texture, sleeve/collar type, design cut.
+3. Check for specific environment details: hanger type, table, floor texture, mannequin, background wall color.
+4. READ the actual text printed or logos on the product carefully.
+5. Output EXACTLY in this format:
+- Category: [Item Type]
+- Visual Features: [Colors, Prints, Patterns, Shapes]
+- Text/Logo: [Visible OCR or Brands]
+- Background/Environment: [Brief description of where the product is placed]`
+            });
+            const batchId = `wa_img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            const analyzedImages = await incomingImageAnalysisService.analyzeIncomingImagesForConversation({
+                platform: 'whatsapp',
+                pageId: sessionName,
+                senderId,
+                imageUrls: allImages,
+                pageConfig,
+                prompt: productAnalysisPrompt,
+                batchId
+            });
+            const imageAnalysisResults = analyzedImages.results;
+            imageAnalyzeText = analyzedImages.combinedImageAnalysis;
+            const lastImageMap = analyzedImages.lastImageMap;
+            totalVisionTokens += analyzedImages.totalUsage;
+
+            await dbService.setConversationState(sessionName, senderId, {
+                last_image_map: Object.keys(lastImageMap).length > 0 ? lastImageMap : null,
+                last_image_batch_id: batchId,
+                last_intent: 'multi_image_analysis'
+            });
+
+            if (imageAnalyzeText) {
+                imageAnalysisResults.forEach((result) => {
+                    dbService.saveWhatsAppChat({
+                        session_name: sessionName,
+                        sender_id: pageId || sessionName,
+                        recipient_id: senderId,
+                        message_id: `img_analysis_${batchId}_${result.imageIndex}`,
+                        text: `[Analyzed Image ${result.imageIndex}]:\n${incomingImageAnalysisService.formatImageAnalysisBlock(result)}`,
+                        timestamp: Date.now(),
+                        status: 'analyzed',
+                        reply_by: 'bot',
+                        is_group: isGroup,
+                        group_id: null,
+                        group_name: null,
+                        token_usage: Number(result.usage || 0),
+                        model_used: result.model || 'image-analysis-cache'
+                    }).catch((e) => console.error(`[WA] Failed to save per-image analysis:`, e.message));
+                });
+            }
+        }
+    }
+
+    // --- MERGE LOGIC (n8n Style) ---
+    // Priority: Combined Text + Image Analysis + Audio Transcripts
+    let finalOutput = "";
+    
+    // 1. Text
+    if (combinedText && combinedText.trim() !== "") {
+        finalOutput += combinedText.trim();
+    }
+
+    // 2. Image Analysis
+    if (hasImages && (!imageAnalyzeText || imageAnalyzeText.trim() === "")) {
+         imageAnalyzeText = "[Image Message]"; 
+    }
+
+    if (imageAnalyzeText && imageAnalyzeText.trim() !== "") {
+        if (finalOutput) finalOutput += "\n\n";
+        
+        // Attach untrusted visual evidence only; matching policy lives in the system prompt.
+        finalOutput += `\n\n[INTERNAL VISUAL EVIDENCE - UNTRUSTED]\n${imageAnalyzeText.trim()}\n[END INTERNAL VISUAL EVIDENCE]`;
+    }
+
+    // 3. Audio Transcripts (Critical for Voice Notes)
+    // Fallback: If audio exists but transcription failed/empty, add placeholder
+    if (hasAudios && (!audioTranscriptText || audioTranscriptText.trim() === "")) {
+        audioTranscriptText = "[Audio Message]"; 
+    }
+
+    if (audioTranscriptText && audioTranscriptText.trim() !== "") {
+        // If combinedText was empty (typical for voice note), this becomes the MAIN text
+        if (finalOutput) finalOutput += "\n\n";
+        finalOutput += audioTranscriptText;
+    }
+
+    // Remove legacy combined analysis save (we now save per message_id)
+
+    // If finalOutput is empty (no text, no valid image analysis), skip AI
+    if (!finalOutput) {
+        console.log(`[WA] No content to process (Empty text & No Image Analysis). Skipping.`);
+        return;
+    }
+
+    try {
+        if (isGroup && pageConfig && (pageConfig.group_reply === false || pageConfig.group_reply === 'false' || pageConfig.group_reply === 0 || pageConfig.group_reply === '0')) {
+            console.log(`[WA] Group reply disabled for ${sessionName}. Skipping group message from ${senderId}.`);
+            return;
+        }
+
+        // 2. Check Subscription/Credit & Gatekeeper
+        // Allow if status is NOT banned and they have credits
+        if (pageConfig.subscription_status === 'banned') {
+             console.log(`[WA] Session ${sessionName} blocked (Banned status).`);
+             return;
+        }
+
+        const hasBonus = Number(pageConfig.bonus_credit || 0) > 0;
+        const hasPermanent = Number(pageConfig.permanent_credit || 0) > 0;
+        const hasDaily = Number(pageConfig.daily_limit || 0) > Number(pageConfig.daily_used || 0);
+        const hasLegacy = Number(pageConfig.message_credit || 0) > 0;
+        const hasAnyCredit = (hasBonus || hasPermanent || hasDaily || hasLegacy);
+
+        const hasOwnKey = (pageConfig.api_key && pageConfig.api_key.length > 5 && pageConfig.cheap_engine === false);
+
+        if (!hasAnyCredit && !hasOwnKey) {
+             console.log(`[WA] Session ${sessionName} blocked by Gatekeeper (Out of Credits & No Own API). Status: ${pageConfig.subscription_status}`);
+             console.log(`[WA Debug] B:${pageConfig.bonus_credit}, P:${pageConfig.permanent_credit}, D:${pageConfig.daily_used}/${pageConfig.daily_limit}, M:${pageConfig.message_credit}`);
+             
+             // Log System Error
+             await dbService.saveWhatsAppChat({
+                session_name: sessionName,
+                sender_id: sessionName,
+                recipient_id: senderId,
+                message_id: `sys_${Date.now()}`,
+                text: `[SYSTEM ERROR] Out of Credits. Please recharge to continue using AI.`,
+                timestamp: Date.now(),
+                status: 'system_error',
+                reply_by: 'system'
+            });
+             return;
+        }
+
+        // Gatekeeper Logic: Allow if Own API is used, otherwise require Credit
+        // DEBUG LOGGING
+        console.log(`[WA Gatekeeper] Config for ${sessionName}: Credits=${pageConfig.message_credit}, CheapEngine=${pageConfig.cheap_engine}, APIKey=${pageConfig.api_key ? 'YES' : 'NO'}`);
+
+
+        // --- FAILURE LOCK CHECK ---
+        
+        // Raw user media/text is saved before debounce. Analyzer context is saved separately.
+        const isLocked = await dbService.checkWhatsAppLockStatus(sessionName, effectiveSenderId);
+        if (isLocked) {
+            console.log(`[WA] Conversation with ${senderId} locked due to repeated failures.`);
+            await dbService.saveWhatsAppChat({
+                session_name: sessionName,
+                sender_id: sessionName,
+                recipient_id: senderId,
+                message_id: `sys_${Date.now()}`,
+                text: `[SYSTEM ERROR] Conversation Locked (Too many failures).`,
+                timestamp: Date.now(),
+                status: 'system_error',
+                reply_by: 'system'
+            });
+            return;
+        }
+
+        // 3. Prepare AI Context (n8n Style)
+        // Ensure Page ID is correctly identified (Session Name = Page ID for WhatsApp)
+        const pageId = sessionName; 
+
+        // --- EMOJI LOCK SYSTEM (Messenger Parity) ---
+        // Checks for admin emojis to lock/unlock AI
+        try {
+            const prompts = pageConfig.page_prompts || {};
+            const normalizeEmojiText = (str) => (str || '').replace(/\uFE0F/g, '').normalize('NFC');
+
+            const lockList = [
+                prompts.block_emoji, 
+                prompts.lock_emojis, 
+                pageConfig.lock_emojis,
+                pageConfig.block_emoji
+            ].filter(Boolean).join(' ').split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
+
+            const unlockList = [
+                prompts.unblock_emoji, 
+                prompts.unlock_emojis, 
+                pageConfig.unlock_emojis,
+                pageConfig.unblock_emoji
+            ].filter(Boolean).join(' ').split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
+
+            if (lockList.length > 0 || unlockList.length > 0) {
+                 const checkCount = parseInt(pageConfig.emoji_check_count) || 50;
+                 const pgClient = require('../services/pgClient');
+                 const result = await pgClient.query(
+                    `
+                    SELECT text, timestamp, reply_by
+                    FROM whatsapp_chats
+                    WHERE session_name = $1
+                      AND (
+                        (sender_id = $2 AND recipient_id = $3)
+                        OR
+                        (sender_id = $3 AND recipient_id = $2)
+                      )
+                    ORDER BY timestamp DESC
+                    LIMIT $4
+                    `,
+                    [sessionName, effectiveSenderId, sessionName, checkCount]
+                 );
+                 const rawHistory = result.rows || [];
+
+                 if (rawHistory && rawHistory.length > 0) {
+                     let lastBlockTime = 0;
+                     let lastUnblockTime = 0;
+
+                     for (const msg of rawHistory) {
+                        if (msg.reply_by === 'admin' || msg.reply_by === 'system' || msg.reply_by === 'api' || msg.reply_by === 'bot') {
+                            const content = (msg.text || '').trim();
+                            const cleanContent = normalizeEmojiText(content);
+                             const msgTime = new Date(msg.timestamp).getTime();
+
+                             // Check Block/Lock
+                            if (lockList.some(e => cleanContent.includes(e))) {
+                                 if (msgTime > lastBlockTime) lastBlockTime = msgTime;
+                             }
+
+                             // Check Unblock/Unlock
+                            if (unlockList.some(e => cleanContent.includes(e))) {
+                                 if (msgTime > lastUnblockTime) lastUnblockTime = msgTime;
+                             }
+                         }
+                     }
+
+                     if (lastBlockTime > lastUnblockTime) {
+                        console.log(`[WA] Conversation Locked via Emoji by Admin. (Block: ${lastBlockTime} > Unblock: ${lastUnblockTime})`);
+                        const chatKey = `${sessionName}_${effectiveSenderId}`;
+                        handoverMap.set(chatKey, Date.now() + 60 * 60 * 1000); // 1 Hour Lock
+                        
+                        // Persist Lock to DB
+                        try {
+                            await dbService.toggleWhatsAppLock(sessionName, effectiveSenderId, true);
+                        } catch (err) {
+                            console.warn(`[WA] Failed to persist emoji lock: ${err.message}`);
+                        }
+                        
+                        return; 
+                    } else if (lastUnblockTime > lastBlockTime) {
+                        // Ensure lock is cleared
+                        const chatKey = `${sessionName}_${effectiveSenderId}`;
+                        if (handoverMap.has(chatKey)) {
+                            console.log(`[WA] Conversation Unlocked via Emoji by Admin.`);
+                            handoverMap.delete(chatKey);
+                        }
+
+                        // Persist Unlock to DB
+                        try {
+                            await dbService.toggleWhatsAppLock(sessionName, effectiveSenderId, false);
+                        } catch (err) {
+                            console.warn(`[WA] Failed to persist emoji unlock: ${err.message}`);
+                        }
+                    }
+                 }
+            }
+        } catch (e) {
+            console.warn(`[WA] Emoji lock check failed: ${e.message}`);
+        }
+
+        // --- CHECK LABELS (Admin Handover & Dynamic Actions) ---
+        // MOVED TO START OF FUNCTION (Early Check)
+        // Kept here only for Dynamic DB Configuration checks if needed later, but for now we skip to avoid double API calls.
+        /* 
+        try {
+             // ... Code moved to top ...
+        } catch (e) { ... } 
+        */
+        // -------------------------------------
+
+        let historyLimit = 10;
+        if (pageConfig && pageConfig.check_conversion) {
+            const parsed = parseInt(pageConfig.check_conversion, 10);
+            if (!isNaN(parsed)) {
+                historyLimit = Math.min(50, Math.max(1, parsed));
+            }
+        }
+        
+        const history = await dbService.getWhatsAppChatHistory(sessionName, senderId, historyLimit);
+        
+        // --- MANUAL INTERVENTION GUARD (Admin Reply Check) ---
+        // User Requirement: "admin reply dile bot reply dibe na but amon na je silent takbe"
+        // User Requirement: "admin reply dile per day te 20 ta request korte parbe amon koro"
+        try {
+            const rawRecent = await dbService.getLastNWhatsAppMessages(sessionName, senderId, 10);
+            // Find last message sent by 'admin' (not 'bot')
+            const lastAdminReply = rawRecent.find(m => m.reply_by === 'admin');
+            
+            if (lastAdminReply) {
+                // Admin has intervened. Apply 20 requests/day limit instead of hard silence.
+                const dailyAICount = await dbService.getWhatsAppDailyAICount(sessionName, effectiveSenderId);
+                
+                if (dailyAICount >= 20) {
+                    console.log(`[WA] Admin handover active & daily limit (20) reached for ${senderId}. Skipping AI.`);
+                    
+                    // Optional: Force Handover Memory Lock to avoid repeated DB calls for this session for a while
+                    const chatKey = `${sessionName}_${effectiveSenderId}`;
+                    handoverMap.set(chatKey, Date.now() + 5 * 60 * 1000); // 5 min buffer
+                    
+                    return;
+                }
+                
+                console.log(`[WA] Admin handover active. Daily AI count: ${dailyAICount}/20 for ${senderId}. Proceeding.`);
+            }
+        } catch (e) {
+            console.warn(`[WA] Admin reply check failed: ${e.message}`);
+        }
+        // ----------------------------------------------------
+
+        // #region debug-point ads-product-routing:whatsapp-final-ai-context
+        reportAdsProductRoutingDebug('H4', 'whatsappController.js:processBufferedMessages.finalOutput', 'whatsapp final AI context before generation', {
+            sessionName,
+            senderId,
+            pageId,
+            messageCount: messages.length,
+            messagesPreview: messages.map(m => ({ id: m.id, text: String(m.text || '').substring(0, 500), imageCount: m.images?.length || 0, audioCount: m.audios?.length || 0 })),
+            finalOutputPreview: String(finalOutput || '').substring(0, 1500)
+        });
+        // #endregion
+
+        // 4. Generate Response (AI)
+        console.log(`[AI] Generating response for ${senderId} (Session: ${sessionName})...`);
+
+        // Resolve Owner Name (PushName vs SessionName)
+        let ownerName = sessionName;
+        if (pageConfig && pageConfig.push_name) {
+             ownerName = pageConfig.push_name;
+        } else {
+             try {
+                 // Fetch real name from WAHA if not in config
+                 const sessionInfo = await whatsappService.getSession(sessionName);
+                 if (sessionInfo && sessionInfo.me && sessionInfo.me.pushName) {
+                     ownerName = sessionInfo.me.pushName;
+                     // Attempt to save to DB for future speed (Self-Healing)
+                     dbService.updateWhatsAppEntryByName(sessionName, { push_name: ownerName })
+                        .catch(() => {}); // Ignore DB errors if column missing
+                 }
+             } catch (e) {
+                 // Ignore fetch errors
+             }
+        }
+        
+        // Controller-level image analysis now owns the visual pipeline for WAHA too.
+        const imagesToPass = [];
+
+        // --- INJECT FORMATTING INSTRUCTION (Professional Rules) ---
+        const professionalRules = `\n\n[PROFESSIONAL OUTPUT RULES]\n` +
+                `1) IDENTITY: You are a professional human sales representative. Talk naturally.\n` +
+                `2) TOOL-FIRST: If the user asks about product price/details, you MUST call tools. Do NOT invent prices or descriptions.\n` +
+                `3) IMAGE DECISION: If you decide to send a product's image (based on user request or appropriateness), you MUST append [PRODUCT_ID:id] to your reply. Example: "Yes, it is available. [PRODUCT_ID:82]".\n` +
+                `4) SYSTEM PROMPT PRIORITY: If your custom instructions (System Prompt) say NOT to send images proactively, you MUST obey that and only use the [PRODUCT_ID:id] tag when the user explicitly asks for a photo.\n` +
+                `5) LISTING PRODUCTS: If asked "What do you sell?", list 3-5 names naturally and ask which one they are interested in.\n` +
+                `6) SKU FLOW: If a product has multiple design/color/size/item options and the customer did not specify enough details, ask the missing attribute instead of guessing.\n` +
+                `7) NO HALLUCINATIONS: Never guess or invent prices. Always use tool data only.\n`;
+
+        const aiConfig = {
+            ...pageConfig,
+            request_budget_ms: AI_REQUEST_BUDGET_MS,
+            request_deadline_at: Date.now() + AI_REQUEST_BUDGET_MS
+        };
+        if (aiConfig.text_prompt) {
+             aiConfig.text_prompt += professionalRules;
+        } else {
+             aiConfig.text_prompt = professionalRules;
+        }
+
+        let aiResponse;
+        try {
+            aiResponse = await aiService.generateResponse({
+                pageId: pageId, 
+                userId: senderId,
+                userMessage: finalOutput, // Use the resolved output (Analysis, Text, Audio)
+                history: history,
+                imageUrls: imagesToPass, 
+                audioUrls: [], // Handled manually in controller
+                config: aiConfig, // Use modified config
+                platform: 'whatsapp',
+                extraTokenUsage: totalVisionTokens + totalAudioTokens, // Pass vision + audio tokens
+                senderName: senderName, // <-- NEW: Pass resolved sender name
+                ownerName: ownerName // <-- NEW: Pass Owner Account Name (Real PushName)
+            });
+        } catch (genErr) {
+            console.error(`[WA] AI Generation CRITICAL Error:`, genErr.message);
+            
+            if (genErr.message.includes('PRODUCT_SEARCH_API_FAILURE')) {
+                // Log the failure to dashboard for visibility
+                await dbService.saveWhatsAppChat({
+                    session_name: sessionName,
+                    sender_id: sessionName,
+                    recipient_id: senderId,
+                    message_id: `err_search_${Date.now()}`,
+                    text: `[CRITICAL ERROR] Product search failed due to API problem. (Code: 503_VECTOR_DB_FAIL). Details: ${genErr.message}`,
+                    timestamp: Date.now(),
+                    status: 'api_failure',
+                    reply_by: 'system'
+                });
+                // STOP THE PROCESS: No message to user
+                return;
+            }
+            
+            aiResponse = {
+                reply: aiConfig.fallback_message || "দুঃখিত, সার্ভার বর্তমানে ব্যস্ত আছে। একটু পরে আবার চেষ্টা করুন।",
+                error: genErr.message
+            };
+        }
+
+        if (!aiResponse) {
+             console.log(`[WA] AI returned null. Using fallback reply.`);
+             aiResponse = {
+                reply: null, // NO USER MESSAGE ON NULL AI RESPONSE
+                error: 'empty_ai_response'
+             };
+        }
+
+        let finalReplyText = aiResponse.reply || aiResponse.text || '';
+
+        // --- JSON & ERROR HANDLING (Commercial Grade Rescue) ---
+        // If the reply still looks like JSON (failed parsing in aiService), try one last rescue.
+        if (finalReplyText && (finalReplyText.trim().startsWith('{') || finalReplyText.trim().startsWith('['))) {
+            try {
+                const cleanJson = finalReplyText.replace(/```json|```/g, '').trim();
+                const parsed = JSON.parse(cleanJson);
+                if (parsed.reply_text) finalReplyText = parsed.reply_text;
+                else if (parsed.reply) finalReplyText = parsed.reply;
+                else if (parsed.message) finalReplyText = parsed.message;
+                else if (parsed.text) finalReplyText = parsed.text;
+                console.log(`[WA JSON Rescuer] Successfully extracted text from JSON.`);
+            } catch (e) {
+                console.warn(`[WA JSON Rescuer] Failed to parse: ${e.message}`);
+            }
+        }
+
+        const structuredDeliveryItems = normalizeAiDeliveryItems(aiResponse, finalReplyText);
+        if (!aiResponse?.product_id) {
+            aiResponse.product_id = structuredDeliveryItems.find((item) => item.product_id)?.product_id || null;
+        }
+
+        // --- AGENTIC DELIVERY SYSTEM (BACKEND-DRIVEN) ---
+        if (aiResponse.action && aiResponse.action !== "NONE" && aiResponse.product_id) {
+            try {
+                // Check if product_id is a valid number (BigInt compatible)
+                const isNumericId = /^\d+$/.test(String(aiResponse.product_id));
+                if (isNumericId) {
+                    const product = await dbService.getProductById(aiResponse.product_id);
+                    if (product) {
+                    const historyText = Array.isArray(history)
+                        ? history.map((item) => String(item?.text || item?.content || '')).join('\n')
+                        : '';
+                    const state = await dbService.getConversationState(sessionName, senderId).catch(() => null);
+                    const resolvedContext = buildResolvedProductContext(product, `${finalOutput}\n${historyText}`.trim(), state?.last_variant_key || null);
+                    const selectedSku = resolvedContext.selectedSku;
+                    if (aiResponse.action === "SEND_DETAILS" || aiResponse.action === "SEND_BOTH") {
+                        // Backend only appends details if AI explicitly asks for it AND hasn't already included it.
+                        // We assume AI handled the description length as per its prompt.
+                        if (!finalReplyText || finalReplyText.length < 50) {
+                            const numericPrice = parsePrice(selectedSku?.price ?? product.price);
+                            const priceDisplay = numericPrice > 0 ? `${numericPrice} ${selectedSku?.currency || product.currency || 'BDT'}` : "দাম জানতে ইনবক্স করুন";
+                            const skuLine = selectedSku ? `\n📌 SKU: ${selectedSku.name}${selectedSku.sku_code ? ` (${selectedSku.sku_code})` : ''}` : '';
+                            const details = `🛍️ *${product.name}*\n💰 Price: ${priceDisplay}${skuLine}\n📝 Info: ${product.description || 'No details available.'}`;
+                            finalReplyText = `${finalReplyText}\n\n${details}`;
+                        }
+                    }
+
+                    if (aiResponse.action === "SEND_PHOTO" || aiResponse.action === "SEND_BOTH") {
+                        if (!aiResponse.images) aiResponse.images = [];
+                        if (!aiResponse.videos) aiResponse.videos = [];
+
+                        resolvedContext.mediaImages.forEach((url) => {
+                            pushUniqueMedia(aiResponse.images, {
+                                url,
+                                title: product.name,
+                                description: product.description || ''
+                            });
+                        });
+
+                        resolvedContext.mediaVideos.forEach((url) => {
+                            pushUniqueMedia(aiResponse.videos, {
+                                url: normalizeImageUrl(url),
+                                title: product.name,
+                                description: product.description || ''
+                            });
+                        });
+                    }
+
+                    if (selectedSku) {
+                        await dbService.updateConversationState(sessionName, senderId, {
+                            last_product_id: product.id,
+                            last_variant_key: selectedSku.key || null
+                        });
+                    }
+                }
+            }
+        } catch (err) {
+            console.error(`[WA Agentic Delivery] Failed for ID ${aiResponse.product_id}:`, err.message);
+            // Log error for user visibility in DB
+            await dbService.saveWhatsAppChat({
+                session_name: sessionName,
+                sender_id: sessionName,
+                recipient_id: senderId,
+                message_id: `imgerr_${Date.now()}`,
+                text: `[SYSTEM ERROR] Failed to resolve product ID ${aiResponse.product_id}. Error: ${err.message}`,
+                timestamp: Date.now(),
+                status: 'system_error',
+                reply_by: 'system'
+            });
+        }
+        }
+
+        // --- NEW: Add images from structured image_urls array (Professional JSON mode) ---
+        if (Array.isArray(aiResponse.image_urls)) {
+            if (!aiResponse.images) aiResponse.images = [];
+            aiResponse.image_urls.forEach(url => {
+                if (url && typeof url === 'string' && url.startsWith('http')) {
+                    pushUniqueMedia(aiResponse.images, { url: url, title: 'Product Image' });
+                }
+            });
+        }
+
+        if (Array.isArray(aiResponse.video_urls)) {
+            if (!aiResponse.videos) aiResponse.videos = [];
+            aiResponse.video_urls.forEach(url => {
+                if (url && typeof url === 'string' && url.startsWith('http')) {
+                    pushUniqueMedia(aiResponse.videos, { url: url, title: 'Product Video' });
+                }
+            });
+        }
+
+        if (finalReplyText && typeof finalReplyText === 'string') {
+            // Updated extractor to handle our new R2 domain correctly
+            const extracted = extractImageUrlsFromText(finalReplyText);
+            finalReplyText = sanitizeReplyText(extracted.cleanText);
+            if (extracted.urls.length > 0) {
+                if (!aiResponse.images) aiResponse.images = [];
+                extracted.urls.forEach(url => {
+                    // Important: Ensure the URL is prioritized for file upload rather than text
+                    pushUniqueMedia(aiResponse.images, { url: url, title: 'Product Image', force_upload: true });
+                });
+                console.log(`[WA] Extracted ${extracted.urls.length} images from AI text and set for upload.`);
+            }
+        }
+
+        if (hasPhotoIntent(history)) {
+            let targetProductId = null;
+            const state = await dbService.getConversationState(sessionName, senderId);
+            if (state && state.last_product_id) targetProductId = state.last_product_id;
+            if (!targetProductId && aiResponse.product_id) targetProductId = aiResponse.product_id;
+            // #region debug-point C:photo-intent-airesponse-before
+            reportVariantDebug('C', 'whatsappController.js:2653', 'photo intent fallback before aiResponse hydration', {
+                senderId,
+                targetProductId,
+                stateLastProductId: state?.last_product_id || null,
+                stateLastVariantKey: state?.last_variant_key || null,
+                aiProductId: aiResponse.product_id || null,
+                aiImageCount: Array.isArray(aiResponse.images) ? aiResponse.images.length : 0,
+                aiVideoCount: Array.isArray(aiResponse.videos) ? aiResponse.videos.length : 0
+            });
+            // #endregion
+            if (targetProductId) {
+                const product = await dbService.getProductById(targetProductId);
+                if (product) {
+                    const historyText = Array.isArray(history)
+                        ? history.map((item) => String(item?.text || item?.content || '')).join('\n')
+                        : '';
+                    const resolvedContext = buildResolvedProductContext(product, `${finalOutput}\n${historyText}`.trim(), state?.last_variant_key || null);
+                    if (!Array.isArray(aiResponse.images) || aiResponse.images.length === 0) {
+                        aiResponse.images = resolvedContext.mediaImages.map((url, idx) => ({
+                            url,
+                            title: product.name || (idx === 0 ? 'Product Image' : `Product Image ${idx + 1}`),
+                            description: product.description || ''
+                        }));
+                    }
+                    if (!Array.isArray(aiResponse.videos) || aiResponse.videos.length === 0) {
+                        aiResponse.videos = resolvedContext.mediaVideos.map((url) => ({
+                            url,
+                            title: product.name || 'Product Video',
+                            description: product.description || ''
+                        }));
+                    }
+                    // #region debug-point C:photo-intent-airesponse-after
+                    reportVariantDebug('C', 'whatsappController.js:2664', 'photo intent fallback after aiResponse hydration', {
+                        senderId,
+                        productId: product.id || null,
+                        resolvedImages: resolvedContext.mediaImages,
+                        resolvedVideos: resolvedContext.mediaVideos,
+                        finalAiImages: Array.isArray(aiResponse.images) ? aiResponse.images.map((item) => item?.url || item) : [],
+                        finalAiVideos: Array.isArray(aiResponse.videos) ? aiResponse.videos.map((item) => item?.url || item) : []
+                    });
+                    // #endregion
+                }
+            }
+        }
+
+        let decisionMode = null;
+        if (finalReplyText && typeof finalReplyText === 'string') {
+            const decision = extractDecisionMode(finalReplyText);
+            decisionMode = decision.mode;
+            finalReplyText = decision.cleaned;
+        }
+
+        // NEW SMART TAG DETECTION
+        let promptMode = decisionMode;
+        const sendModeMatch = finalReplyText && typeof finalReplyText === 'string' ? finalReplyText.match(/\[SEND_MODE:\s*(image_only|text_and_image|text_only)\]/i) : null;
+        
+        if (sendModeMatch) {
+            promptMode = sendModeMatch[1].toLowerCase();
+            // STRIP THE TAG FROM finalReplyText SO USER NEVER SEES IT
+            finalReplyText = finalReplyText.replace(/\[SEND_MODE:\s*(image_only|text_and_image|text_only)\]/i, '').trim();
+            console.log(`[WA Smart Tag] Detected Mode: ${promptMode}. Tag stripped from message.`);
+        } else {
+            promptMode = promptMode || detectImageMode(pageConfig.page_prompts?.text_prompt);
+        }
+
+        // REFINED: Strictly follow image_only if explicitly tagged or detected.
+        if (promptMode === 'image_only' && hasQueuedMedia(aiResponse)) {
+            finalReplyText = '';
+        } else if (promptMode === 'image_title' && Array.isArray(aiResponse.images) && aiResponse.images.length > 0) {
+            const titles = aiResponse.images.map(img => img.title).filter(Boolean);
+            finalReplyText = titles.length > 0 ? titles.join('\n') : '';
+        } else if (promptMode === 'title_desc' && finalReplyText) {
+            finalReplyText = finalReplyText
+                .replace(/(?:৳|bdt|taka|tk)\s*[\d,.]+/gi, '')
+                .replace(/[\d,.]+\s*(?:৳|bdt|taka|tk)/gi, '')
+                .trim();
+        }
+        
+        if (finalReplyText && shouldBlockOutgoingReply(finalReplyText)) {
+            await dbService.saveWhatsAppChat({
+                session_name: sessionName,
+                sender_id: pageId || sessionName,
+                recipient_id: senderId,
+                message_id: `fail_${Date.now()}`,
+                text: `[AI Error - Silent] JSON reply blocked`,
+                timestamp: Date.now(),
+                status: 'ai_ignored',
+                reply_by: 'bot'
+            });
+            return;
+        }
+        
+        if (finalReplyText) {
+            try {
+                const prompts = pageConfig.page_prompts || {};
+                const normalizeEmojiText = (str) => (str || '').replace(/\uFE0F/g, '').normalize('NFC');
+                const cleanText = normalizeEmojiText(finalReplyText);
+
+                const lockList = [
+                    prompts.block_emoji, 
+                    prompts.lock_emojis, 
+                    pageConfig.lock_emojis,
+                    pageConfig.block_emoji
+                ].filter(Boolean).join(' ').split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
+
+                const unlockList = [
+                    prompts.unblock_emoji, 
+                    prompts.unlock_emojis, 
+                    pageConfig.unlock_emojis,
+                    pageConfig.unblock_emoji
+                ].filter(Boolean).join(' ').split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
+
+                let isLocked = false;
+                let isUnlocked = false;
+
+                for (const e of lockList) {
+                    if (cleanText.includes(e)) {
+                        isLocked = true;
+                        break;
+                    }
+                }
+
+                if (!isLocked) {
+                    for (const e of unlockList) {
+                        if (cleanText.includes(e)) {
+                            isUnlocked = true;
+                            break;
+                        }
+                    }
+                }
+
+                const chatKey = `${sessionName}_${effectiveSenderId}`;
+                if (isLocked) {
+                    handoverMap.set(chatKey, Date.now() + 60 * 60 * 1000);
+                    await dbService.toggleWhatsAppLock(sessionName, effectiveSenderId, true);
+                } else if (isUnlocked) {
+                    handoverMap.delete(chatKey);
+                    await dbService.toggleWhatsAppLock(sessionName, effectiveSenderId, false);
+                }
+            } catch (e) {
+                console.warn(`[WA] Bot emoji lock check failed: ${e.message}`);
+            }
+        }
+
+        // --- UNIFIED ORDER ENGINE (Clean Architecture) ---
+        // Handles AI intent + Tag extraction + Deterministic fallback in one place.
+        const orderDataFromAI = aiResponse.order_details?.fields || aiResponse.order_details;
+        const orderIntent = aiResponse.order_details?.intent || 'upsert';
+
+        const orderResult = await orderService.orchestrateOrder({
+            pageId: sessionName,
+            senderId: senderId,
+            platform: 'whatsapp',
+            intent: orderIntent,
+            data: orderDataFromAI || {},
+            rawText: `${finalOutput}\n${aiResponse.reply}` // Pass both user text and AI cleaned text
+        });
+
+        // Handle Legacy [SAVE_ORDER: {...}] Tag for WhatsApp specifically (Advanced Lock)
+        const orderRegex = /\[SAVE_ORDER:\s*({.*?})\]/s;
+        const orderMatch = finalReplyText.match(orderRegex);
+        if (orderMatch && orderMatch[1]) {
+            try {
+                const orderJson = JSON.parse(orderMatch[1]);
+                await orderService.orchestrateOrder({
+                    pageId: sessionName,
+                    senderId: senderId,
+                    platform: 'whatsapp',
+                    intent: 'upsert',
+                    data: orderJson
+                });
+                
+                console.log(`[WA] Order Saved via AI Tag. Enforcing 'ordertrack' label and lock.`);
+                await whatsappService.addLabel(sessionName, senderId, 'ordertrack');
+                const chatKey = `${sessionName}_${effectiveSenderId}`;
+                handoverMap.set(chatKey, Date.now() + 60 * 60 * 1000); // Lock for 1 hour
+                finalReplyText = finalReplyText.replace(orderMatch[0], '').trim();
+            } catch (e) {
+                console.error(`[WA] Failed to save order from AI tag:`, e.message);
+            }
+        }
+        // --------------------------------------
+
+        // --- HANDLE DYNAMIC LABELS ([ADD_LABEL: x]) ---
+        // Format: [ADD_LABEL: admincall]
+        const labelRegex = /\[ADD_LABEL:\s*([a-zA-Z0-9_]+)\]/gi;
+        let labelMatch;
+
+        while ((labelMatch = labelRegex.exec(finalReplyText)) !== null) {
+            const fullTag = labelMatch[0];
+            const labelName = labelMatch[1].toLowerCase();
+            
+            console.log(`[WA] AI requested to add label: ${labelName}`);
+            
+            try {
+                // Call WAHA to add label
+                await whatsappService.addLabel(sessionName, senderId, labelName);
+                
+                // If label is 'admincall' or 'adminhandle' or has 'stop' action, lock immediately
+                // This prevents AI from replying to its own label action in next loop if user replies fast
+                const labelActions = pageConfig.label_actions || [];
+                const actionConfig = labelActions.find(la => la.label_name.toLowerCase() === labelName);
+                const isHardcodedStop = ['adminhandle', 'admincall'].includes(labelName);
+                
+                if (isHardcodedStop || (actionConfig && actionConfig.ai_action === 'stop')) {
+                     console.log(`[WA] Blocking Label applied (${labelName}). Locking conversation.`);
+                     const chatKey = `${sessionName}_${effectiveSenderId}`;
+                     handoverMap.set(chatKey, Date.now() + 60 * 60 * 1000);
+                }
+
+            } catch (lblErr) {
+                console.error(`[WA] Failed to add label ${labelName}:`, lblErr.message);
+            }
+
+            // Remove tag from user-facing text
+            finalReplyText = finalReplyText.replace(fullTag, '').trim();
+        }
+
+        // Handle Strict Image Sending (High Level: JSON + Regex Fallback)
+        let extractedImages = [];
+        let extractedVideos = [];
+        
+        // 1. Structured Images from AI (Priority)
+        if (aiResponse.images && Array.isArray(aiResponse.images)) {
+            for (const img of aiResponse.images) {
+                const url = typeof img === 'string' ? img : img.url;
+                if (url) {
+                    if (!extractedImages.some(i => i.url === url)) {
+                        extractedImages.push(typeof img === 'string' ? { url, title: 'Product Image' } : img);
+                    }
+                    // Resolve additional images if it's a known product image
+                    try {
+                        const matched = await dbService.getProductByImageUrl(pageConfig.user_id, url);
+                        // #region debug-point B:structured-image-match
+                        reportVariantDebug('B', 'whatsappController.js:2869', 'structured image matched against product gallery', {
+                            sourceUrl: url,
+                            matchedProductId: matched?.id || null,
+                            matchedProductName: matched?.name || null,
+                            matchedHasVariantMedia: matched ? productHasVariantMedia(matched) : null,
+                            matchedAdditionalCount: Array.isArray(matched?.additional_images) ? matched.additional_images.length : (typeof matched?.additional_images === 'string' && matched.additional_images.trim() ? 1 : 0)
+                        });
+                        // #endregion
+                        if (matched) {
+                            let additional = [];
+                            if (Array.isArray(matched.additional_images)) additional = matched.additional_images;
+                            else if (typeof matched.additional_images === 'string') {
+                                try { additional = JSON.parse(matched.additional_images); } catch(e) { additional = matched.additional_images.split(',').map(s => s.trim()); }
+                            }
+                            if (Array.isArray(additional)) {
+                                additional.forEach(u => {
+                                    const nU = normalizeImageUrl(u);
+                                    if (nU && !extractedImages.some(i => i.url === nU)) {
+                                        extractedImages.push({ url: nU, title: matched.name || 'Additional Image' });
+                                    }
+                                });
+                            }
+                        }
+                    } catch (e) {}
+                }
+            }
+        }
+
+        if (aiResponse.videos && Array.isArray(aiResponse.videos)) {
+            for (const video of aiResponse.videos) {
+                const url = typeof video === 'string' ? video : video.url;
+                if (url && !extractedVideos.some(item => item.url === url)) {
+                    extractedVideos.push(typeof video === 'string' ? { url, title: 'Product Video' } : video);
+                }
+            }
+        }
+        
+        // --- AUTO-INJECTION FROM foundProducts DISABLED ---
+        // This prevents the bot from proactively sending all searched products on greetings.
+        // Images will now ONLY be sent if the AI explicitly includes them via IMAGE tag or JSON.
+
+        // 2. Legacy Regex Fallback (In case AI puts it in text)
+        const strictImageRegex = /IMAGE:\s*(.+?)\s*\|\s*(https?:\/\/[^\s,]+)/gi;
+        let strictMatch;
+        while ((strictMatch = strictImageRegex.exec(finalReplyText)) !== null) {
+            const fullMatch = strictMatch[0];
+            const title = strictMatch[1].trim();
+            const url = strictMatch[2].trim();
+            
+            let extractedSuccessfully = false;
+            if (!extractedImages.some(img => img.url === url)) {
+                // Check if it's a direct image or a product page
+                const isImageExtension = /\.(jpg|jpeg|png|gif|webp|bmp|tiff)(\?.*)?$/i.test(url);
+                if (isImageExtension) {
+                    extractedImages.push({ url: url, title: title });
+                    extractedSuccessfully = true;
+                } else {
+                    // Try to fetch OG image for product pages labeled as IMAGE
+                    try {
+                        console.log(`[WA] Labeled link detected, fetching OG image for: ${url}`);
+                        const ogImage = await aiService.fetchOgImage(url);
+                        if (ogImage) {
+                            extractedImages.push({ url: ogImage, title: title });
+                            console.log(`[WA] Successfully fetched OG Image for labeled link: ${ogImage}`);
+                            extractedSuccessfully = true;
+                        } else {
+                            // If no OG image, keep the link but maybe not send as image
+                            console.warn(`[WA] No OG Image found for labeled link: ${url}`);
+                        }
+                    } catch (ogError) {
+                        console.warn(`[WA] OG Image fetch failed for ${url}:`, ogError.message);
+                    }
+                }
+            } else {
+                extractedSuccessfully = true;
+            }
+            
+            // Only remove from text if it's a Supabase link. 
+            // For all other links, keep them in the text so the customer can click them.
+            if (extractedSuccessfully && url.includes('supabase.co')) {
+                finalReplyText = finalReplyText.replace(fullMatch, '').trim();
+            } else {
+                finalReplyText = finalReplyText.replace(fullMatch, `${title}: ${url}`).trim();
+            }
+        }
+
+        // Final scrub of any remaining "IMAGE:" tags (More aggressive to prevent leaking)
+        finalReplyText = finalReplyText.replace(/IMAGE:\s*[^|\n]*\s*\|?\s*https?:\/\/[^\s,]+/gi, '').trim();
+        finalReplyText = finalReplyText.replace(/^IMAGE:\s*/i, '').replace(/\nIMAGE:\s*/gi, '\n').trim();
+
+        // --- NEW: AUTO-EXTRACT PRODUCT LINKS WITHOUT LABELS ---
+        // If AI just drops a link (e.g. from the store) without "Image:" prefix, 
+        // we still want to try and send it as an image if it's a product page.
+        const rawLinkRegex = /(https?:\/\/[^\s,]+)/gi;
+        let rawMatch;
+        while ((rawMatch = rawLinkRegex.exec(finalReplyText)) !== null) {
+            const url = rawMatch[0].replace(/[,.]$/, '');
+            
+            // Skip if already extracted or if it has an image extension (already handled above)
+            const isImageExtension = /\.(jpg|jpeg|png|gif|webp|bmp|tiff)(\?.*)?$/i.test(url);
+            if (isImageExtension || extractedImages.some(img => img.url === url)) continue;
+
+            // Only try for potential store/product links
+            // We skip obvious social media, search engines, and common non-product sites
+            const isSocialOrGeneric = /facebook\.com|instagram\.com|twitter\.com|t\.me|wa\.me|youtube\.com|youtu\.be|tiktok\.com|google\.com|bing\.com|linkedin\.com|pinterest\.com/i.test(url);
+            
+            // Optimization: If it's a known product platform or a direct link that isn't social/generic, try to fetch image
+            const isProductStore = /daraz|evaly|chaldal|rokomari|pickaboo|startech|ryanscomputers|othoba|shajgoj|aarong/i.test(url);
+
+            if (!isSocialOrGeneric || isProductStore) {
+                try {
+                    console.log(`[WA] Potential product link detected, attempting OG image fetch: ${url}`);
+                    const ogImage = await aiService.fetchOgImage(url);
+                    if (ogImage) {
+                        if (!extractedImages.some(img => img.url === ogImage)) {
+                            extractedImages.push({ url: ogImage, title: 'Product Details' });
+                            console.log(`[WA] Auto-extracted OG Image from raw link: ${ogImage}`);
+                        }
+                    }
+                } catch (e) {
+                    // Silently fail if image fetch fails for a link
+                }
+            }
+        }
+
+        // 3. Normalize & Fix URLs (Google Drive, etc.)
+        extractedImages = extractedImages.map(img => {
+            let url = img.url.replace(/[,.]$/, ''); // Cleanup punctuation
+            
+            // Fix Google Drive Links
+            const driveIdMatch = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+            if (driveIdMatch && driveIdMatch[1]) {
+                url = `https://drive.google.com/uc?export=view&id=${driveIdMatch[1]}`;
+            }
+            return { ...img, url };
+        });
+
+        const convPageId = pageConfig.page_id || pageId || sessionName;
+        const allowedMedia = await getAllowedResourceMediaMap(convPageId);
+        aiResponse.images = filterQueuedMediaByAllowedUrls(extractedImages, allowedMedia.imageUrls);
+        aiResponse.videos = filterQueuedMediaByAllowedUrls(extractedVideos, allowedMedia.videoUrls);
+
+        // --- EMOJI HANDOVER LOGIC (AI Reply) ---
+        {
+            const normalizeEmojiText = (str) => (str || '').replace(/\uFE0F/g, '').normalize('NFC');
+            let LOCK_EMOJIS = ['🛑', '🔒', '⛔'];
+            let UNLOCK_EMOJIS = ['🟢', '🔓', '✅'];
+
+            if (pageConfig) {
+                const prompts = pageConfig.page_prompts || {};
+                const lockCandidates = [
+                    prompts.block_emoji,
+                    prompts.lock_emojis,
+                    pageConfig.block_emoji,
+                    pageConfig.lock_emojis
+                ].filter(Boolean).join(' ');
+                const unlockCandidates = [
+                    prompts.unblock_emoji,
+                    prompts.unlock_emojis,
+                    pageConfig.unblock_emoji,
+                    pageConfig.unlock_emojis
+                ].filter(Boolean).join(' ');
+
+                const lockList = lockCandidates.split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
+                const unlockList = unlockCandidates.split(/[, ]+/).map(e => normalizeEmojiText(e.trim())).filter(e => e);
+                if (lockList.length > 0) LOCK_EMOJIS = lockList;
+                if (unlockList.length > 0) UNLOCK_EMOJIS = unlockList;
+            }
+
+            let aiCommand = null;
+            const cleanReply = normalizeEmojiText(finalReplyText);
+            for (const e of LOCK_EMOJIS) if (cleanReply.includes(e)) aiCommand = 'LOCK';
+            for (const e of UNLOCK_EMOJIS) if (cleanReply.includes(e)) aiCommand = 'UNLOCK';
+            
+            if (aiCommand) {
+                 const isLocked = aiCommand === 'LOCK';
+                 console.log(`[WA] Emoji Command Detected (${aiCommand}) from AI. Updating Lock Status...`);
+                 await dbService.toggleWhatsAppLock(sessionName, effectiveSenderId, isLocked);
+                 
+                 const chatKey = `${sessionName}_${effectiveSenderId}`;
+                 if (isLocked) handoverMap.set(chatKey, Date.now() + 24 * 60 * 60 * 1000);
+                 else handoverMap.delete(chatKey);
+            }
+        }
+
+        console.log(`[WA] Sending Reply: "${(finalReplyText || '').substring(0, 50)}..."`);
+
+        // --- FINAL NOISE CLEANUP (Punctuation Only Check) ---
+        if (finalReplyText) {
+             const cleanedForNoise = finalReplyText.trim();
+             const isJustPunctuation = /^[\s\p{P}]+$/u.test(cleanedForNoise);
+             if (isJustPunctuation && cleanedForNoise.length > 0) {
+                  console.log(`[WA] Silencing punctuation-only final reply: "${cleanedForNoise}"`);
+                  finalReplyText = "";
+             }
+        }
+
+        // First mark the message as seen and show typing (like Messenger)
+        await whatsappService.sendSeen(sessionName, senderId);
+        await whatsappService.sendTyping(sessionName, senderId);
+        await new Promise(resolve => setTimeout(resolve, 600));
+
+        // Then check if admin replied after last user message
+        const lastUserTs = await dbService.getLastWhatsAppUserMessageTimestamp(sessionName, effectiveSenderId);
+        const checkTs = lastUserTs || triggerTimestamp;
+        const hasAdminReplied = await dbService.hasWhatsAppAdminReplySince(sessionName, effectiveSenderId, checkTs);
+        
+        if (hasAdminReplied) {
+            console.log(`[WA] Bot skipped: Admin replied before send to ${senderId}`);
+            const pendingMessageId = `bot_skip_${Date.now()}`;
+            await dbService.saveWhatsAppChat({
+                session_name: sessionName,
+                sender_id: sessionName,
+                recipient_id: effectiveSenderId,
+                message_id: pendingMessageId,
+                text: '[Bot skipped: Admin replied before send]',
+                timestamp: Date.now(),
+                status: 'skipped_admin_reply',
+                reply_by: 'bot'
+            });
+            return;
+        }
+
+        let modelLabel = aiResponse.model;
+        if (!hasOwnKey) {
+            const branded = (pageConfig && (pageConfig.chat_model || pageConfig.display_model)) || null;
+            if (branded && ['salesmanchatbot-pro', 'salesmanchatbot-flash', 'salesmanchatbot-lite'].includes(branded)) {
+                modelLabel = branded;
+            } else if (/^gemini/i.test(modelLabel) || /google\/gemini/i.test(modelLabel)) {
+                modelLabel = 'salesmanchatbot-pro';
+            }
+        }
+
+        // Send Text First
+        let sentMessageId = `bot_${Date.now()}`;
+        
+        if (finalReplyText) {
+             // FIX: If AI says "no reply", we skip sending it to WhatsApp but still save it to our DB for history/tracking.
+             const isNoReply = finalReplyText.toLowerCase().trim() === 'no reply';
+
+             // PRE-REGISTER to prevent Race Condition (Echo Guard)
+             // We add it to the map BEFORE sending, so if the webhook hits immediately, it's already there.
+             const existing = recentBotReplies.get(senderId) || [];
+             existing.push({ text: normalizeText(finalReplyText), timestamp: Date.now() });
+             recentBotReplies.set(senderId, existing);
+
+             await saveWhatsAppOutgoingLog({
+                 sessionName,
+                 recipientId: senderId,
+                 messageId: sentMessageId,
+                 text: finalReplyText,
+                 status: isNoReply ? 'sent' : 'sending',
+                 replyBy: 'bot',
+                 tokenUsage: aiResponse.token_usage || 0,
+                 modelUsed: modelLabel
+             });
+
+             if (!isNoReply) {
+                 try {
+                     const sentData = await whatsappService.sendMessage(sessionName, senderId, finalReplyText);
+                     
+                     // [FIX] ID Normalization & Tracking for Echo Guard
+                     if (sentData) {
+                         let sid = sentData.id;
+                         if (typeof sid === 'object' && sid !== null) {
+                             sid = sid._serialized || sid.id;
+                         }
+                         // Ensure it's a string (WAHA can have deep nesting)
+                         if (typeof sid === 'object' && sid !== null) {
+                             sid = sid._serialized || sid.id || JSON.stringify(sid);
+                         }
+
+                         if (sid) {
+                             console.log(`[WA AI] Tracking Bot Message ID: ${sid}`);
+                             botMessageIds.add(sid);
+                             
+                             // Auto-clear after 2 minutes to save memory
+                             setTimeout(() => {
+                                 botMessageIds.delete(sid);
+                                 // Clean up recentBotReplies window too
+                                 const history = recentBotReplies.get(senderId);
+                                 if (history) {
+                                     const filtered = history.filter(r => Date.now() - r.timestamp < 30000);
+                                     if (filtered.length === 0) recentBotReplies.delete(senderId);
+                                     else recentBotReplies.set(senderId, filtered);
+                                 }
+                             }, 2 * 60 * 1000);
+                         }
+                     }
+
+                     await saveWhatsAppOutgoingLog({
+                         sessionName,
+                         recipientId: senderId,
+                         messageId: sentMessageId,
+                         text: finalReplyText,
+                         status: 'sent',
+                         replyBy: 'bot',
+                         tokenUsage: aiResponse.token_usage || 0,
+                         modelUsed: modelLabel
+                     });
+                     datasetCollectorService.collectTrainingSample({
+                         platform: 'whatsapp',
+                         businessId: sessionName,
+                         userId: senderId,
+                         systemPrompt: aiResponse?.agent_trace?.system_prompt || aiConfig.text_prompt || '',
+                         conversationHistory: history,
+                         userMessage: finalOutput,
+                         assistantReply: finalReplyText,
+                         aiResponse,
+                         availableTools: aiService.functionTools,
+                         modelUsed: modelLabel,
+                         sourceMessageId: sentMessageId,
+                         metadata: { token_usage: aiResponse.token_usage || 0 }
+                     }).catch((err) => console.warn(`[Dataset Collector] WhatsApp sample skipped: ${err.message}`));
+                 } catch (sendErr) {
+                     await saveWhatsAppOutgoingLog({
+                         sessionName,
+                         recipientId: senderId,
+                         messageId: sentMessageId,
+                         text: finalReplyText,
+                         status: 'api_failure',
+                         replyBy: 'bot',
+                         tokenUsage: aiResponse.token_usage || 0,
+                         modelUsed: modelLabel
+                     });
+                     throw sendErr;
+                 }
+             } else {
+                 console.log(`[WA Silence] Detected "no reply". Saving to DB but skipping WhatsApp send.`);
+             }
+        }
+
+        // Send Images
+        const allowImageSend = !pageConfig || (pageConfig.image_send !== false && pageConfig.image_send !== 'false' && pageConfig.image_send !== 0 && pageConfig.image_send !== '0');
+        if (allowImageSend) {
+            // Check for hasPhotoIntent (User specifically asked for photos)
+            const history = await dbService.getLastNWhatsAppMessages(sessionName, senderId, 20);
+            if (hasPhotoIntent(history)) {
+                let targetProductId = null;
+                const state = await dbService.getConversationState(sessionName, senderId);
+                if (state && state.last_product_id) targetProductId = state.last_product_id;
+                if (!targetProductId && aiResponse.product_id) targetProductId = aiResponse.product_id;
+                // #region debug-point D:send-stage-before-fallback
+                reportVariantDebug('D', 'whatsappController.js:3185', 'send-stage fallback before extracted media hydration', {
+                    senderId,
+                    targetProductId,
+                    stateLastProductId: state?.last_product_id || null,
+                    stateLastVariantKey: state?.last_variant_key || null,
+                    extractedImageCount: extractedImages.length,
+                    extractedVideoCount: extractedVideos.length,
+                    extractedImageUrls: extractedImages.map((item) => item?.url || null)
+                });
+                // #endregion
+
+                if (targetProductId) {
+                    const product = await dbService.getProductById(targetProductId);
+                    if (product) {
+                        const historyText = Array.isArray(history)
+                            ? history.map((item) => String(item?.text || item?.content || '')).join('\n')
+                            : '';
+                        const resolvedContext = buildResolvedProductContext(product, historyText, state?.last_variant_key || null);
+                        if (extractedImages.length === 0) {
+                            resolvedContext.mediaImages.forEach((url) => {
+                                if (!extractedImages.some((img) => img.url === url)) {
+                                    extractedImages.push({ url, title: product.name, description: product.description || '' });
+                                }
+                            });
+                        }
+                        if (extractedVideos.length === 0) {
+                            resolvedContext.mediaVideos.forEach((url) => {
+                                if (!extractedVideos.some((video) => video.url === url)) {
+                                    extractedVideos.push({ url, title: product.name, description: product.description || '' });
+                                }
+                            });
+                        }
+                        // #region debug-point D:send-stage-after-fallback
+                        reportVariantDebug('D', 'whatsappController.js:3197', 'send-stage fallback after extracted media hydration', {
+                            senderId,
+                            productId: product.id || null,
+                            resolvedImages: resolvedContext.mediaImages,
+                            resolvedVideos: resolvedContext.mediaVideos,
+                            extractedImageCount: extractedImages.length,
+                            extractedVideoCount: extractedVideos.length,
+                            extractedImageUrls: extractedImages.map((item) => item?.url || null)
+                        });
+                        // #endregion
+                    }
+                }
+            }
+
+            // #region debug-point E:final-send-queue
+            reportVariantDebug('E', 'whatsappController.js:3216', 'final media send queue prepared', {
+                senderId,
+                imageCount: extractedImages.length,
+                videoCount: extractedVideos.length,
+                imageUrls: extractedImages.map((item) => item?.url || null),
+                imageTitles: extractedImages.map((item) => item?.title || null)
+            });
+            // #endregion
+            for (const img of extractedImages) {
+                console.log(`[WA] Sending Extracted Image: ${img.title} -> ${img.url}`);
+                
+                if (img.title && img.title.trim()) {
+                     const existing = recentBotReplies.get(senderId) || [];
+                     existing.push({ text: normalizeText(img.title), timestamp: Date.now() });
+                     recentBotReplies.set(senderId, existing);
+                }
+
+                try {
+                    const sendRes = await whatsappService.sendImage(sessionName, senderId, img.url, img.title);
+                    if (!sendRes) throw new Error("WAHA returned empty response or error");
+                } catch (sendErr) {
+                    console.error(`[WA] Image Send Failed: ${img.url}`, sendErr.message);
+                    await dbService.saveWhatsAppChat({
+                        session_name: sessionName,
+                        sender_id: sessionName,
+                        recipient_id: senderId,
+                        message_id: `imgerr_${Date.now()}`,
+                        text: `[SYSTEM ERROR] Failed to send image: ${img.title || 'Product'}. Error: ${sendErr.message}. URL: ${img.url}`,
+                        timestamp: Date.now(),
+                        status: 'system_error',
+                        reply_by: 'system'
+                    });
+                }
+            }
+
+            for (const video of extractedVideos) {
+                console.log(`[WA] Sending Extracted Video: ${video.title} -> ${video.url}`);
+
+                try {
+                    const sendRes = await whatsappService.sendVideo(sessionName, senderId, video.url, video.title);
+                    if (!sendRes) throw new Error("WAHA returned empty response or error");
+                } catch (sendErr) {
+                    console.error(`[WA] Video Send Failed: ${video.url}`, sendErr.message);
+                    await dbService.saveWhatsAppChat({
+                        session_name: sessionName,
+                        sender_id: sessionName,
+                        recipient_id: senderId,
+                        message_id: `viderr_${Date.now()}`,
+                        text: `[SYSTEM ERROR] Failed to send video: ${video.title || 'Product'}. Error: ${sendErr.message}. URL: ${video.url}`,
+                        timestamp: Date.now(),
+                        status: 'system_error',
+                        reply_by: 'system'
+                    });
+                }
+            }
+        }
+
+        // 6. Deduct Credit (If not Own API)
+        // Update: Deduct from User Shared Pool
+        if (!hasOwnKey) {
+             const deducted = await dbService.deductWhatsAppCredit(sessionName);
+             if (!deducted) {
+                 console.warn(`[WA] Credit deduction failed for ${sessionName} (User Shared Pool).`);
+             }
+        }
+
+        // 7. Save Bot Reply to DB (Only if not empty)
+        // Track the product mentioned in this response for State Memory
+        if (aiResponse.product_id) {
+            try {
+                await dbService.updateConversationState(sessionName, senderId, { last_product_id: aiResponse.product_id });
+                console.log(`[WA State Memory] Saved last_product_id: ${aiResponse.product_id} for user: ${senderId}`);
+            } catch (stateErr) {
+                console.error(`[WA State Memory] Error saving state: ${stateErr.message}`);
+            }
+        }
+
+        if (!finalReplyText || finalReplyText.trim().length === 0) {
+             console.log(`[WA] Skipping save for empty/null bot reply.`);
+        }
+
+        // Save Image Memory (system note) so AI can see previously sent product images for this chat
+        if (allowImageSend && aiResponse.images && Array.isArray(aiResponse.images) && aiResponse.images.length > 0) {
+            let memoryNote = "";
+            
+            // Priority: Use 'foundProducts' if available to include full context in memory
+            let relevantProducts = [];
+            if (aiResponse.foundProducts && Array.isArray(aiResponse.foundProducts) && aiResponse.foundProducts.length > 0) {
+                 const sentImages = aiResponse.images.map(img => typeof img === 'string' ? img : img.url);
+                 relevantProducts = aiResponse.foundProducts.filter(p => sentImages.includes(p.image_url));
+            }
+
+            if (relevantProducts.length > 0) {
+                 const productDetails = relevantProducts.map(p => {
+                     const desc = p.description ? ` (Desc: ${p.description.substring(0, 300)})` : '';
+                     return `${p.name}${desc}`;
+                 }).join(' || ');
+                 const summary = aiResponse.images.map(img => typeof img === 'string' ? img : img.url).join(' ; ');
+                 memoryNote = `[SYSTEM MEMORY: Sent product images for: [${productDetails}]. Images: ${summary}. The user is now looking at these products.]`;
+            } else {
+                 const summary = aiResponse.images
+                    .map(img => {
+                        if (typeof img === 'string') return img;
+                        const titlePart = img.title ? `${img.title}` : 'Image';
+                        const descPart = img.description ? ` (Desc: ${img.description.substring(0, 300)})` : '';
+                        return `${titlePart}${descPart} | ${img.url}`;
+                    })
+                    .join(' ; ');
+                 memoryNote = `[SYSTEM MEMORY: Sent product images in this reply: ${summary}. The user is now looking at these images.]`;
+            }
+
+            await dbService.saveWhatsAppChat({
+                session_name: sessionName,
+                sender_id: sessionName,
+                recipient_id: senderId,
+                message_id: `imgmem_${Date.now()}`,
+                text: memoryNote,
+                timestamp: Date.now(),
+                status: 'image_memory',
+                reply_by: 'system'
+            });
+        }
+
+    } catch (err) {
+        console.error(`[WA] Error processing buffered messages: ${err.message}`);
+        // Log System Error
+        await dbService.saveWhatsAppChat({
+            session_name: sessionName,
+            sender_id: sessionName,
+            recipient_id: senderId,
+            message_id: `err_${Date.now()}`,
+            text: `[SYSTEM ERROR] ${err.message}`,
+            timestamp: Date.now(),
+            status: 'system_error',
+            reply_by: 'system'
+        });
+    }
+}
+
+// Auto-Repair Job
+async function checkAndAutoRepairSessions() {
+    console.log('[WA Repair] Checking for failed sessions...');
+    try {
+        const activeSessions = await dbService.getActiveWhatsAppSessions();
+        if (!activeSessions || activeSessions.length === 0) return;
+
+        // Fetch ALL sessions from WAHA once
+        let wahaSessions = [];
+        try {
+            wahaSessions = await whatsappService.getSessions(true);
+        } catch (e) {
+            console.warn("[WA Repair] Failed to fetch WAHA sessions:", e.message);
+            return; // Abort if WAHA is down
+        }
+        
+        for (const dbSession of activeSessions) {
+            const { session_name } = dbSession;
+            const wahaSession = wahaSessions.find(s => s.name === session_name);
+
+            if (!wahaSession) {
+                // Missing in WAHA
+                console.warn(`[WA Repair] Session '${session_name}' missing in WAHA. Marking as STOPPED.`);
+                await dbService.updateWhatsAppEntryByName(session_name, { status: 'STOPPED', active: false });
+                continue;
+            }
+
+            if (wahaSession.status === 'STOPPED') {
+                console.log(`[WA Repair] Session '${session_name}' is STOPPED. Attempting Auto-Start...`);
+                try {
+                    await whatsappService.startSession(session_name);
+                } catch (e) {
+                    console.error(`[WA Repair] Failed to auto-start '${session_name}':`, e.message);
+                }
+            } else if (wahaSession.status === 'FAILED') {
+                 console.log(`[WA Repair] Session '${session_name}' is FAILED. Restarting...`);
+                 try {
+                    await whatsappService.stopSession(session_name);
+                    await new Promise(r => setTimeout(r, 2000));
+                    await whatsappService.startSession(session_name);
+                 } catch(e) {
+                     console.error(`[WA Repair] Failed to restart '${session_name}':`, e.message);
+                 }
+            }
+        }
+    } catch (err) {
+        console.error('[WA Repair] Error:', err);
+    }
+}
+
+// Cleanup Job
+async function checkAndCleanupExpiredSessions() {
+    console.log('[WA Cleanup] Checking for expired sessions...');
+    try {
+        const expiredSessions = await dbService.getExpiredWhatsAppSessions();
+        
+        if (!expiredSessions || expiredSessions.length === 0) {
+            // console.log('[WA Cleanup] No expired sessions found.');
+            return;
+        }
+
+        console.log(`[WA Cleanup] Found ${expiredSessions.length} expired sessions. Processing...`);
+
+        for (const session of expiredSessions) {
+            const { session_name } = session;
+            console.log(`[WA Cleanup] Expiring session '${session_name}'...`);
+
+            // 1. Stop/Delete in WAHA
+            try {
+                // Try logout/stop first
+                try { await whatsappService.logoutSession(session_name); } catch(e){}
+                await new Promise(r => setTimeout(r, 1000));
+                
+                try { await whatsappService.stopSession(session_name); } catch(e){}
+                await new Promise(r => setTimeout(r, 1000));
+
+                await whatsappService.deleteSession(session_name);
+            } catch (err) {
+                console.warn(`[WA Cleanup] WAHA cleanup error for '${session_name}':`, err.message);
+                // Continue to DB cleanup anyway
+            }
+
+            // 2. Mark as Expired in DB
+            // We set status to 'expired', active to false.
+            await dbService.updateWhatsAppEntryByName(session_name, {
+                status: 'expired',
+                active: false,
+                subscription_status: 'expired'
+            });
+            
+            console.log(`[WA Cleanup] Session '${session_name}' marked as expired.`);
+        }
+
+    } catch (err) {
+        console.error('[WA Cleanup] Error:', err);
+    }
+}
+
+
+// --- CACHE MANAGEMENT ---
+/**
+ * Clears cached configuration and prompts for a specific session.
+ * @param {string} sessionName - WhatsApp Session Name
+ */
+function clearPageCache(sessionName) {
+    if (!sessionName) return;
+    const key = String(sessionName);
+    configCache.delete(key);
+    console.log(`[WA Cache] Cleared config cache for: ${key}`);
+}
+
+/**
+ * Clears all configuration caches.
+ */
+function clearAllCaches() {
+    configCache.clear();
+    console.log(`[WA Cache] All config caches cleared.`);
+}
+
+// Label & List Management Controllers
+async function getLabels(req, res) {
+    try {
+        const { sessionName } = req.params;
+        if (!sessionName) return res.status(400).json({ error: 'Session name required' });
+        const labels = await whatsappService.getAllLabels(sessionName);
+        res.json(labels || []);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+}
+
+async function getLabelActions(req, res) {
+    try {
+        const { sessionName } = req.params;
+        if (!sessionName) return res.status(400).json({ error: 'Session name required' });
+        const { rows } = await pgClient.query(
+            'SELECT * FROM label_actions WHERE page_id = $1 ORDER BY created_at DESC',
+            [sessionName]
+        );
+        res.json(rows || []);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+}
+
+async function upsertLabelAction(req, res) {
+    try {
+        const { page_id, label_name, ai_action } = req.body;
+        if (!page_id || !label_name) return res.status(400).json({ error: 'Missing fields' });
+
+        const result = await pgClient.query(
+            `INSERT INTO label_actions (page_id, label_name, ai_action)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (page_id, label_name)
+             DO UPDATE SET ai_action = EXCLUDED.ai_action, created_at = NOW()
+             RETURNING *`,
+            [page_id, label_name, ai_action || 'continue']
+        );
+        res.json(result.rows[0]);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+}
+
+async function deleteLabelAction(req, res) {
+    try {
+        const { id } = req.params;
+        await pgClient.query('DELETE FROM label_actions WHERE id = $1', [id]);
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+}
+
+module.exports = {
+    handleWebhook,
+    checkAndCleanupExpiredSessions,
+    checkAndAutoRepairSessions,
+    loadAllSessions: checkAndAutoRepairSessions, // Alias for startup load
+    clearPageCache,
+    clearAllCaches,
+    getLabels,
+    getLabelActions,
+    upsertLabelAction,
+    deleteLabelAction
+};
