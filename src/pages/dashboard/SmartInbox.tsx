@@ -182,6 +182,7 @@ const getMessagePreview = (body?: string) => {
   if (body.includes("bot_image:")) return "Sent an image";
   if (body.includes("Analyzed Image:")) return "Analyzed image";
   if (body.includes("Analyzed Voice:")) return "Analyzed voice";
+  if (/\[Audio URLs?\]:\s*https?:\/\//i.test(body)) return "Sent an audio message";
   if (body.toLowerCase().includes("system memory") || body.includes("ai_memory")) return "System update";
 
   return body;
@@ -329,7 +330,7 @@ const SmartInbox = () => {
       const data = (await response.json()) as Conversation[];
       const lightweightData = (data || []).map((chat) => ({
         ...chat,
-        body: getMessagePreview(chat.body).slice(0, 180)
+        body: getMessagePreview(chat.body)
       }));
       const signature = JSON.stringify(lightweightData);
 
@@ -958,7 +959,7 @@ const SmartInbox = () => {
                         </AvatarFallback>
                       </Avatar>
 
-                      <div className="min-w-0 max-w-full flex-1 overflow-hidden">
+                      <div className="w-0 min-w-0 max-w-full flex-1 overflow-hidden">
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0 flex-1 overflow-hidden">
                             <div className="truncate text-sm sm:text-base font-bold text-white">
