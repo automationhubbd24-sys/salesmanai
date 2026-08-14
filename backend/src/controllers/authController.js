@@ -124,15 +124,84 @@ async function exchangeFacebookCodeForToken(code, redirectUri, appId, appSecret)
     return response.data;
 }
 
-async function fetchMessengerPages(accessToken) {
-    const response = await axios.get(`https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/me/accounts`, {
-        params: {
-            fields: 'id,name,access_token,tasks',
-            access_token: accessToken
-        }
+function normalizeMessengerPages(pages) {
+    const byId = new Map();
+
+    for (const page of pages || []) {
+        if (!page?.id) continue;
+
+        const id = String(page.id);
+        const existing = byId.get(id) || {};
+        byId.set(id, {
+            ...existing,
+            id,
+            name: page.name || existing.name || id,
+            ...(page.access_token ? { access_token: page.access_token } : {}),
+            ...(Array.isArray(page.tasks) ? { tasks: page.tasks } : {})
+        });
+    }
+
+    return Array.from(byId.values());
+}
+
+async function getGraphCollection(path, accessToken, fields) {
+    const response = await axios.get(`https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}${path}`, {
+        params: { fields, access_token: accessToken },
+        timeout: 15000
     });
 
     return Array.isArray(response.data?.data) ? response.data.data : [];
+}
+
+async function getGraphPageCollection(path, accessToken) {
+    return getGraphCollection(path, accessToken, 'id,name,access_token,tasks');
+}
+
+async function resolveMessengerPages(accessToken) {
+    const diagnostics = [];
+    let pages = [];
+
+    try {
+        pages = await getGraphPageCollection('/me/accounts', accessToken);
+    } catch (error) {
+        diagnostics.push({
+            code: 'MESSENGER_ACCOUNTS_UNAVAILABLE',
+            message: 'Unable to retrieve pages from the Facebook accounts endpoint.'
+        });
+    }
+
+    if (pages.length === 0) {
+        let businesses = [];
+        try {
+            businesses = await getGraphCollection('/me/businesses', accessToken, 'id,name');
+        } catch (error) {
+            diagnostics.push({
+                code: 'MESSENGER_BUSINESS_DISCOVERY_UNAVAILABLE',
+                message: 'Business Portfolio discovery is unavailable for this Facebook account.'
+            });
+        }
+
+        for (const business of businesses) {
+            for (const relationship of ['owned_pages', 'client_pages', 'assigned_pages']) {
+                try {
+                    const businessPages = await getGraphPageCollection(`/${business.id}/${relationship}`, accessToken);
+                    pages.push(...businessPages);
+                } catch (error) {
+                    // Some Business Portfolio page relationship endpoints are unavailable by design.
+                }
+            }
+        }
+    }
+
+    const normalizedPages = normalizeMessengerPages(pages);
+    if (normalizedPages.length === 0) {
+        diagnostics.push({
+            code: 'MESSENGER_NO_PAGES_FOUND',
+            message: 'No Facebook Pages are available for this account.'
+        });
+    }
+
+    return { pages: normalizedPages, diagnostics };
 }
 
 function isAllowedFrontendOrigin(origin) {
@@ -468,12 +537,15 @@ async function completeFacebookCode(req, res, label = 'Messenger', includePages 
             );
         }
 
-        const pages = includePages ? await fetchMessengerPages(finalToken) : [];
+        const pageResolution = includePages
+            ? await resolveMessengerPages(finalToken)
+            : { pages: [], diagnostics: [] };
 
         return res.json({
             success: true,
             access_token: finalToken,
-            pages
+            pages: pageResolution.pages,
+            diagnostics: pageResolution.diagnostics
         });
     } catch (error) {
         console.error(
@@ -489,6 +561,26 @@ async function completeFacebookCode(req, res, label = 'Messenger', includePages 
 
 exports.completeMessengerCode = (req, res) => completeFacebookCode(req, res, 'Messenger', true);
 exports.completeInstagramCode = (req, res) => completeFacebookCode(req, res, 'Instagram', false);
+
+exports.resolveMessengerPages = async (req, res) => {
+    const accessToken = String(req.body?.access_token || '').trim();
+    if (!accessToken) {
+        return res.status(400).json({ error: 'Facebook access token is required' });
+    }
+
+    try {
+        return res.json(await resolveMessengerPages(accessToken));
+    } catch (error) {
+        console.error('Messenger page resolution error:', error.response?.data || error.message);
+        return res.status(502).json({
+            error: 'Facebook API Error',
+            diagnostics: [{
+                code: 'MESSENGER_PAGE_RESOLUTION_FAILED',
+                message: 'Unable to resolve Facebook Pages at this time.'
+            }]
+        });
+    }
+};
 
 exports.startFacebookAuth = async (req, res) => {
     try {
@@ -554,7 +646,7 @@ exports.startFacebookAuth = async (req, res) => {
             scope = 'email,public_profile,pages_show_list,pages_read_engagement,pages_manage_metadata,pages_messaging,instagram_basic,instagram_manage_messages,business_management';
         } else {
             redirectUri = `${frontendOrigin}/auth/facebook/messenger/callback`;
-            scope = 'email,public_profile,pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_read_user_content';
+            scope = 'email,public_profile,pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_read_user_content,business_management';
         } 
 
         let baseHost = 'm.facebook.com';

@@ -48,10 +48,16 @@ async function subscribeMessengerPage(pageId, pageAccessToken) {
             timeout: 15000
         });
         console.log(`[Messenger] Subscribed app to page ${pageId} fields: ${fields.join(',')}`);
-        return true;
+        return { success: true };
     } catch (error) {
-        console.warn(`[Messenger] Page subscription failed for ${pageId}:`, error.response?.data?.error?.message || error.message);
-        return false;
+        const facebookError = error.response?.data?.error;
+        const message = facebookError?.message || error.message || 'Facebook webhook subscription failed.';
+        console.warn(`[Messenger] Page subscription failed for ${pageId}:`, message);
+        return {
+            success: false,
+            code: facebookError?.code ? `FACEBOOK_SUBSCRIPTION_${facebookError.code}` : 'MESSENGER_SUBSCRIPTION_FAILED',
+            message
+        };
     }
 }
 
@@ -272,6 +278,22 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
         const verifiedPage = await verifyFacebookPageAccessToken(page_id, page_access_token);
         console.log('✅ [DEBUG] Step 2: Token verified successfully!', verifiedPage);
 
+        const pageExists = await pgClient.query(
+            'SELECT page_id FROM page_access_token_message WHERE page_id = $1',
+            [String(page_id)]
+        );
+        const subscription = await subscribeMessengerPage(String(page_id), page_access_token);
+        if (!subscription.success) {
+            return res.status(422).json({
+                error: subscription.message,
+                diagnostic: {
+                    code: subscription.code,
+                    message: 'Facebook webhook subscription failed. The page was not updated.'
+                },
+                subscription_status: 'failed'
+            });
+        }
+
         console.log('✅ [DEBUG] Step 3: Checking if fb_message_database entry exists...');
         const existsResult = await pgClient.query(
             'SELECT id FROM fb_message_database WHERE page_id = $1 LIMIT 1',
@@ -293,12 +315,6 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
         }
 
         const ownerEmail = email.toLowerCase();
-
-        // Check if page already exists to avoid giving double free credits
-        const pageExists = await pgClient.query(
-            'SELECT page_id FROM page_access_token_message WHERE page_id = $1',
-            [String(page_id)]
-        );
 
         await pgClient.query(
             `INSERT INTO page_access_token_message (page_id, name, page_access_token, user_access_token, email, user_id, ai, chat_model, cheap_engine, subscription_status)
@@ -323,8 +339,6 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
                 'active'
             ]
         );
-
-        await subscribeMessengerPage(String(page_id), page_access_token);
 
         // SYNC ALL PRODUCTS TO THIS NEW PAGE ID (Automatic)
         try {
@@ -405,7 +419,7 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
 
         webhookController.clearPageCache(page_id);
 
-        res.json({ id: dbId });
+        res.json({ id: dbId, subscription_status: 'active' });
     } catch (error) {
         console.error('Error saving Messenger page (manual):', error);
         res.status(error.statusCode || 500).json({ error: error.message });
@@ -935,7 +949,7 @@ router.delete('/pages/:pageId', async (req, res) => {
                 if (pageRow.page_access_token) {
                     try {
                         const axios = require('axios');
-                        await axios.delete(`https://graph.facebook.com/v25.0/${pageId}/subscribed_apps`, {
+                        await axios.delete(`https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/${pageId}/subscribed_apps`, {
                             params: { access_token: pageRow.page_access_token }
                         });
                         console.log(`[Facebook] App unsubscribed from page ${pageId}`);

@@ -266,87 +266,6 @@ export default function MessengerIntegrationPage() {
         };
     }, [isWebhookMonitorOpen]);
 
-    const subscribeAppToPage = (pageId: string, accessToken: string, fields: string[] = []) => {
-        return new Promise((resolve) => {
-            // Add timeout to prevent hanging
-            const timeoutId = setTimeout(() => {
-                console.error(`Timeout subscribing app to page ${pageId}`);
-                resolve({ success: false, error: 'timeout' });
-            }, 10000); // 10 seconds timeout
-
-            // Extended Fields for Professional Bot & Handover Protocol
-            const defaultFields = [
-                'messages', 
-                'messaging_postbacks', 
-                'messaging_optins', 
-                'message_deliveries', 
-                'message_reads', 
-                'messaging_referrals', 
-                'standby', // Critical for Handover Protocol
-                'message_echoes'
-            ];
-            
-            const targetFields = fields.length > 0 ? fields : defaultFields;
-            const fieldsStr = targetFields.join(',');
-
-            // Try using SDK FIRST to avoid CORS issues on client side
-            if (window.FB) {
-                 window.FB.api(
-                    `/${pageId}/subscribed_apps`,
-                    'post',
-                    {
-                        access_token: accessToken,
-                        subscribed_fields: fieldsStr // Send as string for compatibility
-                    },
-                    function(response: any) {
-                        clearTimeout(timeoutId);
-                        if (!response || response.error) {
-                            console.warn('SDK Subscription failed, trying direct fetch:', response?.error);
-                            
-                            // Fallback to Direct Fetch
-                            fetch(`https://graph.facebook.com/v25.0/${pageId}/subscribed_apps?access_token=${accessToken}&subscribed_fields=${fieldsStr}`, {
-                                method: 'POST'
-                            })
-                            .then(res => res.json())
-                            .then(data => {
-                                if (data.error) {
-                                    resolve({ error: data.error });
-                                } else {
-                                    console.log('Direct fetch successfully subscribed app to page:', data);
-                                    resolve({ success: true });
-                                }
-                            })
-                            .catch(err => {
-                                resolve({ error: err.message });
-                            });
-
-                        } else {
-                            console.log('SDK Successfully subscribed app to page:', response);
-                            resolve(response);
-                        }
-                    }
-                );
-            } else {
-                // Fallback if SDK not ready
-                fetch(`https://graph.facebook.com/v25.0/${pageId}/subscribed_apps?access_token=${accessToken}&subscribed_fields=${fieldsStr}`, {
-                    method: 'POST'
-                })
-                .then(res => res.json())
-                .then(data => {
-                    clearTimeout(timeoutId);
-                    if (data.error) {
-                        resolve({ error: data.error });
-                    } else {
-                        resolve({ success: true });
-                    }
-                })
-                .catch(err => {
-                    clearTimeout(timeoutId);
-                    resolve({ error: err.message });
-                });
-            }
-        });
-    };
 
     const unsubscribeAppFromPage = (pageId: string, accessToken: string) => {
         return new Promise((resolve) => {
@@ -396,7 +315,7 @@ export default function MessengerIntegrationPage() {
         });
     };
 
-    const savePagesToBackend = async (facebookPages: FacebookPage[]) => {
+    const savePagesToBackend = async (facebookPages: FacebookPage[], userAccessToken?: string) => {
         console.log('🔍 [DEBUG] savePagesToBackend starting with pages:', facebookPages);
         if (!userEmail) {
             toast.error("User email not found. Please reload.");
@@ -417,69 +336,7 @@ export default function MessengerIntegrationPage() {
             try {
                 let dbId: number | null = null;
 
-                // 1.5 Subscribe App to Page (Critical for Webhooks/n8n)
-                try {
-                    console.log(`✅ [DEBUG] Step 1: Attempting to subscribe app to page ${page.name}...`);
-                    
-                    // Define Field Sets
-                    // 'messaging_referrals' requires special permission, 'feed' requires pages_manage_posts
-                    // REMOVED 'changes' as it causes (#100) Param subscribed_fields error
-                    const allFields = ['messages', 'messaging_postbacks', 'message_deliveries', 'message_reads', 'messaging_optins', 'messaging_referrals', 'standby', 'message_echoes'];
-                    const basicFields = ['messages', 'messaging_postbacks', 'message_deliveries', 'message_reads', 'message_echoes'];
-
-                    console.log(`✅ [DEBUG] Using fields (first attempt):`, allFields);
-                    // Attempt 1: Try ALL Fields
-                    let subResult: any = await subscribeAppToPage(page.id, page.access_token, allFields);
-                    console.log(`✅ [DEBUG] First subscription attempt result:`, subResult);
-                    
-                    // Attempt 2: Fallback to BASIC Fields if first attempt failed
-                    if (subResult?.error) {
-                         console.warn(`⚠️ [DEBUG] Full subscription failed for ${page.name}:`, subResult.error);
-                         
-                         // Silent Log to Backend (User requested NO TOAST on frontend for this retry)
-                         logFrontendError({
-                            message: `Full connection failed (${subResult.error.message || subResult.error.code}). Retrying with basic chat features...`,
-                            context: 'MessengerIntegrationPage:subscribeAppToPage:Retry',
-                            pageName: page.name,
-                            pageId: page.id
-                         });
-                         
-                         console.log(`✅ [DEBUG] Now using basic fields:`, basicFields);
-                         // Retry with minimal fields
-                         subResult = await subscribeAppToPage(page.id, page.access_token, basicFields);
-                         console.log(`✅ [DEBUG] Basic subscription attempt result:`, subResult);
-                    }
-
-                    if (subResult?.error) {
-                        // Final Failure
-                        console.error(`❌ [DEBUG] Final subscription failed for ${page.name}`, subResult.error);
-                        
-                        // Log to Backend
-                        logFrontendError({
-                            message: `Subscription Failed for ${page.name}: ${JSON.stringify(subResult.error)}`,
-                            context: 'MessengerIntegrationPage:subscribeAppToPage',
-                            pageName: page.name,
-                            pageId: page.id
-                        });
-
-                        toast.error(`${page.name}: Connection Failed. ${subResult.error.message || 'Check Permissions'}`);
-                    } else {
-                        console.log(`✅ [DEBUG] Successfully subscribed app to page ${page.name}`);
-                        
-                        toast.success(`${page.name}: Connected Successfully!`);
-                    }
-                } catch (subError: any) {
-                    console.error(`❌ [DEBUG] Exception during subscription for page ${page.name}`, subError);
-                    logFrontendError({
-                        message: `Subscription Exception: ${subError.message}`,
-                        stack: subError.stack,
-                        context: 'MessengerIntegrationPage:subscribeAppToPage:Exception',
-                        pageName: page.name,
-                        pageId: page.id
-                    });
-                }
-
-                console.log(`✅ [DEBUG] Step 2: Sending page data to backend...`);
+                console.log(`✅ [DEBUG] Sending page data to backend for authoritative subscription...`);
                 const res = await fetch(`${BACKEND_URL}/api/messenger/pages/manual`, {
                     method: "POST",
                     headers: {
@@ -490,6 +347,7 @@ export default function MessengerIntegrationPage() {
                         page_id: page.id,
                         name: page.name,
                         page_access_token: page.access_token,
+                        user_access_token: userAccessToken,
                         email: userEmail,
                         user_id: userId,
                     }),
@@ -569,7 +427,7 @@ export default function MessengerIntegrationPage() {
                 throw new Error("No Facebook pages found. If you are a Business Manager Owner, please assign yourself to the page under Business Settings > Add People.");
             }
 
-            await savePagesToBackend(facebookPages);
+            await savePagesToBackend(facebookPages, data.access_token);
         } catch (error: any) {
             console.error("Messenger mobile callback error:", error);
             logFrontendError({
@@ -713,7 +571,7 @@ export default function MessengerIntegrationPage() {
                     } else {
                         reject(new Error('User cancelled login or did not fully authorize.'));
                     }
-                }, {scope: 'email,public_profile,pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata'});
+                }, {scope: 'email,public_profile,pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,business_management'});
             });
 
             console.log('Successfully logged in, exchanging token...');
@@ -759,29 +617,37 @@ export default function MessengerIntegrationPage() {
                 toast.warning("Backend connection failed. Using short-lived token.");
             }
 
-            // Fetch User's Pages
-            addLog('info', 'FB Graph API', 'Fetching list of accessible pages from /me/accounts');
-            const pageResponse: any = await new Promise((resolve, reject) => {
-                window.FB.api('/me/accounts', 'get', { access_token: finalToken }, (response: any) => {
-                    if (response && response.data) {
-                        resolve(response);
-                    } else {
-                        reject(response?.error || new Error("No Facebook pages found. If you are a Business Manager Owner, please assign yourself to the page under Business Settings > Add People."));
-                    }
-                });
+            addLog('info', 'Backend API', 'Resolving accessible pages, including Business Portfolio pages...');
+            const authToken = localStorage.getItem("auth_token");
+            if (!authToken) {
+                throw new Error("Please login again");
+            }
+
+            const pagesResponse = await secureFetch(`${BACKEND_URL}/api/auth/facebook/messenger/pages`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${authToken}`
+                },
+                body: JSON.stringify({ access_token: finalToken })
+            });
+            const pageResolution = await pagesResponse.json().catch(() => ({}));
+            if (!pagesResponse.ok) {
+                throw new Error(pageResolution.error || 'Failed to resolve Facebook pages.');
+            }
+
+            const facebookPages: FacebookPage[] = Array.isArray(pageResolution.pages) ? pageResolution.pages : [];
+            if (facebookPages.length === 0) {
+                addLog('warning', 'Backend API', 'No accessible pages were resolved.', { diagnostics: pageResolution.diagnostics });
+                throw new Error("No Facebook pages found. If you are a Business Manager Owner, please assign yourself to the page under Business Settings > Add People.");
+            }
+
+            addLog('success', 'Backend API', `Found ${facebookPages.length} pages`, {
+                pages: facebookPages.map((page) => page.name),
+                diagnostics: pageResolution.diagnostics
             });
 
-            console.log('Pages fetched:', pageResponse);
-            if (!pageResponse.data || pageResponse.data.length === 0) {
-                 addLog('warning', 'FB Graph API', 'API returned 0 pages. User might need to grant access in Business Settings');
-                 throw new Error("No Facebook pages found. If you are a Business Manager Owner, please assign yourself to the page under Business Settings > Add People.");
-            }
-            
-            addLog('success', 'FB Graph API', `Found ${pageResponse.data.length} pages`, { 
-                pages: pageResponse.data.map((p: any) => p.name)
-            });
-            
-            await savePagesToBackend(pageResponse.data);
+            await savePagesToBackend(facebookPages, finalToken);
 
         } catch (error: any) {
             console.error("Facebook Connect Error:", error);
