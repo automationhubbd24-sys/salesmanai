@@ -2470,7 +2470,7 @@ async function saveWhatsAppContact(data) {
         await query(
             `INSERT INTO whatsapp_contacts
                 (session_name, phone_number, lid, name, profile_name, name_source, last_interaction)
-             VALUES ($1, $2, $3, $4, $4, CASE WHEN $4 IS NULL THEN NULL ELSE 'profile' END, $5)
+             VALUES ($1, $2, $3, $4::text, $4::text, CASE WHEN $4::text IS NULL THEN NULL ELSE 'profile' END, $5)
              ON CONFLICT (session_name, phone_number) DO UPDATE SET
                 profile_name = COALESCE(EXCLUDED.profile_name, whatsapp_contacts.profile_name),
                 name = CASE
