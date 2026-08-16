@@ -127,19 +127,6 @@ BEGIN
     WHERE email = v_user_email;
 
     IF v_user_id IS NULL THEN
-        -- Fallback: Try to find in whatsapp_sessions if auth lookup fails
-        -- (This handles cases where email casing might differ or auth table is restricted)
-        BEGIN
-            SELECT user_id::uuid INTO v_user_id
-            FROM public.whatsapp_sessions
-            WHERE user_email = v_user_email
-            LIMIT 1;
-        EXCEPTION WHEN OTHERS THEN
-            v_user_id := NULL;
-        END;
-    END IF;
-
-    IF v_user_id IS NULL THEN
         RAISE EXCEPTION 'User ID not found for email: %. User must be registered.', v_user_email;
     END IF;
 
@@ -190,9 +177,8 @@ WITH CHECK (auth.uid()::text = user_id);
 
 
 -- ==========================================
---  6. WhatsApp Sessions Updates (Expiry)
+--  6. WhatsApp Message Database Updates (Expiry)
 -- ==========================================
--- NOTE: Table name is 'whatsapp_message_database', NOT 'whatsapp_sessions'
 ALTER TABLE public.whatsapp_message_database 
 ADD COLUMN IF NOT EXISTS expires_at timestamp with time zone,
 ADD COLUMN IF NOT EXISTS plan_days integer DEFAULT 30;

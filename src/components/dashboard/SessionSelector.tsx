@@ -1,4 +1,4 @@
-import { useWhatsApp, type WahaSession } from "@/context/WhatsAppContext";
+import { useWhatsApp, type WhatsAppSession } from "@/context/WhatsAppContext";
 import { useEffect } from "react";
 import {
   Select,
@@ -14,7 +14,7 @@ export function SessionSelector() {
   const context = useWhatsApp();
   const navigate = useNavigate();
   const { sessions, currentSession, setCurrentSession } = context;
-  const getWpDbId = (session: WahaSession | null) => {
+  const getWpDbId = (session: WhatsAppSession | null) => {
     const value = session?.wp_db_id;
     if (typeof value === "string" || typeof value === "number") return value;
     return null;

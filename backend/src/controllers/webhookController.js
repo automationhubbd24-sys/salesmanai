@@ -4976,12 +4976,6 @@ STRICT RULES:
         // Save Assistant Reply (Text + Memory) to AI Context
         await dbService.saveChatMessage(sessionId, 'assistant', historyReplyText);
 
-        await dbService.saveLead({
-            page_id: pageId,
-            sender_id: senderId,
-            message: finalUserMessage,
-            reply: replyText
-        });
 
         // 8. Deduct Credit (ONLY IF CHEAP ENGINE IS ACTIVE)
         if (isCheapEngine) {

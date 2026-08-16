@@ -3535,9 +3535,6 @@ ${productContext || "No specific product context provided yet."}
     });
 }
 
-const WAHA_BASE_URL = process.env.WAHA_BASE_URL || 'https://wahubbd.salesmanchatbot.online';
-const WAHA_API_KEY = process.env.WAHA_API_KEY || 'e9457ca133cc4d73854ee0d43cee3bc5';
-
 // --- HELPER: Process Image (Vision) with Smart Fallback ---
 function appendImageSourceTypeInstruction(prompt = '') {
     const instruction = 'Image Source Type: choose exactly one of raw_photo, screenshot, post_screenshot, or video_screenshot.';
@@ -3570,9 +3567,7 @@ async function processImageWithVision(imageUrl, pageConfig = {}, customOptions =
             } else {
                 console.log(`[Vision] Downloading image from URL for Base64 fallback: ${imageUrl.substring(0, 50)}...`);
                 const headers = { 'User-Agent': 'Mozilla/5.0' };
-                if (imageUrl.includes(WAHA_BASE_URL) || imageUrl.includes('wahubbd.salesmanchatbot.online')) {
-                    headers['X-Api-Key'] = WAHA_API_KEY;
-                } else if ((imageUrl.includes('graph.facebook.com') || imageUrl.includes('lookaside.fbsbx.com')) && (pageConfig.page_access_token || pageConfig.cloud_access_token)) {
+                if ((imageUrl.includes('graph.facebook.com') || imageUrl.includes('lookaside.fbsbx.com')) && (pageConfig.page_access_token || pageConfig.cloud_access_token)) {
                     headers['Authorization'] = `Bearer ${pageConfig.page_access_token || pageConfig.cloud_access_token}`;
                 }
 
@@ -3689,7 +3684,6 @@ Example format: T-shirt, navy blue, horizontal stripes, short sleeves, crew neck
             const apiKey = keyData.key;
             
             // USE URL DIRECTLY IF POSSIBLE (User Preference)
-            // But if it's a private URL (like FB/WAHA), we MUST use Base64.
             // If we already downloaded it (base64Image exists), use Base64 to be safe.
             let imageContent;
             if (base64Image) {
@@ -4003,16 +3997,7 @@ async function transcribeAudio(audioUrl, config) {
     // 1. Download Audio
     try {
         const headers = { 'User-Agent': 'Mozilla/5.0' };
-        const isWahaUrl = audioUrl.includes(WAHA_BASE_URL) || 
-                          audioUrl.includes('wahubbd.salesmanchatbot.online') ||
-                          audioUrl.includes('/api/files/');
-        
-        if (isWahaUrl) {
-            // Priority: config.waha_api_key || process.env.WAHA_API_KEY || default
-            const activeWahaKey = config.waha_api_key || process.env.WAHA_API_KEY || WAHA_API_KEY;
-            headers['X-Api-Key'] = activeWahaKey;
-            console.log(`[Audio] Using WAHA Auth for URL: ${audioUrl.substring(0, 50)}...`);
-        } else if ((audioUrl.includes('graph.facebook.com') || audioUrl.includes('lookaside.fbsbx.com')) && (config.page_access_token || config.cloud_access_token)) {
+        if ((audioUrl.includes('graph.facebook.com') || audioUrl.includes('lookaside.fbsbx.com')) && (config.page_access_token || config.cloud_access_token)) {
             headers['Authorization'] = `Bearer ${config.page_access_token || config.cloud_access_token}`;
         }
 

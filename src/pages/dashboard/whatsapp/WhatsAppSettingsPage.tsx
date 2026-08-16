@@ -6,7 +6,7 @@ import { secureFetch } from "@/lib/api";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { Save, Bot, Sparkles, Key, Check, Image, Clock, Infinity as InfinityIcon, Loader2, Star, Tags, Plus, Trash2, ShieldAlert, ZapOff, RefreshCw } from "lucide-react";
+import { Save, Bot, Sparkles, Key, Check, Image, Clock, Infinity as InfinityIcon, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -39,7 +39,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 
 const formSchema = z.object({
   provider: z.string().min(1, "Please select a provider"),
@@ -95,14 +95,6 @@ export default function WhatsAppSettingsPage() {
   const [productList, setProductList] = useState<PromptProduct[]>([]);
   const [productLoading, setProductLoading] = useState(false);
   const [productSearch, setProductSearch] = useState("");
-
-  // Labels
-  const [isLabelDialogOpen, setIsLabelDialogOpen] = useState(false);
-  const [labels, setLabels] = useState<any[]>([]);
-  const [labelActions, setLabelActions] = useState<any[]>([]);
-  const [labelLoading, setLabelLoading] = useState(false);
-  const [newLabelName, setNewLabelName] = useState("");
-  const [newLabelAction, setNewLabelAction] = useState<'stop' | 'continue'>('stop');
 
   // Credits (Shared)
   const [messageCredit, setMessageCredit] = useState(0);
@@ -422,12 +414,6 @@ export default function WhatsAppSettingsPage() {
     fetchProductsForPrompt();
   };
 
-  useEffect(() => {
-    if (isLabelDialogOpen) {
-      fetchLabelsAndActions();
-    }
-  }, [isLabelDialogOpen]);
-
   const handleInsertProductIntoPrompt = (product: PromptProduct) => {
     const name = product?.name || "Unnamed Product";
     const line = `\n##PRODUCT "${name}"`;
@@ -531,92 +517,6 @@ export default function WhatsAppSettingsPage() {
       toast.error(error.message);
     } finally {
       setBehaviorSaving(false);
-    }
-  };
-
-  const fetchLabelsAndActions = async () => {
-    const sessionName = String(currentSession?.name || localStorage.getItem("active_wa_session_id") || "");
-    if (!sessionName) return;
-    
-    setLabelLoading(true);
-    try {
-      const token = localStorage.getItem("auth_token");
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/labels/${sessionName}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setLabels(data || []);
-      }
-      
-      if (dbId) {
-        const resConfig = await fetch(`${BACKEND_URL}/api/whatsapp/config/${dbId}`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (resConfig.ok) {
-          const config = await resConfig.json();
-          setLabelActions(config.label_actions || []);
-        }
-      }
-    } catch (e) {
-      console.error("Failed to fetch labels", e);
-    } finally {
-      setLabelLoading(false);
-    }
-  };
-
-  const handleUpsertLabelAction = async (labelName: string, action: 'stop' | 'continue') => {
-    if (!dbId) return;
-    try {
-      const token = localStorage.getItem("auth_token");
-      const newActions = [...labelActions];
-      const idx = newActions.findIndex(a => a.label_name.toLowerCase() === labelName.toLowerCase());
-      
-      if (idx > -1) {
-        newActions[idx].ai_action = action;
-      } else {
-        newActions.push({ id: Date.now(), label_name: labelName, ai_action: action });
-      }
-
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${dbId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ label_actions: newActions })
-      });
-
-      if (res.ok) {
-        setLabelActions(newActions);
-        toast.success("Label action updated");
-      }
-    } catch (e) {
-      toast.error("Failed to update label action");
-    }
-  };
-
-  const handleDeleteLabelAction = async (actionId: any) => {
-    if (!dbId) return;
-    try {
-      const token = localStorage.getItem("auth_token");
-      const newActions = labelActions.filter(a => a.id !== actionId);
-
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${dbId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ label_actions: newActions })
-      });
-
-      if (res.ok) {
-        setLabelActions(newActions);
-        toast.success("Label action removed");
-      }
-    } catch (e) {
-      toast.error("Failed to delete label action");
     }
   };
 
@@ -1461,174 +1361,6 @@ export default function WhatsAppSettingsPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={isLabelDialogOpen} onOpenChange={setIsLabelDialogOpen}>
-        <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col bg-card border-border">
-          <DialogHeader>
-            <DialogTitle className="text-2xl font-bold flex items-center gap-2">
-              <Tags className="h-6 w-6 text-primary" />
-              WhatsApp Label & Action Management
-            </DialogTitle>
-            <DialogDescription>
-              Configure how the AI should behave when specific WhatsApp labels are applied to a chat.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="flex-1 overflow-y-auto py-4 space-y-6">
-            {/* Action Summary/Instruction */}
-            <div className="bg-primary/5 border border-primary/20 p-4 rounded-xl flex gap-4 items-start text-sm">
-              <ShieldAlert className="h-5 w-5 text-primary shrink-0 mt-0.5" />
-              <div>
-                <p className="font-bold text-primary">How Label Actions Work:</p>
-                <p className="text-muted-foreground mt-1">
-                  When a label is added to a contact (manually or by AI), the system checks these rules. 
-                  If set to <strong>"Stop AI (Handover)"</strong>, the bot will immediately pause for that customer.
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Left: Current Labels from WhatsApp */}
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-bold flex items-center gap-2">
-                    <Sparkles className="h-4 w-4 text-amber-500" />
-                    WhatsApp Labels
-                  </h4>
-                  <Button variant="ghost" size="sm" onClick={fetchLabelsAndActions} disabled={labelLoading} className="h-8 text-xs">
-                    <RefreshCw className={`mr-1 h-3 w-3 ${labelLoading ? 'animate-spin' : ''}`} />
-                    Refresh
-                  </Button>
-                </div>
-                <div className="border border-border rounded-xl bg-secondary/20 p-4 min-h-[200px] max-h-[400px] overflow-y-auto space-y-2">
-                  {labelLoading ? (
-                    <div className="flex justify-center items-center h-32">
-                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                    </div>
-                  ) : labels.length === 0 ? (
-                    <div className="text-center py-10 text-muted-foreground italic">
-                      No labels found in your WhatsApp.
-                    </div>
-                  ) : (
-                    labels.map((label) => {
-                      const existingAction = labelActions.find(a => a.label_name.toLowerCase() === label.name.toLowerCase());
-                      return (
-                        <div key={label.id} className="flex items-center justify-between p-3 bg-card border border-border rounded-lg shadow-sm hover:shadow-md transition-all">
-                          <div className="flex items-center gap-3">
-                            <div className="w-3 h-3 rounded-full shadow-[0_0_5px_rgba(0,0,0,0.1)]" style={{ backgroundColor: label.colorHex || '#ccc' }} />
-                            <span className="font-medium">{label.name}</span>
-                          </div>
-                          {existingAction ? (
-                             <Badge variant="outline" className={existingAction.ai_action === 'stop' ? "bg-red-500/10 text-red-500 border-red-500/30" : "bg-green-500/10 text-green-500 border-green-500/30"}>
-                               {existingAction.ai_action === 'stop' ? 'AI Stopped' : 'AI Active'}
-                             </Badge>
-                          ) : (
-                            <Button size="sm" variant="outline" onClick={() => handleUpsertLabelAction(label.name, 'stop')} className="h-7 text-[10px] uppercase font-bold px-2">
-                              Assign Action
-                            </Button>
-                          )}
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-
-              {/* Right: Label Rules (Actions) */}
-              <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h4 className="font-bold flex items-center gap-2">
-                      <ShieldAlert className="h-4 w-4 text-primary" />
-                      Behavior Rules
-                    </h4>
-                    <Dialog>
-                      <DialogTrigger asChild>
-                        <Button size="sm" variant="outline" className="h-7 text-[10px] uppercase font-bold">
-                          <Plus className="mr-1 h-3 w-3" />
-                          Manual Add
-                        </Button>
-                      </DialogTrigger>
-                      <DialogContent className="sm:max-w-[425px] bg-card border-border">
-                        <DialogHeader>
-                          <DialogTitle>Add Manual Label</DialogTitle>
-                          <DialogDescription>
-                            Manually add a label name to define its behavior rules.
-                          </DialogDescription>
-                        </DialogHeader>
-                        <div className="grid gap-4 py-4">
-                          <div className="grid gap-2">
-                            <Label htmlFor="labelName">Label Name</Label>
-                            <Input
-                              id="labelName"
-                              placeholder="e.g. Paid Customer"
-                              value={newLabelName}
-                              onChange={(e) => setNewLabelName(e.target.value)}
-                            />
-                          </div>
-                          <div className="flex items-center justify-between rounded-lg border p-3">
-                            <div className="space-y-0.5">
-                              <Label>AI Action</Label>
-                              <div className="text-[11px] text-muted-foreground">
-                                {newLabelAction === 'stop' ? 'Bot will stop for this label' : 'Bot will continue talking'}
-                              </div>
-                            </div>
-                            <Switch
-                              checked={newLabelAction === 'stop'}
-                              onCheckedChange={(checked) => setNewLabelAction(checked ? 'stop' : 'continue')}
-                            />
-                          </div>
-                        </div>
-                        <DialogFooter>
-                          <Button 
-                            disabled={!newLabelName.trim()} 
-                            onClick={() => {
-                              handleUpsertLabelAction(newLabelName, newLabelAction);
-                              setNewLabelName("");
-                              toast.success("Manual label added");
-                            }}
-                          >
-                            Add Rule
-                          </Button>
-                        </DialogFooter>
-                      </DialogContent>
-                    </Dialog>
-                  </div>
-                <div className="border border-border rounded-xl bg-secondary/10 p-4 min-h-[200px] max-h-[400px] overflow-y-auto space-y-3">
-                  {labelActions.length === 0 ? (
-                    <div className="text-center py-10 text-muted-foreground italic">
-                      Define how AI should react to labels.
-                    </div>
-                  ) : (
-                    labelActions.map((action) => (
-                      <Card key={action.id} className="p-3 border border-border/60 shadow-sm">
-                        <div className="flex justify-between items-start mb-2">
-                          <span className="font-black text-xs uppercase tracking-wider text-primary">{action.label_name}</span>
-                          <Button variant="ghost" size="sm" onClick={() => handleDeleteLabelAction(action.id)} className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive">
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                        <div className="flex items-center justify-between gap-4">
-                           <div className="flex items-center gap-2">
-                              {action.ai_action === 'stop' ? <ZapOff className="h-4 w-4 text-red-500" /> : <Bot className="h-4 w-4 text-green-500" />}
-                              <span className="text-xs font-medium">{action.ai_action === 'stop' ? 'Stop AI' : 'Keep AI Active'}</span>
-                           </div>
-                           <Switch 
-                              checked={action.ai_action === 'stop'} 
-                              onCheckedChange={(checked) => handleUpsertLabelAction(action.label_name, checked ? 'stop' : 'continue')}
-                           />
-                        </div>
-                      </Card>
-                    ))
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <DialogFooter className="pt-4 border-t border-border">
-            <Button variant="outline" onClick={() => setIsLabelDialogOpen(false)}>Close Manager</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

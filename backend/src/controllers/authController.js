@@ -30,14 +30,12 @@ async function invalidateUserRuntimeCaches(userId) {
             )
         ]);
 
-        const whatsappController = require('./whatsappController');
         const webhookController = require('./webhookController');
 
         waResult.rows.forEach((row) => {
             [row.session_name, row.waba_id, row.phone_number_id]
                 .filter(Boolean)
                 .forEach((key) => {
-                    whatsappController.clearPageCache(key);
                     webhookController.clearPageCache(key);
                 });
         });

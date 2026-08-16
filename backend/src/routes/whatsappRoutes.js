@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
-const whatsappController = require('../controllers/whatsappController');
 const whatsappCloudController = require('../controllers/whatsappCloudController');
 const webhookController = require('../controllers/webhookController');
 const pgClient = require('../services/pgClient');
@@ -212,12 +211,12 @@ router.delete('/official/:sessionName', authMiddleware, async (req, res) => {
         }
 
         await dbService.deleteWhatsAppEntry(row.session_name);
-        whatsappController.clearPageCache(row.session_name);
+        webhookController.clearPageCache(row.session_name);
         if (row.waba_id) {
-            whatsappController.clearPageCache(row.waba_id);
+            webhookController.clearPageCache(row.waba_id);
         }
         if (row.phone_number_id) {
-            whatsappController.clearPageCache(row.phone_number_id);
+            webhookController.clearPageCache(row.phone_number_id);
         }
 
         res.json({ success: true });
@@ -1018,7 +1017,6 @@ router.put('/config/:id', async (req, res) => {
             ].filter(Boolean);
 
             for (const cacheKey of cacheKeys) {
-                whatsappController.clearPageCache(cacheKey);
                 webhookController.clearPageCache(cacheKey);
             }
         }
@@ -1093,12 +1091,6 @@ router.get('/download-conversation', authMiddleware, async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-
-// Label & List Management
-router.get('/labels/:sessionName', authMiddleware, whatsappController.getLabels);
-router.get('/label-actions/:sessionName', authMiddleware, whatsappController.getLabelActions);
-router.post('/label-actions', authMiddleware, whatsappController.upsertLabelAction);
-router.delete('/label-actions/:id', authMiddleware, whatsappController.deleteLabelAction);
 
 router.get('/conversations/:sessionName', authMiddleware, async (req, res) => {
     try {

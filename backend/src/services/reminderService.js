@@ -1,7 +1,6 @@
 const dbService = require('./dbService');
 const aiService = require('./aiService');
 const facebookService = require('./facebookService');
-const whatsappService = require('./whatsappService');
 const whatsappCloudService = require('./whatsappCloudService');
 const { query } = require('./pgClient');
 
@@ -167,7 +166,12 @@ class ReminderService {
     }
 
     async processWhatsAppReminders(config) {
-        const { session_name, order_reminder_delay_hours, order_reminder_message } = config;
+        const { session_name, provider_type, phone_number_id, cloud_access_token, order_reminder_delay_hours, order_reminder_message } = config;
+        if (provider_type !== 'official' || !phone_number_id || !cloud_access_token) {
+            console.warn(`[Reminder] Skipping non-official WhatsApp connection ${session_name}`);
+            return;
+        }
+
         const delayHours = order_reminder_delay_hours || 4;
         const reminderTemplate = order_reminder_message || 'স্যার, আপনি [PRODUCT] টি নিতে চেয়েছিলেন, আপনি কি অর্ডারটি কনফার্ম করতে চান?';
 
@@ -189,6 +193,10 @@ class ReminderService {
         const sessionConfig = await dbService.getWhatsAppConfig(session_name);
         if (!sessionConfig) {
             console.warn(`[Reminder] No WhatsApp config found for ${session_name}`);
+            return;
+        }
+        if (sessionConfig.provider_type !== 'official' || !sessionConfig.phone_number_id || !sessionConfig.cloud_access_token) {
+            console.warn(`[Reminder] Skipping non-official WhatsApp connection ${session_name}`);
             return;
         }
 
@@ -314,11 +322,12 @@ class ReminderService {
         });
 
         try {
-            if (sessionConfig.provider_type === 'official' && sessionConfig.phone_number_id && sessionConfig.cloud_access_token) {
-                await whatsappCloudService.sendTextMessage(sessionConfig.phone_number_id, sessionConfig.cloud_access_token, sender_id, finalMessage);
-            } else {
-                await whatsappService.sendMessage(sessionName, sender_id, finalMessage);
-            }
+            await whatsappCloudService.sendTextMessage(
+                sessionConfig.phone_number_id,
+                sessionConfig.cloud_access_token,
+                sender_id,
+                finalMessage
+            );
         } catch (error) {
             await dbService.saveWhatsAppChat({
                 session_name: sessionName,

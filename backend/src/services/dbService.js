@@ -232,25 +232,6 @@ async function getPagePrompts(pageId) {
     }
 }
 
-// 3. Save Lead / Chat History (Step 5)
-async function saveLead(data) {
-    try {
-        await query(
-            `INSERT INTO wp_chats (page_id, sender_id, text, status, timestamp)
-             VALUES ($1,$2,$3,$4,$5)`,
-            [
-                data.page_id,
-                data.sender_id,
-                data.message,
-                'done',
-                Date.now()
-            ]
-        );
-    } catch (error) {
-        console.error("Error saving lead:", error);
-    }
-}
-
 // 3.1 Conversation State Management (Agentic Follow-up Context)
 async function getConversationState(pageId, senderId) {
     try {
@@ -307,32 +288,6 @@ async function setConversationState(pageId, senderId, data) {
 // Backward-compatible alias used by legacy WhatsApp paths.
 async function updateConversationState(pageId, senderId, data) {
     return setConversationState(pageId, senderId, data);
-}
-
-// 4. Debounce / Duplicate Check
-async function checkDuplicate(messageId) {
-    if (!messageId) return false;
-
-    try {
-        const existing = await query(
-            'SELECT id FROM wpp_debounce WHERE debounce_key = $1 LIMIT 1',
-            [messageId]
-        );
-        if (existing.rows.length > 0) {
-            return true;
-        }
-        await query(
-            'INSERT INTO wpp_debounce (debounce_key) VALUES ($1)',
-            [messageId]
-        );
-        return false;
-    } catch (error) {
-        if (error.code === '23505') { // Unique violation
-            return true;
-        }
-        console.error("Error in checkDuplicate:", error.message);
-        return false;
-    }
 }
 
 // 5. Smart Credit Deduction (Centralized User Balance)
@@ -839,11 +794,6 @@ async function initTables() {
                 IF seq_name IS NOT NULL THEN
                     EXECUTE 'SELECT setval(''' || seq_name || ''', (SELECT COALESCE(MAX(id),0)+1 FROM fb_chats), false)';
                 END IF;
-
-                seq_name := pg_get_serial_sequence('wp_chats', 'id');
-                IF seq_name IS NOT NULL THEN
-                    EXECUTE 'SELECT setval(''' || seq_name || ''', (SELECT COALESCE(MAX(id),0)+1 FROM wp_chats), false)';
-                END IF;
             END $$;
         `);
 
@@ -1324,9 +1274,7 @@ async function addBalanceByEmail(email, amount) {
     try {
         // Try to find user_id from our local tables first if possible
         // But 'user_configs' is keyed by user_id.
-        // Let's try to find a user who has this email in 'page_access_token_message' (if they connected a page)
-        // OR 'whatsapp_sessions' (if they connected WA)
-        
+        // Let's try to find a user who has this email in a connected resource.
         let userId = null;
 
         const userConfigResult = await query(
@@ -1339,7 +1287,7 @@ async function addBalanceByEmail(email, amount) {
 
         if (!userId) {
             const waResult = await query(
-                'SELECT user_id FROM whatsapp_sessions WHERE user_email = $1 LIMIT 1',
+                'SELECT user_id FROM whatsapp_message_database WHERE email = $1 LIMIT 1',
                 [email]
             );
             if (waResult.rows.length > 0) {
@@ -1739,7 +1687,7 @@ async function getMessageById(messageId) {
     }
 }
 
-// 12. Create WhatsApp Entry (whatsapp_message_database & whatsapp_sessions)
+// 12. Create WhatsApp Entry
 async function createWhatsAppEntry(sessionName, userId, planDays = 30, initialStatus = 'connected', userEmail = null) {
     const { query } = require('./pgClient');
 
@@ -1818,49 +1766,7 @@ async function createWhatsAppEntry(sessionName, userId, planDays = 30, initialSt
         }
     }
 
-    try {
-        await query(
-            `INSERT INTO whatsapp_sessions
-                (session_name, session_id, user_id, user_email, plan_days, expires_at, created_at, updated_at, status, qr, qr_code)
-             VALUES ($1,$1,$2,$3,$4,$5,now(),now(),$6,'',NULL)
-             ON CONFLICT (session_name) DO UPDATE SET
-                user_id = EXCLUDED.user_id,
-                user_email = EXCLUDED.user_email,
-                plan_days = EXCLUDED.plan_days,
-                expires_at = EXCLUDED.expires_at,
-                updated_at = now(),
-                status = EXCLUDED.status`,
-            [sessionName, userId, userEmail, parseInt(planDays), expiresAt.toISOString(), initialStatus]
-        );
-    } catch (e) {
-        console.warn("[DB] Failed to insert into whatsapp_sessions (ignoring):", e.message);
-    }
-
     return row;
-}
-
-// 12.5 Create WhatsApp Session Entry (Public Table)
-async function createWhatsAppSessionEntry(sessionName, userId, planDays = 30, initialStatus = 'connected', userEmail = null) {
-    const { query } = require('./pgClient');
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + parseInt(planDays));
-
-    const result = await query(
-        `INSERT INTO whatsapp_sessions
-            (session_name, session_id, user_id, user_email, plan_days, expires_at, created_at, updated_at, status, qr, qr_code)
-         VALUES ($1,$1,$2,$3,$4,$5,now(),now(),$6,'',NULL)
-         ON CONFLICT (session_name) DO UPDATE SET
-            user_id = EXCLUDED.user_id,
-            user_email = EXCLUDED.user_email,
-            plan_days = EXCLUDED.plan_days,
-            expires_at = EXCLUDED.expires_at,
-            updated_at = now(),
-            status = EXCLUDED.status
-         RETURNING *`,
-        [sessionName, userId, userEmail, parseInt(planDays), expiresAt.toISOString(), initialStatus]
-    );
-
-    return result.rows[0];
 }
 
 // --- WhatsApp Specific Functions ---
@@ -3181,33 +3087,6 @@ async function updateWhatsAppEntry(id, updates) {
             [...values, id]
         );
 
-        const sessionResult = await query(
-            'SELECT session_name FROM whatsapp_message_database WHERE id = $1 LIMIT 1',
-            [id]
-        );
-
-        if (sessionResult.rows.length > 0 && sessionResult.rows[0].session_name) {
-            const sessionName = sessionResult.rows[0].session_name;
-            const sessionUpdates = { ...updates, updated_at: new Date().toISOString() };
-            delete sessionUpdates.reply_message;
-            delete sessionUpdates.order_tracking;
-            delete sessionUpdates.text_prompt;
-            delete sessionUpdates.active;
-            delete sessionUpdates.subscription_status;
-
-            const sessionKeys = Object.keys(sessionUpdates);
-            if (sessionKeys.length === 0) return;
-
-            const sessionSet = sessionKeys.map((k, idx) => `${k} = $${idx + 1}`);
-            const sessionValues = sessionKeys.map(k => sessionUpdates[k]);
-
-            await query(
-                `UPDATE whatsapp_sessions
-                 SET ${sessionSet.join(', ')}
-                 WHERE session_name = $${sessionKeys.length + 1}`,
-                [...sessionValues, sessionName]
-            );
-        }
     } catch (error) {
         console.error("Error updating WhatsApp entry:", error.message);
     }
@@ -3229,92 +3108,8 @@ async function updateWhatsAppEntryByName(sessionName, updates) {
             [...values, sessionName]
         );
 
-        const sessionUpdates = { ...updates, updated_at: new Date().toISOString() };
-        delete sessionUpdates.reply_message;
-        delete sessionUpdates.order_tracking;
-        delete sessionUpdates.text_prompt;
-        delete sessionUpdates.active;
-        delete sessionUpdates.subscription_status;
-
-        const sessionKeys = Object.keys(sessionUpdates);
-        if (sessionKeys.length === 0) return;
-
-        const sessionSet = sessionKeys.map((k, idx) => `${k} = $${idx + 1}`);
-        const sessionValues = sessionKeys.map(k => sessionUpdates[k]);
-
-        await query(
-            `UPDATE whatsapp_sessions
-             SET ${sessionSet.join(', ')}
-             WHERE session_name = $${sessionKeys.length + 1}`,
-            [...sessionValues, sessionName]
-        );
     } catch (error) {
         console.error("Error updating WhatsApp entry by name:", error.message);
-    }
-}
-
-// 22. Renew WhatsApp Session
-async function renewWhatsAppSession(sessionName, days) {
-    const sessionResult = await query(
-        'SELECT expires_at, plan_days FROM whatsapp_message_database WHERE session_name = $1 LIMIT 1',
-        [sessionName]
-    );
-
-    if (sessionResult.rows.length === 0) {
-        throw new Error("Session not found");
-    }
-
-    const session = sessionResult.rows[0];
-    let newExpiresAt = new Date();
-
-    if (session.expires_at && new Date(session.expires_at) > new Date()) {
-        newExpiresAt = new Date(session.expires_at);
-    }
-
-    newExpiresAt.setDate(newExpiresAt.getDate() + days);
-
-    const updateResult = await query(
-        `UPDATE whatsapp_message_database
-         SET expires_at = $2,
-             plan_days = COALESCE(plan_days, 0) + $3,
-             active = true,
-             status = 'working',
-             subscription_status = 'active'
-         WHERE session_name = $1
-         RETURNING *`,
-        [sessionName, newExpiresAt.toISOString(), days]
-    );
-
-    try {
-        await query(
-            `UPDATE whatsapp_sessions
-             SET expires_at = $2,
-                 plan_days = COALESCE(plan_days, 0) + $3,
-                 status = 'working',
-                 updated_at = now()
-             WHERE session_name = $1`,
-            [sessionName, newExpiresAt.toISOString(), days]
-        );
-    } catch (e) {}
-
-    return updateResult.rows[0];
-}
-
-// 23. Get Expired WhatsApp Sessions
-async function getExpiredWhatsAppSessions() {
-    const now = new Date().toISOString();
-    try {
-        const result = await query(
-            `SELECT session_name, user_id, expires_at
-             FROM whatsapp_message_database
-             WHERE expires_at < $1
-               AND active = true`,
-            [now]
-        );
-        return result.rows;
-    } catch (error) {
-        console.error("Error fetching expired sessions:", error);
-        return [];
     }
 }
 
@@ -3354,14 +3149,6 @@ async function deleteWhatsAppEntry(sessionName) {
         throw error;
     }
 
-    try {
-        await query(
-            'DELETE FROM whatsapp_sessions WHERE session_name = $1',
-            [sessionName]
-        );
-    } catch (e) {
-        console.warn("[DB] Failed to delete from whatsapp_sessions:", e.message);
-    }
 }
 
 async function deleteMessengerPage(pageId) {
@@ -4093,11 +3880,9 @@ module.exports = {
     calculateRequestCost,
     getPageConfig,
     getPagePrompts,
-    saveLead,
     getConversationState,
     setConversationState,
     updateConversationState,
-    checkDuplicate,
     deductCredit,
     getChatHistory,
     saveChatMessage,
@@ -4134,14 +3919,11 @@ module.exports = {
     toggleWhatsAppLock,
     getWhatsAppContact,
     getWhatsAppContactByLid,
-    renewWhatsAppSession,
-    getExpiredWhatsAppSessions,
     deductUserBalance,
     deleteWhatsAppEntry,
     deleteMessengerPage,
     checkWhatsAppLockStatus,
     checkWhatsAppEmojiLock,
-    createWhatsAppSessionEntry,
     getActiveWhatsAppSessions,
     getWhatsAppDailyAICount,
     checkFbLockStatus,
@@ -4215,17 +3997,6 @@ async function checkProductFeatureAccess(userId) {
         }
     }
 
-    const waResult = await query(
-        `SELECT COUNT(*)::int AS cnt
-         FROM whatsapp_sessions
-         WHERE user_id::text = $1::text
-           AND expires_at > NOW()`,
-        [String(userId)]
-    );
-
-    if (waResult.rows.length > 0 && waResult.rows[0].cnt > 0) {
-        return true;
-    }
 
     const fbResult = await query(
         `SELECT COUNT(*)::int AS cnt
@@ -4784,13 +4555,6 @@ async function resolvePageContextType(pageId) {
         console.warn("[DB] resolvePageContextType DB check failed:", e.message);
     }
 
-    try {
-        const waRes2 = await query('SELECT 1 FROM whatsapp_sessions WHERE session_name = $1 LIMIT 1', [sId]);
-        if (waRes2.rows.length > 0) return 'whatsapp';
-    } catch (e) {
-        console.warn("[DB] resolvePageContextType DB check failed:", e.message);
-    }
-    
     // 3. Check for FB Page IDs (usually all numeric and > 10 digits)
     if (/^\d{10,}$/.test(sId)) return 'messenger';
     
@@ -5449,15 +5213,7 @@ async function resolveResourceSearchContext(pageId) {
                 .filter(Boolean)
         ));
 
-        let ownerUserId = row?.user_id ? String(row.user_id) : null;
-
-        if (!ownerUserId) {
-            const waSessionRes = await query(
-                'SELECT user_id FROM whatsapp_sessions WHERE session_name = $1 LIMIT 1',
-                [resourceId]
-            );
-            ownerUserId = waSessionRes.rows[0]?.user_id ? String(waSessionRes.rows[0].user_id) : null;
-        }
+        const ownerUserId = row?.user_id ? String(row.user_id) : null;
 
         return { contextType, isWhatsapp, resourceIds, ownerUserId };
     } catch (err) {

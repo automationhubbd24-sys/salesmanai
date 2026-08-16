@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from "react";
 import { toast } from "sonner";
 import { BACKEND_URL } from "@/config";
 
-export interface WahaSession {
+export interface WhatsAppSession {
   name: string;
   status?: string;
   provider_type?: string;
@@ -14,9 +14,9 @@ export interface WahaSession {
 }
 
 export interface WhatsAppContextType {
-  sessions: WahaSession[];
-  currentSession: WahaSession | null;
-  setCurrentSession: (session: WahaSession | null) => void;
+  sessions: WhatsAppSession[];
+  currentSession: WhatsAppSession | null;
+  setCurrentSession: (session: WhatsAppSession | null) => void;
   refreshSessions: () => Promise<void>;
   loading: boolean;
   // Team Features
@@ -31,8 +31,8 @@ export interface WhatsAppContextType {
 const WhatsAppContext = createContext<WhatsAppContextType | undefined>(undefined);
 
 export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
-  const [sessions, setSessions] = useState<WahaSession[]>([]);
-  const [currentSession, setCurrentSession] = useState<WahaSession | null>(null);
+  const [sessions, setSessions] = useState<WhatsAppSession[]>([]);
+  const [currentSession, setCurrentSession] = useState<WhatsAppSession | null>(null);
   const [loading, setLoading] = useState(true);
   const currentSessionRef = React.useRef(currentSession);
   
@@ -157,8 +157,8 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
           throw new Error(errData.error || `Server returned ${res.status}`);
       }
 
-      const wahaSessions = await res.json();
-      const allSessions: WahaSession[] = Array.isArray(wahaSessions) ? wahaSessions : [];
+      const sessionResponse = await res.json();
+      const allSessions: WhatsAppSession[] = Array.isArray(sessionResponse) ? sessionResponse : [];
       let officialSessions = allSessions.filter((session) =>
         session.provider_type === "official" || String(session.name || "").startsWith("official_")
       );
@@ -172,8 +172,8 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
               const teamUrl = `${BACKEND_URL}/api/whatsapp/sessions?team_owner=${encodeURIComponent(team.owner_email)}`;
               const teamRes = await fetch(teamUrl, { headers: { Authorization: `Bearer ${token}` } });
               if (teamRes.ok) {
-                  const teamWahaSessions = await teamRes.json();
-                  const teamOfficial = (Array.isArray(teamWahaSessions) ? teamWahaSessions : []).filter((s: any) => 
+                  const teamSessionResponse = await teamRes.json();
+                  const teamOfficial = (Array.isArray(teamSessionResponse) ? teamSessionResponse : []).filter((s: any) =>
                       s.provider_type === "official" || String(s.name || "").startsWith("official_")
                   );
                   if (teamOfficial.length > 0) {
