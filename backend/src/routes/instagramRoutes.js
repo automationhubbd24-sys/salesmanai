@@ -384,7 +384,7 @@ router.get('/messages/:accountId/:senderId', authMiddleware, async (req, res) =>
         const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 40, 10), 120);
         const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
         const { rows } = await pgClient.query(
-            `SELECT CASE WHEN reply_by IN ('bot','admin') THEN 'me' ELSE sender_id END AS from, text AS body,
+            `SELECT id, message_id, CASE WHEN reply_by IN ('bot','admin') THEN 'me' ELSE sender_id END AS from, text AS body,
                     COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000) AS timestamp, reply_by, (reply_by = 'bot') AS is_ai
              FROM instagram_chats
              WHERE instagram_account_id = $1 AND (sender_id = $2 OR recipient_id = $2)
@@ -456,7 +456,18 @@ router.post('/send', authMiddleware, upload.single('image'), async (req, res) =>
             await dbService.saveInstagramChat({ instagram_account_id: account.page_id, sender_id: account.page_id, recipient_id: to, message_id: id, text: message, timestamp: Date.now(), status: 'sent', reply_by: 'admin' });
             sent.push({ messageId: id, body: message });
         }
-        res.json({ success: true, sent });
+        res.json({
+            success: true,
+            message: {
+                message_id: sent[0]?.messageId || null,
+                from: 'me',
+                body: sent.map((part) => part.body).filter(Boolean).join('\n\n'),
+                timestamp: Date.now(),
+                reply_by: 'admin',
+                is_ai: false
+            },
+            sent
+        });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

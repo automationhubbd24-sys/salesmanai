@@ -63,6 +63,12 @@ type Conversation = {
 };
 
 type MessageItem = {
+  id?: string | number | null;
+  message_id?: string | null;
+  messageId?: string | null;
+  provider_message_id?: string | null;
+  client_id?: string | null;
+  optimistic?: boolean;
   from: string;
   body: string;
   timestamp: number | string | null;
@@ -222,6 +228,57 @@ const shouldHideMessage = (message: MessageItem) => {
     lowerBody.includes("conversation locked") ||
     lowerBody.includes("too many failures");
   return isInternalNoise && !hasImage && !isBotImage;
+};
+
+const getMessageUniqueId = (message: MessageItem) => {
+  const uniqueId = message.message_id || message.messageId || message.provider_message_id || message.id;
+  return uniqueId === null || uniqueId === undefined || uniqueId === "" ? null : String(uniqueId);
+};
+
+const getMessageFingerprint = (message: MessageItem) => [
+  normalizeTimestamp(message.timestamp) || "",
+  message.from || "",
+  message.reply_by || "",
+  message.body || ""
+].join(":");
+
+const isSameOutgoingMessage = (a: MessageItem, b: MessageItem) => {
+  const aTimestamp = normalizeTimestamp(a.timestamp);
+  const bTimestamp = normalizeTimestamp(b.timestamp);
+  if (!aTimestamp || !bTimestamp) return false;
+
+  const aBody = a.body || "";
+  const bBody = b.body || "";
+  const sameBody = aBody === bBody || (aBody.startsWith("[Image Message]") && bBody.startsWith("[Image Message]"));
+
+  return (a.from === "me" || a.reply_by === "admin") &&
+    (b.from === "me" || b.reply_by === "admin") &&
+    sameBody &&
+    Math.abs(aTimestamp - bTimestamp) <= 120000;
+};
+
+const mergeMessageLists = (currentMessages: MessageItem[], incomingMessages: MessageItem[]) => {
+  const merged = [...currentMessages];
+
+  incomingMessages.forEach((incoming) => {
+    const incomingId = getMessageUniqueId(incoming);
+    const incomingFingerprint = getMessageFingerprint(incoming);
+    const existingIndex = merged.findIndex((existing) => {
+      const existingId = getMessageUniqueId(existing);
+      if (incoming.client_id && existing.client_id && incoming.client_id === existing.client_id) return true;
+      if (incomingId && existingId && incomingId === existingId) return true;
+      if (!incomingId && !existingId && getMessageFingerprint(existing) === incomingFingerprint) return true;
+      return Boolean(existing.optimistic) && isSameOutgoingMessage(existing, incoming);
+    });
+
+    if (existingIndex >= 0) {
+      merged[existingIndex] = { ...merged[existingIndex], ...incoming, optimistic: false };
+    } else {
+      merged.push(incoming);
+    }
+  });
+
+  return merged.sort((a, b) => (normalizeTimestamp(a.timestamp) || 0) - (normalizeTimestamp(b.timestamp) || 0));
 };
 
 const isValidContactName = (value: unknown) => {
@@ -415,16 +472,8 @@ const SmartInbox = () => {
           messagesSignatureRef.current = signature;
           setMessages((prev) => {
             const nextData = data || [];
-            if (!silent) return nextData;
-
-            const merged = new Map<string, MessageItem>();
-            [...prev, ...nextData].forEach((item) => {
-              merged.set(`${normalizeTimestamp(item.timestamp)}:${item.from}:${item.body}`, item);
-            });
-
-            return Array.from(merged.values()).sort(
-              (a, b) => (normalizeTimestamp(a.timestamp) || 0) - (normalizeTimestamp(b.timestamp) || 0)
-            );
+            if (!silent) return mergeMessageLists([], nextData);
+            return mergeMessageLists(prev, nextData);
           });
         }
         setHasOlderMessages((data || []).length === MESSAGE_LIMIT);
@@ -475,11 +524,7 @@ const SmartInbox = () => {
       setHasOlderMessages(olderData.length === MESSAGE_LIMIT);
       if (olderData.length) {
         skipNextScrollRef.current = true;
-        setMessages((prev) => {
-          const seen = new Set(prev.map((item) => `${normalizeTimestamp(item.timestamp)}:${item.from}:${item.body}`));
-          const nextOlder = olderData.filter((item) => !seen.has(`${normalizeTimestamp(item.timestamp)}:${item.from}:${item.body}`));
-          return [...nextOlder, ...prev];
-        });
+        setMessages((prev) => mergeMessageLists(olderData, prev));
       }
     } catch (error) {
       if ((error as Error).name !== "AbortError") {
@@ -742,10 +787,13 @@ const SmartInbox = () => {
     const messageText = newMessage.trim();
     if (!messageText && !selectedImage) return;
 
+    const optimisticClientId = `smart-inbox-${platform}-${selectedChat.id}-${Date.now()}`;
     const optimisticBody = selectedImagePreview
       ? `[Image Message]\n[Image URL]: ${selectedImagePreview}${messageText ? `\n${messageText}` : ""}`
       : messageText;
     const optimisticMessage: MessageItem = {
+      client_id: optimisticClientId,
+      optimistic: true,
       from: "me",
       body: optimisticBody,
       timestamp: Date.now(),
@@ -755,7 +803,7 @@ const SmartInbox = () => {
 
     setSending(true);
     setNewMessage("");
-    setMessages((prev) => [...prev, optimisticMessage]);
+    setMessages((prev) => mergeMessageLists(prev, [optimisticMessage]));
 
     try {
       const token = localStorage.getItem("auth_token");
@@ -781,8 +829,18 @@ const SmartInbox = () => {
       }
 
       const data = await response.json().catch(() => null);
-      const deliveredBody = data?.message?.body || optimisticBody;
-      const timestamp = Date.now();
+      const sentMessageId = data?.message?.message_id || data?.message?.messageId || data?.sent?.[0]?.messageId || null;
+      const deliveredBody = data?.message?.body || data?.sent?.map((part: { body?: string }) => part.body).filter(Boolean).join("\n\n") || optimisticBody;
+      const timestamp = normalizeTimestamp(data?.message?.timestamp) || Date.now();
+      setMessages((prev) => mergeMessageLists(prev, [{
+        ...optimisticMessage,
+        ...data?.message,
+        client_id: optimisticClientId,
+        message_id: sentMessageId,
+        body: deliveredBody,
+        timestamp,
+        optimistic: false
+      }]));
       const updatedConversation: Conversation = {
         ...selectedChat,
         body: deliveredBody,

@@ -1255,6 +1255,8 @@ router.get('/messages/:pageId/:senderId', authMiddleware, async (req, res) => {
             `SELECT *
              FROM (
                 SELECT
+                    id,
+                    message_id,
                     CASE WHEN reply_by = 'bot' THEN 'me' WHEN reply_by = 'admin' THEN 'me' ELSE sender_id END as from,
                     text as body,
                     COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000) as timestamp,
@@ -1353,6 +1355,7 @@ router.post('/send', authMiddleware, smartInboxUpload.single('image'), async (re
         res.json({
             success: true,
             message: {
+                message_id: sentParts[0]?.messageId || null,
                 from: 'me',
                 body: sentParts.map((part) => part.body).filter(Boolean).join('\n\n'),
                 timestamp: Date.now(),
