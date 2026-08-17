@@ -326,6 +326,7 @@ const SmartInbox = () => {
   const messagesAbortRef = useRef<AbortController | null>(null);
   const olderMessagesAbortRef = useRef<AbortController | null>(null);
   const skipNextScrollRef = useRef(false);
+  const failedMediaUrlsRef = useRef(new Set<string>());
   const chatsSignatureRef = useRef("");
   const messagesSignatureRef = useRef("");
   const selectedSenderIdRef = useRef<string | null>(null);
@@ -344,6 +345,12 @@ const SmartInbox = () => {
     if (viewport) {
       viewport.scrollTop = viewport.scrollHeight;
     }
+  }, []);
+
+  const handleMediaError = useCallback((url: string) => {
+    if (!url) return;
+    failedMediaUrlsRef.current.add(url);
+    setMessages((prev) => [...prev]);
   }, []);
 
   const upsertConversationLocally = useCallback((nextConversation: Conversation) => {
@@ -1251,7 +1258,8 @@ const SmartInbox = () => {
                   {renderedMessages.map((message, index) => {
                     const body = message.body || "";
                     const imageUrl = extractMediaImageUrl(body);
-                    const hasMediaImage = Boolean(imageUrl);
+                    const hasFailedMediaImage = Boolean(imageUrl && failedMediaUrlsRef.current.has(imageUrl));
+                    const hasMediaImage = Boolean(imageUrl) && !hasFailedMediaImage;
                     const lowerBody = body.toLowerCase();
                     const isBotImage =
                       hasMediaImage &&
@@ -1299,10 +1307,19 @@ const SmartInbox = () => {
                                 decoding="async"
                                 className="w-full max-w-[170px] sm:max-w-[240px] max-h-[220px] rounded-2xl border border-black/10 object-cover cursor-pointer"
                                 onClick={() => window.open(imageUrl, "_blank")}
-                                onError={(event) => {
-                                  (event.currentTarget as HTMLImageElement).style.display = "none";
-                                }}
+                                onError={() => handleMediaError(imageUrl)}
                               />
+                              {cleanMediaMessageText(body) && (
+                                <p className={cn("text-xs leading-relaxed", isBot ? "text-black/70" : "text-white/70")}>
+                                  {cleanMediaMessageText(body)}
+                                </p>
+                              )}
+                            </div>
+                          ) : hasFailedMediaImage && !isAnalysisMessage ? (
+                            <div className="space-y-3">
+                              <div className={cn("flex h-28 w-full max-w-[170px] items-center justify-center rounded-2xl border border-dashed text-xs font-bold sm:max-w-[240px]", isBot ? "border-black/15 bg-black/5 text-black/55" : "border-white/15 bg-white/[0.04] text-white/55")}>
+                                Image unavailable
+                              </div>
                               {cleanMediaMessageText(body) && (
                                 <p className={cn("text-xs leading-relaxed", isBot ? "text-black/70" : "text-white/70")}>
                                   {cleanMediaMessageText(body)}
