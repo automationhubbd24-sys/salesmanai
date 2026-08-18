@@ -42,6 +42,10 @@ router.get('/members', authMiddleware, async (req, res) => {
         const userEmail = req.user.email;
         const ownerEmail = await getEffectiveOwnerEmail(req, userEmail);
 
+        if (ownerEmail.toLowerCase() !== userEmail.toLowerCase()) {
+            return res.status(403).json({ error: 'Only the Team Owner can view team members' });
+        }
+
         const result = await pgClient.query(
             'SELECT id, member_email, status, permissions, created_at FROM team_members WHERE owner_email = $1 ORDER BY created_at DESC',
             [ownerEmail]

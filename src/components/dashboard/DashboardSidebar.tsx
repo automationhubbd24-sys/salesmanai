@@ -19,7 +19,8 @@ import {
   MessageSquare,
   Key,
   Inbox,
-  MessageCircle
+  MessageCircle,
+  ShieldCheck
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -54,6 +55,7 @@ export function DashboardSidebar({ isMobile, onLinkClick }: { isMobile?: boolean
       { title: "Ads Library", icon: Megaphone, path: platform ? `/dashboard/${platform}/ads` : "/dashboard/ads" },
       { title: "Reseller", icon: Users, path: platform ? `/dashboard/${platform}/reseller` : "/dashboard/reseller" },
       { title: "Payment / Topup", icon: CreditCard, path: platform ? `/dashboard/${platform}/payment` : "/dashboard/payment" },
+      { title: "Team Management", icon: ShieldCheck, path: "/dashboard/team-management" },
       { title: "Developer API", icon: Key, path: "/dashboard/api" },
     ];
 
