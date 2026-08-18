@@ -8,7 +8,7 @@
     "dev": "node --watch index.js",
     "setup:db": "node setup_db.js",
     "test:audio:compare": "node scripts/test_audio_transcription_compare.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test test/**/*.test.js"
   },
   "keywords": [],
   "author": "",
