@@ -54,6 +54,39 @@ function dbError(res, error, message) {
     return res.status(500).json({ error: message });
 }
 
+/** Ensure every canonical resource grant belongs to the team owner. */
+function validatePermissionResourceGrants(permissions, ownedResources) {
+    for (const resourceType of ['fb_pages', 'wa_sessions']) {
+        const owned = new Set((ownedResources?.[resourceType] || []).map(resource => String(resource).trim()));
+        for (const resourceId of permissions[resourceType]) {
+            if (!owned.has(resourceId)) {
+                return { valid: false, error: `Invalid or unauthorized ${resourceType} resource: ${resourceId}` };
+            }
+        }
+    }
+    return { valid: true, value: permissions };
+}
+
+/** Fetch and validate the owner's submitted canonical resource grants. */
+async function validateOwnerPermissionResourceGrants({ pgClient: client, ownerEmail, permissions }) {
+    const resourceQueries = {
+        fb_pages: `SELECT CAST(page_id AS TEXT) AS resource_id
+                   FROM page_access_token_message
+                   WHERE LOWER(email) = $1 AND CAST(page_id AS TEXT) = ANY($2::text[])`,
+        wa_sessions: `SELECT session_name AS resource_id
+                      FROM whatsapp_message_database
+                      WHERE LOWER(email) = $1 AND session_name = ANY($2::text[])`
+    };
+    const ownedResources = { fb_pages: [], wa_sessions: [] };
+    await Promise.all(Object.keys(ownedResources).map(async resourceType => {
+        const resourceIds = permissions[resourceType];
+        if (!resourceIds.length) return;
+        const result = await client.query(resourceQueries[resourceType], [ownerEmail, resourceIds]);
+        ownedResources[resourceType] = result.rows.map(row => row.resource_id);
+    }));
+    return validatePermissionResourceGrants(permissions, ownedResources);
+}
+
 router.get('/members', authMiddleware, async (req, res) => {
     const ownerEmail = requireOwner(req, res);
     if (!ownerEmail) return;
@@ -111,6 +144,8 @@ router.post('/members', authMiddleware, async (req, res) => {
     if (memberEmail === ownerEmail) return res.status(400).json({ error: 'Cannot add the owner as a member' });
     if (!validated.valid) return res.status(400).json({ error: validated.error });
     try {
+        const resourceValidation = await validateOwnerPermissionResourceGrants({ pgClient, ownerEmail, permissions: validated.value });
+        if (!resourceValidation.valid) return res.status(400).json({ error: resourceValidation.error });
         // Update every legacy duplicate so future reads cannot retain stale permissions.
         const existing = await pgClient.query('SELECT id FROM team_members WHERE LOWER(owner_email) = $1 AND LOWER(member_email) = $2 LIMIT 1', [ownerEmail, memberEmail]);
         const result = existing.rowCount
@@ -126,6 +161,8 @@ router.put('/members/:id', authMiddleware, async (req, res) => {
     const validated = validatePermissions(req.body?.permissions || {});
     if (!validated.valid) return res.status(400).json({ error: validated.error });
     try {
+        const resourceValidation = await validateOwnerPermissionResourceGrants({ pgClient, ownerEmail, permissions: validated.value });
+        if (!resourceValidation.valid) return res.status(400).json({ error: resourceValidation.error });
         const member = await pgClient.query('SELECT member_email FROM team_members WHERE id = $1 AND LOWER(owner_email) = $2', [req.params.id, ownerEmail]);
         if (!member.rowCount) return res.status(404).json({ error: 'Member not found' });
         const result = await pgClient.query(`UPDATE team_members SET permissions = $1 WHERE LOWER(owner_email) = $2 AND LOWER(member_email) = $3 RETURNING id, member_email, status, permissions, created_at`, [validated.value, ownerEmail, normalizeEmail(member.rows[0].member_email)]);
@@ -295,4 +332,6 @@ router.distributeOrderQuotas = distributeOrderQuotas;
 router.validatePermissions = validatePermissions;
 router.mergePermissions = mergePermissions;
 router.ownerContext = ownerContext;
+router.validatePermissionResourceGrants = validatePermissionResourceGrants;
+router.validateOwnerPermissionResourceGrants = validateOwnerPermissionResourceGrants;
 module.exports = router;

@@ -51,6 +51,73 @@ test('merges duplicate-member module and legacy permissions without dropping key
     assert.equal(merged.orders.assign, false);
 });
 
+test('validates canonical resource grants without dropping permission fields', () => {
+    const permissions = teamAuthorization.validatePermissions({
+        fb_pages: [' page-1 ', 'page-1'],
+        wa_sessions: ['session-1'],
+        smart_inbox: { reply: true },
+        orders: { view_assigned: true }
+    }).value;
+
+    const result = teamRoutes.validatePermissionResourceGrants(permissions, {
+        fb_pages: ['page-1'],
+        wa_sessions: ['session-1']
+    });
+    assert.equal(result.valid, true);
+    assert.deepEqual(result.value, permissions);
+    assert.deepEqual(result.value.fb_pages, ['page-1']);
+    assert.equal(result.value.smart_inbox.reply, true);
+    assert.equal(result.value.orders.view_assigned, true);
+});
+
+test('rejects unknown or foreign canonical resource grants', () => {
+    const permissions = teamAuthorization.validatePermissions({
+        fb_pages: ['owned-page', 'foreign-page'],
+        wa_sessions: ['foreign-session']
+    }).value;
+
+    const pageResult = teamRoutes.validatePermissionResourceGrants(permissions, {
+        fb_pages: ['owned-page'],
+        wa_sessions: []
+    });
+    assert.deepEqual(pageResult, {
+        valid: false,
+        error: 'Invalid or unauthorized fb_pages resource: foreign-page'
+    });
+
+    const sessionResult = teamRoutes.validatePermissionResourceGrants({ ...permissions, fb_pages: [] }, {
+        fb_pages: [],
+        wa_sessions: []
+    });
+    assert.deepEqual(sessionResult, {
+        valid: false,
+        error: 'Invalid or unauthorized wa_sessions resource: foreign-session'
+    });
+});
+
+test('loads only owner-owned grants when validating canonical resources', async () => {
+    const queries = [];
+    const pgClient = {
+        query: async (query, params) => {
+            queries.push({ query, params });
+            return { rows: query.includes('page_access_token_message') ? [{ resource_id: 'page-1' }] : [{ resource_id: 'session-1' }] };
+        }
+    };
+    const permissions = teamAuthorization.validatePermissions({
+        fb_pages: ['page-1'], wa_sessions: ['session-1'], smart_inbox: { view: true }
+    }).value;
+
+    const result = await teamRoutes.validateOwnerPermissionResourceGrants({
+        pgClient, ownerEmail: 'owner@example.com', permissions
+    });
+    assert.equal(result.valid, true);
+    assert.equal(queries.length, 2);
+    for (const { query, params } of queries) {
+        assert.match(query, /LOWER\(email\) = \$1/);
+        assert.deepEqual(params, ['owner@example.com', query.includes('page_access_token_message') ? ['page-1'] : ['session-1']]);
+    }
+});
+
 test('owner has full action and resource access', () => {
     assert.equal(teamAuthorization.hasFullTeamAccess({ actorEmail: 'OWNER@example.com', ownerEmail: 'owner@example.com' }), true);
     assert.equal(teamAuthorization.canAuthorizeTeamAction({
