@@ -8,6 +8,7 @@ const imageService = require('../services/imageService');
 const pgClient = require('../services/pgClient');
 const jwt = require('jsonwebtoken');
 const authMiddleware = require('../middleware/authMiddleware');
+const { resolveAuthorizedTeamResource } = require('../services/teamAuthorizationService');
 
 const webhookController = require('../controllers/webhookController');
 const { getSmartInboxConversations, upsertSmartInboxLabel } = require('../utils/smartInbox');
@@ -38,6 +39,43 @@ async function getPageByPageId(pageId, userId, userEmail) {
         [String(pageId), String(userId || ''), String(userEmail || '')]
     );
     return rows[0] || null;
+}
+
+async function authorizeMessengerResource(req, pageId, module, action) {
+    return resolveAuthorizedTeamResource({
+        pgClient,
+        actorEmail: req.user?.email,
+        resourceType: 'fb_pages',
+        resourceId: String(pageId || '').trim(),
+        module,
+        action
+    });
+}
+
+async function requireMessengerResource(req, res, pageId, module, action) {
+    const authorization = await authorizeMessengerResource(req, pageId, module, action);
+    if (!authorization?.authorized) {
+        res.status(403).json({ error: 'Forbidden' });
+        return null;
+    }
+    return authorization;
+}
+
+function assignedOrderJoin(authorization, source, resourceId, orderIdColumn = 'o.id') {
+    if (authorization.isOwner) return { join: '', values: [] };
+    return {
+        join: ` INNER JOIN team_order_assignments toa
+                ON LOWER(toa.owner_email) = LOWER($2)
+               AND toa.source = $3
+               AND toa.resource_id = $1
+               AND toa.order_identity = ${orderIdColumn}::text
+               AND LOWER(toa.member_email) = LOWER($4) `,
+        values: [authorization.ownerEmail, source, resourceId, reqSafeEmail(authorization)]
+    };
+}
+
+function reqSafeEmail(authorization) {
+    return authorization.membership?.member_email || '';
 }
 
 async function subscribeMessengerPage(pageId, pageAccessToken) {
@@ -442,6 +480,7 @@ router.get('/config/:id', async (req, res) => {
         const payload = jwt.verify(token, secret);
 
         const userEmail = payload.email;
+        req.user = { ...req.user, id: payload.sub, email: userEmail };
 
         res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
         res.set('Pragma', 'no-cache');
@@ -505,44 +544,15 @@ router.get('/config/:id', async (req, res) => {
         }
 
         const pageId = configRow.page_id;
+        const authorization = await requireMessengerResource(req, res, pageId, 'ai_settings', 'view');
+        if (!authorization) return;
 
         const pageResult = await pgClient.query(
-            'SELECT page_id, email, page_access_token, api_key, ai, chat_model, voice_model, vision_model, cheap_engine, custom_base_url, pro_plus_mode FROM page_access_token_message WHERE page_id = $1',
+            'SELECT page_id, api_key, ai, chat_model, voice_model, vision_model, cheap_engine, custom_base_url, pro_plus_mode FROM page_access_token_message WHERE page_id = $1',
             [pageId]
         );
-
         const pageRow = pageResult.rows[0] || null;
 
-        let allowed = false;
-
-        // Case insensitive email check
-        if (pageRow && pageRow.email && pageRow.email.toLowerCase() === userEmail.toLowerCase()) {
-            allowed = true;
-        }
-
-        if (!allowed && userEmail) {
-            const { rows: teamData } = await pgClient.query(
-                'SELECT permissions FROM team_members WHERE member_email = $1 AND status = $2',
-                [userEmail, 'active']
-            );
-
-            for (const t of teamData) {
-                const pages = t.permissions && Array.isArray(t.permissions.fb_pages)
-                    ? t.permissions.fb_pages
-                    : [];
-                if (pages.map(String).includes(String(pageId))) {
-                    allowed = true;
-                    break;
-                }
-            }
-        }
-
-        if (!allowed) {
-            console.warn(`[GET /config/:id] Forbidden. Page Owner: ${pageRow?.email}, User: ${userEmail}`);
-            return res.status(403).json({ error: 'Forbidden' });
-        }
-
-        // Merge credentials from page_access_token_message into configRow
         if (pageRow) {
             configRow = {
                 ...configRow,
@@ -555,6 +565,12 @@ router.get('/config/:id', async (req, res) => {
                 custom_base_url: pageRow.custom_base_url || configRow.custom_base_url,
                 pro_plus_mode: true // force enabled globally until code unlock changes it
             };
+        }
+
+        if (!authorization.isOwner) {
+            delete configRow.api_key;
+            delete configRow.page_access_token;
+            delete configRow.user_access_token;
         }
 
         res.json(configRow);
@@ -613,40 +629,8 @@ router.put('/config/:id', async (req, res) => {
 
         const pageId = configRow.page_id;
         const dbId = configRow.id;
-
-        // Check Permissions
-        const pageResult = await pgClient.query(
-            'SELECT page_id, email FROM page_access_token_message WHERE page_id = $1',
-            [pageId]
-        );
-        
-        const pageRow = pageResult.rows[0];
-        let allowed = false;
-
-        if (pageRow && pageRow.email && userEmail && pageRow.email.toLowerCase() === userEmail.toLowerCase()) {
-            allowed = true;
-        }
-
-        if (!allowed && userEmail) {
-            const { rows: teamData } = await pgClient.query(
-                'SELECT permissions FROM team_members WHERE member_email = $1 AND status = $2',
-                [userEmail, 'active']
-            );
-
-            for (const t of teamData) {
-                const pages = t.permissions && Array.isArray(t.permissions.fb_pages)
-                    ? t.permissions.fb_pages
-                    : [];
-                if (pages.map(String).includes(String(pageId))) {
-                    allowed = true;
-                    break;
-                }
-            }
-        }
-
-        if (!allowed) {
-            return res.status(403).json({ error: 'Forbidden' });
-        }
+        req.user = { ...req.user, id: payload.sub, email: userEmail };
+        if (!await requireMessengerResource(req, res, pageId, 'ai_settings', 'manage')) return;
 
         console.log(`[PUT /config/:id] Body:`, req.body);
 
@@ -975,34 +959,37 @@ router.get('/orders', authMiddleware, async (req, res) => {
         const pageId = String(req.query.page_id || '').trim();
         const from = req.query.from ? Number(req.query.from) : null;
         const to = req.query.to ? Number(req.query.to) : null;
+        if (!pageId) return res.status(400).json({ error: 'page_id is required' });
 
-        if (!pageId) {
-            return res.status(400).json({ error: 'page_id is required' });
+        let authorization = await authorizeMessengerResource(req, pageId, 'orders', 'view_all');
+        let assignedOnly = false;
+        if (!authorization?.authorized) {
+            authorization = await authorizeMessengerResource(req, pageId, 'orders', 'view_assigned');
+            if (!authorization?.authorized) return res.status(403).json({ error: 'Forbidden' });
+            assignedOnly = !authorization.isOwner;
         }
 
-        const values = [pageId];
-        const conditions = ['page_id = $1'];
-        let idx = 2;
-
-        if (Number.isFinite(from)) {
-            conditions.push(`created_at >= to_timestamp($${idx} / 1000.0)`);
-            values.push(from);
-            idx += 1;
+        const values = [authorization.resourceId, authorization.ownerEmail];
+        const conditions = ['o.page_id = $1'];
+        let idx = 3;
+        if (assignedOnly) {
+            conditions.push(`EXISTS (SELECT 1 FROM team_order_assignments toa WHERE LOWER(toa.owner_email) = LOWER($${idx}) AND toa.source = 'fb' AND toa.resource_id = $1 AND toa.order_identity = o.id::text AND LOWER(toa.member_email) = LOWER($${idx + 1}))`);
+            values.push(authorization.ownerEmail, authorization.membership.member_email);
+            idx += 2;
         }
-        if (Number.isFinite(to)) {
-            conditions.push(`created_at <= to_timestamp($${idx} / 1000.0)`);
-            values.push(to);
-        }
+        if (Number.isFinite(from)) { conditions.push(`o.created_at >= to_timestamp($${idx} / 1000.0)`); values.push(from); idx += 1; }
+        if (Number.isFinite(to)) { conditions.push(`o.created_at <= to_timestamp($${idx} / 1000.0)`); values.push(to); }
 
-        const where = conditions.join(' AND ');
-        const queryText = `
-            SELECT o.id, o.product_name, o.number, o.location, o.product_quantity, o.price, o.created_at, o.sender_id, o.status, o.is_locked, o.customer_name
-            FROM fb_order_tracking o
-            WHERE o.${where.replace(/page_id/g, 'page_id').replace(/created_at/g, 'o.created_at')}
-            ORDER BY o.created_at DESC
-        `;
-
-        const result = await pgClient.query(queryText, values);
+        const result = await pgClient.query(`
+            SELECT o.id, o.product_name, o.number, o.location, o.product_quantity, o.price, o.created_at, o.sender_id, o.status, o.is_locked, o.customer_name,
+                   (SELECT toa.member_email
+                    FROM team_order_assignments toa
+                    WHERE LOWER(toa.owner_email) = LOWER($2)
+                      AND toa.source = 'fb'
+                      AND toa.resource_id = $1
+                      AND toa.order_identity = o.id::text
+                    LIMIT 1) AS assigned_member_email
+            FROM fb_order_tracking o WHERE ${conditions.join(' AND ')} ORDER BY o.created_at DESC`, values);
         res.json(result.rows);
     } catch (err) {
         console.error('Messenger orders error:', err);
@@ -1027,6 +1014,7 @@ router.get('/chats', authMiddleware, async (req, res) => {
         if (!from || !to) {
             return res.status(400).json({ error: 'from and to are required ISO date strings' });
         }
+        if (!await requireMessengerResource(req, res, pageId, 'smart_inbox', 'view')) return;
 
         const senderFilterSql = senderId ? `AND (sender_id = $6 OR recipient_id = $6)` : '';
         const baseParams = senderId
@@ -1130,6 +1118,8 @@ router.get('/stats', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'page_id is required' });
         }
 
+        if (!await requireMessengerResource(req, res, pageId, 'smart_inbox', 'analytics')) return;
+
         console.log('[GET /stats] Querying reply count...');
         const replyResult = await pgClient.query(
             `
@@ -1174,6 +1164,15 @@ router.patch('/orders/:id/status', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'Invalid status' });
         }
 
+        const orderResult = await pgClient.query(
+            'SELECT page_id FROM fb_order_tracking WHERE id = $1 LIMIT 1',
+            [id]
+        );
+        if (orderResult.rowCount === 0) {
+            return res.status(404).json({ error: 'Order not found' });
+        }
+        if (!await requireMessengerResource(req, res, orderResult.rows[0].page_id, 'orders', 'assign')) return;
+
         const isLocked = (status === 'delivered' || status === 'locked');
 
         const result = await pgClient.query(
@@ -1204,6 +1203,7 @@ router.get('/download-conversation', authMiddleware, async (req, res) => {
         if (!pageId || !from || !to) {
             return res.status(400).json({ error: 'page_id, from, and to are required' });
         }
+        if (!await requireMessengerResource(req, res, pageId, 'smart_inbox', 'view')) return;
 
         const conversationHistory = await pgClient.query(
             `SELECT created_at, reply_by, text, sender_id FROM fb_chats WHERE page_id = $1 AND created_at >= $2 AND created_at <= $3 ORDER BY sender_id, created_at ASC`,
@@ -1239,6 +1239,7 @@ router.get('/conversations/:pageId', authMiddleware, async (req, res) => {
     try {
         const { pageId } = req.params;
         const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 60, 20), 120);
+        if (!await requireMessengerResource(req, res, pageId, 'smart_inbox', 'view')) return;
         const rows = await getSmartInboxConversations(pgClient, 'messenger', pageId, { limit });
         res.json(rows);
     } catch (err) {
@@ -1251,6 +1252,7 @@ router.get('/messages/:pageId/:senderId', authMiddleware, async (req, res) => {
         const { pageId, senderId } = req.params;
         const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 40, 10), 120);
         const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+        if (!await requireMessengerResource(req, res, pageId, 'smart_inbox', 'view')) return;
         const { rows } = await pgClient.query(
             `SELECT *
              FROM (
@@ -1284,6 +1286,7 @@ router.patch('/conversations/:pageId/:senderId/labels', authMiddleware, async (r
         if (typeof active !== 'boolean' || !labelKey) {
             return res.status(400).json({ error: 'labelKey and boolean active are required' });
         }
+        if (!await requireMessengerResource(req, res, pageId, 'smart_inbox', 'reply')) return;
 
         const updatedConversation = await upsertSmartInboxLabel(pgClient, {
             platform: 'messenger',
@@ -1310,6 +1313,7 @@ router.post('/send', authMiddleware, smartInboxUpload.single('image'), async (re
         if (!pageId || !to || (!message && !req.file)) {
             return res.status(400).json({ error: 'pageId, to and message or image are required' });
         }
+        if (!await requireMessengerResource(req, res, pageId, 'smart_inbox', 'reply')) return;
 
         const pageConfig = await dbService.getPageConfig(String(pageId));
         if (!pageConfig?.page_access_token) {
@@ -1331,7 +1335,9 @@ router.post('/send', authMiddleware, smartInboxUpload.single('image'), async (re
                 text: imageText,
                 timestamp: Date.now(),
                 status: 'sent',
-                reply_by: 'admin'
+                reply_by: 'admin',
+                admin_user_id: req.user.id,
+                admin_email: String(req.user.email || '').trim().toLowerCase() || null
             });
             sentParts.push({ messageId: imageMessageId, imageUrl, body: imageText });
         }
@@ -1347,7 +1353,9 @@ router.post('/send', authMiddleware, smartInboxUpload.single('image'), async (re
                 text: message,
                 timestamp: Date.now(),
                 status: 'sent',
-                reply_by: 'admin'
+                reply_by: 'admin',
+                admin_user_id: req.user.id,
+                admin_email: String(req.user.email || '').trim().toLowerCase() || null
             });
             sentParts.push({ messageId, body: message });
         }

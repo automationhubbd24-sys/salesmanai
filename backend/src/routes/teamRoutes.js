@@ -2,74 +2,11 @@ const express = require('express');
 const router = express.Router();
 const pgClient = require('../services/pgClient');
 const authMiddleware = require('../middleware/authMiddleware');
-
-const MODULE_PERMISSION_SCHEMA = Object.freeze({
-    smart_inbox: ['view', 'reply', 'analytics'],
-    orders: ['view_assigned', 'view_all', 'assign', 'analytics'],
-    conversion: ['view', 'manage'],
-    ai_settings: ['view', 'manage'],
-    control_panel: ['view', 'manage'],
-    team: ['view', 'manage', 'analytics']
-});
-const LEGACY_PERMISSION_KEYS = new Set(['fb_pages', 'wa_sessions']);
-
-function normalizeEmail(email) {
-    if (typeof email !== 'string') return null;
-    const normalized = email.trim().toLowerCase();
-    return normalized && normalized.includes('@') ? normalized : null;
-}
-
-function emptyPermissions() {
-    const permissions = { fb_pages: [], wa_sessions: [] };
-    for (const [moduleName, actions] of Object.entries(MODULE_PERMISSION_SCHEMA)) {
-        permissions[moduleName] = Object.fromEntries(actions.map(action => [action, false]));
-    }
-    return permissions;
-}
-
-/** Strictly validate and canonicalize the persisted team permission document. */
-function validatePermissions(value) {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        return { valid: false, error: 'permissions must be an object' };
-    }
-    const permissions = emptyPermissions();
-    for (const [key, entry] of Object.entries(value)) {
-        if (LEGACY_PERMISSION_KEYS.has(key)) {
-            if (!Array.isArray(entry) || entry.some(item => typeof item !== 'string')) {
-                return { valid: false, error: `${key} must be an array of strings` };
-            }
-            permissions[key] = [...new Set(entry.map(item => item.trim()).filter(Boolean))];
-            continue;
-        }
-        const actions = MODULE_PERMISSION_SCHEMA[key];
-        if (!actions || !entry || typeof entry !== 'object' || Array.isArray(entry)) {
-            return { valid: false, error: `Unknown or invalid permission key: ${key}` };
-        }
-        for (const [action, allowed] of Object.entries(entry)) {
-            if (!actions.includes(action) || typeof allowed !== 'boolean') {
-                return { valid: false, error: `Unknown or invalid permission: ${key}.${action}` };
-            }
-            permissions[key][action] = allowed;
-        }
-    }
-    return { valid: true, value: permissions };
-}
-
-function mergePermissions(permissionDocuments) {
-    const merged = emptyPermissions();
-    for (const document of permissionDocuments) {
-        const validated = validatePermissions(document || {});
-        if (!validated.valid) continue; // Do not expose malformed historical data as permissions.
-        const permissions = validated.value;
-        for (const legacyKey of LEGACY_PERMISSION_KEYS) {
-            merged[legacyKey] = [...new Set([...merged[legacyKey], ...permissions[legacyKey]])];
-        }
-        for (const [moduleName, actions] of Object.entries(MODULE_PERMISSION_SCHEMA)) {
-            for (const action of actions) merged[moduleName][action] ||= permissions[moduleName][action];
-        }
-    }
-    return merged;
-}
+const {
+    normalizeEmail,
+    validatePermissions,
+    mergePermissions
+} = require('../services/teamAuthorizationService');
 
 function requestedOwner(req) {
     return req.query?.team_owner || req.headers['x-team-owner'];
@@ -212,9 +149,90 @@ router.get('/analytics', authMiddleware, async (req, res) => {
     if (!ownerEmail) return;
     const period = req.query.period || 'today';
     if (!['today', '7d', '30d'].includes(period)) return res.status(400).json({ error: 'period must be today, 7d, or 30d' });
-    // Chat rows do not contain an owner or assigned team-member identity. Reporting an invented
-    // breakdown would be unsafe; this endpoint deliberately exposes no unverifiable attribution.
-    return res.json({ period, per_member: [], total: null, attribution_available: false, reason: 'Chat tables do not safely identify an owner or assigned team member' });
+
+    const days = period === 'today' ? 1 : Number.parseInt(period, 10);
+    const startAt = new Date();
+    startAt.setHours(0, 0, 0, 0);
+    startAt.setDate(startAt.getDate() - (days - 1));
+
+    try {
+        noStore(res);
+        // Deployments that have not yet run the additive attribution migration must still be able
+        // to load the team page without exposing fabricated analytics.
+        const columns = await pgClient.query(
+            `SELECT table_name, column_name
+             FROM information_schema.columns
+             WHERE table_schema = current_schema()
+               AND table_name IN ('fb_chats', 'whatsapp_chats')
+               AND column_name IN ('admin_user_id', 'admin_email')`
+        );
+        const found = new Set(columns.rows.map(row => `${row.table_name}.${row.column_name}`));
+        const attributionAvailable = ['fb_chats.admin_user_id', 'fb_chats.admin_email', 'whatsapp_chats.admin_user_id', 'whatsapp_chats.admin_email']
+            .every(column => found.has(column));
+        if (!attributionAvailable) {
+            return res.json({
+                period,
+                kpis: { human_replies: 0, member_replies: 0, owner_replies: 0, unattributed_replies: 0 },
+                members: [], activity: [], owner_replies: 0, unattributed_replies: 0,
+                attribution_available: false
+            });
+        }
+
+        const replies = await pgClient.query(
+            `WITH scoped_replies AS (
+                SELECT LOWER(NULLIF(BTRIM(f.admin_email), '')) AS admin_email, f.created_at
+                FROM fb_chats f
+                INNER JOIN page_access_token_message p ON p.page_id = f.page_id
+                WHERE LOWER(p.email) = $1 AND f.reply_by = 'admin' AND f.created_at >= $2
+                UNION ALL
+                SELECT LOWER(NULLIF(BTRIM(w.admin_email), '')) AS admin_email, w.created_at
+                FROM whatsapp_chats w
+                INNER JOIN whatsapp_message_database d ON d.session_name = w.session_name
+                WHERE LOWER(d.email) = $1 AND w.reply_by = 'admin' AND w.created_at >= $2
+            ), active_members AS (
+                SELECT DISTINCT LOWER(member_email) AS member_email
+                FROM team_members
+                WHERE LOWER(owner_email) = $1 AND status = 'active'
+            )
+            SELECT admin_email, created_at::date AS activity_date,
+                   CASE WHEN admin_email = $1 THEN 'owner'
+                        WHEN admin_email IS NULL THEN 'unattributed'
+                        WHEN admin_email IN (SELECT member_email FROM active_members) THEN 'member'
+                        ELSE 'other' END AS attribution
+            FROM scoped_replies`,
+            [ownerEmail, startAt]
+        );
+
+        const memberCounts = new Map();
+        const activity = new Map();
+        let ownerReplies = 0;
+        let unattributedReplies = 0;
+        for (const row of replies.rows) {
+            const date = new Date(row.activity_date).toISOString().slice(0, 10);
+            const daily = activity.get(date) || { date, human_replies: 0, member_replies: 0, owner_replies: 0, unattributed_replies: 0 };
+            daily.human_replies += 1;
+            if (row.attribution === 'owner') { ownerReplies += 1; daily.owner_replies += 1; }
+            else if (row.attribution === 'unattributed') { unattributedReplies += 1; daily.unattributed_replies += 1; }
+            else if (row.attribution === 'member') {
+                memberCounts.set(row.admin_email, (memberCounts.get(row.admin_email) || 0) + 1);
+                daily.member_replies += 1;
+            }
+            activity.set(date, daily);
+        }
+        const members = [...memberCounts.entries()]
+            .map(([member_email, human_replies]) => ({ member_email, human_replies }))
+            .sort((a, b) => b.human_replies - a.human_replies || a.member_email.localeCompare(b.member_email));
+        const memberReplies = members.reduce((total, member) => total + member.human_replies, 0);
+        return res.json({
+            period,
+            kpis: { human_replies: replies.rowCount, member_replies: memberReplies, owner_replies: ownerReplies, unattributed_replies: unattributedReplies },
+            members,
+            activity: [...activity.values()].sort((a, b) => a.date.localeCompare(b.date)),
+            owner_replies: ownerReplies,
+            unattributed_replies: unattributedReplies,
+            attribution_available: true
+        });
+    } catch (error) { return dbError(res, error, 'Failed to fetch team analytics'); }
 });
 
 router.get('/order-allocation', authMiddleware, async (req, res) => {

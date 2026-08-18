@@ -9,6 +9,7 @@ const whatsappCloudService = require('../services/whatsappCloudService');
 const imageService = require('../services/imageService');
 const jwt = require('jsonwebtoken');
 const authMiddleware = require('../middleware/authMiddleware');
+const { resolveAuthorizedTeamResource } = require('../services/teamAuthorizationService');
 const { getOfficialWebhookSubscriptionOptions } = require('../utils/officialWebhookConfig');
 const { getSmartInboxConversations, upsertSmartInboxLabel } = require('../utils/smartInbox');
 const smartInboxUpload = multer({
@@ -64,6 +65,26 @@ async function ensureOfficialWebhookSubscription(row, reason = 'runtime') {
         );
         return { success: false, error };
     }
+}
+
+async function authorizeWhatsAppResource(req, sessionName, module, action) {
+    return resolveAuthorizedTeamResource({
+        pgClient,
+        actorEmail: req.user?.email,
+        resourceType: 'wa_sessions',
+        resourceId: String(sessionName || '').trim(),
+        module,
+        action
+    });
+}
+
+async function requireWhatsAppResource(req, res, sessionName, module, action) {
+    const authorization = await authorizeWhatsAppResource(req, sessionName, module, action);
+    if (!authorization?.authorized) {
+        res.status(403).json({ error: 'Forbidden' });
+        return null;
+    }
+    return authorization;
 }
 
 async function hasSessionAccess(sessionName, userId, userEmail) {
@@ -402,6 +423,7 @@ router.get('/config/:id', async (req, res) => {
 
         const userId = payload.sub;
         const userEmail = payload.email;
+        req.user = { ...req.user, id: userId, email: userEmail };
 
         res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
         res.set('Pragma', 'no-cache');
@@ -432,30 +454,12 @@ router.get('/config/:id', async (req, res) => {
             await ensureOfficialWebhookSubscription(row, 'get_config');
         }
 
-        let allowed = false;
-        if (row.user_id === userId || (row.email && userEmail && row.email.toLowerCase() === userEmail.toLowerCase())) {
-            allowed = true;
-        }
+        const authorization = await requireWhatsAppResource(req, res, row.session_name, 'ai_settings', 'view');
+        if (!authorization) return;
 
-        if (!allowed && userEmail) {
-            const { rows: teamData } = await pgClient.query(
-                'SELECT permissions FROM team_members WHERE member_email = $1 AND status = $2',
-                [userEmail, 'active']
-            );
-
-            for (const t of teamData) {
-                const sessions = t.permissions && Array.isArray(t.permissions.wa_sessions)
-                    ? t.permissions.wa_sessions
-                    : [];
-                if (sessions.includes(row.session_name)) {
-                    allowed = true;
-                    break;
-                }
-            }
-        }
-
-        if (!allowed) {
-            return res.status(403).json({ error: 'Forbidden' });
+        if (!authorization.isOwner) {
+            delete row.api_key;
+            delete row.cloud_access_token;
         }
 
         res.json(row);
@@ -475,17 +479,22 @@ router.get('/orders', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'session_name is required' });
         }
 
-        const userId = req.user.id;
-        const userEmail = req.user.email;
-
-        const allowed = await hasSessionAccess(sessionName, userId, userEmail);
-        if (!allowed) {
-            return res.status(403).json({ error: 'Forbidden' });
+        let authorization = await authorizeWhatsAppResource(req, sessionName, 'orders', 'view_all');
+        let assignedOnly = false;
+        if (!authorization?.authorized) {
+            authorization = await authorizeWhatsAppResource(req, sessionName, 'orders', 'view_assigned');
+            if (!authorization?.authorized) return res.status(403).json({ error: 'Forbidden' });
+            assignedOnly = !authorization.isOwner;
         }
 
-        const values = [sessionName];
-        const conditions = ['session_name = $1'];
+        const values = [authorization.resourceId];
+        const conditions = ['o.session_name = $1'];
         let idx = 2;
+        if (assignedOnly) {
+            conditions.push(`EXISTS (SELECT 1 FROM team_order_assignments toa WHERE LOWER(toa.owner_email) = LOWER($${idx}) AND toa.source = 'whatsapp' AND toa.resource_id = $1 AND toa.order_identity = o.id::text AND LOWER(toa.member_email) = LOWER($${idx + 1}))`);
+            values.push(authorization.ownerEmail, authorization.membership.member_email);
+            idx += 2;
+        }
 
         if (Number.isFinite(from)) {
             conditions.push(`created_at >= to_timestamp($${idx} / 1000.0)`);
@@ -502,7 +511,7 @@ router.get('/orders', authMiddleware, async (req, res) => {
             SELECT o.id, o.product_name, o.number, o.location, o.product_quantity, o.price, o.created_at, o.sender_id, o.status, COALESCE(o.customer_name, c.name) AS customer_name
             FROM whatsapp_order_tracking o
             LEFT JOIN whatsapp_contacts c ON o.session_name = c.session_name AND o.sender_id = c.phone_number
-            WHERE o.${where.replace(/session_name/g, 'session_name').replace(/created_at/g, 'o.created_at')}
+            WHERE ${where}
             ORDER BY o.created_at DESC
         `;
 
@@ -513,9 +522,9 @@ router.get('/orders', authMiddleware, async (req, res) => {
             if (err && err.code === '42703') {
                 const fallbackQuery = `
                     SELECT id, number, location, product_quantity, price, created_at
-                    FROM whatsapp_order_tracking
+                    FROM whatsapp_order_tracking o
                     WHERE ${where}
-                    ORDER BY created_at DESC
+                    ORDER BY o.created_at DESC
                 `;
                 const fallbackResult = await pgClient.query(fallbackQuery, values);
                 const rows = (fallbackResult.rows || []).map(row => ({
@@ -542,6 +551,15 @@ router.patch('/orders/:id/status', authMiddleware, async (req, res) => {
         if (!allowedStatuses.includes(status)) {
             return res.status(400).json({ error: 'Invalid status' });
         }
+
+        const orderResult = await pgClient.query(
+            'SELECT session_name FROM whatsapp_order_tracking WHERE id = $1 LIMIT 1',
+            [id]
+        );
+        if (orderResult.rowCount === 0) {
+            return res.status(404).json({ error: 'Order not found' });
+        }
+        if (!await requireWhatsAppResource(req, res, orderResult.rows[0].session_name, 'orders', 'assign')) return;
 
         const result = await pgClient.query(
             `UPDATE whatsapp_order_tracking 
@@ -576,13 +594,7 @@ router.get('/messages', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'session_name is required' });
         }
 
-        const userId = req.user.id;
-        const userEmail = req.user.email;
-
-        const allowed = await hasSessionAccess(sessionName, userId, userEmail);
-        if (!allowed) {
-            return res.status(403).json({ error: 'Forbidden' });
-        }
+        if (!await requireWhatsAppResource(req, res, sessionName, 'smart_inbox', 'view')) return;
 
         if (!Number.isFinite(from) || !Number.isFinite(to)) {
             return res.status(400).json({ error: 'from and to (ms) are required' });
@@ -724,13 +736,7 @@ router.get('/stats', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'session_name is required' });
         }
 
-        const userId = req.user.id;
-        const userEmail = req.user.email;
-
-        const allowed = await hasSessionAccess(sessionName, userId, userEmail);
-        if (!allowed) {
-            return res.status(403).json({ error: 'Forbidden' });
-        }
+        if (!await requireWhatsAppResource(req, res, sessionName, 'smart_inbox', 'analytics')) return;
 
         const countResult = await pgClient.query(
             `
@@ -876,6 +882,7 @@ router.put('/config/:id', async (req, res) => {
 
         const userId = payload.sub;
         const userEmail = payload.email;
+        req.user = { ...req.user, id: userId, email: userEmail };
 
         const configResult = await pgClient.query(
             'SELECT * FROM whatsapp_message_database WHERE id = $1',
@@ -887,32 +894,7 @@ router.put('/config/:id', async (req, res) => {
         }
 
         const row = configResult.rows[0];
-
-        let allowed = false;
-        if (row.user_id === userId || (row.email && userEmail && row.email.toLowerCase() === userEmail.toLowerCase())) {
-            allowed = true;
-        }
-
-        if (!allowed && userEmail) {
-            const { rows: teamData } = await pgClient.query(
-                'SELECT permissions FROM team_members WHERE member_email = $1 AND status = $2',
-                [userEmail, 'active']
-            );
-
-            for (const t of teamData) {
-                const sessions = t.permissions && Array.isArray(t.permissions.wa_sessions)
-                    ? t.permissions.wa_sessions
-                    : [];
-                if (sessions.includes(row.session_name)) {
-                    allowed = true;
-                    break;
-                }
-            }
-        }
-
-        if (!allowed) {
-            return res.status(403).json({ error: 'Forbidden' });
-        }
+        if (!await requireWhatsAppResource(req, res, row.session_name, 'ai_settings', 'manage')) return;
 
         const allowedKeys = [
             'reply_message',
@@ -1061,6 +1043,7 @@ router.get('/download-conversation', authMiddleware, async (req, res) => {
         if (!sessionName || !from || !to) {
             return res.status(400).json({ error: 'session_name, from, and to are required' });
         }
+        if (!await requireWhatsAppResource(req, res, sessionName, 'smart_inbox', 'view')) return;
 
         const conversationHistory = await pgClient.query(
             `SELECT timestamp, reply_by, text, sender_id FROM whatsapp_chats WHERE session_name = $1 AND timestamp >= $2 AND timestamp <= $3 ORDER BY sender_id, timestamp ASC`,
@@ -1096,6 +1079,7 @@ router.get('/conversations/:sessionName', authMiddleware, async (req, res) => {
     try {
         const { sessionName } = req.params;
         const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 60, 20), 120);
+        if (!await requireWhatsAppResource(req, res, sessionName, 'smart_inbox', 'view')) return;
         const rows = await getSmartInboxConversations(pgClient, 'whatsapp', sessionName, { limit });
         res.json(rows);
     } catch (err) {
@@ -1108,6 +1092,7 @@ router.get('/messages/:sessionName/:senderId', authMiddleware, async (req, res) 
         const { sessionName, senderId } = req.params;
         const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 40, 10), 120);
         const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+        if (!await requireWhatsAppResource(req, res, sessionName, 'smart_inbox', 'view')) return;
         const { rows } = await pgClient.query(
             `SELECT *
              FROM (
@@ -1141,6 +1126,7 @@ router.patch('/conversations/:sessionName/:senderId/labels', authMiddleware, asy
         if (typeof active !== 'boolean' || !labelKey) {
             return res.status(400).json({ error: 'labelKey and boolean active are required' });
         }
+        if (!await requireWhatsAppResource(req, res, sessionName, 'smart_inbox', 'reply')) return;
 
         const updatedConversation = await upsertSmartInboxLabel(pgClient, {
             platform: 'whatsapp',
@@ -1168,10 +1154,7 @@ router.post('/send', authMiddleware, smartInboxUpload.single('image'), async (re
             return res.status(400).json({ error: 'sessionName, to and message or image are required' });
         }
 
-        const allowed = await hasSessionAccess(String(sessionName), req.user.id, req.user.email);
-        if (!allowed) {
-            return res.status(403).json({ error: 'Forbidden' });
-        }
+        if (!await requireWhatsAppResource(req, res, String(sessionName), 'smart_inbox', 'reply')) return;
 
         const configResult = await pgClient.query(
             `SELECT session_name, provider_type, phone_number_id, cloud_access_token
@@ -1204,7 +1187,9 @@ router.post('/send', authMiddleware, smartInboxUpload.single('image'), async (re
                 text: imageText,
                 timestamp: Date.now(),
                 status: 'sent',
-                reply_by: 'admin'
+                reply_by: 'admin',
+                admin_user_id: req.user.id,
+                admin_email: String(req.user.email || '').trim().toLowerCase() || null
             });
             sentParts.push({ messageId: imageMessageId, imageUrl, body: imageText });
         }
@@ -1221,7 +1206,9 @@ router.post('/send', authMiddleware, smartInboxUpload.single('image'), async (re
                 text: message,
                 timestamp: Date.now(),
                 status: 'sent',
-                reply_by: 'admin'
+                reply_by: 'admin',
+                admin_user_id: req.user.id,
+                admin_email: String(req.user.email || '').trim().toLowerCase() || null
             });
             sentParts.push({ messageId, body: message });
         }

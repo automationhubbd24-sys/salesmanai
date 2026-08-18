@@ -242,8 +242,10 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
             setActiveTeam(team);
             if (team) {
                 localStorage.setItem('active_team_owner', team.owner_email);
+                localStorage.setItem('active_team_permissions', JSON.stringify(team.permissions ?? {}));
             } else {
                 localStorage.removeItem('active_team_owner');
+                localStorage.removeItem('active_team_permissions');
             }
         },
         viewMode,

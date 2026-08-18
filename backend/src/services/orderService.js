@@ -140,7 +140,7 @@ async function orchestrateOrder(params) {
 
         try {
             const result = await dbService.saveOrder(savePayload);
-            const isNewOrder = Boolean(result) && result.status !== 'updated';
+            const isNewOrder = Boolean(result?.isNew);
             
             // --- NEW: Email Notifications ---
             if (result) {
@@ -173,7 +173,7 @@ async function orchestrateOrder(params) {
             return {
                 status: 'SUCCESS',
                 orderId: result?.id,
-                isNew: result?.status !== 'updated',
+                isNew: Boolean(result?.isNew),
                 capturedFields: Object.keys(extracted).filter(k => extracted[k])
             };
         } catch (err) {

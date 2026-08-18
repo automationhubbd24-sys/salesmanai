@@ -1,4 +1,5 @@
-const { query } = require('./pgClient');
+const { query, getPool } = require('./pgClient');
+const { allocateNewOrder } = require('./teamOrderAllocationService');
 const runtimeMonitor = require('./runtimeMonitor');
 const { normalizeContactName, isValidContactName } = require('../utils/contactName');
 
@@ -1363,14 +1364,16 @@ async function saveFbChat(data) {
         data.token || 0,
         data.ai_model || null,
         data.platform || 'messenger',
-        data.sender_name || null
+        data.sender_name || null,
+        data.admin_user_id || null,
+        data.admin_email || null
     ];
 
     const run = async () => {
         await query(
             `INSERT INTO fb_chats
-                (page_id, sender_id, recipient_id, message_id, text, timestamp, status, reply_by, token, ai_model, platform, sender_name)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+                (page_id, sender_id, recipient_id, message_id, text, timestamp, status, reply_by, token, ai_model, platform, sender_name, admin_user_id, admin_email)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
              ON CONFLICT (message_id) DO UPDATE SET
                 page_id = EXCLUDED.page_id,
                 sender_id = EXCLUDED.sender_id,
@@ -1381,7 +1384,9 @@ async function saveFbChat(data) {
                 reply_by = EXCLUDED.reply_by,
                 token = EXCLUDED.token,
                 ai_model = EXCLUDED.ai_model,
-                sender_name = COALESCE(NULLIF(BTRIM(EXCLUDED.sender_name), ''), fb_chats.sender_name)`,
+                sender_name = COALESCE(NULLIF(BTRIM(EXCLUDED.sender_name), ''), fb_chats.sender_name),
+                admin_user_id = COALESCE(EXCLUDED.admin_user_id, fb_chats.admin_user_id),
+                admin_email = COALESCE(NULLIF(BTRIM(EXCLUDED.admin_email), ''), fb_chats.admin_email)`,
             params
         );
     };
@@ -1892,8 +1897,8 @@ async function saveWhatsAppChat(data) {
     const run = async () => {
         await query(
             `INSERT INTO whatsapp_chats
-                (session_name, sender_id, recipient_id, message_id, text, timestamp, status, reply_by, token_usage, model_used, is_group, group_id, group_name)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+                (session_name, sender_id, recipient_id, message_id, text, timestamp, status, reply_by, token_usage, model_used, is_group, group_id, group_name, admin_user_id, admin_email)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
              ON CONFLICT (message_id) DO UPDATE SET
                 text = EXCLUDED.text,
                 timestamp = EXCLUDED.timestamp,
@@ -1903,7 +1908,9 @@ async function saveWhatsAppChat(data) {
                 model_used = EXCLUDED.model_used,
                 is_group = EXCLUDED.is_group,
                 group_id = EXCLUDED.group_id,
-                group_name = EXCLUDED.group_name`,
+                group_name = EXCLUDED.group_name,
+                admin_user_id = COALESCE(EXCLUDED.admin_user_id, whatsapp_chats.admin_user_id),
+                admin_email = COALESCE(NULLIF(BTRIM(EXCLUDED.admin_email), ''), whatsapp_chats.admin_email)`,
             [
                 data.session_name,
                 data.sender_id,
@@ -1917,7 +1924,9 @@ async function saveWhatsAppChat(data) {
                 data.model_used || null,
                 data.is_group || false,
                 data.group_id || null,
-                data.group_name || null
+                data.group_name || null,
+                data.admin_user_id || null,
+                data.admin_email || null
             ]
         );
     };
@@ -1956,6 +1965,9 @@ async function ensureWhatsAppChatsTable() {
             group_name TEXT,
             model_used TEXT
         );
+        ALTER TABLE whatsapp_chats
+            ADD COLUMN IF NOT EXISTS admin_user_id UUID,
+            ADD COLUMN IF NOT EXISTS admin_email TEXT;
         CREATE INDEX IF NOT EXISTS idx_whatsapp_chats_session_sender ON whatsapp_chats(session_name, sender_id);
         CREATE INDEX IF NOT EXISTS idx_whatsapp_chats_timestamp ON whatsapp_chats(timestamp DESC);
         
@@ -2097,8 +2109,8 @@ async function approveDepositTransaction(txn) {
 
 // 17. Save WhatsApp Order Tracking
 async function saveWhatsAppOrderTracking(orderData) {
-    let { session_name, sender_id, product_name, number, location, product_quantity, price, customer_email, customer_name } = orderData;
-    const { query } = require('./pgClient');
+    let { session_name, sender_id, product_name, number, location, product_quantity, price, customer_email, customer_name, client } = orderData;
+    const db = client || { query };
 
     // Clean product name
     if (product_name) {
@@ -2108,7 +2120,7 @@ async function saveWhatsAppOrderTracking(orderData) {
     }
 
     try {
-        await query(`
+        await db.query(`
             ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS customer_email text;
             ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS customer_name text;
             ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS status text DEFAULT 'ongoing';
@@ -2119,7 +2131,7 @@ async function saveWhatsAppOrderTracking(orderData) {
 
     try {
         // SMART MERGE: Last 1 hour
-        const recentOrder = await query(
+        const recentOrder = await db.query(
             `SELECT id, product_name, number, location, product_quantity, price, customer_email, customer_name
              FROM whatsapp_order_tracking 
              WHERE session_name = $1::text AND sender_id = $2::text 
@@ -2165,31 +2177,31 @@ async function saveWhatsAppOrderTracking(orderData) {
 
             if (updates.length > 0) {
                 values.push(existing.id);
-                const updateResult = await query(
+                const updateResult = await db.query(
                     `UPDATE whatsapp_order_tracking SET ${updates.join(', ')} WHERE id = $${idx}::bigint RETURNING *`,
                     values
                 );
                 console.log(`[WA Order] Smart Merged data into ID ${existing.id}`);
-                return updateResult.rows[0];
+                return { ...updateResult.rows[0], status: 'updated', isNew: false };
             }
             
             if (number && existing.number && number !== existing.number) {
                 console.log(`[WA Order] New number for ${sender_id}. New row.`);
             } else {
-                return existing;
+                return { ...existing, status: 'updated', isNew: false };
             }
         }
 
         if (!number && !product_name && !location) return null;
 
-        const result = await query(
+        const result = await db.query(
             `INSERT INTO whatsapp_order_tracking
                 (session_name, sender_id, product_name, number, location, product_quantity, price, customer_email, customer_name)
              VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, $9::text)
              RETURNING *`,
             [session_name || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null, customer_email || null, customer_name || null]
         );
-        return result.rows[0];
+        return { ...result.rows[0], isNew: true };
     } catch (error) {
         console.error("Error in saveWhatsAppOrderTracking:", error);
         return null;
@@ -2706,31 +2718,53 @@ async function logMessage(msgData) {
 // 12. Save Order (Unified Wrapper)
 async function saveOrder(orderData) {
     const { platform } = orderData;
-    if (platform === 'whatsapp') {
-        return await saveWhatsAppOrderTracking({
-            session_name: orderData.page_id, // For WA, page_id is session_name
-            sender_id: orderData.sender_id,
-            product_name: orderData.product_name,
-            number: orderData.phone,
-            location: orderData.address,
-            product_quantity: orderData.quantity,
-            price: orderData.price,
-            customer_email: orderData.customer_email,
-            customer_name: orderData.customer_name
+    const client = await getPool().connect();
+    try {
+        await client.query('BEGIN');
+        const saveWithClient = platform === 'whatsapp' ? saveWhatsAppOrderTracking : saveOrderTracking;
+        const result = await saveWithClient({
+            ...(platform === 'whatsapp'
+                ? {
+                    session_name: orderData.page_id,
+                    sender_id: orderData.sender_id,
+                    product_name: orderData.product_name,
+                    number: orderData.phone,
+                    location: orderData.address,
+                    product_quantity: orderData.quantity,
+                    price: orderData.price,
+                    customer_email: orderData.customer_email,
+                    customer_name: orderData.customer_name
+                }
+                : {
+                    page_id: orderData.page_id,
+                    sender_id: orderData.sender_id,
+                    product_name: orderData.product_name,
+                    number: orderData.phone,
+                    location: orderData.address,
+                    product_quantity: orderData.quantity,
+                    price: orderData.price,
+                    sender_number: orderData.phone,
+                    customer_email: orderData.customer_email,
+                    customer_name: orderData.customer_name
+                }),
+            client
         });
-    } else {
-        return await saveOrderTracking({
-            page_id: orderData.page_id,
-            sender_id: orderData.sender_id,
-            product_name: orderData.product_name,
-            number: orderData.phone,
-            location: orderData.address,
-            product_quantity: orderData.quantity,
-            price: orderData.price,
-            sender_number: orderData.phone,
-            customer_email: orderData.customer_email,
-            customer_name: orderData.customer_name
-        });
+
+        if (result?.isNew) {
+            await allocateNewOrder({
+                client,
+                source: platform === 'whatsapp' ? 'whatsapp' : 'fb',
+                resourceId: orderData.page_id,
+                orderIdentity: result.id
+            });
+        }
+        await client.query('COMMIT');
+        return result;
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
     }
 }
 
@@ -2751,7 +2785,8 @@ async function updateContactPhone(pageId, senderId, phone) {
 
 // 12. Save Order Tracking (Messenger)
 async function saveOrderTracking(orderData) {
-    let { page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, customer_email } = orderData;
+    let { page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, customer_email, client } = orderData;
+    const db = client || { query };
     
     // --- 1. SMART DATA CLEANING (Filter out templates like "নাম: ঠিকানা:") ---
     const cleanValue = (val) => {
@@ -2786,7 +2821,7 @@ async function saveOrderTracking(orderData) {
     }
 
     try {
-        await query(`
+        await db.query(`
             DO $$ 
             BEGIN 
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='customer_name') THEN
@@ -2809,7 +2844,7 @@ async function saveOrderTracking(orderData) {
 
     try {
         // --- 2. SMART AGENT DECISION (Merge into existing incomplete order) ---
-        const recentOrder = await query(
+        const recentOrder = await db.query(
             `SELECT id, is_locked, status, product_name, number, location FROM fb_order_tracking 
              WHERE page_id = $1::text AND sender_id = $2::text 
              AND created_at > NOW() - INTERVAL '24 hours'
@@ -2833,7 +2868,7 @@ async function saveOrderTracking(orderData) {
 
                 console.log(`[Order] Found active recent order (${orderId}). Incomplete: ${isMissingDetails}. Updating...`);
                 
-                await query(
+                await db.query(
                     `UPDATE fb_order_tracking SET
                         product_name = CASE 
                             WHEN $1::text IS NOT NULL AND $1::text <> 'Pending' AND $1::text <> 'Recovered Lead' AND $1::text <> 'Unknown' AND $1::text <> '' THEN $1::text 
@@ -2871,7 +2906,7 @@ async function saveOrderTracking(orderData) {
                      WHERE id = $7::bigint`,
                     [product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderId, orderData.customer_name || null, customer_email || null]
                 );
-                return { id: orderId, status: 'updated' };
+                return { id: orderId, status: 'updated', isNew: false };
             }
         }
 
@@ -2882,14 +2917,14 @@ async function saveOrderTracking(orderData) {
             return null;
         }
 
-        const result = await query(
+        const result = await db.query(
             `INSERT INTO fb_order_tracking
                 (page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, created_at, status, is_locked, customer_name, customer_email)
              VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, NOW(), 'ongoing', FALSE, $9::text, $10::text)
              RETURNING *`,
             [page_id || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderData.customer_name || null, customer_email || null]
         );
-        return result.rows[0];
+        return { ...result.rows[0], isNew: true };
 
     } catch (error) {
         console.error("[Order] Smart Save Error:", error.message);

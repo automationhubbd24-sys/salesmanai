@@ -14,16 +14,16 @@ import { cn } from "@/lib/utils";
 type Permissions = Record<string, unknown>;
 type TeamMember = { id: number | string; member_email: string; status: string; permissions?: Permissions; role?: string };
 type Period = "today" | "7d" | "30d";
-type ModulePermission = { key: string; title: string; icon: typeof Inbox; primary: string; secondary: string; action: string };
+type ModulePermission = { key: string; title: string; icon: typeof Inbox; primary: string; secondary: string; primaryAction: string; action: string };
 type Analytics = Record<string, unknown>;
 type QuotaRow = Record<string, unknown>;
 
 const modules: ModulePermission[] = [
-  { key: "smart_inbox", title: "Smart Inbox", icon: Inbox, primary: "View conversations", secondary: "Reply / send messages", action: "reply" },
-  { key: "orders", title: "Orders", icon: ShoppingBag, primary: "View assigned orders", secondary: "View all orders", action: "assign" },
-  { key: "conversion", title: "Conversion", icon: BarChart3, primary: "View conversion data", secondary: "Manage conversion settings", action: "manage" },
-  { key: "ai_settings", title: "AI Settings", icon: Settings, primary: "View AI settings", secondary: "Edit AI settings", action: "manage" },
-  { key: "control_panel", title: "Control Panel", icon: ShieldCheck, primary: "View controls", secondary: "Manage controls", action: "manage" },
+  { key: "smart_inbox", title: "Smart Inbox", icon: Inbox, primary: "View conversations", secondary: "Reply / send messages", primaryAction: "view", action: "reply" },
+  { key: "orders", title: "Orders", icon: ShoppingBag, primary: "View assigned orders", secondary: "View all orders", primaryAction: "view_assigned", action: "assign" },
+  { key: "conversion", title: "Conversion", icon: BarChart3, primary: "View conversion data", secondary: "Manage conversion settings", primaryAction: "view", action: "manage" },
+  { key: "ai_settings", title: "AI Settings", icon: Settings, primary: "View AI settings", secondary: "Edit AI settings", primaryAction: "view", action: "manage" },
+  { key: "control_panel", title: "Control Panel", icon: ShieldCheck, primary: "View controls", secondary: "Manage controls", primaryAction: "view", action: "manage" },
 ];
 
 const displayName = (email: string) => email.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -35,17 +35,16 @@ const toRows = (value: unknown): QuotaRow[] => Array.isArray(value) ? value.filt
 function moduleAccess(permissions: Permissions | undefined, module: ModulePermission) {
   const value = permissions?.[module.key];
   const access = asRecord(value);
-  return { view: value === true || Boolean(access.view), manage: Boolean(access[module.action] || access.manage || access.reply || access.assign) };
+  return { view: value === true || Boolean(access[module.primaryAction] || access.view), manage: Boolean(access[module.action] || access.manage || access.reply || access.assign) };
 }
 
 function permissionPayload(permissions: Permissions): Permissions {
-  return Object.fromEntries(Object.entries(permissions).map(([key, value]) => {
-    const module = modules.find((item) => item.key === key);
-    if (!module) return [key, value];
+  return Object.fromEntries(modules.map((module) => {
+    const value = permissions[module.key];
     const access = asRecord(value);
-    const { manage: legacyManage, reply: legacyReply, assign: legacyAssign, ...legacyFields } = access;
-    const secondaryEnabled = Boolean(access[module.action] || legacyManage || legacyReply || legacyAssign);
-    return [key, { ...legacyFields, view: value === true || Boolean(access.view), [module.action]: secondaryEnabled }];
+    const primaryEnabled = value === true || Boolean(access[module.primaryAction] || access.view);
+    const secondaryEnabled = Boolean(access[module.action] || access.manage || access.reply || access.assign);
+    return [module.key, { [module.primaryAction]: primaryEnabled, [module.action]: secondaryEnabled }];
   }));
 }
 
@@ -68,10 +67,10 @@ function apiError(data: unknown, fallback: string) {
 
 function PermissionCard({ module, access, onChange }: { module: ModulePermission; access: { view: boolean; manage: boolean }; onChange: (field: "view" | "manage", value: boolean) => void }) {
   const Icon = module.icon;
-  return <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-    <div className="flex items-start justify-between gap-4">
-      <div className="flex min-w-0 gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#00ff88]/10 text-[#00ff88]"><Icon className="h-5 w-5" /></div><div><h4 className="font-bold">{module.title}</h4><p className="mt-2 text-xs text-muted-foreground">{module.primary}</p><p className="mt-2 text-xs text-muted-foreground">{module.secondary}</p></div></div>
-      <div className="flex shrink-0 gap-3"><label className="flex flex-col items-center gap-1 text-xs text-muted-foreground">View<Switch checked={access.view} onCheckedChange={(checked) => onChange("view", checked)} /></label><label className="flex flex-col items-center gap-1 text-xs text-muted-foreground">Manage<Switch checked={access.manage} onCheckedChange={(checked) => onChange("manage", checked)} /></label></div>
+  return <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-3 sm:px-4">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex min-w-0 items-center gap-3"><div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#00ff88]/10 text-[#00ff88]"><Icon className="h-4 w-4" /></div><div className="min-w-0"><h4 className="font-bold leading-tight">{module.title}</h4><p className="mt-1 text-xs text-muted-foreground">{module.primary} · {module.secondary}</p></div></div>
+      <div className="flex shrink-0 items-center gap-4 self-end sm:self-auto"><label className="flex items-center gap-2 text-xs font-medium text-muted-foreground"><span>View</span><Switch checked={access.view} onCheckedChange={(checked) => onChange("view", checked)} /></label><label className="flex items-center gap-2 text-xs font-medium text-muted-foreground"><span>Manage</span><Switch checked={access.manage} onCheckedChange={(checked) => onChange("manage", checked)} /></label></div>
     </div>
   </div>;
 }
@@ -108,7 +107,7 @@ export default function TeamManagementPage() {
       if (responses.some((response) => !response.ok)) throw new Error("Unable to load team management data.");
       const [memberData, analyticsData, allocationData, quotaData] = await Promise.all(responses.map((response) => response.json()));
       setMembers(Array.isArray(memberData) ? memberData as TeamMember[] : []);
-      setAnalytics(asRecord(analyticsData));
+      setAnalytics(asRecord(analyticsData) as Analytics);
       const nextAllocation = asRecord(allocationData);
       setAllocation(nextAllocation);
       setAllocationDraft(nextAllocation);
@@ -130,7 +129,7 @@ export default function TeamManagementPage() {
 
   const selectMember = (member: TeamMember) => { setSelectedId(member.id); setDraftPermissions(member.permissions ?? {}); };
   const setPermission = (target: "draft" | "new", module: ModulePermission, field: "view" | "manage", checked: boolean) => {
-    const update = (current: Permissions) => ({ ...current, [module.key]: { ...asRecord(current[module.key]), [field === "manage" ? module.action : field]: checked } });
+    const update = (current: Permissions) => ({ ...current, [module.key]: { ...asRecord(current[module.key]), [field === "manage" ? module.action : module.primaryAction]: checked } });
     target === "draft" ? setDraftPermissions(update) : setNewPermissions(update);
   };
 
@@ -193,6 +192,6 @@ export default function TeamManagementPage() {
 
     {activeView === "orders" && <div className="space-y-6"><Card className="rounded-3xl border-white/10 bg-card/80"><CardHeader><CardTitle>Assignment rules</CardTitle><CardDescription>Current allocation configuration returned by the API.</CardDescription></CardHeader><CardContent>{allocation && Object.keys(allocation).length > 0 ? <div className="space-y-5"><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{Object.entries(allocationDraft).filter(([, value]) => typeof value !== "object").map(([key, value]) => key === "overflow" ? <label key={key} className="flex items-center justify-between gap-3 rounded-xl border border-white/10 px-3 py-2 text-xs font-bold uppercase text-muted-foreground">{key.replace(/_/g, " ")}<Switch checked={Boolean(value)} onCheckedChange={(checked) => setAllocationDraft((current) => ({ ...current, overflow: checked }))} /></label> : <label key={key} className="text-xs font-bold uppercase text-muted-foreground">{key.replace(/_/g, " ")}<Input type={key === "batch_size" ? "number" : "text"} min={key === "batch_size" ? 1 : undefined} step={key === "batch_size" ? 1 : undefined} value={typeof value === "string" || typeof value === "number" ? String(value) : ""} onChange={(event) => setAllocationDraft((current) => ({ ...current, [key]: key === "batch_size" ? Math.max(1, Math.trunc(event.target.valueAsNumber || 1)) : event.target.value }))} className="mt-2 rounded-xl border-white/10 bg-white/[0.03] normal-case text-foreground" /></label>)}</div><Button disabled={!allocationChanged || savingAllocation} onClick={() => void saveAllocation()} className="bg-[#00ff88] text-black hover:bg-[#00ff88]/90">{savingAllocation ? "Saving…" : "Save allocation"}</Button></div> : <p className="text-muted-foreground">No allocation configuration is available.</p>}</CardContent></Card><Card className="rounded-3xl border-white/10 bg-card/80"><CardHeader><CardTitle>Admin quota</CardTitle></CardHeader><CardContent className="overflow-x-auto">{quotaRows.length === 0 ? <p className="py-10 text-center text-muted-foreground">No quota records are available.</p> : <table className="w-full min-w-[620px] text-left text-sm"><thead className="border-b border-white/10"><tr>{Object.keys(quotaRows[0]).map((key) => <th key={key} className="py-3 pr-5 text-xs uppercase text-muted-foreground">{key.replace(/_/g, " ")}</th>)}</tr></thead><tbody>{quotaRows.map((row, index) => <tr key={String(row.id ?? index)} className="border-b border-white/5">{Object.keys(quotaRows[0]).map((key) => <td key={key} className="py-4 pr-5">{valueText(row[key])}</td>)}</tr>)}</tbody></table>}</CardContent></Card></div>}
 
-    <Dialog open={addOpen} onOpenChange={setAddOpen}><DialogContent className="max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>Add team member</DialogTitle><DialogDescription>Set the member email and module permissions before inviting them.</DialogDescription></DialogHeader><Input type="email" value={newEmail} onChange={(event) => setNewEmail(event.target.value)} placeholder="member@company.com" aria-label="Member email" /><div className="space-y-3">{modules.map((module) => <PermissionCard key={module.key} module={module} access={moduleAccess(newPermissions, module)} onChange={(field, checked) => setPermission("new", module, field, checked)} />)}</div><DialogFooter><Button variant="outline" onClick={() => setAddOpen(false)} disabled={adding}>Cancel</Button><Button onClick={() => void addMember()} disabled={adding} className="bg-[#00ff88] text-black hover:bg-[#00ff88]/90">{adding ? "Adding…" : "Add member"}</Button></DialogFooter></DialogContent></Dialog>
+    <Dialog open={addOpen} onOpenChange={setAddOpen}><DialogContent className="max-h-[88vh] w-[calc(100%-2rem)] max-w-3xl overflow-y-auto rounded-3xl border-white/10 bg-card p-5 sm:p-6"><DialogHeader className="space-y-2"><DialogTitle className="text-2xl font-black">Add team member</DialogTitle><DialogDescription>Choose access before adding this member to your workspace.</DialogDescription></DialogHeader><div className="space-y-2"><label htmlFor="team-member-email" className="text-sm font-bold">Email Address</label><Input id="team-member-email" type="email" value={newEmail} onChange={(event) => setNewEmail(event.target.value)} placeholder="member@company.com" aria-describedby="team-member-email-help" className="h-11 rounded-xl border-white/10 bg-white/[0.03]" /><p id="team-member-email-help" className="text-xs leading-relaxed text-muted-foreground">Enter the email address of the person you want to add to this workspace.</p></div><div className="border-t border-white/10 pt-5"><div className="mb-3"><h3 className="font-bold">Module Access &amp; Permissions</h3><p className="mt-1 text-xs text-muted-foreground">Enable only the access this team member needs.</p></div><div className="space-y-2">{modules.map((module) => <PermissionCard key={module.key} module={module} access={moduleAccess(newPermissions, module)} onChange={(field, checked) => setPermission("new", module, field, checked)} />)}</div></div><DialogFooter className="gap-2 border-t border-white/10 pt-5 sm:gap-0"><Button variant="outline" onClick={() => setAddOpen(false)} disabled={adding}>Cancel</Button><Button onClick={() => void addMember()} disabled={adding} className="bg-[#00ff88] text-black hover:bg-[#00ff88]/90">{adding ? "Adding…" : "Add member"}</Button></DialogFooter></DialogContent></Dialog>
   </div>;
 }

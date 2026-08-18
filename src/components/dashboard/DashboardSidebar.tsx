@@ -36,6 +36,7 @@ import { SessionSelector } from "./SessionSelector";
 import { PageSelector } from "@/components/dashboard/PageSelector";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import { InstagramAccountSelector } from "./InstagramAccountSelector";
+import { hasWorkspacePermission, teamWorkspaceFromStorage } from "@/hooks/useTeamPermissions";
 
 export function DashboardSidebar({ isMobile, onLinkClick }: { isMobile?: boolean; onLinkClick?: () => void }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -47,6 +48,9 @@ export function DashboardSidebar({ isMobile, onLinkClick }: { isMobile?: boolean
 
   const pathParts = location.pathname.split('/');
   const platform = ['whatsapp', 'messenger', 'instagram'].includes(pathParts[2]) ? pathParts[2] : null;
+
+  const workspace = teamWorkspaceFromStorage(platform);
+  const canAccess = (permission: "smart_inbox" | "orders" | "conversion" | "ai_settings" | "control_panel" | "team_management") => hasWorkspacePermission(workspace, permission);
 
   const getMenuItems = () => {
     // Define Global Tools
@@ -83,9 +87,9 @@ export function DashboardSidebar({ isMobile, onLinkClick }: { isMobile?: boolean
     if (['whatsapp', 'messenger', 'instagram'].includes(platform)) {
       platformItems.push({ title: "AI Settings", icon: Sparkles, path: `${base}/settings` });
       if (platform === 'messenger' || platform === 'instagram') platformItems.push({ title: "Comment Automation", icon: MessageCircle, path: `${base}/comment-automation` });
-      platformItems.push({ title: "Order Tracking", icon: ShoppingBag, path: `${base}/orders` });
-      platformItems.push({ title: "Conversion", icon: MessageSquare, path: `${base}/conversion` });
-      platformItems.push({ title: "Smart Inbox", icon: Inbox, path: `${base}/smart-inbox` });
+      if (canAccess("orders")) platformItems.push({ title: "Order Tracking", icon: ShoppingBag, path: `${base}/orders` });
+      if (canAccess("conversion")) platformItems.push({ title: "Conversion", icon: MessageSquare, path: `${base}/conversion` });
+      if (canAccess("smart_inbox")) platformItems.push({ title: "Smart Inbox", icon: Inbox, path: `${base}/smart-inbox` });
     }
 
     const switchItem = { title: "Switch Platform", icon: ArrowLeft, path: "/dashboard" };
