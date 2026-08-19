@@ -320,17 +320,6 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
             'SELECT page_id FROM page_access_token_message WHERE page_id = $1',
             [String(page_id)]
         );
-        const subscription = await subscribeMessengerPage(String(page_id), page_access_token);
-        if (!subscription.success) {
-            return res.status(422).json({
-                error: subscription.message,
-                diagnostic: {
-                    code: subscription.code,
-                    message: 'Facebook webhook subscription failed. The page was not updated.'
-                },
-                subscription_status: 'failed'
-            });
-        }
 
         console.log('✅ [DEBUG] Step 3: Checking if fb_message_database entry exists...');
         const existsResult = await pgClient.query(
@@ -377,6 +366,11 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
                 'active'
             ]
         );
+
+        const subscription = await subscribeMessengerPage(String(page_id), page_access_token);
+        if (!subscription.success) {
+            console.warn(`[Messenger] Page saved, but automatic webhook field subscription failed for ${page_id}: ${subscription.message}`);
+        }
 
         // SYNC ALL PRODUCTS TO THIS NEW PAGE ID (Automatic)
         try {
@@ -457,7 +451,11 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
 
         webhookController.clearPageCache(page_id);
 
-        res.json({ id: dbId, subscription_status: 'active' });
+        res.json({
+            id: dbId,
+            subscription_status: subscription.success ? 'active' : 'saved_subscription_failed',
+            subscription_error: subscription.success ? null : subscription.message
+        });
     } catch (error) {
         console.error('Error saving Messenger page (manual):', error);
         res.status(error.statusCode || 500).json({ error: error.message });

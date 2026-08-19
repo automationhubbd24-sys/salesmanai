@@ -2248,7 +2248,21 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
                 reply_by: 'bot'
             });
             console.log(`[WhatsApp Webhook] Sending text reply to ${senderId}...`);
-            await whatsappCloudService.sendTextMessage(resolvedPhoneNumberId, config.cloud_access_token, senderId, entry.text);
+            // #region debug-point A
+            (()=>{let u='http://127.0.0.1:7777/event';try{u=require('fs').readFileSync(require('path').resolve(__dirname,'../../../.dbg/whatsapp-text-delivery.env'),'utf8').match(/^DEBUG_SERVER_URL=(.+)$/m)?.[1]||u}catch{}fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'whatsapp-text-delivery',runId:'pre-fix',hypothesisId:'A',location:'webhookController.js:2251',msg:'[DEBUG] Before Cloud AI text send',data:{textPresent:Boolean(entry.text),textLength:String(entry.text).length,hasPhoneNumberId:Boolean(resolvedPhoneNumberId),hasCloudToken:Boolean(config.cloud_access_token)}})}).catch(()=>{})})();
+            // #endregion
+            let textSendResponse;
+            try {
+                textSendResponse = await whatsappCloudService.sendTextMessage(resolvedPhoneNumberId, config.cloud_access_token, senderId, entry.text);
+            } catch (error) {
+                // #region debug-point C
+                (()=>{let u='http://127.0.0.1:7777/event';try{u=require('fs').readFileSync(require('path').resolve(__dirname,'../../../.dbg/whatsapp-text-delivery.env'),'utf8').match(/^DEBUG_SERVER_URL=(.+)$/m)?.[1]||u}catch{}fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'whatsapp-text-delivery',runId:'pre-fix',hypothesisId:'C',location:'webhookController.js:2257',msg:'[DEBUG] Cloud AI text send failed',data:{status:error?.response?.status,providerCode:error?.response?.data?.error?.code,message:String(error?.message||'').slice(0,200)}})}).catch(()=>{})})();
+                // #endregion
+                throw error;
+            }
+            // #region debug-point B
+            (()=>{let u='http://127.0.0.1:7777/event';try{u=require('fs').readFileSync(require('path').resolve(__dirname,'../../../.dbg/whatsapp-text-delivery.env'),'utf8').match(/^DEBUG_SERVER_URL=(.+)$/m)?.[1]||u}catch{}fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'whatsapp-text-delivery',runId:'pre-fix',hypothesisId:'B',location:'webhookController.js:2261',msg:'[DEBUG] Cloud AI text send succeeded',data:{hasProviderMessageId:Boolean(textSendResponse?.messages?.[0]?.id)}})}).catch(()=>{})})();
+            // #endregion
             await dbService.saveWhatsAppChat({
                 session_name: effectiveSessionName,
                 sender_id: effectiveSessionName,

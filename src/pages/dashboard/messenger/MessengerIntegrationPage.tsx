@@ -702,9 +702,7 @@ export default function MessengerIntegrationPage() {
                 throw new Error("Please login again");
             }
 
-            addLog('info', 'Backend API', 'Saving credentials to our database (skipping Graph API webhook subscription)');
-            // Directly save to backend WITHOUT attempting to subscribe via Graph API
-            // This acts exactly like n8n, relying on the user's manual Meta Developer App webhook configuration
+            addLog('info', 'Backend API', 'Saving credentials and checking webhook subscription');
             const res = await fetch(`${BACKEND_URL}/api/messenger/pages/manual`, {
                 method: "POST",
                 headers: {
@@ -726,8 +724,13 @@ export default function MessengerIntegrationPage() {
                 throw new Error(body.error || "Failed to save page to database");
             }
             
-            addLog('success', 'Process Completed', `Manual setup successful for ${finalName}`);
-            toast.success(`${finalName} connected manually! Make sure to set up Webhooks in your Meta Developer App.`);
+            if (body.subscription_status === 'saved_subscription_failed') {
+                addLog('warning', 'Webhook Subscription', 'Page connected, but automatic webhook field subscription failed', { error: body.subscription_error });
+                toast.warning(`${finalName} connected. Webhook field subscription needs review in Meta.`);
+            } else {
+                addLog('success', 'Process Completed', `${finalName} connected successfully`);
+                toast.success(`${finalName} connected successfully!`);
+            }
             
             // Set the active page directly into LocalStorage to immediately show it
             localStorage.setItem("active_fb_page_id", directPageId);
