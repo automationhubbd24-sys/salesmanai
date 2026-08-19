@@ -49,7 +49,7 @@ import { logFrontendError } from "../../../lib/logger";
 interface FacebookPage {
     id: string;
     name: string;
-    access_token: string;
+    access_token?: string;
     tasks?: string[];
 }
 
@@ -331,8 +331,15 @@ export default function MessengerIntegrationPage() {
         }
 
         let successCount = 0;
+        let skippedTokenlessCount = 0;
         for (const [index, page] of facebookPages.entries()) {
             console.log(`🔄 [DEBUG] Processing page ${index + 1}/${facebookPages.length}:`, page.name, page.id);
+            if (!page.access_token) {
+                skippedTokenlessCount++;
+                addLog('warning', 'Page Token', `Skipping ${page.name || page.id} because Meta did not return a Page access token`, { pageId: page.id, tasks: page.tasks });
+                continue;
+            }
+
             try {
                 let dbId: number | null = null;
 
@@ -391,6 +398,8 @@ export default function MessengerIntegrationPage() {
         if (successCount > 0) {
             toast.success(`Successfully connected ${successCount} pages!`);
             fetchPages();
+        } else if (skippedTokenlessCount > 0) {
+            toast.error("Meta returned pages without Page access tokens. Assign yourself Page access/tasks in Business Settings, then reconnect.");
         } else {
             toast.error("Failed to connect pages.");
         }

@@ -143,12 +143,21 @@ function normalizeMessengerPages(pages) {
 }
 
 async function getGraphCollection(path, accessToken, fields) {
-    const response = await axios.get(`https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}${path}`, {
-        params: { fields, access_token: accessToken },
-        timeout: 15000
-    });
+    const items = [];
+    let url = `https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}${path}`;
+    let params = { fields, access_token: accessToken, limit: 100 };
 
-    return Array.isArray(response.data?.data) ? response.data.data : [];
+    while (url) {
+        const response = await axios.get(url, { params, timeout: 15000 });
+        if (Array.isArray(response.data?.data)) {
+            items.push(...response.data.data);
+        }
+
+        url = response.data?.paging?.next || null;
+        params = undefined;
+    }
+
+    return items;
 }
 
 async function getGraphPageCollection(path, accessToken) {
@@ -160,7 +169,7 @@ async function resolveMessengerPages(accessToken) {
     let pages = [];
 
     try {
-        pages = await getGraphPageCollection('/me/accounts', accessToken);
+        pages.push(...await getGraphPageCollection('/me/accounts', accessToken));
     } catch (error) {
         diagnostics.push({
             code: 'MESSENGER_ACCOUNTS_UNAVAILABLE',
@@ -168,25 +177,27 @@ async function resolveMessengerPages(accessToken) {
         });
     }
 
-    if (pages.length === 0) {
-        let businesses = [];
-        try {
-            businesses = await getGraphCollection('/me/businesses', accessToken, 'id,name');
-        } catch (error) {
-            diagnostics.push({
-                code: 'MESSENGER_BUSINESS_DISCOVERY_UNAVAILABLE',
-                message: 'Business Portfolio discovery is unavailable for this Facebook account.'
-            });
-        }
+    let businesses = [];
+    try {
+        businesses = await getGraphCollection('/me/businesses', accessToken, 'id,name');
+    } catch (error) {
+        diagnostics.push({
+            code: 'MESSENGER_BUSINESS_DISCOVERY_UNAVAILABLE',
+            message: 'Business Portfolio discovery is unavailable for this Facebook account.'
+        });
+    }
 
-        for (const business of businesses) {
-            for (const relationship of ['owned_pages', 'client_pages', 'assigned_pages']) {
-                try {
-                    const businessPages = await getGraphPageCollection(`/${business.id}/${relationship}`, accessToken);
-                    pages.push(...businessPages);
-                } catch (error) {
-                    // Some Business Portfolio page relationship endpoints are unavailable by design.
-                }
+    for (const business of businesses) {
+        for (const relationship of ['owned_pages', 'client_pages', 'assigned_pages']) {
+            try {
+                const businessPages = await getGraphPageCollection(`/${business.id}/${relationship}`, accessToken);
+                pages.push(...businessPages);
+            } catch (error) {
+                diagnostics.push({
+                    code: `MESSENGER_BUSINESS_${relationship.toUpperCase()}_UNAVAILABLE`,
+                    business_id: business.id,
+                    message: `Unable to retrieve ${relationship.replace('_', ' ')} for this Business Portfolio.`
+                });
             }
         }
     }
