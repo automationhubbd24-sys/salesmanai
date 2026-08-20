@@ -2462,9 +2462,6 @@ async function ensureWhatsAppContactsTable() {
             last_interaction TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
             UNIQUE(session_name, phone_number)
         );
-        CREATE INDEX IF NOT EXISTS idx_whatsapp_contacts_session_phone ON whatsapp_contacts(session_name, phone_number);
-        CREATE INDEX IF NOT EXISTS idx_whatsapp_contacts_session_lid ON whatsapp_contacts(session_name, lid);
-        CREATE INDEX IF NOT EXISTS idx_whatsapp_contacts_session_username ON whatsapp_contacts(session_name, username);
     `);
 
     await query(`
@@ -2501,6 +2498,14 @@ async function ensureWhatsAppContactsTable() {
                 ALTER TABLE whatsapp_contacts ADD COLUMN last_interaction TIMESTAMP WITH TIME ZONE DEFAULT NOW();
             END IF;
         END $$;
+    `);
+
+    await query(`
+        CREATE INDEX IF NOT EXISTS idx_whatsapp_contacts_session_phone ON whatsapp_contacts(session_name, phone_number);
+        CREATE INDEX IF NOT EXISTS idx_whatsapp_contacts_session_lid ON whatsapp_contacts(session_name, lid);
+        CREATE INDEX IF NOT EXISTS idx_whatsapp_contacts_session_wa_id ON whatsapp_contacts(session_name, wa_id);
+        CREATE INDEX IF NOT EXISTS idx_whatsapp_contacts_session_username ON whatsapp_contacts(session_name, username);
+        CREATE INDEX IF NOT EXISTS idx_whatsapp_contacts_session_bsuid ON whatsapp_contacts(session_name, business_scoped_user_id);
     `);
 }
 // 20. Toggle WhatsApp Lock (Handover)
