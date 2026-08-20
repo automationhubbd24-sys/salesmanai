@@ -1,6 +1,48 @@
 const axios = require('axios');
+const FormData = require('form-data');
 
 const GRAPH_VERSION = process.env.FACEBOOK_GRAPH_VERSION || 'v22.0';
+const DEBUG_SERVER_URL = process.env.DEBUG_SERVER_URL || null;
+
+async function reportMediaSendDebug(hypothesisId, location, msg, data = {}) {
+    if (!DEBUG_SERVER_URL) return;
+
+    try {
+        await fetch(`${DEBUG_SERVER_URL.replace(/\/$/, '')}/event`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                sessionId: 'whatsapp-media-send',
+                runId: 'pre-fix',
+                hypothesisId,
+                location,
+                msg,
+                data
+            })
+        });
+    } catch {
+        // instrumentation only
+    }
+}
+
+async function uploadMediaFromUrl(phoneNumberId, accessToken, mediaUrl) {
+    const response = await axios.get(mediaUrl, { responseType: 'arraybuffer', timeout: 15000 });
+    const contentType = response.headers['content-type'] || 'image/jpeg';
+    const buffer = Buffer.from(response.data, 'binary');
+    const extension = contentType.split('/')[1] || 'jpg';
+    const form = new FormData();
+    form.append('messaging_product', 'whatsapp');
+    form.append('file', buffer, { filename: `media.${extension === 'jpeg' ? 'jpg' : extension}`, contentType });
+
+    const uploadResponse = await axios.post(getGraphUrl(`/${phoneNumberId}/media`), form, {
+        headers: {
+            ...form.getHeaders(),
+            Authorization: `Bearer ${accessToken}`
+        }
+    });
+
+    return uploadResponse.data?.id || null;
+}
 
 function getGraphUrl(pathname) {
     return `https://graph.facebook.com/${GRAPH_VERSION}${pathname}`;
@@ -219,23 +261,75 @@ class WhatsAppCloudService {
     }
 
     async sendImageMessage(phoneNumberId, accessToken, recipientNumber, imageUrl, caption) {
+        await reportMediaSendDebug('A', 'whatsappCloudService.js:sendImageMessage:start', 'attempting image send', {
+            phoneNumberId,
+            recipientNumber,
+            imageUrl,
+            hasCaption: Boolean(caption)
+        });
+
         try {
-            const image = { link: imageUrl };
+            const mediaId = await uploadMediaFromUrl(phoneNumberId, accessToken, imageUrl);
+            if (!mediaId) throw new Error('WhatsApp media upload returned empty id');
+
+            const body = {
+                messaging_product: 'whatsapp',
+                recipient_type: 'individual',
+                to: recipientNumber,
+                type: 'image',
+                image: { id: mediaId }
+            };
             if (caption) {
-                image.caption = caption;
+                body.image.caption = caption;
             }
 
-            const response = await this.graphPost(`/${phoneNumberId}/messages`, {
-                messaging_product: "whatsapp",
-                recipient_type: "individual",
-                to: recipientNumber,
-                type: "image",
-                image
-            }, accessToken);
+            const response = await this.graphPost(`/${phoneNumberId}/messages`, body, accessToken);
+
+            await reportMediaSendDebug('B', 'whatsappCloudService.js:sendImageMessage:media-success', 'image sent by uploaded media id', {
+                recipientNumber,
+                mediaId,
+                hasProviderMessageId: Boolean(response?.messages?.[0]?.id)
+            });
+
             return response;
-        } catch (error) {
-            console.error('[WhatsApp Cloud] Send Image Error:', error.response?.data || error.message);
-            throw error;
+        } catch (mediaError) {
+            await reportMediaSendDebug('C', 'whatsappCloudService.js:sendImageMessage:media-failed', 'media upload path failed, trying link fallback', {
+                status: mediaError?.response?.status || null,
+                providerCode: mediaError?.response?.data?.error?.code || null,
+                message: String(mediaError?.message || '').slice(0, 200),
+                imageUrl
+            });
+
+            try {
+                const image = { link: imageUrl };
+                if (caption) {
+                    image.caption = caption;
+                }
+
+                const response = await this.graphPost(`/${phoneNumberId}/messages`, {
+                    messaging_product: "whatsapp",
+                    recipient_type: "individual",
+                    to: recipientNumber,
+                    type: "image",
+                    image
+                }, accessToken);
+
+                await reportMediaSendDebug('D', 'whatsappCloudService.js:sendImageMessage:link-success', 'image sent by link', {
+                    recipientNumber,
+                    hasProviderMessageId: Boolean(response?.messages?.[0]?.id)
+                });
+
+                return response;
+            } catch (linkError) {
+                await reportMediaSendDebug('E', 'whatsappCloudService.js:sendImageMessage:link-failed', 'image send failed on both media and link paths', {
+                    status: linkError?.response?.status || null,
+                    providerCode: linkError?.response?.data?.error?.code || null,
+                    message: String(linkError?.message || '').slice(0, 200),
+                    imageUrl
+                });
+                console.error('[WhatsApp Cloud] Send Image Error:', linkError.response?.data || linkError.message);
+                throw linkError;
+            }
         }
     }
 
