@@ -2212,16 +2212,18 @@ async function saveWhatsAppOrderTracking(orderData) {
 async function getWhatsAppChatHistory(sessionName, senderId, limit = 10) {
     const { query } = require('./pgClient');
     const result = await query(
-        `SELECT * FROM whatsapp_chats
-         WHERE session_name = $1
-           AND (
-                (sender_id = $2 AND recipient_id = $1)
-             OR (sender_id = $1 AND recipient_id = $2)
-           )
-         ORDER BY timestamp DESC
-         LIMIT $3`,
-        [sessionName, senderId, limit]
-    );
+            `SELECT * FROM whatsapp_chats
+             WHERE session_name = $1
+               AND (
+                    sender_id = $2
+                 OR recipient_id = $2
+                 OR sender_id = $1
+                 OR recipient_id = $1
+               )
+             ORDER BY timestamp DESC
+             LIMIT $3`,
+            [sessionName, senderId, limit]
+        );
 
     return result.rows.reverse().map(msg => ({
         role: msg.reply_by === 'user' ? 'user' : (msg.reply_by === 'system' ? 'system' : 'assistant'),
@@ -2387,9 +2389,13 @@ async function saveWhatsAppContact(data) {
     const run = async () => {
         await query(
             `INSERT INTO whatsapp_contacts
-                (session_name, phone_number, lid, name, profile_name, name_source, last_interaction)
-             VALUES ($1, $2, $3, $4::text, $4::text, CASE WHEN $4::text IS NULL THEN NULL ELSE 'profile' END, $5)
+                (session_name, phone_number, lid, wa_id, username, business_scoped_user_id, name, profile_name, name_source, last_interaction)
+             VALUES ($1, $2, $3, $4, $5, $6, $7::text, $7::text, CASE WHEN $7::text IS NULL THEN NULL ELSE 'profile' END, $8)
              ON CONFLICT (session_name, phone_number) DO UPDATE SET
+                lid = COALESCE(EXCLUDED.lid, whatsapp_contacts.lid),
+                wa_id = COALESCE(EXCLUDED.wa_id, whatsapp_contacts.wa_id),
+                username = COALESCE(EXCLUDED.username, whatsapp_contacts.username),
+                business_scoped_user_id = COALESCE(EXCLUDED.business_scoped_user_id, whatsapp_contacts.business_scoped_user_id),
                 profile_name = COALESCE(EXCLUDED.profile_name, whatsapp_contacts.profile_name),
                 name = CASE
                     WHEN whatsapp_contacts.is_locked OR whatsapp_contacts.name_source IN ('manual', 'custom') THEN whatsapp_contacts.name
@@ -2411,12 +2417,14 @@ async function saveWhatsAppContact(data) {
                     ) THEN 'profile'
                     ELSE whatsapp_contacts.name_source
                 END,
-                lid = COALESCE(EXCLUDED.lid, whatsapp_contacts.lid),
                 last_interaction = EXCLUDED.last_interaction`,
             [
                 data.session_name,
                 data.phone_number,
                 data.lid || null,
+                data.wa_id || null,
+                data.username || null,
+                data.business_scoped_user_id || null,
                 hasProfileName ? profileName : null,
                 new Date().toISOString()
             ]
@@ -2444,6 +2452,9 @@ async function ensureWhatsAppContactsTable() {
             session_name TEXT NOT NULL,
             phone_number TEXT NOT NULL,
             lid TEXT,
+            wa_id TEXT,
+            username TEXT,
+            business_scoped_user_id TEXT,
             name TEXT,
             profile_name TEXT,
             name_source TEXT,
@@ -2452,6 +2463,8 @@ async function ensureWhatsAppContactsTable() {
             UNIQUE(session_name, phone_number)
         );
         CREATE INDEX IF NOT EXISTS idx_whatsapp_contacts_session_phone ON whatsapp_contacts(session_name, phone_number);
+        CREATE INDEX IF NOT EXISTS idx_whatsapp_contacts_session_lid ON whatsapp_contacts(session_name, lid);
+        CREATE INDEX IF NOT EXISTS idx_whatsapp_contacts_session_username ON whatsapp_contacts(session_name, username);
     `);
 
     await query(`
@@ -2462,6 +2475,15 @@ async function ensureWhatsAppContactsTable() {
             END IF;
             IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='lid') THEN
                 ALTER TABLE whatsapp_contacts ADD COLUMN lid TEXT;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='wa_id') THEN
+                ALTER TABLE whatsapp_contacts ADD COLUMN wa_id TEXT;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='username') THEN
+                ALTER TABLE whatsapp_contacts ADD COLUMN username TEXT;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='business_scoped_user_id') THEN
+                ALTER TABLE whatsapp_contacts ADD COLUMN business_scoped_user_id TEXT;
             END IF;
             IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='name') THEN
                 ALTER TABLE whatsapp_contacts ADD COLUMN name TEXT;
@@ -3256,7 +3278,10 @@ async function checkWhatsAppLockStatus(sessionName, senderId) {
     try {
         const run = async () => {
             const result = await query(
-                'SELECT is_locked FROM whatsapp_contacts WHERE session_name = $1 AND phone_number = $2 LIMIT 1',
+                `SELECT is_locked FROM whatsapp_contacts
+                 WHERE session_name = $1
+                   AND (phone_number = $2 OR lid = $2 OR username = $2 OR wa_id = $2 OR business_scoped_user_id = $2)
+                 LIMIT 1`,
                 [sessionName, senderId]
             );
             if (result.rows.length > 0) {
@@ -3271,7 +3296,10 @@ async function checkWhatsAppLockStatus(sessionName, senderId) {
             try {
                 await ensureWhatsAppContactsTable();
                 const result = await query(
-                    'SELECT is_locked FROM whatsapp_contacts WHERE session_name = $1 AND phone_number = $2 LIMIT 1',
+                    `SELECT is_locked FROM whatsapp_contacts
+                     WHERE session_name = $1
+                       AND (phone_number = $2 OR lid = $2 OR username = $2 OR wa_id = $2 OR business_scoped_user_id = $2)
+                     LIMIT 1`,
                     [sessionName, senderId]
                 );
                 if (result.rows.length > 0) {
@@ -5972,7 +6000,7 @@ async function getLastWhatsAppUserMessageTimestamp(sessionName, senderId) {
         const result = await query(
             `SELECT timestamp FROM whatsapp_chats 
              WHERE session_name = $1 
-               AND sender_id = $2 
+               AND (sender_id = $2 OR recipient_id = $2) 
                AND reply_by = 'user' 
              ORDER BY timestamp DESC LIMIT 1`,
             [sessionName, senderId]

@@ -22,7 +22,7 @@ const PLATFORM_CONFIG = {
                              AND BTRIM(COALESCE(wc.name, '')) <> ''
                              AND BTRIM(COALESCE(wc.name, '')) !~ '^[0-9]+$'
                              AND LOWER(BTRIM(COALESCE(wc.name, ''))) NOT IN ('unknown', 'unknown user', 'customer', 'whatsapp user', 'messenger user', 'null', 'undefined')) THEN wc.name
-                    ELSE COALESCE(wc.profile_name, wc.name)
+                    ELSE COALESCE(wc.profile_name, wc.username, wc.name)
                 END AS name
                 FROM whatsapp_contacts wc
                 WHERE wc.session_name = $1

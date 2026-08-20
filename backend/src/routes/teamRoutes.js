@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pgClient = require('../services/pgClient');
 const authMiddleware = require('../middleware/authMiddleware');
+const runtimeMonitor = require('../services/runtimeMonitor');
 const {
     normalizeEmail,
     validatePermissions,
@@ -49,9 +50,32 @@ function distributeOrderQuotas(batchSize, memberEmails) {
     }));
 }
 
-function dbError(res, error, message) {
+function dbError(res, error, message, meta = {}) {
+    runtimeMonitor.recordError('team_routes', error, { stage: meta.stage || message, platform: 'team_management' });
     console.error(message, error);
     return res.status(500).json({ error: message });
+}
+
+async function ensureTeamOrderTables() {
+    await pgClient.query(`CREATE TABLE IF NOT EXISTS public.team_order_settings (
+        owner_email TEXT PRIMARY KEY,
+        mode TEXT NOT NULL DEFAULT 'manual' CHECK (mode IN ('manual', 'equal_share')),
+        batch_size INTEGER NOT NULL DEFAULT 1 CHECK (batch_size > 0),
+        overflow BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
+    await pgClient.query(`CREATE TABLE IF NOT EXISTS public.team_order_assignments (
+        owner_email TEXT NOT NULL,
+        source TEXT NOT NULL CHECK (source IN ('fb', 'whatsapp')),
+        resource_id TEXT NOT NULL,
+        order_identity TEXT NOT NULL,
+        member_email TEXT,
+        assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (owner_email, source, resource_id, order_identity)
+    )`);
+    await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_team_order_assignments_owner_member
+        ON public.team_order_assignments (owner_email, member_email, assigned_at DESC)`);
 }
 
 /** Ensure every canonical resource grant belongs to the team owner. */
@@ -105,7 +129,7 @@ router.get('/members', authMiddleware, async (req, res) => {
             else members.set(email, { ...row, member_email: email, permissions: mergePermissions([row.permissions]) });
         }
         return res.json([...members.values()]);
-    } catch (error) { return dbError(res, error, 'Failed to fetch team members'); }
+    } catch (error) { return dbError(res, error, 'Failed to fetch team members', { stage: 'members-get' }); }
 });
 
 router.get('/members/:id', authMiddleware, async (req, res) => {
@@ -132,7 +156,7 @@ router.get('/me', authMiddleware, async (req, res) => {
             [userEmail, 'active']
         );
         return res.json(result.rows);
-    } catch (error) { return dbError(res, error, 'Failed to fetch teams'); }
+    } catch (error) { return dbError(res, error, 'Failed to fetch teams', { stage: 'me-get' }); }
 });
 
 router.post('/members', authMiddleware, async (req, res) => {
@@ -269,16 +293,17 @@ router.get('/analytics', authMiddleware, async (req, res) => {
             unattributed_replies: unattributedReplies,
             attribution_available: true
         });
-    } catch (error) { return dbError(res, error, 'Failed to fetch team analytics'); }
+    } catch (error) { return dbError(res, error, 'Failed to fetch team analytics', { stage: 'analytics-get' }); }
 });
 
 router.get('/order-allocation', authMiddleware, async (req, res) => {
     const ownerEmail = requireOwner(req, res);
     if (!ownerEmail) return;
     try {
+        await ensureTeamOrderTables();
         const result = await pgClient.query('SELECT mode, batch_size, overflow, updated_at FROM team_order_settings WHERE owner_email = $1', [ownerEmail]);
         return res.json(result.rows[0] || { mode: 'manual', batch_size: 1, overflow: false, persisted: false });
-    } catch (error) { return dbError(res, error, 'Failed to fetch order allocation settings'); }
+    } catch (error) { return dbError(res, error, 'Failed to fetch order allocation settings', { stage: 'order-allocation-get' }); }
 });
 
 router.put('/order-allocation', authMiddleware, async (req, res) => {
@@ -289,15 +314,17 @@ router.put('/order-allocation', authMiddleware, async (req, res) => {
         return res.status(400).json({ error: 'mode (manual|equal_share), positive integer batch_size, and boolean overflow are required' });
     }
     try {
+        await ensureTeamOrderTables();
         const result = await pgClient.query(`INSERT INTO team_order_settings (owner_email, mode, batch_size, overflow) VALUES ($1, $2, $3, $4) ON CONFLICT (owner_email) DO UPDATE SET mode = EXCLUDED.mode, batch_size = EXCLUDED.batch_size, overflow = EXCLUDED.overflow, updated_at = NOW() RETURNING mode, batch_size, overflow, updated_at`, [ownerEmail, mode, batchSize, overflow]);
         return res.json(result.rows[0]);
-    } catch (error) { return dbError(res, error, 'Failed to save order allocation settings'); }
+    } catch (error) { return dbError(res, error, 'Failed to save order allocation settings', { stage: 'order-allocation-put' }); }
 });
 
 router.get('/order-quota', authMiddleware, async (req, res) => {
     const ownerEmail = requireOwner(req, res);
     if (!ownerEmail) return;
     try {
+        await ensureTeamOrderTables();
         const [settingResult, memberResult, assignmentResult] = await Promise.all([
             pgClient.query('SELECT mode, batch_size FROM team_order_settings WHERE owner_email = $1', [ownerEmail]),
             pgClient.query("SELECT DISTINCT LOWER(member_email) AS member_email FROM team_members WHERE LOWER(owner_email) = $1 AND status = 'active' ORDER BY member_email", [ownerEmail]),
@@ -324,7 +351,7 @@ router.get('/order-quota', authMiddleware, async (req, res) => {
             };
         });
         return res.json({ mode, batch_size: batchSize, quotas });
-    } catch (error) { return dbError(res, error, 'Failed to calculate order quotas'); }
+    } catch (error) { return dbError(res, error, 'Failed to calculate order quotas', { stage: 'order-quota-get' }); }
 });
 
 router.normalizeEmail = normalizeEmail;

@@ -1134,6 +1134,44 @@ const verifyWhatsAppWebhook = (req, res) => {
     res.sendStatus(400);
 };
 
+function normalizeWhatsAppIdentity(message, value = {}) {
+    const rawSenderId = String(message?.from || '').trim();
+    const contacts = Array.isArray(value?.contacts) ? value.contacts : [];
+    const contact = contacts.find(item => {
+        const waId = String(item?.wa_id || '').trim();
+        return waId && waId === rawSenderId;
+    }) || contacts[0] || {};
+
+    const username = String(
+        message?.username
+        || message?.from_username
+        || message?.profile?.username
+        || contact?.username
+        || contact?.profile?.username
+        || ''
+    ).trim();
+    const businessScopedUserId = String(
+        message?.business_scoped_user_id
+        || message?.bsuid
+        || message?.identity?.business_scoped_user_id
+        || contact?.business_scoped_user_id
+        || contact?.bsuid
+        || ''
+    ).trim();
+    const waId = String(contact?.wa_id || message?.wa_id || '').trim();
+    const profileName = String(contact?.profile?.name || message?.profile?.name || '').trim();
+    const conversationId = rawSenderId || businessScopedUserId || username || waId;
+
+    return {
+        conversationId,
+        rawSenderId,
+        waId,
+        username,
+        businessScopedUserId,
+        profileName
+    };
+}
+
 function extractOfficialMessageText(message) {
     if (!message || typeof message !== 'object') return '';
 
@@ -1294,7 +1332,8 @@ function flushWhatsAppDebounce(batchKey) {
                 sessionData.senderName,
                 sessionData.senderId,
                 sessionData.wabaId,
-                sessionData.phoneNumberId
+                sessionData.phoneNumberId,
+                sessionData.identity
             );
         } finally {
             const remaining = waDebounceMap.get(batchKey);
@@ -1326,6 +1365,7 @@ function queueWhatsAppBatch(batch) {
             prompts: batch.prompts,
             senderName: batch.senderName,
             senderId: batch.senderId,
+            identity: batch.identity || {},
             wabaId: batch.wabaId,
             phoneNumberId: batch.phoneNumberId
         });
@@ -1337,6 +1377,7 @@ function queueWhatsAppBatch(batch) {
     sessionData.prompts = batch.prompts;
     sessionData.senderName = batch.senderName;
     sessionData.senderId = batch.senderId;
+    sessionData.identity = batch.identity || sessionData.identity || {};
     sessionData.wabaId = batch.wabaId;
     sessionData.phoneNumberId = batch.phoneNumberId;
 
@@ -1358,9 +1399,19 @@ function queueWhatsAppBatch(batch) {
 }
 
 // --- WHATSAPP INLINE BATCH PROCESSING ---
-async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, senderName, senderId, wabaId, phoneNumberId) {
+async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, senderName, senderId, wabaId, phoneNumberId, identity = {}) {
     const effectiveSessionName = config.session_name || `official_${wabaId || phoneNumberId}`;
     const resolvedPhoneNumberId = config.phone_number_id || phoneNumberId;
+    const senderIdentity = {
+        conversationId: String(identity.conversationId || senderId || '').trim(),
+        rawSenderId: String(identity.rawSenderId || senderId || '').trim(),
+        waId: String(identity.waId || '').trim(),
+        username: String(identity.username || '').trim(),
+        businessScopedUserId: String(identity.businessScopedUserId || '').trim(),
+        profileName: String(identity.profileName || senderName || '').trim()
+    };
+    const conversationId = senderIdentity.conversationId || senderIdentity.rawSenderId || senderIdentity.businessScopedUserId || senderIdentity.username || senderIdentity.waId;
+    const replyRecipientId = senderIdentity.rawSenderId || conversationId;
     const latestIncomingMessageId = [...bufferedMessages].reverse().map(msg => msg?.id).find(Boolean) || null;
     const controlConfig = {
         ...(config || {}),
@@ -1406,10 +1457,14 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     if (allAudios.length > 0) inboundLogParts.push(`[Audio URLs]: ${allAudios.join(', ')}`);
     const inboundLogText = inboundLogParts.join('\n\n').trim();
 
-    if (isValidContactName(senderName)) {
+    if (conversationId) {
         await dbService.saveWhatsAppContact({
             session_name: effectiveSessionName,
-            phone_number: senderId,
+            phone_number: conversationId,
+            lid: senderIdentity.businessScopedUserId || senderIdentity.waId || null,
+            username: senderIdentity.username || null,
+            business_scoped_user_id: senderIdentity.businessScopedUserId || null,
+            wa_id: senderIdentity.waId || senderIdentity.rawSenderId || null,
             name: senderName
         });
     }
@@ -1417,7 +1472,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     if (inboundLogText) {
         await dbService.saveWhatsAppChat({
             session_name: effectiveSessionName,
-            sender_id: senderId,
+            sender_id: conversationId,
             recipient_id: effectiveSessionName,
             message_id: bufferedMessages[0].id,
             text: inboundLogText,
@@ -1452,7 +1507,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
 
         if (!imageDetectionEnabled) {
             console.log(`[WhatsApp Batch] Image Detection disabled. Skipping.`);
-            await dbService.setConversationState(effectiveSessionName, senderId, {
+            await dbService.setConversationState(effectiveSessionName, conversationId, {
                 last_image_map: null,
                 last_image_batch_id: `wa_img_skipped_${Date.now()}`,
                 last_intent: 'image_analysis_skipped'
@@ -1470,7 +1525,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
             const analyzedImages = await analyzeIncomingImagesForConversation({
                 platform: 'whatsapp',
                 pageId: effectiveSessionName,
-                senderId,
+                senderId: conversationId,
                 imageUrls: allImages,
                 pageConfig: config,
                 prompt: productAnalysisPrompt,
@@ -1482,7 +1537,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
             const lastImageMap = analyzedImages.lastImageMap;
             totalVisionTokens += analyzedImages.totalUsage;
 
-            await dbService.setConversationState(effectiveSessionName, senderId, {
+            await dbService.setConversationState(effectiveSessionName, conversationId, {
                 last_image_map: Object.keys(lastImageMap).length > 0 ? lastImageMap : null,
                 last_image_batch_id: batchId,
                 last_intent: 'multi_image_analysis'
@@ -1493,7 +1548,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
                     dbService.saveWhatsAppChat({
                         session_name: effectiveSessionName,
                         sender_id: effectiveSessionName,
-                        recipient_id: senderId,
+                        recipient_id: conversationId,
                         message_id: `img_analysis_${batchId}_${result.imageIndex}`,
                         text: `[Analyzed Image ${result.imageIndex}]:\n${formatImageAnalysisBlock(result)}`,
                         timestamp: Date.now(),
@@ -1535,7 +1590,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
                     const job = audioJobs[i];
                     dbService.saveWhatsAppChat({
                         session_name: effectiveSessionName,
-                        sender_id: senderId,
+                        sender_id: conversationId,
                         recipient_id: effectiveSessionName,
                         message_id: job.id,
                         text: job.rawText ? `${job.rawText}\n[Transcript]: ${text.trim()}` : `[Transcript]: ${text.trim()}`,
@@ -1568,7 +1623,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     if (semEnabled && !isMediaTurn && combinedText.trim()) {
         try {
             const cacheQuery = combinedText.trim().replace(/\s+/g, ' ');
-            const state = await dbService.getConversationState(effectiveSessionName, senderId);
+            const state = await dbService.getConversationState(effectiveSessionName, conversationId);
             const contextId = state?.last_product_id || null;
             const cached = await dbService.findSemanticCache({
                 page_id: effectiveSessionName,
@@ -1580,17 +1635,17 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
 
             if (cached) {
                 // Check if admin replied after last user message
-                const lastUserTs = await dbService.getLastWhatsAppUserMessageTimestamp(effectiveSessionName, senderId);
+                const lastUserTs = await dbService.getLastWhatsAppUserMessageTimestamp(effectiveSessionName, conversationId);
                 const checkTs = lastUserTs || triggerTimestamp;
-                const hasAdminReplied = await dbService.hasWhatsAppAdminReplySince(effectiveSessionName, senderId, checkTs);
+                const hasAdminReplied = await dbService.hasWhatsAppAdminReplySince(effectiveSessionName, conversationId, checkTs);
                 
                 if (hasAdminReplied) {
-                    console.log(`[WhatsApp Cloud] Bot skipped: Admin replied before send to ${senderId}`);
+                    console.log(`[WhatsApp Cloud] Bot skipped: Admin replied before send to ${conversationId}`);
                     const cacheMessageId = `bot_skip_${Date.now()}`;
                     await dbService.saveWhatsAppChat({
                         session_name: effectiveSessionName,
                         sender_id: effectiveSessionName,
-                        recipient_id: senderId,
+                        recipient_id: conversationId,
                         message_id: cacheMessageId,
                         text: '[Bot skipped: Admin replied before send]',
                         timestamp: Date.now(),
@@ -1605,7 +1660,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
                 await dbService.saveWhatsAppChat({
                     session_name: effectiveSessionName,
                     sender_id: effectiveSessionName,
-                    recipient_id: senderId,
+                    recipient_id: conversationId,
                     message_id: cacheMessageId,
                     text: cached,
                     timestamp: Date.now(),
@@ -1622,11 +1677,11 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
                     }
                 }
 
-                await whatsappCloudService.sendTextMessage(resolvedPhoneNumberId, config.cloud_access_token, senderId, cached);
+                await whatsappCloudService.sendTextMessage(resolvedPhoneNumberId, config.cloud_access_token, replyRecipientId, cached);
                 await dbService.saveWhatsAppChat({
                     session_name: effectiveSessionName,
                     sender_id: effectiveSessionName,
-                    recipient_id: senderId,
+                    recipient_id: conversationId,
                     message_id: cacheMessageId,
                     text: cached,
                     timestamp: Date.now(),
@@ -1654,13 +1709,13 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         reply_by: 'user'
     });
 
-    const isLocked = await dbService.checkWhatsAppLockStatus(effectiveSessionName, senderId);
+    const isLocked = await dbService.checkWhatsAppLockStatus(effectiveSessionName, conversationId);
     if (isLocked) {
-        console.log(`[WhatsApp Webhook] Conversation locked for ${senderId}. Skipping AI reply.`);
+        console.log(`[WhatsApp Webhook] Conversation locked for ${conversationId}. Skipping AI reply.`);
         await dbService.saveWhatsAppChat({
             session_name: effectiveSessionName,
             sender_id: effectiveSessionName,
-            recipient_id: senderId,
+            recipient_id: conversationId,
             message_id: `sys_${Date.now()}`,
             text: `[SYSTEM ERROR] Conversation Locked (Too many failures).`,
             timestamp: Date.now(),
@@ -1689,7 +1744,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         await dbService.saveWhatsAppChat({
             session_name: effectiveSessionName,
             sender_id: effectiveSessionName,
-            recipient_id: senderId,
+            recipient_id: conversationId,
             message_id: `sys_${Date.now()}`,
             text: `[SYSTEM ERROR] Out of Credits. Please recharge to continue using AI.`,
             timestamp: Date.now(),
@@ -1700,10 +1755,10 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     }
 
     // 4. AI Response Generation
-    console.log(`[WhatsApp Webhook] Generating AI response for ${senderId}...`);
+    console.log(`[WhatsApp Webhook] Generating AI response for ${conversationId}...`);
     const historyLimit = Math.max(1, Number(controlConfig.check_conversion) || 10);
-    const history = await dbService.getWhatsAppChatHistory(effectiveSessionName, senderId, historyLimit);
-    const recentRawHistory = await dbService.getLastNWhatsAppMessages(effectiveSessionName, senderId, historyLimit);
+    const history = await dbService.getWhatsAppChatHistory(effectiveSessionName, conversationId, historyLimit);
+    const recentRawHistory = await dbService.getLastNWhatsAppMessages(effectiveSessionName, conversationId, historyLimit);
 
     let finalUserMessage = combinedText || inboundLogText;
     const replyToId = bufferedMessages
@@ -1828,7 +1883,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     try {
         aiResponse = await aiService.generateResponse({
             pageId: effectiveSessionName,
-            userId: senderId,
+            userId: conversationId,
             userMessage: finalUserMessage,
             history,
             imageUrls: [],
@@ -1889,7 +1944,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
 
     if (aiResponse?.product_id) {
         try {
-            await dbService.setConversationState(effectiveSessionName, senderId, { last_product_id: aiResponse.product_id });
+            await dbService.setConversationState(effectiveSessionName, conversationId, { last_product_id: aiResponse.product_id });
         } catch (stateErr) {
             console.warn(`[Context] Failed to update WhatsApp conversation state: ${stateErr.message}`);
         }
@@ -1913,7 +1968,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
                 const product = await dbService.getProductById(productId);
                 if (product) {
                     const historyText = getHistoryText(recentRawHistory);
-                    const state = await dbService.getConversationState(effectiveSessionName, senderId).catch(() => null);
+                    const state = await dbService.getConversationState(effectiveSessionName, conversationId).catch(() => null);
                     const resolvedContext = buildResolvedProductContext(product, historyText || combinedText || '', state?.last_variant_key || null);
                     const selectedSku = resolvedContext.selectedSku;
                     const numericPrice = parsePrice(selectedSku?.price ?? product.price);
@@ -1955,7 +2010,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
                     }
 
                     if (selectedSku) {
-                        await dbService.setConversationState(effectiveSessionName, senderId, {
+                        await dbService.setConversationState(effectiveSessionName, conversationId, {
                             last_product_id: product.id,
                             last_variant_key: selectedSku.key || null
                         });
@@ -2029,7 +2084,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
 
     if (hasPhotoIntent(recentRawHistory)) {
         let targetProductId = null;
-        const state = await dbService.getConversationState(effectiveSessionName, senderId);
+        const state = await dbService.getConversationState(effectiveSessionName, conversationId);
         if (state && state.last_product_id) targetProductId = state.last_product_id;
         if (!targetProductId && aiResponse?.product_id) targetProductId = aiResponse.product_id;
         if (targetProductId) {
@@ -2080,7 +2135,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         await dbService.saveWhatsAppChat({
             session_name: effectiveSessionName,
             sender_id: effectiveSessionName,
-            recipient_id: senderId,
+            recipient_id: conversationId,
             message_id: `fail_${Date.now()}`,
             text: `[AI Error - Silent] JSON reply blocked`,
             timestamp: Date.now(),
@@ -2092,7 +2147,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
 
     if (aiResponse?.product_id) {
         try {
-            await dbService.setConversationState(effectiveSessionName, senderId, { last_product_id: aiResponse.product_id });
+            await dbService.setConversationState(effectiveSessionName, conversationId, { last_product_id: aiResponse.product_id });
         } catch (stateErr) {
             console.warn(`[WhatsApp Webhook] Failed to update conversation state: ${stateErr.message}`);
         }
@@ -2103,7 +2158,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         const orderIntent = aiResponse.order_details?.intent || 'upsert';
         await orderService.orchestrateOrder({
             pageId: effectiveSessionName,
-            senderId,
+            senderId: conversationId,
             platform: 'whatsapp',
             intent: orderIntent,
             data: orderDataFromAI || {},
@@ -2130,7 +2185,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
 
     const deliveryQueue = [];
     if (structuredDeliveryItems.length > 1) {
-        const state = await dbService.getConversationState(effectiveSessionName, senderId).catch(() => null);
+        const state = await dbService.getConversationState(effectiveSessionName, conversationId).catch(() => null);
         const historyText = getHistoryText(recentRawHistory) || combinedText || '';
         const wantsPhoto = hasPhotoIntent(recentRawHistory);
 
@@ -2195,16 +2250,16 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         : [{ text: finalReplyText, images: outboundImages, videos: outboundVideos }].filter((entry) => entry.text || entry.images.length > 0 || entry.videos.length > 0);
 
     if (sendQueue.length === 0) {
-        console.log(`[WhatsApp Webhook] AI stayed silent for ${senderId}`);
+        console.log(`[WhatsApp Webhook] AI stayed silent for ${conversationId}`);
         return;
     }
 
-    console.log(`[WhatsApp Webhook] AI generated response for ${senderId}: "${String(finalReplyText || '').substring(0, 30)}..."`);
+    console.log(`[WhatsApp Webhook] AI generated response for ${conversationId}: "${String(finalReplyText || '').substring(0, 30)}..."`);
 
     // 5. Send Responses
-    const lastUserTs = await dbService.getLastWhatsAppUserMessageTimestamp(effectiveSessionName, senderId);
+    const lastUserTs = await dbService.getLastWhatsAppUserMessageTimestamp(effectiveSessionName, conversationId);
     const checkTs = lastUserTs || triggerTimestamp;
-    const hasAdminReplied = await dbService.hasWhatsAppAdminReplySince(effectiveSessionName, senderId, checkTs);
+    const hasAdminReplied = await dbService.hasWhatsAppAdminReplySince(effectiveSessionName, conversationId, checkTs);
     
     if (hasAdminReplied) {
         console.log(`[WhatsApp Cloud] Bot skipped: Admin replied before send to ${senderId}`);
@@ -2212,7 +2267,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         await dbService.saveWhatsAppChat({
             session_name: effectiveSessionName,
             sender_id: effectiveSessionName,
-            recipient_id: senderId,
+            recipient_id: conversationId,
             message_id: pendingTextMessageId,
             text: '[Bot skipped: Admin replied before send]',
             timestamp: Date.now(),
@@ -2240,7 +2295,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
             await dbService.saveWhatsAppChat({
                 session_name: effectiveSessionName,
                 sender_id: effectiveSessionName,
-                recipient_id: senderId,
+                recipient_id: conversationId,
                 message_id: pendingTextMessageId,
                 text: entry.text,
                 timestamp: Date.now(),
@@ -2253,7 +2308,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
             // #endregion
             let textSendResponse;
             try {
-                textSendResponse = await whatsappCloudService.sendTextMessage(resolvedPhoneNumberId, config.cloud_access_token, senderId, entry.text);
+                textSendResponse = await whatsappCloudService.sendTextMessage(resolvedPhoneNumberId, config.cloud_access_token, replyRecipientId, entry.text);
             } catch (error) {
                 // #region debug-point C
                 (()=>{let u='http://127.0.0.1:7777/event';try{u=require('fs').readFileSync(require('path').resolve(__dirname,'../../../.dbg/whatsapp-text-delivery.env'),'utf8').match(/^DEBUG_SERVER_URL=(.+)$/m)?.[1]||u}catch{}fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'whatsapp-text-delivery',runId:'pre-fix',hypothesisId:'C',location:'webhookController.js:2257',msg:'[DEBUG] Cloud AI text send failed',data:{status:error?.response?.status,providerCode:error?.response?.data?.error?.code,message:String(error?.message||'').slice(0,200)}})}).catch(()=>{})})();
@@ -2278,15 +2333,15 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         for (let i = 0; i < entry.images.length; i++) {
             const image = entry.images[i];
             const caption = !entry.text && i === 0 && image.title ? String(image.title).slice(0, 1024) : undefined;
-            console.log(`[WhatsApp Webhook] Sending image reply to ${senderId}...`);
-            await whatsappCloudService.sendImageMessage(resolvedPhoneNumberId, config.cloud_access_token, senderId, image.url, caption);
+            console.log(`[WhatsApp Webhook] Sending image reply to ${conversationId}...`);
+            await whatsappCloudService.sendImageMessage(resolvedPhoneNumberId, config.cloud_access_token, replyRecipientId, image.url, caption);
         }
 
         for (let i = 0; i < entry.videos.length; i++) {
             const video = entry.videos[i];
             const caption = !entry.text && entry.images.length === 0 && i === 0 && video.title ? String(video.title).slice(0, 1024) : undefined;
-            console.log(`[WhatsApp Webhook] Sending video reply to ${senderId}...`);
-            await whatsappCloudService.sendVideoMessage(resolvedPhoneNumberId, config.cloud_access_token, senderId, video.url, caption);
+            console.log(`[WhatsApp Webhook] Sending video reply to ${conversationId}...`);
+            await whatsappCloudService.sendVideoMessage(resolvedPhoneNumberId, config.cloud_access_token, replyRecipientId, video.url, caption);
         }
     }
 
@@ -2429,8 +2484,13 @@ async function processWhatsAppWebhook(body) {
                     continue;
                 }
 
-                const senderId = message.from;
-                const senderName = value.contacts?.[0]?.profile?.name || 'Unknown';
+                const identity = normalizeWhatsAppIdentity(message, value);
+                const senderId = identity.conversationId;
+                const senderName = identity.profileName || identity.username || identity.businessScopedUserId || 'Unknown';
+                if (!senderId) {
+                    console.warn(`[WhatsApp Webhook] Skipping message ${messageId}: missing sender identity.`);
+                    continue;
+                }
                 console.log(`[WhatsApp Webhook] Inbound from ${senderName} (${senderId}). Type: ${message.type}`);
 
                 const lookupKeys = [
@@ -2461,6 +2521,7 @@ async function processWhatsAppWebhook(body) {
                     prompts: pageData.prompts,
                     senderName,
                     senderId,
+                    identity,
                     wabaId,
                     phoneNumberId
                 };
