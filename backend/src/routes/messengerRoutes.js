@@ -268,7 +268,7 @@ router.get('/pages', async (req, res) => {
                         `INSERT INTO fb_message_database (page_id, text_prompt, engine_override, wait, image_send, image_detection, template)
                          VALUES ($1, $2, $3, $4, $5, $6, $7)
                          RETURNING *`,
-                        [p.page_id, 'You are a helpful sales assistant.', 'salesmanchatbot-flash', 2, true, true, true]
+                        [p.page_id, 'You are a helpful sales assistant.', 'salesmanchatbot-pro-plus', 2, true, true, true]
                     );
                     dbInfo = insertRes.rows[0];
                 } catch (err) {
@@ -334,7 +334,7 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
                 `INSERT INTO fb_message_database (page_id, text_prompt, engine_override, wait, image_send, image_detection, template)
                  VALUES ($1, $2, $3, $4, $5, $6, $7)
                  RETURNING id`,
-                [String(page_id), 'You are a helpful sales assistant.', 'salesmanchatbot-flash', 2, true, true, true]
+                [String(page_id), 'You are a helpful sales assistant.', 'salesmanchatbot-pro-plus', 2, true, true, true]
             );
             dbId = insertResult.rows[0].id;
         } else {
@@ -361,7 +361,7 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
                 ownerEmail,
                 userId,
                 'gemini',
-                'salesmanchatbot-flash',
+                'salesmanchatbot-pro-plus',
                 true,
                 'active'
             ]
@@ -523,7 +523,7 @@ router.get('/config/:id', async (req, res) => {
                         `INSERT INTO fb_message_database (page_id, text_prompt, engine_override, wait, image_send, image_detection, template)
                          VALUES ($1, $2, $3, $4, $5, $6, $7)
                          RETURNING *`,
-                        [id, 'You are a helpful sales assistant.', 'salesmanchatbot-flash', 2, true, true, true]
+                        [id, 'You are a helpful sales assistant.', 'salesmanchatbot-pro-plus', 2, true, true, true]
                     );
                     configRow = insertRes.rows[0];
                     console.log(`[GET /config/:id] Auto-created config for Page ID: ${id}`);
