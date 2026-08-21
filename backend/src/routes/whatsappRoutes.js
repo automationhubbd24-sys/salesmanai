@@ -12,6 +12,29 @@ const authMiddleware = require('../middleware/authMiddleware');
 const { resolveAuthorizedTeamResource } = require('../services/teamAuthorizationService');
 const { getOfficialWebhookSubscriptionOptions } = require('../utils/officialWebhookConfig');
 const { getSmartInboxConversations, upsertSmartInboxLabel } = require('../utils/smartInbox');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
+// #region debug-point whatsapp-cross-routing
+function reportWhatsAppRoutingDebug(hypothesisId, location, msg, data = {}) {
+    try {
+        const envContent = fs.readFileSync(path.resolve(__dirname, '../../../.dbg/whatsapp-cross-routing.env'), 'utf8');
+        const debugUrl = envContent.match(/^DEBUG_SERVER_URL=(.+)$/m)?.[1]?.trim();
+        const sessionId = envContent.match(/^DEBUG_SESSION_ID=(.+)$/m)?.[1]?.trim();
+        if (!debugUrl || !sessionId) return;
+        fetch(debugUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId, runId: 'pre-fix', hypothesisId, location, msg, data, ts: Date.now() })
+        }).catch(() => {});
+    } catch (_) {}
+}
+
+function hashRoutingId(value) {
+    return value ? crypto.createHash('sha256').update(String(value)).digest('hex').slice(0, 12) : null;
+}
+// #endregion
 const smartInboxUpload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 16 * 1024 * 1024 },
@@ -1170,6 +1193,15 @@ router.post('/send', authMiddleware, smartInboxUpload.single('image'), async (re
             return res.status(400).json({ error: 'Official WhatsApp Cloud API credentials not found for this inbox.' });
         }
         const recipientId = String(to).replace(/@c\.us$/i, '').replace(/@s\.whatsapp\.net$/i, '');
+        // #region debug-point E:whatsapp-cross-routing
+        reportWhatsAppRoutingDebug('E', 'whatsappRoutes.js:smartInboxSend', 'manual inbox send requested', {
+            sessionName: hashRoutingId(resolvedSessionName),
+            recipientId: hashRoutingId(recipientId),
+            isOfficial,
+            hasImage: Boolean(req.file),
+            hasText: Boolean(message)
+        });
+        // #endregion
         const sentParts = [];
 
         if (req.file) {

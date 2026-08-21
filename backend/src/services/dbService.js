@@ -2,6 +2,29 @@ const { query, getPool } = require('./pgClient');
 const { allocateNewOrder } = require('./teamOrderAllocationService');
 const runtimeMonitor = require('./runtimeMonitor');
 const { normalizeContactName, isValidContactName } = require('../utils/contactName');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
+// #region debug-point whatsapp-cross-routing
+function reportWhatsAppRoutingDebug(hypothesisId, location, msg, data = {}) {
+  try {
+    const envContent = fs.readFileSync(path.resolve(__dirname, '../../../.dbg/whatsapp-cross-routing.env'), 'utf8');
+    const debugUrl = envContent.match(/^DEBUG_SERVER_URL=(.+)$/m)?.[1]?.trim();
+    const sessionId = envContent.match(/^DEBUG_SESSION_ID=(.+)$/m)?.[1]?.trim();
+    if (!debugUrl || !sessionId) return;
+    fetch(debugUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, runId: 'pre-fix', hypothesisId, location, msg, data, ts: Date.now() })
+    }).catch(() => {});
+  } catch (_) {}
+}
+
+function hashRoutingId(value) {
+  return value ? crypto.createHash('sha256').update(String(value)).digest('hex').slice(0, 12) : null;
+}
+// #endregion
 
 const productResourceSearchInFlight = new Map();
 
@@ -1804,9 +1827,27 @@ async function getWhatsAppConfig(sessionName) {
          LIMIT 1`,
         [sessionName]
     );
-    if (mainResult.rows.length === 0) return null;
+    if (mainResult.rows.length === 0) {
+        // #region debug-point C:whatsapp-cross-routing
+        reportWhatsAppRoutingDebug('C', 'dbService.js:getWhatsAppConfig', 'no WhatsApp config matched lookup key', {
+            lookupKey: hashRoutingId(sessionName)
+        });
+        // #endregion
+        return null;
+    }
 
     const data = mainResult.rows[0];
+    // #region debug-point C:whatsapp-cross-routing
+    reportWhatsAppRoutingDebug('C', 'dbService.js:getWhatsAppConfig', 'resolved WhatsApp config', {
+        lookupKey: hashRoutingId(sessionName),
+        sessionName: hashRoutingId(data.session_name),
+        wabaId: hashRoutingId(data.waba_id),
+        phoneNumberId: hashRoutingId(data.phone_number_id),
+        lookupMatchesSession: String(data.session_name || '') === String(sessionName || ''),
+        lookupMatchesWaba: String(data.waba_id || '') === String(sessionName || ''),
+        lookupMatchesPhoneNumber: String(data.phone_number_id || '') === String(sessionName || '')
+    });
+    // #endregion
 
     if (!data.text_prompt) {
         data.text_prompt = 'You are a helpful sales assistant.';
@@ -2215,15 +2256,28 @@ async function getWhatsAppChatHistory(sessionName, senderId, limit = 10) {
             `SELECT * FROM whatsapp_chats
              WHERE session_name = $1
                AND (
-                    sender_id = $2
-                 OR recipient_id = $2
-                 OR sender_id = $1
-                 OR recipient_id = $1
+                    (sender_id = $2 AND recipient_id = $1)
+                 OR (sender_id = $1 AND recipient_id = $2)
                )
              ORDER BY timestamp DESC
              LIMIT $3`,
             [sessionName, senderId, limit]
         );
+
+    // #region debug-point A:whatsapp-cross-routing
+    const foreignConversationRows = result.rows.filter(msg => {
+        const isInbound = String(msg.sender_id || '') === String(senderId || '') && String(msg.recipient_id || '') === String(sessionName || '');
+        const isOutbound = String(msg.sender_id || '') === String(sessionName || '') && String(msg.recipient_id || '') === String(senderId || '');
+        return !isInbound && !isOutbound;
+    });
+    reportWhatsAppRoutingDebug('A', 'dbService.js:getWhatsAppChatHistory', 'loaded AI chat history', {
+        sessionName: hashRoutingId(sessionName),
+        senderId: hashRoutingId(senderId),
+        rowCount: result.rows.length,
+        foreignConversationRowCount: foreignConversationRows.length,
+        foreignRecipientIds: [...new Set(foreignConversationRows.map(row => hashRoutingId(row.recipient_id)).filter(Boolean))]
+    });
+    // #endregion
 
     return result.rows.reverse().map(msg => ({
         role: msg.reply_by === 'user' ? 'user' : (msg.reply_by === 'system' ? 'system' : 'assistant'),
