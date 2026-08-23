@@ -2233,7 +2233,10 @@ async function saveWhatsAppOrderTracking(orderData) {
             }
         }
 
-        if (!number && !product_name && !location) return null;
+        if (!number || number === 'Pending' || number === 'null' || number.length < 8) {
+            console.log(`[WA Order] Skipping New Order Creation: Missing or invalid phone number (${number}).`);
+            return null;
+        }
 
         const result = await db.query(
             `INSERT INTO whatsapp_order_tracking
@@ -2992,7 +2995,6 @@ async function saveOrderTracking(orderData) {
         }
 
         // --- 3. NEW ORDER (Strict Requirement: Must have a phone number to start a new row) ---
-        // If we reach here, no existing order was found. We ONLY create a new row if we have a phone number.
         if (!number || number === 'Pending' || number === 'null' || number.length < 8) {
             console.log(`[Order] Skipping New Order Creation: Missing or invalid phone number (${number}).`);
             return null;

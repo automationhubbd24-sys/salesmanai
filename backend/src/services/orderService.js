@@ -105,9 +105,8 @@ async function orchestrateOrder(params) {
     // Handle Intent: Upsert (Create or Update)
     if (intent === 'upsert' || intent === 'order_create_or_update') {
         const hasPhone = extracted.phone && extracted.phone.length >= 8;
-        const hasCriticalInfo = hasPhone || extracted.address || extracted.location || extracted.product_name || extracted.customer_name || extracted.name;
         
-        if (!hasCriticalInfo) return { status: 'NO_ACTION' };
+        if (!hasPhone) return { status: 'NO_ACTION', reason: 'PHONE_REQUIRED' };
 
         let resolvedProductName = extracted.product_name || 'Recovered Lead';
         try {
@@ -123,7 +122,7 @@ async function orchestrateOrder(params) {
         }
 
         // Persistence via dbService (which already handles the smart merge internally)
-        // dbService now strictly enforces that a NEW order MUST have a phone number.
+        // New orders require a valid phone number; reminders are handled from conversation history.
         const savePayload = {
             page_id: pageId,
             sender_id: senderId,

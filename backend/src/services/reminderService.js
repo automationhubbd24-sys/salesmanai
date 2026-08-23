@@ -126,25 +126,60 @@ class ReminderService {
     async processPageReminders(config) {
         const { page_id, order_reminder_delay_hours, order_reminder_message } = config;
         const delayHours = order_reminder_delay_hours || 4;
-        const reminderTemplate = order_reminder_message || 'স্যার, আপনি [PRODUCT] টি নিতে চেয়েছিলেন, আপনি কি অর্ডারটি কনফার্ম করতে চান?';
+        const reminderTemplate = order_reminder_message || 'স্যার, আপনি কি এখনও সাহায্য চান? চাইলে এখানে রিপ্লাই করুন।';
 
-        // 2. Fetch "ongoing" orders that haven't been reminded yet
+        // 2. Fetch inactive conversations that haven't been reminded yet
         // Rule: Must be within 24-hour window (safety)
         // Rule: Inactivity period must be at least delayHours
-        const ordersRes = await query(
-            `SELECT id, sender_id, product_name, number, location, customer_name, updated_at 
-             FROM fb_order_tracking 
-             WHERE page_id = $1 
-             AND status = 'ongoing' 
-             AND reminder_count = 0
-             AND updated_at <= NOW() - make_interval(hours => $2::int)
-             AND updated_at >= NOW() - INTERVAL '23 hours'`, // 23h to leave 1h buffer for standard window
+        const conversationsRes = await query(
+            `WITH conversations AS (
+                SELECT
+                    CASE WHEN sender_id = $1 THEN recipient_id ELSE sender_id END AS sender_id,
+                    MAX(timestamp) AS last_activity_ts
+                FROM fb_chats
+                WHERE page_id = $1
+                  AND timestamp IS NOT NULL
+                  AND (sender_id = $1 OR recipient_id = $1)
+                GROUP BY 1
+             ), latest AS (
+                SELECT DISTINCT ON (CASE WHEN sender_id = $1 THEN recipient_id ELSE sender_id END)
+                    CASE WHEN sender_id = $1 THEN recipient_id ELSE sender_id END AS sender_id,
+                    status,
+                    reply_by,
+                    timestamp
+                FROM fb_chats
+                WHERE page_id = $1
+                  AND timestamp IS NOT NULL
+                  AND (sender_id = $1 OR recipient_id = $1)
+                ORDER BY CASE WHEN sender_id = $1 THEN recipient_id ELSE sender_id END, timestamp DESC
+             )
+             SELECT
+                'chat_fb_' || $1 || '_' || c.sender_id AS id,
+                c.sender_id,
+                NULL::text AS product_name,
+                NULL::text AS customer_name,
+                to_timestamp(c.last_activity_ts / 1000.0) AS updated_at,
+                'conversation' AS reminder_source
+             FROM conversations c
+             JOIN latest l ON l.sender_id = c.sender_id
+             WHERE c.sender_id IS NOT NULL
+               AND c.sender_id <> $1
+               AND COALESCE(l.status, '') <> 'reminder'
+               AND c.last_activity_ts <= (EXTRACT(EPOCH FROM (NOW() - make_interval(hours => $2::int))) * 1000)
+               AND c.last_activity_ts >= (EXTRACT(EPOCH FROM (NOW() - INTERVAL '23 hours')) * 1000)
+               AND EXISTS (
+                    SELECT 1 FROM fb_chats inbound
+                    WHERE inbound.page_id = $1
+                      AND inbound.sender_id = c.sender_id
+                      AND inbound.timestamp IS NOT NULL
+                      AND COALESCE(inbound.status, '') <> 'reminder'
+               )`,
             [page_id, delayHours]
         );
 
-        if (ordersRes.rows.length === 0) return;
+        if (conversationsRes.rows.length === 0) return;
 
-        console.log(`[Reminder] Found ${ordersRes.rows.length} pending reminders for Page ${page_id}`);
+        console.log(`[Reminder] Found ${conversationsRes.rows.length} inactive conversations for Page ${page_id}`);
 
         // Get Page Token
         const pageConfig = await dbService.getPageConfig(page_id);
@@ -153,11 +188,11 @@ class ReminderService {
             return;
         }
 
-        for (const order of ordersRes.rows) {
+        for (const conversation of conversationsRes.rows) {
             try {
-                await this.sendSmartReminder(pageConfig, order, reminderTemplate);
+                await this.sendSmartReminder(pageConfig, conversation, reminderTemplate);
             } catch (orderErr) {
-                console.error(`[Reminder] Failed to send to ${order.sender_id}:`, orderErr.message);
+                console.error(`[Reminder] Failed to send to ${conversation.sender_id}:`, orderErr.message);
             }
             
             // Add a small delay between messages to avoid CPU/Network spikes
@@ -166,45 +201,79 @@ class ReminderService {
     }
 
     async processWhatsAppReminders(config) {
-        const { session_name, provider_type, phone_number_id, cloud_access_token, order_reminder_delay_hours, order_reminder_message } = config;
-        if (provider_type !== 'official' || !phone_number_id || !cloud_access_token) {
-            console.warn(`[Reminder] Skipping non-official WhatsApp connection ${session_name}`);
+        const { session_name, phone_number_id, cloud_access_token, order_reminder_delay_hours, order_reminder_message } = config;
+        if (!phone_number_id || !cloud_access_token) {
+            console.warn(`[Reminder] Skipping WhatsApp connection ${session_name}: missing Cloud API credentials`);
             return;
         }
 
         const delayHours = order_reminder_delay_hours || 4;
-        const reminderTemplate = order_reminder_message || 'স্যার, আপনি [PRODUCT] টি নিতে চেয়েছিলেন, আপনি কি অর্ডারটি কনফার্ম করতে চান?';
+        const reminderTemplate = order_reminder_message || 'স্যার, আপনি কি এখনও সাহায্য চান? চাইলে এখানে রিপ্লাই করুন।';
 
-        const ordersRes = await query(
-            `SELECT id, sender_id, product_name, number, location, updated_at
-             FROM whatsapp_order_tracking
-             WHERE session_name = $1
-             AND status = 'ongoing'
-             AND reminder_count = 0
-             AND updated_at <= NOW() - make_interval(hours => $2::int)
-             AND updated_at >= NOW() - INTERVAL '23 hours'`,
+        const conversationsRes = await query(
+            `WITH conversations AS (
+                SELECT
+                    CASE WHEN sender_id = $1 THEN recipient_id ELSE sender_id END AS sender_id,
+                    MAX(timestamp) AS last_activity_ts
+                FROM whatsapp_chats
+                WHERE session_name = $1
+                  AND timestamp IS NOT NULL
+                  AND (sender_id = $1 OR recipient_id = $1)
+                GROUP BY 1
+             ), latest AS (
+                SELECT DISTINCT ON (CASE WHEN sender_id = $1 THEN recipient_id ELSE sender_id END)
+                    CASE WHEN sender_id = $1 THEN recipient_id ELSE sender_id END AS sender_id,
+                    status,
+                    reply_by,
+                    timestamp
+                FROM whatsapp_chats
+                WHERE session_name = $1
+                  AND timestamp IS NOT NULL
+                  AND (sender_id = $1 OR recipient_id = $1)
+                ORDER BY CASE WHEN sender_id = $1 THEN recipient_id ELSE sender_id END, timestamp DESC
+             )
+             SELECT
+                'chat_wa_' || $1 || '_' || c.sender_id AS id,
+                c.sender_id,
+                NULL::text AS product_name,
+                to_timestamp(c.last_activity_ts / 1000.0) AS updated_at,
+                'conversation' AS reminder_source
+             FROM conversations c
+             JOIN latest l ON l.sender_id = c.sender_id
+             WHERE c.sender_id IS NOT NULL
+               AND c.sender_id <> $1
+               AND COALESCE(l.status, '') <> 'reminder'
+               AND c.last_activity_ts <= (EXTRACT(EPOCH FROM (NOW() - make_interval(hours => $2::int))) * 1000)
+               AND c.last_activity_ts >= (EXTRACT(EPOCH FROM (NOW() - INTERVAL '23 hours')) * 1000)
+               AND EXISTS (
+                    SELECT 1 FROM whatsapp_chats inbound
+                    WHERE inbound.session_name = $1
+                      AND inbound.sender_id = c.sender_id
+                      AND inbound.timestamp IS NOT NULL
+                      AND COALESCE(inbound.status, '') <> 'reminder'
+               )`,
             [session_name, delayHours]
         );
 
-        if (ordersRes.rows.length === 0) return;
+        if (conversationsRes.rows.length === 0) return;
 
-        console.log(`[Reminder] Found ${ordersRes.rows.length} pending reminders for WhatsApp ${session_name}`);
+        console.log(`[Reminder] Found ${conversationsRes.rows.length} inactive conversations for WhatsApp ${session_name}`);
 
         const sessionConfig = await dbService.getWhatsAppConfig(session_name);
         if (!sessionConfig) {
             console.warn(`[Reminder] No WhatsApp config found for ${session_name}`);
             return;
         }
-        if (sessionConfig.provider_type !== 'official' || !sessionConfig.phone_number_id || !sessionConfig.cloud_access_token) {
-            console.warn(`[Reminder] Skipping non-official WhatsApp connection ${session_name}`);
+        if (!sessionConfig.phone_number_id || !sessionConfig.cloud_access_token) {
+            console.warn(`[Reminder] Skipping WhatsApp connection ${session_name}: missing Cloud API credentials`);
             return;
         }
 
-        for (const order of ordersRes.rows) {
+        for (const conversation of conversationsRes.rows) {
             try {
-                await this.sendSmartWhatsAppReminder(sessionConfig, order, reminderTemplate);
+                await this.sendSmartWhatsAppReminder(sessionConfig, conversation, reminderTemplate);
             } catch (orderErr) {
-                console.error(`[Reminder] Failed WhatsApp send to ${order.sender_id}:`, orderErr.message);
+                console.error(`[Reminder] Failed WhatsApp send to ${conversation.sender_id}:`, orderErr.message);
             }
 
             await new Promise(r => setTimeout(r, 1500));
@@ -216,15 +285,15 @@ class ReminderService {
      */
     async sendSmartReminder(pageConfig, order, baseMessageTemplate) {
         const { page_id, page_access_token } = pageConfig;
-        const { id: orderId, sender_id, product_name, customer_name } = order;
+        const { id: reminderId, sender_id, product_name, customer_name } = order;
 
         // 1. AI Spinning (Rewrite message to be unique)
         const product = product_name || 'পণ্যটি';
         const name = customer_name && customer_name !== 'Unknown' ? customer_name : '';
         
-        const spinPrompt = `You are a helpful sales assistant for a Facebook page. 
-        A customer named "${name}" started an order for "${product}" but didn't finish providing their phone or address.
-        Write a friendly, polite, and professional reminder message in Bengali to ask if they want to confirm the order.
+        const spinPrompt = `You are a helpful sales assistant for a Facebook page.
+        A customer recently chatted but has not continued the conversation.
+        Write a friendly, polite, and professional follow-up message in Bengali asking if they still need help.
         Do NOT be pushy. Keep it short.
         Base Message Idea: "${baseMessageTemplate.replace('[PRODUCT]', product)}"
         Rewrite this to be unique:`;
@@ -239,7 +308,7 @@ class ReminderService {
         });
 
         const finalMessage = aiResponse.reply || baseMessageTemplate.replace('[PRODUCT]', product);
-        const reminderMessageId = `reminder_fb_${orderId}_${Date.now()}`;
+        const reminderMessageId = `reminder_fb_${reminderId}_${Date.now()}`;
 
         await dbService.saveFbChat({
             page_id,
@@ -274,26 +343,17 @@ class ReminderService {
             throw error;
         }
 
-        // 3. Update Order Tracking
-        await query(
-            `UPDATE fb_order_tracking 
-             SET reminder_count = reminder_count + 1, 
-                 last_reminder_sent_at = NOW() 
-             WHERE id = $1`,
-            [orderId]
-        );
-
-        console.log(`[Reminder] Sent successfully to ${sender_id} for order ${orderId}`);
+        console.log(`[Reminder] Sent successfully to ${sender_id}`);
     }
 
     async sendSmartWhatsAppReminder(sessionConfig, order, baseMessageTemplate) {
         const sessionName = sessionConfig.session_name;
-        const { id: orderId, sender_id, product_name } = order;
+        const { id: reminderId, sender_id, product_name } = order;
         const product = product_name || 'পণ্যটি';
 
         const spinPrompt = `You are a helpful sales assistant for a WhatsApp store.
-        A customer started an order for "${product}" but did not complete it.
-        Write a friendly, polite, and short reminder message in Bengali to ask if they want to confirm the order.
+        A customer recently chatted but has not continued the conversation.
+        Write a friendly, polite, and short follow-up message in Bengali asking if they still need help.
         Base Message Idea: "${baseMessageTemplate.replace('[PRODUCT]', product)}"
         Rewrite this to be unique:`;
 
@@ -307,7 +367,7 @@ class ReminderService {
         });
 
         const finalMessage = aiResponse.reply || baseMessageTemplate.replace('[PRODUCT]', product);
-        const reminderMessageId = `reminder_wa_${orderId}_${Date.now()}`;
+        const reminderMessageId = `reminder_wa_${reminderId}_${Date.now()}`;
 
         await dbService.saveWhatsAppChat({
             session_name: sessionName,
@@ -343,15 +403,7 @@ class ReminderService {
             throw error;
         }
 
-        await query(
-            `UPDATE whatsapp_order_tracking
-             SET reminder_count = reminder_count + 1,
-                 last_reminder_sent_at = NOW()
-             WHERE id = $1`,
-            [orderId]
-        );
-
-        console.log(`[Reminder] WhatsApp reminder sent successfully to ${sender_id} for order ${orderId}`);
+        console.log(`[Reminder] WhatsApp reminder sent successfully to ${sender_id}`);
     }
 }
 

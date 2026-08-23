@@ -2190,9 +2190,15 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                             customer_address: customerAddress ? String(customerAddress).trim() : null
                         };
 
-                        // Phone First Rule: Start saving only if phone exists
-                        if (orderData.customer_phone && orderData.customer_phone.length >= 10) {
-                            console.log(`[AgentLoop] 📦 Phone detected. Proceeding with order orchestration...`);
+                        const hasMeaningfulOrderData = Boolean(
+                            orderData.customer_phone ||
+                            orderData.customer_address ||
+                            (orderData.product_name && orderData.product_name !== 'Unknown') ||
+                            (orderData.customer_name && orderData.customer_name !== 'Unknown')
+                        );
+
+                        if (hasMeaningfulOrderData) {
+                            console.log(`[AgentLoop] 📦 Order data detected. Proceeding with order orchestration...`);
                             
                             try {
                                 const orderService = require('./orderService');
@@ -2217,8 +2223,6 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                             } catch (err) {
                                 console.error(`[AgentLoop] ❌ Order Orchestration Error:`, err.message);
                             }
-                        } else {
-                            console.log(`[AgentLoop] ⏳ No phone detected yet. Skipping order save/update.`);
                         }
                     }
 
