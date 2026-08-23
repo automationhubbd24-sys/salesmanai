@@ -1328,6 +1328,20 @@ async function generateResponse({ pageId, userId, userMessage, history, imageUrl
                 if (result.rows.length > 0 && result.rows[0].name && result.rows[0].name !== 'Unknown') {
                     senderName = result.rows[0].name;
                 }
+            } else if (platform === 'messenger') {
+                const result = await pgClient.query(
+                    `SELECT COALESCE(
+                        NULLIF(BTRIM(name), ''),
+                        NULLIF(BTRIM(profile_name), '')
+                    ) AS name
+                     FROM fb_contacts
+                     WHERE sender_id = $1 AND page_id = $2
+                     LIMIT 1`,
+                    [userId, pageId]
+                );
+                if (result.rows.length > 0 && result.rows[0].name && result.rows[0].name !== 'Unknown') {
+                    senderName = result.rows[0].name;
+                }
             }
         } catch (e) {
         }

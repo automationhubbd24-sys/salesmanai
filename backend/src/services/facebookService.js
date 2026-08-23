@@ -445,12 +445,13 @@ async function getCommentReplies(commentId, accessToken) {
 // Get User Profile (Name & Gender)
 async function getUserProfile(userId, accessToken) {
     try {
-        // Attempt to fetch gender (though often restricted)
-        const url = `https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/${userId}?fields=first_name,last_name,name,gender&access_token=${accessToken}`;
+        const fields = 'first_name,last_name,name,profile_pic,gender';
+        const url = `https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/${userId}?fields=${fields}&access_token=${accessToken}`;
         const response = await axios.get(url, { timeout: 10000 });
         return response.data;
     } catch (error) {
-        // Fail silently so callers preserve any stored contact name.
+        const errData = error.response ? (error.response.data || 'No data') : error.message;
+        console.warn(`[Facebook] User profile lookup failed for ${userId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
         return {};
     }
 }
