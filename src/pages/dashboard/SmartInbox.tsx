@@ -900,7 +900,6 @@ const SmartInbox = () => {
     () => messages.filter((message) => !shouldHideMessage(message)),
     [messages]
   );
-  const renderedMessages = visibleMessages.slice(-MESSAGE_LIMIT);
 
   return (
     <div className="fixed inset-0 z-50 flex h-[100dvh] min-w-0 max-w-full overflow-hidden border-0 bg-[radial-gradient(circle_at_top_left,rgba(37,211,102,0.08),transparent_32%),linear-gradient(135deg,#050810,#081020)] shadow-2xl sm:relative sm:z-auto sm:h-[calc(100dvh-70px)] md:h-[calc(100vh-80px)] md:rounded-[2rem] md:border md:border-white/8">
@@ -1255,7 +1254,7 @@ const SmartInbox = () => {
                     </div>
                   )}
 
-                  {renderedMessages.map((message, index) => {
+                  {visibleMessages.map((message, index) => {
                     const body = message.body || "";
                     const imageUrl = extractMediaImageUrl(body);
                     const hasFailedMediaImage = Boolean(imageUrl && failedMediaUrlsRef.current.has(imageUrl));
@@ -1379,7 +1378,7 @@ const SmartInbox = () => {
                     <div className="pt-4 text-center">
                       <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-4 py-2 text-[11px] text-white/40">
                         <div className="h-1.5 w-1.5 rounded-full bg-[#00ff88]/50" />
-                        Showing recent {MESSAGE_LIMIT} messages
+                        Showing {visibleMessages.length} loaded messages
                       </div>
                     </div>
                   )}
