@@ -310,30 +310,29 @@ class ReminderService {
         const finalMessage = aiResponse.reply || baseMessageTemplate.replace('[PRODUCT]', product);
         const reminderMessageId = `reminder_fb_${reminderId}_${Date.now()}`;
 
-        await dbService.saveFbChat({
-            page_id,
-            sender_id: page_id,
-            recipient_id: sender_id,
-            message_id: reminderMessageId,
-            text: finalMessage,
-            timestamp: Date.now(),
-            status: 'reminder',
-            reply_by: 'system',
-            ai_model: aiResponse.model || 'reminder'
-        });
-
         // 2. Send Message via Facebook API
         // We don't use tags for now because we are within the 24h window
         await facebookService.sendTypingAction(sender_id, page_access_token, 'typing_on');
         await new Promise(r => setTimeout(r, 2000));
         try {
             await facebookService.sendMessage(page_id, sender_id, finalMessage, page_access_token);
-        } catch (error) {
             await dbService.saveFbChat({
                 page_id,
                 sender_id: page_id,
                 recipient_id: sender_id,
                 message_id: reminderMessageId,
+                text: finalMessage,
+                timestamp: Date.now(),
+                status: 'reminder',
+                reply_by: 'system',
+                ai_model: aiResponse.model || 'reminder'
+            });
+        } catch (error) {
+            await dbService.saveFbChat({
+                page_id,
+                sender_id: page_id,
+                recipient_id: sender_id,
+                message_id: `${reminderMessageId}_error`,
                 text: finalMessage,
                 timestamp: Date.now(),
                 status: 'reminder_error',
@@ -369,18 +368,6 @@ class ReminderService {
         const finalMessage = aiResponse.reply || baseMessageTemplate.replace('[PRODUCT]', product);
         const reminderMessageId = `reminder_wa_${reminderId}_${Date.now()}`;
 
-        await dbService.saveWhatsAppChat({
-            session_name: sessionName,
-            sender_id: sessionName,
-            recipient_id: sender_id,
-            message_id: reminderMessageId,
-            text: finalMessage,
-            timestamp: Date.now(),
-            status: 'reminder',
-            reply_by: 'system',
-            model_used: aiResponse.model || 'reminder'
-        });
-
         try {
             await whatsappCloudService.sendTextMessage(
                 sessionConfig.phone_number_id,
@@ -388,12 +375,23 @@ class ReminderService {
                 sender_id,
                 finalMessage
             );
-        } catch (error) {
             await dbService.saveWhatsAppChat({
                 session_name: sessionName,
                 sender_id: sessionName,
                 recipient_id: sender_id,
                 message_id: reminderMessageId,
+                text: finalMessage,
+                timestamp: Date.now(),
+                status: 'reminder',
+                reply_by: 'system',
+                model_used: aiResponse.model || 'reminder'
+            });
+        } catch (error) {
+            await dbService.saveWhatsAppChat({
+                session_name: sessionName,
+                sender_id: sessionName,
+                recipient_id: sender_id,
+                message_id: `${reminderMessageId}_error`,
                 text: finalMessage,
                 timestamp: Date.now(),
                 status: 'reminder_error',
