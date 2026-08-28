@@ -3,6 +3,7 @@ const emailService = require('./emailService');
 const pgClient = require('./pgClient');
 
 const REQUIRED_ORDER_FIELDS = ['product_name', 'quantity', 'customer_name', 'phone', 'address'];
+const CONFIRMABLE_ORDER_FIELDS = ['product_name', 'quantity', 'phone', 'address'];
 const VALID_LEAD_STATUSES = ['draft', 'confirmed'];
 
 /**
@@ -114,6 +115,10 @@ function getMissingFields(orderData = {}) {
     return REQUIRED_ORDER_FIELDS.filter(field => !normalizeTextValue(orderData[field]));
 }
 
+function getConfirmableMissingFields(orderData = {}) {
+    return CONFIRMABLE_ORDER_FIELDS.filter(field => !normalizeTextValue(orderData[field]));
+}
+
 function buildOrderItems(orderData = {}) {
     return [{
         product_name: orderData.product_name || null,
@@ -142,14 +147,17 @@ function buildNextPromptInstruction(missingFields = []) {
 function determineSection({ intent, mergedData, rawText, previousState }) {
     const normalizedIntent = String(intent || '').toLowerCase();
     const missingFields = getMissingFields(mergedData);
+    const confirmableMissingFields = getConfirmableMissingFields(mergedData);
     const requiredComplete = missingFields.length === 0;
+    const confirmableComplete = confirmableMissingFields.length === 0;
     const orderStarted = normalizedIntent.includes('order') || hasDraftOrderData(mergedData) || detectOrderStart(rawText) || previousState?.section === 'draft';
+    const customerConfirmed = detectConfirmation(rawText, intent);
 
     if (previousState?.section === 'confirmed') {
         return { section: 'confirmed', missingFields, requiredComplete, shouldSave: false };
     }
 
-    if (requiredComplete && orderStarted) {
+    if ((requiredComplete || (confirmableComplete && customerConfirmed)) && orderStarted) {
         return { section: 'confirmed', missingFields, requiredComplete, shouldSave: true };
     }
 
