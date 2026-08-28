@@ -33,6 +33,41 @@ import { cn } from "@/lib/utils";
 import { BACKEND_URL } from "@/config";
 import { useSearchParams } from "react-router-dom";
 
+type MessageTypeFilter = "all" | "bot" | "reminder" | "user" | "error";
+
+const MESSAGE_TYPE_OPTIONS: { value: MessageTypeFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "bot", label: "Bot Reply" },
+  { value: "reminder", label: "Reminder" },
+  { value: "user", label: "User" },
+  { value: "error", label: "Error" },
+];
+
+const getReplyByLabel = (replyBy?: string | null, status?: string | null) => {
+  if (status === "reminder" || replyBy === "system") return "System Reminder";
+  if (replyBy === "bot") return "Bot Reply";
+  if (replyBy === "admin") return "Admin";
+  if (replyBy === "user") return "User";
+  return replyBy || "Unknown";
+};
+
+const getReplyByClassName = (replyBy?: string | null, status?: string | null) => {
+  if (status === "reminder" || replyBy === "system") return "bg-amber-500/10 text-amber-300 border-amber-500/40";
+  if (replyBy === "bot") return "bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/40";
+  if (replyBy === "admin") return "bg-sky-500/10 text-sky-300 border-sky-500/40";
+  if (replyBy === "user") return "bg-white/5 text-white/80 border-white/20";
+  return "bg-white/5 text-white/80 border-white/20";
+};
+
+const getStatusClassName = (status?: string | null) => {
+  if (status === "reminder") return "bg-amber-500/10 text-amber-300 border-amber-500/40";
+  if (status === "reminder_error" || status === "system_error") return "bg-red-500/10 text-red-300 border-red-500/40";
+  if (status === "sent") return "bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/40";
+  if (status === "transcribed") return "bg-cyan-500/10 text-cyan-300 border-cyan-500/40";
+  if (status === "analyzed") return "bg-violet-500/10 text-violet-300 border-violet-500/40";
+  return "bg-yellow-500/10 text-yellow-300 border-yellow-500/40";
+};
+
 export default function MessengerConversionPage() {
   const platform = window.location.pathname.includes("/dashboard/instagram") ? "instagram" : "messenger";
   const isInstagram = platform === "instagram";
@@ -58,6 +93,7 @@ export default function MessengerConversionPage() {
     to: endOfDay(new Date()),
   });
   const [filterType, setFilterType] = useState("today");
+  const [messageType, setMessageType] = useState<MessageTypeFilter>("all");
 
   const activePageId = currentPage?.page_id || null;
   const targetSenderId = searchParams.get("sender_id")?.trim() || "";
@@ -73,7 +109,7 @@ export default function MessengerConversionPage() {
     if (activePageId && date?.from && date?.to) {
         fetchMessages(activePageId, date.from, date.to, currentPageNum);
     }
-  }, [activePageId, date, currentPageNum, targetSenderId]);
+  }, [activePageId, date, currentPageNum, targetSenderId, messageType]);
 
   // Reset page when date changes
   useEffect(() => {
@@ -82,7 +118,7 @@ export default function MessengerConversionPage() {
 
   useEffect(() => {
     setCurrentPageNum(1);
-  }, [targetSenderId]);
+  }, [targetSenderId, messageType]);
 
   // Separate function for All Time Stats (Optimized)
   const fetchStats = async (pageId: string) => {
@@ -128,6 +164,7 @@ export default function MessengerConversionPage() {
       params.set("to", to.toISOString());
       params.set("page", String(page));
       params.set("limit", String(LIMIT));
+      params.set("message_type", messageType);
       if (targetSenderId) {
         params.set("sender_id", targetSenderId);
       }
@@ -293,6 +330,17 @@ export default function MessengerConversionPage() {
             </div>
             
             <div className="flex items-center gap-2 w-full sm:w-auto">
+                <Select value={messageType} onValueChange={(value) => setMessageType(value as MessageTypeFilter)}>
+                  <SelectTrigger className="w-[160px]">
+                    <SelectValue placeholder="Message Type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MESSAGE_TYPE_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
                 <Select value={filterType} onValueChange={handleFilterChange}>
                   <SelectTrigger className="w-[180px]">
                     <SelectValue placeholder="Select Filter" />
@@ -467,14 +515,8 @@ export default function MessengerConversionPage() {
                     <TableCell className="font-mono text-xs">{msg.sender_id}</TableCell>
                     <TableCell className="max-w-[300px] truncate" title={msg.text}>{msg.text}</TableCell>
                     <TableCell>
-                      <span
-                        className={`px-2 py-1 rounded-full text-xs border ${
-                          msg.reply_by === 'bot'
-                            ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/40'
-                            : 'bg-white/5 text-white/80 border-white/20'
-                        }`}
-                      >
-                        {msg.reply_by || 'Unknown'}
+                      <span className={`px-2 py-1 rounded-full text-xs border ${getReplyByClassName(msg.reply_by, msg.status)}`}>
+                        {getReplyByLabel(msg.reply_by, msg.status)}
                       </span>
                     </TableCell>
                     <TableCell>
@@ -492,18 +534,8 @@ export default function MessengerConversionPage() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <span
-                        className={`px-2 py-1 rounded-full text-xs border ${
-                          msg.status === 'sent'
-                            ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/40'
-                            : msg.status === 'transcribed'
-                              ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/40'
-                              : msg.status === 'analyzed'
-                                ? 'bg-violet-500/10 text-violet-300 border-violet-500/40'
-                                : 'bg-yellow-500/10 text-yellow-300 border-yellow-500/40'
-                        }`}
-                      >
-                        {msg.status}
+                      <span className={`px-2 py-1 rounded-full text-xs border ${getStatusClassName(msg.status)}`}>
+                        {msg.status || '-'}
                       </span>
                     </TableCell>
                     <TableCell className="text-right">

@@ -2156,7 +2156,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     try {
         const orderDataFromAI = aiResponse.order_details?.fields || aiResponse.order_details;
         const orderIntent = aiResponse.order_details?.intent || 'upsert';
-        await orderService.orchestrateOrder({
+        const orderResult = await orderService.orchestrateOrder({
             pageId: effectiveSessionName,
             senderId: conversationId,
             platform: 'whatsapp',
@@ -2164,20 +2164,31 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
             data: orderDataFromAI || {},
             rawText: `${finalUserMessage}\n${finalReplyText || aiResponse.reply || ''}`.trim()
         });
+        if (orderResult?.section === 'draft' && orderResult.nextPromptInstruction) {
+            finalReplyText = `${finalReplyText || ''}\n\n${orderResult.nextPromptInstruction}`.trim();
+        } else if (orderResult?.section === 'confirmed') {
+            finalReplyText = finalReplyText || 'আপনার অর্ডারটি নেওয়া হয়েছে।';
+        }
 
         const orderMatch = typeof finalReplyText === 'string'
             ? finalReplyText.match(/\[SAVE_ORDER:\s*({.*?})\]/s)
             : null;
         if (orderMatch && orderMatch[1]) {
             const orderJson = JSON.parse(orderMatch[1]);
-            await orderService.orchestrateOrder({
+            const fallbackOrderResult = await orderService.orchestrateOrder({
                 pageId: effectiveSessionName,
-                senderId,
+                senderId: conversationId,
                 platform: 'whatsapp',
-                intent: 'upsert',
-                data: orderJson
+                intent: 'order_create_or_update',
+                data: orderJson,
+                rawText: `${finalUserMessage}\n${finalReplyText || ''}`.trim()
             });
             finalReplyText = finalReplyText.replace(orderMatch[0], '').trim();
+            if (fallbackOrderResult?.section === 'draft' && fallbackOrderResult.nextPromptInstruction) {
+                finalReplyText = `${finalReplyText || ''}\n\n${fallbackOrderResult.nextPromptInstruction}`.trim();
+            } else if (fallbackOrderResult?.section === 'confirmed') {
+                finalReplyText = finalReplyText || 'আপনার অর্ডারটি নেওয়া হয়েছে।';
+            }
         }
     } catch (orderErr) {
         console.warn(`[WhatsApp Webhook] Order orchestration failed: ${orderErr.message}`);
@@ -4083,7 +4094,7 @@ STRICT RULES:
         const orderDataFromAI = aiResponse.order_details?.fields || aiResponse.order_details;
         const orderIntent = aiResponse.order_details?.intent || 'upsert';
 
-        await orderService.orchestrateOrder({
+        const orderResult = await orderService.orchestrateOrder({
             pageId: pageId,
             senderId: senderId,
             platform: 'messenger',
@@ -4091,6 +4102,11 @@ STRICT RULES:
             data: orderDataFromAI || {},
             rawText: combinedText
         });
+        if (orderResult?.section === 'draft' && orderResult.nextPromptInstruction) {
+            replyText = `${replyText || ''}\n\n${orderResult.nextPromptInstruction}`.trim();
+        } else if (orderResult?.section === 'confirmed') {
+            replyText = replyText || 'আপনার অর্ডারটি নেওয়া হয়েছে।';
+        }
         // --------------------------------------
 
         // 6. Send Reply (Text + Images)

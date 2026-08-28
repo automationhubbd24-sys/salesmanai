@@ -5,6 +5,7 @@ const whatsappCloudController = require('../controllers/whatsappCloudController'
 const webhookController = require('../controllers/webhookController');
 const pgClient = require('../services/pgClient');
 const dbService = require('../services/dbService');
+const orderService = require('../services/orderService');
 const whatsappCloudService = require('../services/whatsappCloudService');
 const imageService = require('../services/imageService');
 const jwt = require('jsonwebtoken');
@@ -149,6 +150,21 @@ async function hasSessionAccess(sessionName, userId, userEmail) {
     }
 
     return false;
+}
+
+function buildMessageTypeFilter(messageType) {
+    switch (messageType) {
+        case 'bot':
+            return "AND reply_by = 'bot'";
+        case 'reminder':
+            return "AND (status = 'reminder' OR reply_by = 'system')";
+        case 'user':
+            return "AND reply_by = 'user'";
+        case 'error':
+            return "AND status IN ('system_error', 'reminder_error')";
+        default:
+            return '';
+    }
 }
 
 function sendLegacySessionRetired(res) {
@@ -492,6 +508,31 @@ router.get('/config/:id', async (req, res) => {
     }
 });
 
+router.get('/order-states', authMiddleware, async (req, res) => {
+    try {
+        const sessionName = String(req.query.session_name || '').trim();
+        const section = String(req.query.section || '').trim();
+        const from = req.query.from ? Number(req.query.from) : null;
+        const to = req.query.to ? Number(req.query.to) : null;
+        const limit = req.query.limit ? Number(req.query.limit) : 200;
+        if (!sessionName) return res.status(400).json({ error: 'session_name is required' });
+        if (!await requireWhatsAppResource(req, res, sessionName, 'orders', 'view_all')) return;
+
+        const rows = await orderService.listOrderStates({
+            platform: 'whatsapp',
+            pageId: sessionName,
+            section: section || null,
+            from,
+            to,
+            limit
+        });
+        res.json(rows);
+    } catch (err) {
+        console.error('WhatsApp order states error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 router.get('/orders', authMiddleware, async (req, res) => {
     try {
         const sessionName = String(req.query.session_name || '').trim();
@@ -609,6 +650,7 @@ router.get('/messages', authMiddleware, async (req, res) => {
         const from = req.query.from ? Number(req.query.from) : null;
         const to = req.query.to ? Number(req.query.to) : null;
         const senderId = String(req.query.sender_id || '').trim();
+        const messageType = String(req.query.message_type || 'all').trim().toLowerCase();
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 50;
         const offset = (page - 1) * limit;
@@ -623,7 +665,9 @@ router.get('/messages', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'from and to (ms) are required' });
         }
 
-        const senderFilterSql = senderId ? `AND (sender_id = $4 OR recipient_id = $4)` : '';
+        const dataSenderFilterSql = senderId ? `AND (sender_id = $4 OR recipient_id = $4)` : '';
+        const aggregateSenderFilterSql = senderId ? `AND (sender_id = $4 OR recipient_id = $4)` : '';
+        const messageTypeFilterSql = buildMessageTypeFilter(messageType);
         const baseParams = senderId
             ? [sessionName, from, to, senderId, limit, offset]
             : [sessionName, from, to, limit, offset];
@@ -640,7 +684,8 @@ router.get('/messages', authMiddleware, async (req, res) => {
                 WHERE session_name = $1
                   AND timestamp >= $2
                   AND timestamp <= $3
-                  ${senderFilterSql}
+                  ${dataSenderFilterSql}
+                  ${messageTypeFilterSql}
                 ORDER BY timestamp DESC
                 LIMIT ${senderId ? '$5 OFFSET $6' : '$4 OFFSET $5'}
                 `,
@@ -655,7 +700,8 @@ router.get('/messages', authMiddleware, async (req, res) => {
                 WHERE session_name = $1
                   AND timestamp >= $2
                   AND timestamp <= $3
-                  ${senderFilterSql}
+                  ${aggregateSenderFilterSql}
+                  ${messageTypeFilterSql}
                 `,
                 aggregateParams
             );
@@ -671,7 +717,8 @@ router.get('/messages', authMiddleware, async (req, res) => {
                 WHERE session_name = $1
                   AND timestamp >= $2
                   AND timestamp <= $3
-                  ${senderFilterSql}
+                  ${aggregateSenderFilterSql}
+                  ${messageTypeFilterSql}
                 `,
                 aggregateParams
             );
@@ -684,7 +731,8 @@ router.get('/messages', authMiddleware, async (req, res) => {
                 WHERE session_name = $1
                   AND timestamp >= $2
                   AND timestamp <= $3
-                  ${senderFilterSql}
+                  ${aggregateSenderFilterSql}
+                  ${messageTypeFilterSql}
                   AND reply_by = 'bot'
                   AND token_usage > 0
                 GROUP BY model_used
@@ -718,7 +766,8 @@ router.get('/messages', authMiddleware, async (req, res) => {
                     WHERE session_name = $1
                       AND timestamp >= $2
                       AND timestamp <= $3
-                      ${senderFilterSql}
+                      ${dataSenderFilterSql}
+                      ${messageTypeFilterSql}
                     ORDER BY timestamp DESC
                     LIMIT ${senderId ? '$5 OFFSET $6' : '$4 OFFSET $5'}
                     `,
@@ -726,7 +775,7 @@ router.get('/messages', authMiddleware, async (req, res) => {
                 );
                 
                 const fallbackCount = await pgClient.query(
-                    `SELECT COUNT(*) AS total FROM whatsapp_chats WHERE session_name = $1 AND timestamp >= $2 AND timestamp <= $3 ${senderFilterSql}`,
+                    `SELECT COUNT(*) AS total FROM whatsapp_chats WHERE session_name = $1 AND timestamp >= $2 AND timestamp <= $3 ${aggregateSenderFilterSql} ${messageTypeFilterSql}`,
                     aggregateParams
                 );
 
@@ -1122,11 +1171,12 @@ router.get('/messages/:sessionName/:senderId', authMiddleware, async (req, res) 
                 SELECT
                     id,
                     message_id,
-                    CASE WHEN reply_by = 'bot' THEN 'me' WHEN reply_by = 'admin' THEN 'me' ELSE sender_id END as from,
+                    CASE WHEN reply_by IN ('bot', 'admin', 'system') THEN 'me' ELSE sender_id END as from,
                     text as body,
                     COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000) as timestamp,
                     reply_by,
-                    (reply_by = 'bot') as is_ai
+                    status,
+                    (reply_by IN ('bot', 'system') OR status = 'reminder') as is_ai
                 FROM whatsapp_chats
                 WHERE session_name = $1 AND (sender_id = $2 OR recipient_id = $2)
                 ORDER BY COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000) DESC

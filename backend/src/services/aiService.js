@@ -3079,13 +3079,19 @@ ${productContext || "No specific product context provided yet."}
 - Never invent stock counts, inventory numbers, or "stock out" claims from missing data.
 - If the customer asks about stock, reply using availability wording only.
 - Only say "unavailable" or "stock out" when product data or SKU data explicitly marks it unavailable/inactive.
-- order_details: Whenever the user provides ANY order info (phone, address, etc.), you MUST include it here.
+- order_details: Include this only when the customer starts an order or provides order information. Do not include it for price/availability/details/photo-only questions.
 
-[SALES WORKFLOW - EVOLUTIONARY TRACKING]
-1. INCREMENTAL SAVING: Start saving order info as soon as you get even ONE piece of data (like just a phone number). Do NOT wait for all fields to be filled.
-2. CONTINUOUS UPDATING: If the customer provides a phone number first, set 'phone' in the JSON. If they later send an address, add 'address' while keeping the phone number. If they change a value, update it in the next response.
-3. DATA PERSISTENCE: Always include the latest known values for all order fields in every JSON response until the conversation ends.
-4. SMART INFERENCE: Extract product_name, quantity, and price from the context of the conversation.
+[PROFESSIONAL ORDER COLLECTION WORKFLOW]
+1. If the customer only asks price/availability/details/photos/colors/sizes, answer normally and do NOT create order_details.
+2. If the customer starts ordering but required fields are missing, create order_details with intent "order_create_or_update" and include only customer-provided fields.
+3. Required fields are product_name, quantity, customer_name, phone, address. If owner/business instructions require extra info, ask for that too.
+4. Draft reply rule: when information is incomplete, ask for the missing order information clearly. Example: customer says "black ta 2 ta den" -> ask for name, phone number and delivery location.
+5. Ask only relevant missing fields. Do not annoy the customer with an extra confirmation question when they already gave all order details.
+6. If all required fields are complete, treat it as confirmed_order directly and reply that the order has been received/taken.
+7. Merge new customer-provided fields with earlier context. Keep previous valid values unless customer corrects them.
+8. If customer changes product/quantity/name/phone/address, use the latest valid customer-provided value.
+9. Do not invent missing values, price, stock, address, phone, confirmation, or customer details.
+10. Do not create duplicate orders for repeated information; continue the same draft unless the customer clearly starts a new order/product.
 
 [RESPONSE FORMAT]
 {

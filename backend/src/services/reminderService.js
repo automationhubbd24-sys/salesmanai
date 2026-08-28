@@ -53,6 +53,30 @@ class ReminderService {
         `);
 
         await query(`
+            CREATE TABLE IF NOT EXISTS conversation_order_states (
+                id bigserial PRIMARY KEY,
+                platform text NOT NULL,
+                page_id text NOT NULL,
+                sender_id text NOT NULL,
+                section text NOT NULL DEFAULT 'draft',
+                status text NOT NULL DEFAULT 'active',
+                order_data jsonb NOT NULL DEFAULT '{}'::jsonb,
+                items jsonb NOT NULL DEFAULT '[]'::jsonb,
+                missing_fields jsonb NOT NULL DEFAULT '[]'::jsonb,
+                summary_shown boolean NOT NULL DEFAULT false,
+                confirmed_order_id text,
+                order_id text UNIQUE,
+                last_message text,
+                last_contact_at timestamptz NOT NULL DEFAULT NOW(),
+                created_at timestamptz NOT NULL DEFAULT NOW(),
+                updated_at timestamptz NOT NULL DEFAULT NOW()
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS conversation_order_states_active_idx
+                ON conversation_order_states(platform, page_id, sender_id)
+                WHERE status = 'active';
+        `);
+
+        await query(`
             UPDATE fb_order_tracking
             SET
                 updated_at = COALESCE(updated_at, created_at, NOW()),
@@ -156,17 +180,34 @@ class ReminderService {
              SELECT
                 'chat_fb_' || $1 || '_' || c.sender_id AS id,
                 c.sender_id,
-                NULL::text AS product_name,
-                NULL::text AS customer_name,
+                COALESCE(cos.order_data->>'product_name', lo.product_name) AS product_name,
+                COALESCE(cos.order_data->>'customer_name', lo.customer_name) AS customer_name,
                 to_timestamp(c.last_activity_ts / 1000.0) AS updated_at,
-                'conversation' AS reminder_source
+                COALESCE(cos.section, lo.status, 'conversation') AS reminder_source
              FROM conversations c
              JOIN latest l ON l.sender_id = c.sender_id
+             LEFT JOIN conversation_order_states cos
+               ON cos.platform = 'messenger'
+              AND cos.page_id = $1
+              AND cos.sender_id = c.sender_id
+              AND cos.status = 'active'
+             LEFT JOIN LATERAL (
+                SELECT status, product_name, customer_name
+                FROM fb_order_tracking
+                WHERE page_id = $1 AND sender_id = c.sender_id
+                ORDER BY COALESCE(updated_at, created_at) DESC NULLS LAST
+                LIMIT 1
+             ) lo ON TRUE
              WHERE c.sender_id IS NOT NULL
                AND c.sender_id <> $1
                AND COALESCE(l.status, '') <> 'reminder'
                AND c.last_activity_ts <= (EXTRACT(EPOCH FROM (NOW() - make_interval(hours => $2::int))) * 1000)
                AND c.last_activity_ts >= (EXTRACT(EPOCH FROM (NOW() - INTERVAL '23 hours')) * 1000)
+               AND (
+                    LOWER(COALESCE(lo.status, '')) IN ('cancelled', 'delivered')
+                    OR cos.section = 'draft'
+                    OR (cos.section IS NULL AND lo.status IS NULL)
+               )
                AND EXISTS (
                     SELECT 1 FROM fb_chats inbound
                     WHERE inbound.page_id = $1
@@ -235,16 +276,34 @@ class ReminderService {
              SELECT
                 'chat_wa_' || $1 || '_' || c.sender_id AS id,
                 c.sender_id,
-                NULL::text AS product_name,
+                COALESCE(cos.order_data->>'product_name', lo.product_name) AS product_name,
+                COALESCE(cos.order_data->>'customer_name', lo.customer_name) AS customer_name,
                 to_timestamp(c.last_activity_ts / 1000.0) AS updated_at,
-                'conversation' AS reminder_source
+                COALESCE(cos.section, lo.status, 'conversation') AS reminder_source
              FROM conversations c
              JOIN latest l ON l.sender_id = c.sender_id
+             LEFT JOIN conversation_order_states cos
+               ON cos.platform = 'whatsapp'
+              AND cos.page_id = $1
+              AND cos.sender_id = c.sender_id
+              AND cos.status = 'active'
+             LEFT JOIN LATERAL (
+                SELECT status, product_name, customer_name
+                FROM whatsapp_order_tracking
+                WHERE session_name = $1 AND sender_id = c.sender_id
+                ORDER BY COALESCE(updated_at, created_at) DESC NULLS LAST
+                LIMIT 1
+             ) lo ON TRUE
              WHERE c.sender_id IS NOT NULL
                AND c.sender_id <> $1
                AND COALESCE(l.status, '') <> 'reminder'
                AND c.last_activity_ts <= (EXTRACT(EPOCH FROM (NOW() - make_interval(hours => $2::int))) * 1000)
                AND c.last_activity_ts >= (EXTRACT(EPOCH FROM (NOW() - INTERVAL '23 hours')) * 1000)
+               AND (
+                    LOWER(COALESCE(lo.status, '')) IN ('cancelled', 'delivered')
+                    OR cos.section = 'draft'
+                    OR (cos.section IS NULL AND lo.status IS NULL)
+               )
                AND EXISTS (
                     SELECT 1 FROM whatsapp_chats inbound
                     WHERE inbound.session_name = $1

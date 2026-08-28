@@ -3,6 +3,7 @@ const router = express.Router();
 const axios = require('axios');
 const multer = require('multer');
 const dbService = require('../services/dbService');
+const orderService = require('../services/orderService');
 const facebookService = require('../services/facebookService');
 const imageService = require('../services/imageService');
 const pgClient = require('../services/pgClient');
@@ -76,6 +77,21 @@ function assignedOrderJoin(authorization, source, resourceId, orderIdColumn = 'o
 
 function reqSafeEmail(authorization) {
     return authorization.membership?.member_email || '';
+}
+
+function buildMessageTypeFilter(messageType) {
+    switch (messageType) {
+        case 'bot':
+            return "AND reply_by = 'bot'";
+        case 'reminder':
+            return "AND (status = 'reminder' OR reply_by = 'system')";
+        case 'user':
+            return "AND reply_by = 'user'";
+        case 'error':
+            return "AND status IN ('system_error', 'reminder_error')";
+        default:
+            return '';
+    }
 }
 
 async function subscribeMessengerPage(pageId, pageAccessToken) {
@@ -952,6 +968,31 @@ router.delete('/pages/:pageId', async (req, res) => {
 });
 
 
+router.get('/order-states', authMiddleware, async (req, res) => {
+    try {
+        const pageId = String(req.query.page_id || '').trim();
+        const section = String(req.query.section || '').trim();
+        const from = req.query.from ? Number(req.query.from) : null;
+        const to = req.query.to ? Number(req.query.to) : null;
+        const limit = req.query.limit ? Number(req.query.limit) : 200;
+        if (!pageId) return res.status(400).json({ error: 'page_id is required' });
+        if (!await requireMessengerResource(req, res, pageId, 'orders', 'view_all')) return;
+
+        const rows = await orderService.listOrderStates({
+            platform: 'messenger',
+            pageId,
+            section: section || null,
+            from,
+            to,
+            limit
+        });
+        res.json(rows);
+    } catch (err) {
+        console.error('Messenger order states error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 router.get('/orders', authMiddleware, async (req, res) => {
     try {
         const pageId = String(req.query.page_id || '').trim();
@@ -1001,6 +1042,7 @@ router.get('/chats', authMiddleware, async (req, res) => {
         const from = req.query.from ? String(req.query.from) : null;
         const to = req.query.to ? String(req.query.to) : null;
         const senderId = String(req.query.sender_id || '').trim();
+        const messageType = String(req.query.message_type || 'all').trim().toLowerCase();
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 50;
         const offset = (page - 1) * limit;
@@ -1015,6 +1057,8 @@ router.get('/chats', authMiddleware, async (req, res) => {
         if (!await requireMessengerResource(req, res, pageId, 'smart_inbox', 'view')) return;
 
         const senderFilterSql = senderId ? `AND (sender_id = $6 OR recipient_id = $6)` : '';
+        const aggregateSenderFilterSql = senderId ? `AND (sender_id = $4 OR recipient_id = $4)` : '';
+        const messageTypeFilterSql = buildMessageTypeFilter(messageType);
         const baseParams = senderId
             ? [pageId, from, to, limit, offset, senderId]
             : [pageId, from, to, limit, offset];
@@ -1031,6 +1075,7 @@ router.get('/chats', authMiddleware, async (req, res) => {
               AND (created_at >= $2::timestamptz OR timestamp >= EXTRACT(EPOCH FROM $2::timestamptz) * 1000)
               AND (created_at <= $3::timestamptz OR timestamp <= EXTRACT(EPOCH FROM $3::timestamptz) * 1000)
               ${senderFilterSql}
+              ${messageTypeFilterSql}
             ORDER BY created_at DESC, timestamp DESC
             LIMIT $4 OFFSET $5
             `,
@@ -1045,7 +1090,8 @@ router.get('/chats', authMiddleware, async (req, res) => {
             WHERE page_id = $1
               AND (created_at >= $2::timestamptz OR timestamp >= EXTRACT(EPOCH FROM $2::timestamptz) * 1000)
               AND (created_at <= $3::timestamptz OR timestamp <= EXTRACT(EPOCH FROM $3::timestamptz) * 1000)
-              ${senderId ? `AND (sender_id = $4 OR recipient_id = $4)` : ''}
+              ${aggregateSenderFilterSql}
+              ${messageTypeFilterSql}
             `,
             aggregateParams
         );
@@ -1061,7 +1107,8 @@ router.get('/chats', authMiddleware, async (req, res) => {
             WHERE page_id = $1
               AND (created_at >= $2::timestamptz OR timestamp >= EXTRACT(EPOCH FROM $2::timestamptz) * 1000)
               AND (created_at <= $3::timestamptz OR timestamp <= EXTRACT(EPOCH FROM $3::timestamptz) * 1000)
-              ${senderId ? `AND (sender_id = $4 OR recipient_id = $4)` : ''}
+              ${aggregateSenderFilterSql}
+              ${messageTypeFilterSql}
             `,
             aggregateParams
         );
@@ -1074,7 +1121,8 @@ router.get('/chats', authMiddleware, async (req, res) => {
             WHERE page_id = $1
               AND (created_at >= $2::timestamptz OR timestamp >= EXTRACT(EPOCH FROM $2::timestamptz) * 1000)
               AND (created_at <= $3::timestamptz OR timestamp <= EXTRACT(EPOCH FROM $3::timestamptz) * 1000)
-              ${senderId ? `AND (sender_id = $4 OR recipient_id = $4)` : ''}
+              ${aggregateSenderFilterSql}
+              ${messageTypeFilterSql}
               AND reply_by = 'bot'
               AND token > 0
             GROUP BY ai_model
@@ -1257,11 +1305,12 @@ router.get('/messages/:pageId/:senderId', authMiddleware, async (req, res) => {
                 SELECT
                     id,
                     message_id,
-                    CASE WHEN reply_by = 'bot' THEN 'me' WHEN reply_by = 'admin' THEN 'me' ELSE sender_id END as from,
+                    CASE WHEN reply_by IN ('bot', 'admin', 'system') THEN 'me' ELSE sender_id END as from,
                     text as body,
                     COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000) as timestamp,
                     reply_by,
-                    (reply_by = 'bot') as is_ai
+                    status,
+                    (reply_by IN ('bot', 'system') OR status = 'reminder') as is_ai
                 FROM fb_chats
                 WHERE page_id = $1 AND (sender_id = $2 OR recipient_id = $2)
                 ORDER BY COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000) DESC

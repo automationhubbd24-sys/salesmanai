@@ -3,6 +3,7 @@ const SMART_INBOX_MANUAL_LABELS = new Set(["order", "human_transfer"]);
 const SMART_INBOX_LABEL_TITLES = {
     agent: "Agent",
     human: "Human",
+    reminder: "Reminder",
     order: "Order",
     human_transfer: "Human Transfer"
 };
@@ -112,6 +113,10 @@ function buildConversationPayload(row) {
         activeLabels.push(primaryLabel);
     }
 
+    if (row.has_reminder) {
+        activeLabels.push("reminder");
+    }
+
     if (row.order_selected) {
         activeLabels.push("order");
     }
@@ -129,10 +134,12 @@ function buildConversationPayload(row) {
         body: row.body || "",
         timestamp: row.timestamp ? Number(row.timestamp) : null,
         reply_by: row.last_reply_state || null,
+        status: row.last_status || null,
         primary_label: primaryLabel,
         primary_label_title: primaryLabel ? SMART_INBOX_LABEL_TITLES[primaryLabel] : null,
         active_labels: activeLabels,
         active_label_titles: activeLabels.map((key) => SMART_INBOX_LABEL_TITLES[key]),
+        has_reminder: Boolean(row.has_reminder),
         has_order: Boolean(row.has_order),
         order_status: row.order_status || null,
         order_selected: Boolean(row.order_selected),
@@ -168,6 +175,7 @@ async function getSmartInboxConversations(pgClient, platform, resourceId) {
                 END AS conversation_id,
                 text,
                 reply_by,
+                status,
                 ${config.senderNameExpression || 'NULL::text'} AS sender_name,
                 ${config.timestampExpression} AS event_at
             FROM ${config.chatsTable}
@@ -201,10 +209,18 @@ async function getSmartInboxConversations(pgClient, platform, resourceId) {
             SELECT DISTINCT ON (conversation_id)
                 conversation_id,
                 reply_by,
+                status,
                 event_at
             FROM usable_messages
-            WHERE reply_by IN ('user', 'bot', 'admin')
+            WHERE reply_by IN ('user', 'bot', 'admin', 'system')
             ORDER BY conversation_id, event_at DESC
+        ),
+        reminder_flags AS (
+            SELECT
+                conversation_id,
+                BOOL_OR(status = 'reminder' OR reply_by = 'system') AS has_reminder
+            FROM usable_messages
+            GROUP BY conversation_id
         ),
         latest_sender_name AS (
             SELECT DISTINCT ON (conversation_id)
@@ -238,6 +254,8 @@ async function getSmartInboxConversations(pgClient, platform, resourceId) {
             COALESCE(lp.body, lf.body, '') AS body,
             COALESCE(lp.event_at, lf.event_at, ls.event_at) AS timestamp,
             ls.reply_by AS last_reply_state,
+            ls.status AS last_status,
+            COALESCE(rf.has_reminder, FALSE) AS has_reminder,
             CASE
                 WHEN ls.reply_by = 'bot' THEN 'agent'
                 WHEN ls.reply_by = 'admin' THEN 'human'
@@ -267,6 +285,8 @@ async function getSmartInboxConversations(pgClient, platform, resourceId) {
             ON lo.sender_id = ${conversationIdExpression}
         LEFT JOIN latest_sender_name lsn
             ON lsn.conversation_id = ${conversationIdExpression}
+        LEFT JOIN reminder_flags rf
+            ON rf.conversation_id = ${conversationIdExpression}
         ${conversationNameJoin}
         WHERE ${conversationIdExpression} IS NOT NULL
         ORDER BY COALESCE(lp.event_at, lf.event_at, ls.event_at) DESC

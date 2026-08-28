@@ -35,7 +35,7 @@ const MESSAGE_POLL_INTERVAL_MS = 12000;
 const CHAT_LIMIT = 60;
 const MESSAGE_LIMIT = 40;
 
-type LabelKey = "agent" | "human" | "order" | "human_transfer";
+type LabelKey = "agent" | "human" | "reminder" | "order" | "human_transfer";
 type FilterKey = "all" | LabelKey;
 type PlatformKey = "whatsapp" | "messenger" | "instagram";
 
@@ -48,10 +48,12 @@ type Conversation = {
   body: string;
   timestamp: number | null;
   reply_by: string | null;
+  status?: string | null;
   primary_label: "agent" | "human" | null;
   primary_label_title: string | null;
   active_labels: LabelKey[];
   active_label_titles: string[];
+  has_reminder?: boolean;
   has_order: boolean;
   order_status: string | null;
   order_selected: boolean;
@@ -74,6 +76,7 @@ type MessageItem = {
   timestamp: number | string | null;
   is_ai: boolean;
   reply_by?: string | null;
+  status?: string | null;
 };
 
 const LABEL_META: Record<LabelKey, { title: string; className: string }> = {
@@ -84,6 +87,10 @@ const LABEL_META: Record<LabelKey, { title: string; className: string }> = {
   human: {
     title: "Human",
     className: "border-sky-400/30 bg-sky-400/10 text-sky-200"
+  },
+  reminder: {
+    title: "Reminder",
+    className: "border-amber-400/30 bg-amber-400/10 text-amber-200"
   },
   order: {
     title: "Order",
@@ -99,6 +106,7 @@ const FILTER_OPTIONS: { key: FilterKey; title: string }[] = [
   { key: "all", title: "All" },
   { key: "agent", title: "Agent" },
   { key: "human", title: "Human" },
+  { key: "reminder", title: "Reminder" },
   { key: "order", title: "Order" },
   { key: "human_transfer", title: "Human Transfer" }
 ];
@@ -227,7 +235,7 @@ const shouldHideMessage = (message: MessageItem) => {
     body.includes("[SYSTEM ERROR]") ||
     lowerBody.includes("conversation locked") ||
     lowerBody.includes("too many failures");
-  return isInternalNoise && !hasImage && !isBotImage;
+  return isInternalNoise && !hasImage && !isBotImage && message.status !== "reminder";
 };
 
 const getMessageUniqueId = (message: MessageItem) => {
@@ -679,7 +687,7 @@ const SmartInbox = () => {
             : chats.filter((chat) => chat.active_labels.includes(item.key as LabelKey)).length;
         return acc;
       },
-      { all: 0, agent: 0, human: 0, order: 0, human_transfer: 0 }
+      { all: 0, agent: 0, human: 0, reminder: 0, order: 0, human_transfer: 0 }
     );
   }, [chats]);
 
@@ -1138,11 +1146,13 @@ const SmartInbox = () => {
                     <div className="mt-0.5 sm:mt-1 flex items-center gap-1.5 sm:gap-2 text-[10px] sm:text-[11px] text-white/45">
                       <span className="inline-flex items-center gap-1 sm:gap-1.5">
                         <span className="h-1.5 w-1.5 sm:h-2 sm:w-2 rounded-full bg-[#00ff88] animate-pulse" />
-                        {selectedChat.reply_by === "bot"
-                          ? "Last reply by Agent"
-                          : selectedChat.reply_by === "admin"
-                            ? "Last reply by Admin"
-                            : "Waiting for your reply"}
+                        {selectedChat.status === "reminder" || selectedChat.reply_by === "system"
+                          ? "Last reply by System Reminder"
+                          : selectedChat.reply_by === "bot"
+                            ? "Last reply by Agent"
+                            : selectedChat.reply_by === "admin"
+                              ? "Last reply by Admin"
+                              : "Waiting for your reply"}
                       </span>
                       <span className="text-white/20">•</span>
                       <span>{platformTheme.title}</span>
@@ -1269,7 +1279,8 @@ const SmartInbox = () => {
                         lowerBody.includes("sent images to user"));
                     const isAnalysisMessage = /\[Analyzed Images?\]|\[Analyzed Image\s*\d*\]|Analyzed Image:|Analyzed Voice:/i.test(body);
                     const isTranscriptMessage = /^\[Transcript\]:/i.test(body.trim());
-                    const isOutgoing = message.from === "me" || message.reply_by === "admin" || isBotImage;
+                    const isReminder = message.status === "reminder" || message.reply_by === "system";
+                    const isOutgoing = message.from === "me" || message.reply_by === "admin" || isBotImage || isReminder;
                     const isBot = message.reply_by === "bot" || isBotImage;
 
                     return (
@@ -1289,11 +1300,13 @@ const SmartInbox = () => {
                           className={cn(
                             "min-w-0 max-w-[min(86%,320px)] overflow-hidden rounded-[1.25rem] px-3 py-2.5 text-sm sm:max-w-[min(78%,420px)] sm:px-3.5 sm:py-3 md:max-w-[min(70%,560px)] lg:max-w-[min(58%,620px)] shadow-lg transition-all duration-200 hover:shadow-xl", 
                             isOutgoing
-                              ? isBot
-                                ? platform === "whatsapp"
-                                  ? "rounded-br-md bg-gradient-to-br from-[#d9fdd3] to-[#b7f3cc] text-slate-950 shadow-[0_4px_20px_rgba(0,168,132,0.22)]"
-                                  : "rounded-br-md bg-gradient-to-br from-[#0084ff] to-[#0069d9] text-white shadow-[0_4px_20px_rgba(0,132,255,0.24)]"
-                                : "rounded-br-md border border-sky-300/20 bg-gradient-to-br from-[#0b8bdc] to-[#0566b3] text-white shadow-[0_4px_20px_rgba(0,132,255,0.18)]"
+                              ? isReminder
+                                ? "rounded-br-md border border-amber-300/30 bg-gradient-to-br from-amber-500/20 to-orange-500/20 text-amber-50 shadow-[0_4px_20px_rgba(245,158,11,0.18)]"
+                                : isBot
+                                  ? platform === "whatsapp"
+                                    ? "rounded-br-md bg-gradient-to-br from-[#d9fdd3] to-[#b7f3cc] text-slate-950 shadow-[0_4px_20px_rgba(0,168,132,0.22)]"
+                                    : "rounded-br-md bg-gradient-to-br from-[#0084ff] to-[#0069d9] text-white shadow-[0_4px_20px_rgba(0,132,255,0.24)]"
+                                  : "rounded-br-md border border-sky-300/20 bg-gradient-to-br from-[#0b8bdc] to-[#0566b3] text-white shadow-[0_4px_20px_rgba(0,132,255,0.18)]"
                               : "rounded-bl-md border border-white/10 bg-gradient-to-br from-[#202c33] to-[#17212b] text-white/95 shadow-[0_4px_20px_rgba(0,0,0,0.28)]"
                           )}
                         >
@@ -1360,7 +1373,7 @@ const SmartInbox = () => {
                             <span className="font-medium">{formatClock(message.timestamp)}</span>
                             <span className="opacity-50">•</span>
                             <span className="font-bold">
-                              {isBot ? "Agent" : message.reply_by === "admin" ? "Admin" : "Customer"}
+                              {isReminder ? "System Reminder" : isBot ? "Agent" : message.reply_by === "admin" ? "Admin" : "Customer"}
                             </span>
                           </div>
                         </div>

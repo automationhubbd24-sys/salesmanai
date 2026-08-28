@@ -33,6 +33,40 @@ import { cn } from "@/lib/utils";
 import { BACKEND_URL } from "@/config";
 import { useSearchParams } from "react-router-dom";
 
+type MessageTypeFilter = "all" | "bot" | "reminder" | "user" | "error";
+
+const MESSAGE_TYPE_OPTIONS: { value: MessageTypeFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "bot", label: "Bot Reply" },
+  { value: "reminder", label: "Reminder" },
+  { value: "user", label: "User" },
+  { value: "error", label: "Error" },
+];
+
+const getReplyByLabel = (replyBy?: string | null, status?: string | null) => {
+  if (status === "reminder" || replyBy === "system") return "System Reminder";
+  if (replyBy === "bot") return "Bot Reply";
+  if (replyBy === "admin") return "Admin";
+  if (replyBy === "user") return "User";
+  return replyBy || "Unknown";
+};
+
+const getReplyByClassName = (replyBy?: string | null, status?: string | null) => {
+  if (status === "reminder" || replyBy === "system") return "bg-amber-500/10 text-amber-300 border-amber-500/40";
+  if (replyBy === "bot") return "bg-primary/10 text-primary border-primary/40";
+  if (replyBy === "admin") return "bg-sky-500/10 text-sky-300 border-sky-500/40";
+  return "bg-muted/10 text-muted-foreground border-border";
+};
+
+const getStatusClassName = (status?: string | null) => {
+  if (status === "reminder") return "bg-amber-500/10 text-amber-300 border-amber-500/40";
+  if (status === "reminder_error" || status === "system_error") return "bg-red-500/10 text-red-300 border-red-500/40";
+  if (status === "sent") return "bg-green-500/10 text-green-300 border-green-500/40";
+  if (status === "transcribed") return "bg-cyan-500/10 text-cyan-300 border-cyan-500/40";
+  if (status === "analyzed") return "bg-violet-500/10 text-violet-300 border-violet-500/40";
+  return "bg-yellow-500/10 text-yellow-300 border-yellow-500/40";
+};
+
 export default function WhatsAppConversionPage() {
   const { currentSession, loading: contextLoading } = useWhatsApp();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -198,6 +232,7 @@ export default function WhatsAppConversionPage() {
     to: endOfDay(new Date()),
   });
   const [filterType, setFilterType] = useState("today");
+  const [messageType, setMessageType] = useState<MessageTypeFilter>("all");
 
   useEffect(() => {
     if (activeSessionName) {
@@ -211,7 +246,7 @@ export default function WhatsAppConversionPage() {
         fetchMessages(activeSessionName, date.from, date.to, currentPageNum);
         fetchContacts(activeSessionName);
     }
-  }, [activeSessionName, date, currentPageNum, targetSenderId]);
+  }, [activeSessionName, date, currentPageNum, targetSenderId, messageType]);
 
   // Reset page when date changes
   useEffect(() => {
@@ -220,7 +255,7 @@ export default function WhatsAppConversionPage() {
 
   useEffect(() => {
     setCurrentPageNum(1);
-  }, [targetSenderId]);
+  }, [targetSenderId, messageType]);
 
   useEffect(() => {
     const groups: Record<string, WaChat[]> = {};
@@ -252,6 +287,7 @@ export default function WhatsAppConversionPage() {
       params.set("to", to.getTime().toString());
       params.set("page", String(page));
       params.set("limit", String(LIMIT));
+      params.set("message_type", messageType);
       if (targetSenderId) {
         params.set("sender_id", targetSenderId);
       }
@@ -401,6 +437,17 @@ export default function WhatsAppConversionPage() {
             </div>
             
             <div className="flex items-center gap-2 w-full sm:w-auto">
+                <Select value={messageType} onValueChange={(value) => setMessageType(value as MessageTypeFilter)}>
+                  <SelectTrigger className="w-[160px]">
+                    <SelectValue placeholder="Message Type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MESSAGE_TYPE_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
                 <Select value={filterType} onValueChange={handleFilterChange}>
                   <SelectTrigger className="w-[180px]">
                     <SelectValue placeholder="Select Filter" />
@@ -586,14 +633,8 @@ export default function WhatsAppConversionPage() {
                       {msg.text}
                     </TableCell>
                     <TableCell>
-                      <span
-                        className={`px-2 py-1 rounded-full text-xs border ${
-                          msg.reply_by === 'bot'
-                            ? 'bg-primary/10 text-primary border-primary/40'
-                            : 'bg-muted/10 text-muted-foreground border-border'
-                        }`}
-                      >
-                        {msg.reply_by || 'Unknown'}
+                      <span className={`px-2 py-1 rounded-full text-xs border ${getReplyByClassName(msg.reply_by, msg.status)}`}>
+                        {getReplyByLabel(msg.reply_by, msg.status)}
                       </span>
                     </TableCell>
                     <TableCell>
@@ -611,18 +652,8 @@ export default function WhatsAppConversionPage() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <span
-                        className={`px-2 py-1 rounded-full text-xs border ${
-                          msg.status === 'sent'
-                            ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/40'
-                            : msg.status === 'transcribed'
-                              ? 'bg-cyan-500/10 text-cyan-500 border-cyan-500/40'
-                              : msg.status === 'analyzed'
-                                ? 'bg-violet-500/10 text-violet-500 border-violet-500/40'
-                                : 'bg-yellow-500/10 text-yellow-500 border-yellow-500/40'
-                        }`}
-                      >
-                        {msg.status}
+                      <span className={`px-2 py-1 rounded-full text-xs border ${getStatusClassName(msg.status)}`}>
+                        {msg.status || '-'}
                       </span>
                     </TableCell>
                     <TableCell className="text-right">
