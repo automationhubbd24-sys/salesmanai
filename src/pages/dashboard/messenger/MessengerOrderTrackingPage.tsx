@@ -182,9 +182,10 @@ export default function MessengerOrderTrackingPage() {
   const [dateFilter, setDateFilter] = useState<'today' | 'yesterday' | 'custom' | 'all'>('today');
   const [date, setDate] = useState<Date | undefined>(new Date());
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [businessModalOpen, setBusinessModalOpen] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return !localStorage.getItem("messenger_order_business_type");
+  const [businessModalOpen, setBusinessModalOpen] = useState(false);
+  const [savedBusinessType, setSavedBusinessType] = useState<BusinessType | null>(() => {
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem("messenger_order_business_type") as BusinessType | null;
   });
   const [selectedBusinessType, setSelectedBusinessType] = useState<BusinessType>(() => {
     if (typeof window === "undefined") return "ecommerce";
@@ -249,10 +250,13 @@ Phone: ${order.number || 'N/A'}`;
 
   const handleBusinessContinue = () => {
     localStorage.setItem("messenger_order_business_type", selectedBusinessType);
+    setSavedBusinessType(selectedBusinessType);
     setBusinessModalOpen(false);
   };
 
-  const selectedBusinessLabel = businessTypes.find((type) => type.id === selectedBusinessType)?.title || "Business Type";
+  const selectedBusinessLabel = savedBusinessType
+    ? businessTypes.find((type) => type.id === savedBusinessType)?.title || "Business Type"
+    : "Select Business Type";
 
   useEffect(() => {
     ordersRef.current = orders;
@@ -419,7 +423,10 @@ Phone: ${order.number || 'N/A'}`;
               <div className="flex flex-wrap items-center gap-3 md:gap-4">
                   <Button
                     variant="outline"
-                    onClick={() => setBusinessModalOpen(true)}
+                    onClick={() => {
+                      if (savedBusinessType) setSelectedBusinessType(savedBusinessType);
+                      setBusinessModalOpen(true);
+                    }}
                     className="border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300"
                   >
                     <Store className="mr-2 h-4 w-4" />
@@ -586,22 +593,22 @@ Phone: ${order.number || 'N/A'}`;
         </CardContent>
       </Card>
       <Dialog open={businessModalOpen} onOpenChange={setBusinessModalOpen}>
-        <DialogContent className="max-h-[90vh] w-[calc(100%-2rem)] max-w-5xl overflow-y-auto border-white/10 bg-[#0c1015]/95 p-0 text-white shadow-[0_24px_80px_rgba(0,0,0,0.65)] backdrop-blur-xl sm:rounded-2xl">
+        <DialogContent className="flex max-h-[92dvh] w-[calc(100vw-1rem)] max-w-[1120px] grid-rows-[auto_1fr_auto] overflow-hidden border-white/10 bg-[#0c1015]/95 p-0 text-white shadow-[0_24px_80px_rgba(0,0,0,0.65)] backdrop-blur-xl sm:w-[calc(100vw-2rem)] sm:rounded-2xl">
           <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_20%_0%,rgba(0,255,136,0.12),transparent_32%),radial-gradient(circle_at_80%_12%,rgba(59,130,246,0.10),transparent_28%)]" />
-          <div className="p-6 md:p-8">
-            <DialogHeader className="flex-row items-start gap-4 space-y-0 text-left">
-              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full border border-emerald-500/25 bg-emerald-500/15 text-emerald-400 shadow-lg shadow-emerald-500/10">
-                <Store className="h-8 w-8" />
+          <div className="min-h-0 overflow-y-auto p-4 sm:p-6 lg:p-8">
+            <DialogHeader className="flex-row items-start gap-3 space-y-0 pr-8 text-left sm:gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-emerald-500/25 bg-emerald-500/15 text-emerald-400 shadow-lg shadow-emerald-500/10 sm:h-16 sm:w-16">
+                <Store className="h-6 w-6 sm:h-8 sm:w-8" />
               </div>
-              <div className="pt-1">
-                <DialogTitle className="text-2xl font-bold tracking-tight">Select Business Type</DialogTitle>
+              <div className="pt-0.5 sm:pt-1">
+                <DialogTitle className="text-xl font-bold tracking-tight sm:text-2xl">Select Business Type</DialogTitle>
                 <DialogDescription className="mt-2 text-sm text-slate-300">
                   Choose the type that best matches your business model.
                 </DialogDescription>
               </div>
             </DialogHeader>
 
-            <div className="mt-8 grid gap-4 md:grid-cols-3 md:gap-5">
+            <div className="mt-5 grid gap-3 sm:mt-6 sm:grid-cols-2 lg:grid-cols-3 lg:gap-5">
               {businessTypes.map((type) => {
                 const Icon = type.Icon;
                 const accent = businessAccentClasses[type.accent];
@@ -613,7 +620,7 @@ Phone: ${order.number || 'N/A'}`;
                     type="button"
                     onClick={() => setSelectedBusinessType(type.id)}
                     className={cn(
-                      "group relative flex min-h-[460px] flex-col rounded-xl border p-4 text-center transition-all duration-200 hover:-translate-y-1 focus:outline-none focus:ring-2",
+                      "group relative flex min-h-[unset] flex-col rounded-xl border p-3 text-center transition-all duration-200 hover:-translate-y-1 focus:outline-none focus:ring-2 sm:p-4 lg:min-h-[420px]",
                       accent.card,
                       isSelected && "translate-y-[-2px] ring-2",
                       isSelected && accent.ring
@@ -626,19 +633,19 @@ Phone: ${order.number || 'N/A'}`;
                       <Check className="h-4 w-4" />
                     </span>
 
-                    <div className="mt-6 flex justify-center">
-                      <div className={cn("flex h-24 w-24 items-center justify-center rounded-full border shadow-xl", accent.iconWrap)}>
-                        <Icon className="h-11 w-11" />
+                    <div className="mt-3 flex justify-center sm:mt-5 lg:mt-6">
+                      <div className={cn("flex h-16 w-16 items-center justify-center rounded-full border shadow-xl sm:h-20 sm:w-20 lg:h-24 lg:w-24", accent.iconWrap)}>
+                        <Icon className="h-8 w-8 sm:h-10 sm:w-10 lg:h-11 lg:w-11" />
                       </div>
                     </div>
 
-                    <h3 className="mt-5 text-xl font-bold text-white">{type.title}</h3>
+                    <h3 className="mt-4 text-lg font-bold text-white sm:mt-5 sm:text-xl">{type.title}</h3>
                     <div className="mt-3">
                       <span className={cn("rounded-md border px-3 py-1 text-xs font-semibold", accent.badge)}>{type.badge}</span>
                     </div>
-                    <p className="mx-auto mt-5 max-w-[240px] text-sm leading-6 text-slate-300">{type.description}</p>
+                    <p className="mx-auto mt-4 max-w-[240px] text-sm leading-6 text-slate-300 lg:mt-5">{type.description}</p>
 
-                    <div className="mt-auto rounded-xl border border-white/10 bg-white/[0.035] p-4 text-left">
+                    <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.035] p-3 text-left sm:p-4 lg:mt-auto">
                       <p className={cn("mb-4 text-sm font-semibold", accent.example)}>Examples</p>
                       <div className="space-y-3">
                         {type.examples.map((example) => (
@@ -655,12 +662,12 @@ Phone: ${order.number || 'N/A'}`;
             </div>
           </div>
 
-          <DialogFooter className="border-t border-white/10 bg-black/20 px-6 py-5 sm:items-center sm:justify-between sm:space-x-0 md:px-8">
-            <div className="flex items-center gap-3 text-sm text-slate-400">
-              <Info className="h-5 w-5 text-emerald-400" />
+          <DialogFooter className="gap-4 border-t border-white/10 bg-black/20 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:space-x-0 sm:px-6 md:px-8">
+            <div className="flex items-center gap-3 text-xs text-slate-400 sm:text-sm">
+              <Info className="h-5 w-5 shrink-0 text-emerald-400" />
               <span>You can change this later in settings.</span>
             </div>
-            <Button onClick={handleBusinessContinue} className="h-12 rounded-xl bg-emerald-500 px-7 text-base font-bold text-white hover:bg-emerald-400">
+            <Button onClick={handleBusinessContinue} className="h-11 w-full rounded-xl bg-emerald-500 px-6 text-sm font-bold text-white hover:bg-emerald-400 sm:h-12 sm:w-auto sm:text-base">
               Continue
               <ArrowRight className="ml-3 h-5 w-5" />
             </Button>
