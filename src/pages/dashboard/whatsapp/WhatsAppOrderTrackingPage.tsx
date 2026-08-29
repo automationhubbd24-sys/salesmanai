@@ -228,27 +228,37 @@ export default function WhatsAppOrderTrackingPage() {
   const [date, setDate] = useState<Date | undefined>(new Date());
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [businessModalOpen, setBusinessModalOpen] = useState(false);
-  const [savedBusinessType, setSavedBusinessType] = useState<BusinessType | null>(() => {
-    if (typeof window === "undefined") return null;
-    return localStorage.getItem("whatsapp_order_business_type") as BusinessType | null;
-  });
-  const [selectedBusinessType, setSelectedBusinessType] = useState<BusinessType>(() => {
-    if (typeof window === "undefined") return "ecommerce";
-    return (localStorage.getItem("whatsapp_order_business_type") as BusinessType | null) || "ecommerce";
-  });
+  const [savedBusinessType, setSavedBusinessType] = useState<BusinessType | null>(null);
+  const [selectedBusinessType, setSelectedBusinessType] = useState<BusinessType>("ecommerce");
 
   const activeSessionName = currentSession?.name
     || (typeof window !== "undefined" ? localStorage.getItem("active_wa_session_id") : null)
     || null;
   const activeDbId = (currentSession as any)?.wp_db_id || (typeof window !== "undefined" ? Number(localStorage.getItem("active_wp_db_id") || 0) : 0);
+  const businessTypeStorageKey = activeSessionName ? `whatsapp_order_business_type:${activeSessionName}` : null;
   const activeBusinessType = getBusinessType(savedBusinessType);
+
+  useEffect(() => {
+    if (!businessTypeStorageKey || typeof window === "undefined") {
+      setSavedBusinessType(null);
+      setSelectedBusinessType("ecommerce");
+      return;
+    }
+
+    const storedType = localStorage.getItem(businessTypeStorageKey) as BusinessType | null;
+    const resolvedType = getBusinessType(storedType);
+    setSavedBusinessType(storedType);
+    setSelectedBusinessType(resolvedType);
+  }, [businessTypeStorageKey]);
 
   const selectedBusinessLabel = savedBusinessType
     ? businessTypes.find((type) => type.id === savedBusinessType)?.title || "Business Type"
     : "Select Business Type";
 
   const handleBusinessContinue = () => {
-    localStorage.setItem("whatsapp_order_business_type", selectedBusinessType);
+    if (businessTypeStorageKey) {
+      localStorage.setItem(businessTypeStorageKey, selectedBusinessType);
+    }
     setSavedBusinessType(selectedBusinessType);
     setBusinessModalOpen(false);
   };

@@ -232,14 +232,8 @@ export default function MessengerOrderTrackingPage() {
   const [date, setDate] = useState<Date | undefined>(new Date());
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [businessModalOpen, setBusinessModalOpen] = useState(false);
-  const [savedBusinessType, setSavedBusinessType] = useState<BusinessType | null>(() => {
-    if (typeof window === "undefined") return null;
-    return localStorage.getItem("messenger_order_business_type") as BusinessType | null;
-  });
-  const [selectedBusinessType, setSelectedBusinessType] = useState<BusinessType>(() => {
-    if (typeof window === "undefined") return "ecommerce";
-    return (localStorage.getItem("messenger_order_business_type") as BusinessType | null) || "ecommerce";
-  });
+  const [savedBusinessType, setSavedBusinessType] = useState<BusinessType | null>(null);
+  const [selectedBusinessType, setSelectedBusinessType] = useState<BusinessType>("ecommerce");
   const lastFetchParams = useRef("");
   const lastFetchAt = useRef(0);
   const ordersRef = useRef<Order[]>([]);
@@ -248,7 +242,21 @@ export default function MessengerOrderTrackingPage() {
 
   const activePageId = currentPage?.page_id || null;
   const activeDbId = currentPage?.db_id || (typeof window !== "undefined" ? Number(localStorage.getItem("active_fb_db_id") || 0) : 0);
+  const businessTypeStorageKey = activePageId ? `${notificationPlatform}_order_business_type:${activePageId}` : null;
   const activeBusinessType = getBusinessType(savedBusinessType);
+
+  useEffect(() => {
+    if (!businessTypeStorageKey || typeof window === "undefined") {
+      setSavedBusinessType(null);
+      setSelectedBusinessType("ecommerce");
+      return;
+    }
+
+    const storedType = localStorage.getItem(businessTypeStorageKey) as BusinessType | null;
+    const resolvedType = getBusinessType(storedType);
+    setSavedBusinessType(storedType);
+    setSelectedBusinessType(resolvedType);
+  }, [businessTypeStorageKey]);
 
   const updateOrderStatus = async (orderId: string, newStatus: string) => {
     const token = localStorage.getItem("auth_token");
@@ -314,7 +322,9 @@ Phone: ${order.number || 'N/A'}`;
   };
 
   const handleBusinessContinue = () => {
-    localStorage.setItem("messenger_order_business_type", selectedBusinessType);
+    if (businessTypeStorageKey) {
+      localStorage.setItem(businessTypeStorageKey, selectedBusinessType);
+    }
     setSavedBusinessType(selectedBusinessType);
     setBusinessModalOpen(false);
   };
