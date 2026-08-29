@@ -2,8 +2,17 @@ const dbService = require('./dbService');
 const emailService = require('./emailService');
 const pgClient = require('./pgClient');
 
-const REQUIRED_ORDER_FIELDS = ['product_name', 'quantity', 'customer_name', 'phone', 'address'];
-const CONFIRMABLE_ORDER_FIELDS = ['product_name', 'quantity', 'phone', 'address'];
+const BUSINESS_TYPES = ['ecommerce', 'service', 'appointment'];
+const REQUIRED_FIELDS_BY_TYPE = {
+    ecommerce: ['product_name', 'quantity', 'customer_name', 'phone', 'address'],
+    service: ['service_name', 'customer_name', 'phone'],
+    appointment: ['appointment_type', 'appointment_date', 'appointment_time', 'customer_name', 'phone']
+};
+const CONFIRMABLE_FIELDS_BY_TYPE = {
+    ecommerce: ['product_name', 'quantity', 'phone', 'address'],
+    service: ['service_name', 'phone'],
+    appointment: ['appointment_type', 'appointment_date', 'appointment_time', 'phone']
+};
 const VALID_LEAD_STATUSES = ['draft', 'confirmed'];
 
 /**
@@ -47,15 +56,33 @@ function normalizeTextValue(value) {
     return text;
 }
 
+function resolveBusinessType(value) {
+    const type = normalizeTextValue(value)?.toLowerCase();
+    return BUSINESS_TYPES.includes(type) ? type : 'ecommerce';
+}
+
 function cleanExtractedData(data = {}) {
     const fields = data.fields && typeof data.fields === 'object' ? data.fields : data;
     const phoneSource = fields.phone || fields.number || fields.mobile || fields.customer_phone;
     const phone = normalizeBdPhone(phoneSource);
     const quantity = normalizeTextValue(fields.quantity || fields.product_quantity);
     const emailSource = fields.email || fields.customer_email;
+    const businessType = resolveBusinessType(fields.business_type || fields.order_type || fields.type);
+    const serviceName = normalizeTextValue(fields.service_name || fields.service || fields.package_name || fields.product_name || fields.product || fields.item_name);
+    const appointmentType = normalizeTextValue(fields.appointment_type || fields.booking_type || fields.service_name || fields.service || fields.product_name || fields.product);
 
     return {
+        business_type: businessType,
         product_name: normalizeTextValue(fields.product_name || fields.product || fields.item_name),
+        service_name: serviceName,
+        service_package: normalizeTextValue(fields.service_package || fields.package || fields.plan || fields.package_name),
+        service_details: normalizeTextValue(fields.service_details || fields.requirements || fields.details || fields.note || fields.notes),
+        delivery_method: normalizeTextValue(fields.delivery_method || fields.delivery_channel || fields.method),
+        appointment_type: appointmentType,
+        appointment_date: normalizeTextValue(fields.appointment_date || fields.booking_date || fields.date),
+        appointment_time: normalizeTextValue(fields.appointment_time || fields.booking_time || fields.time),
+        appointment_notes: normalizeTextValue(fields.appointment_notes || fields.notes || fields.note),
+        assigned_to: normalizeTextValue(fields.assigned_to || fields.doctor || fields.consultant),
         variant: normalizeTextValue(fields.variant || fields.color || fields.size),
         quantity: quantity || null,
         phone,
@@ -78,13 +105,18 @@ function mergeOrderData(existing = {}, incoming = {}) {
 }
 
 function hasAnyOrderData(data = {}) {
-    return ['product_name', 'variant', 'quantity', 'phone', 'address', 'customer_name', 'customer_email', 'price', 'product_id', 'sku_code']
-        .some(key => data[key] !== undefined && data[key] !== null && data[key] !== '');
+    return [
+        'product_name', 'service_name', 'service_package', 'service_details', 'delivery_method',
+        'appointment_type', 'appointment_date', 'appointment_time', 'appointment_notes', 'assigned_to',
+        'variant', 'quantity', 'phone', 'address', 'customer_name', 'customer_email', 'price', 'product_id', 'sku_code'
+    ].some(key => data[key] !== undefined && data[key] !== null && data[key] !== '');
 }
 
 function hasDraftOrderData(data = {}) {
-    return ['quantity', 'phone', 'address', 'customer_name']
-        .some(key => data[key] !== undefined && data[key] !== null && data[key] !== '');
+    return [
+        'quantity', 'phone', 'address', 'customer_name', 'service_name', 'service_details',
+        'appointment_type', 'appointment_date', 'appointment_time'
+    ].some(key => data[key] !== undefined && data[key] !== null && data[key] !== '');
 }
 
 function detectOrderStart(rawText = '') {
@@ -111,37 +143,56 @@ function detectSummaryShown(rawText = '') {
     return markers.some(marker => text.includes(marker));
 }
 
+function getRequiredFields(orderData = {}) {
+    return REQUIRED_FIELDS_BY_TYPE[resolveBusinessType(orderData.business_type)] || REQUIRED_FIELDS_BY_TYPE.ecommerce;
+}
+
+function getConfirmableFields(orderData = {}) {
+    return CONFIRMABLE_FIELDS_BY_TYPE[resolveBusinessType(orderData.business_type)] || CONFIRMABLE_FIELDS_BY_TYPE.ecommerce;
+}
+
 function getMissingFields(orderData = {}) {
-    return REQUIRED_ORDER_FIELDS.filter(field => !normalizeTextValue(orderData[field]));
+    return getRequiredFields(orderData).filter(field => !normalizeTextValue(orderData[field]));
 }
 
 function getConfirmableMissingFields(orderData = {}) {
-    return CONFIRMABLE_ORDER_FIELDS.filter(field => !normalizeTextValue(orderData[field]));
+    return getConfirmableFields(orderData).filter(field => !normalizeTextValue(orderData[field]));
 }
 
 function buildOrderItems(orderData = {}) {
+    const businessType = resolveBusinessType(orderData.business_type);
     return [{
+        business_type: businessType,
         product_name: orderData.product_name || null,
+        service_name: orderData.service_name || null,
+        appointment_type: orderData.appointment_type || null,
+        appointment_date: orderData.appointment_date || null,
+        appointment_time: orderData.appointment_time || null,
         variant: orderData.variant || null,
-        quantity: orderData.quantity || '1',
+        quantity: orderData.quantity || (businessType === 'ecommerce' ? '1' : null),
         price: orderData.price || null,
         sku_code: orderData.sku_code || null,
         product_id: orderData.product_id || null
-    }].filter(item => item.product_name || item.product_id || item.variant || item.sku_code);
+    }].filter(item => item.product_name || item.service_name || item.appointment_type || item.product_id || item.variant || item.sku_code);
 }
 
-function buildNextPromptInstruction(missingFields = []) {
+function buildNextPromptInstruction(missingFields = [], businessType = 'ecommerce') {
     const labels = {
         product_name: 'প্রোডাক্টের নাম',
+        service_name: 'সার্ভিসের নাম',
+        appointment_type: 'অ্যাপয়েন্টমেন্টের ধরন',
+        appointment_date: 'তারিখ',
+        appointment_time: 'সময়',
         quantity: 'পরিমাণ',
         customer_name: 'আপনার নাম',
         phone: 'ফোন নম্বর',
         address: 'ডেলিভারি লোকেশন'
     };
-    const important = missingFields.filter(field => ['customer_name', 'phone', 'address'].includes(field));
+    const important = missingFields.filter(field => ['customer_name', 'phone', 'address', 'appointment_date', 'appointment_time'].includes(field));
     const fieldsToAsk = important.length > 0 ? important : missingFields.slice(0, 2);
     if (fieldsToAsk.length === 0) return null;
-    return `অর্ডারটি নিতে ${fieldsToAsk.map(field => labels[field] || field).join(', ')} দিন।`;
+    const noun = businessType === 'appointment' ? 'বুকিংটি' : businessType === 'service' ? 'সার্ভিস রিকোয়েস্টটি' : 'অর্ডারটি';
+    return `${noun} নিতে ${fieldsToAsk.map(field => labels[field] || field).join(', ')} দিন।`;
 }
 
 function determineSection({ intent, mergedData, rawText, previousState }) {
@@ -243,7 +294,8 @@ async function upsertOrderState({ platform, pageId, senderId, section, orderData
 }
 
 function buildLegacySavePayload({ pageId, senderId, platform, orderData }) {
-    let resolvedProductName = orderData.product_name || 'Recovered Lead';
+    const businessType = resolveBusinessType(orderData.business_type);
+    let resolvedProductName = orderData.product_name || orderData.service_name || orderData.appointment_type || 'Recovered Lead';
     const skuRef = orderData.sku_code || null;
     if (skuRef && !String(resolvedProductName).includes('[SKU:')) {
         resolvedProductName = `${resolvedProductName} [SKU:${skuRef}]`;
@@ -253,10 +305,20 @@ function buildLegacySavePayload({ pageId, senderId, platform, orderData }) {
         page_id: pageId,
         sender_id: senderId,
         platform,
+        business_type: businessType,
         product_name: resolvedProductName,
+        service_name: orderData.service_name || null,
+        service_package: orderData.service_package || null,
+        service_details: orderData.service_details || null,
+        delivery_method: orderData.delivery_method || null,
+        appointment_type: orderData.appointment_type || null,
+        appointment_date: orderData.appointment_date || null,
+        appointment_time: orderData.appointment_time || null,
+        appointment_notes: orderData.appointment_notes || null,
+        assigned_to: orderData.assigned_to || null,
         phone: orderData.phone || null,
-        address: orderData.address || 'Pending',
-        quantity: orderData.quantity || '1',
+        address: orderData.address || (businessType === 'ecommerce' ? 'Pending' : null),
+        quantity: orderData.quantity || (businessType === 'ecommerce' ? '1' : null),
         price: orderData.price ? parsePrice(orderData.price) : null,
         customer_name: orderData.customer_name || 'Pending',
         customer_email: orderData.customer_email || null,
@@ -394,13 +456,15 @@ async function orchestrateOrder(params) {
     }
 
     const mergedData = mergeOrderData(previousData, extracted);
+    const businessType = resolveBusinessType(mergedData.business_type);
+    mergedData.business_type = businessType;
     const decision = determineSection({ intent, mergedData, rawText, previousState });
     if (!decision.section) {
         return { status: 'NO_ACTION', reason: 'NO_ORDER_START' };
     }
     const items = buildOrderItems(mergedData);
     const nextPromptInstruction = decision.section === 'draft'
-        ? buildNextPromptInstruction(decision.missingFields)
+        ? buildNextPromptInstruction(decision.missingFields, businessType)
         : null;
 
     let confirmedResult = null;

@@ -2150,7 +2150,11 @@ async function approveDepositTransaction(txn) {
 
 // 17. Save WhatsApp Order Tracking
 async function saveWhatsAppOrderTracking(orderData) {
-    let { session_name, sender_id, product_name, number, location, product_quantity, price, customer_email, customer_name, client } = orderData;
+    let {
+        session_name, sender_id, product_name, number, location, product_quantity, price, customer_email, customer_name, client,
+        business_type = 'ecommerce', service_name, service_package, service_details, delivery_method,
+        appointment_type, appointment_date, appointment_time, appointment_notes, assigned_to
+    } = orderData;
     const db = client || { query };
 
     // Clean product name
@@ -2165,6 +2169,17 @@ async function saveWhatsAppOrderTracking(orderData) {
             ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS customer_email text;
             ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS customer_name text;
             ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS status text DEFAULT 'ongoing';
+            ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS business_type text DEFAULT 'ecommerce';
+            ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS service_name text;
+            ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS service_package text;
+            ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS service_details text;
+            ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS delivery_method text;
+            ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS appointment_type text;
+            ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS appointment_date text;
+            ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS appointment_time text;
+            ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS appointment_notes text;
+            ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS assigned_to text;
+            ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
         `);
     } catch (e) {
         console.warn("[DB] whatsapp_order_tracking migration failed:", e.message);
@@ -2173,7 +2188,9 @@ async function saveWhatsAppOrderTracking(orderData) {
     try {
         // SMART MERGE: Last 1 hour
         const recentOrder = await db.query(
-            `SELECT id, product_name, number, location, product_quantity, price, customer_email, customer_name
+            `SELECT id, product_name, number, location, product_quantity, price, customer_email, customer_name,
+                    business_type, service_name, service_package, service_details, delivery_method,
+                    appointment_type, appointment_date, appointment_time, appointment_notes, assigned_to
              FROM whatsapp_order_tracking 
              WHERE session_name = $1::text AND sender_id = $2::text 
              AND created_at >= NOW() - INTERVAL '1 hour'
@@ -2215,8 +2232,27 @@ async function saveWhatsAppOrderTracking(orderData) {
                 updates.push(`customer_name = $${idx++}::text`);
                 values.push(customer_name);
             }
+            const extraFields = {
+                business_type,
+                service_name,
+                service_package,
+                service_details,
+                delivery_method,
+                appointment_type,
+                appointment_date,
+                appointment_time,
+                appointment_notes,
+                assigned_to
+            };
+            for (const [field, value] of Object.entries(extraFields)) {
+                if (value !== undefined && value !== null && value !== '') {
+                    updates.push(`${field} = $${idx++}::text`);
+                    values.push(value);
+                }
+            }
 
             if (updates.length > 0) {
+                updates.push('updated_at = NOW()');
                 values.push(existing.id);
                 const updateResult = await db.query(
                     `UPDATE whatsapp_order_tracking SET ${updates.join(', ')} WHERE id = $${idx}::bigint RETURNING *`,
@@ -2238,12 +2274,21 @@ async function saveWhatsAppOrderTracking(orderData) {
             return null;
         }
 
+        const initialStatus = business_type === 'service' ? 'new' : business_type === 'appointment' ? 'requested' : 'ongoing';
         const result = await db.query(
             `INSERT INTO whatsapp_order_tracking
-                (session_name, sender_id, product_name, number, location, product_quantity, price, customer_email, customer_name)
-             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, $9::text)
+                (session_name, sender_id, product_name, number, location, product_quantity, price, customer_email, customer_name,
+                 business_type, service_name, service_package, service_details, delivery_method,
+                 appointment_type, appointment_date, appointment_time, appointment_notes, assigned_to, status, updated_at)
+             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, $9::text,
+                     $10::text, $11::text, $12::text, $13::text, $14::text,
+                     $15::text, $16::text, $17::text, $18::text, $19::text, $20::text, NOW())
              RETURNING *`,
-            [session_name || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null, customer_email || null, customer_name || null]
+            [
+                session_name || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null, customer_email || null, customer_name || null,
+                business_type || 'ecommerce', service_name || null, service_package || null, service_details || null, delivery_method || null,
+                appointment_type || null, appointment_date || null, appointment_time || null, appointment_notes || null, assigned_to || null, initialStatus
+            ]
         );
         return { ...result.rows[0], isNew: true };
     } catch (error) {
@@ -2802,6 +2847,18 @@ async function logMessage(msgData) {
 // 12. Save Order (Unified Wrapper)
 async function saveOrder(orderData) {
     const { platform } = orderData;
+    const sharedOrderFields = {
+        business_type: orderData.business_type || 'ecommerce',
+        service_name: orderData.service_name,
+        service_package: orderData.service_package,
+        service_details: orderData.service_details,
+        delivery_method: orderData.delivery_method,
+        appointment_type: orderData.appointment_type,
+        appointment_date: orderData.appointment_date,
+        appointment_time: orderData.appointment_time,
+        appointment_notes: orderData.appointment_notes,
+        assigned_to: orderData.assigned_to
+    };
     const client = await getPool().connect();
     try {
         await client.query('BEGIN');
@@ -2817,7 +2874,8 @@ async function saveOrder(orderData) {
                     product_quantity: orderData.quantity,
                     price: orderData.price,
                     customer_email: orderData.customer_email,
-                    customer_name: orderData.customer_name
+                    customer_name: orderData.customer_name,
+                    ...sharedOrderFields
                 }
                 : {
                     page_id: orderData.page_id,
@@ -2829,7 +2887,8 @@ async function saveOrder(orderData) {
                     price: orderData.price,
                     sender_number: orderData.phone,
                     customer_email: orderData.customer_email,
-                    customer_name: orderData.customer_name
+                    customer_name: orderData.customer_name,
+                    ...sharedOrderFields
                 }),
             client
         });
@@ -2869,7 +2928,11 @@ async function updateContactPhone(pageId, senderId, phone) {
 
 // 12. Save Order Tracking (Messenger)
 async function saveOrderTracking(orderData) {
-    let { page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, customer_email, client } = orderData;
+    let {
+        page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, customer_email, customer_name, client,
+        business_type = 'ecommerce', service_name, service_package, service_details, delivery_method,
+        appointment_type, appointment_date, appointment_time, appointment_notes, assigned_to
+    } = orderData;
     const db = client || { query };
     
     // --- 1. SMART DATA CLEANING (Filter out templates like "নাম: ঠিকানা:") ---
@@ -2920,6 +2983,39 @@ async function saveOrderTracking(orderData) {
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='is_locked') THEN
                     ALTER TABLE fb_order_tracking ADD COLUMN is_locked boolean DEFAULT false;
                 END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='business_type') THEN
+                    ALTER TABLE fb_order_tracking ADD COLUMN business_type text DEFAULT 'ecommerce';
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='service_name') THEN
+                    ALTER TABLE fb_order_tracking ADD COLUMN service_name text;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='service_package') THEN
+                    ALTER TABLE fb_order_tracking ADD COLUMN service_package text;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='service_details') THEN
+                    ALTER TABLE fb_order_tracking ADD COLUMN service_details text;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='delivery_method') THEN
+                    ALTER TABLE fb_order_tracking ADD COLUMN delivery_method text;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='appointment_type') THEN
+                    ALTER TABLE fb_order_tracking ADD COLUMN appointment_type text;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='appointment_date') THEN
+                    ALTER TABLE fb_order_tracking ADD COLUMN appointment_date text;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='appointment_time') THEN
+                    ALTER TABLE fb_order_tracking ADD COLUMN appointment_time text;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='appointment_notes') THEN
+                    ALTER TABLE fb_order_tracking ADD COLUMN appointment_notes text;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='assigned_to') THEN
+                    ALTER TABLE fb_order_tracking ADD COLUMN assigned_to text;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='updated_at') THEN
+                    ALTER TABLE fb_order_tracking ADD COLUMN updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+                END IF;
             END $$;
         `);
     } catch (e) {
@@ -2929,7 +3025,10 @@ async function saveOrderTracking(orderData) {
     try {
         // --- 2. SMART AGENT DECISION (Merge into existing incomplete order) ---
         const recentOrder = await db.query(
-            `SELECT id, is_locked, status, product_name, number, location FROM fb_order_tracking 
+            `SELECT id, is_locked, status, product_name, number, location,
+                    business_type, service_name, service_package, service_details, delivery_method,
+                    appointment_type, appointment_date, appointment_time, appointment_notes, assigned_to
+             FROM fb_order_tracking 
              WHERE page_id = $1::text AND sender_id = $2::text 
              AND created_at > NOW() - INTERVAL '24 hours'
              ORDER BY created_at DESC LIMIT 1`,
@@ -2986,9 +3085,23 @@ async function saveOrderTracking(orderData) {
                             WHEN $9::text IS NOT NULL AND $9::text <> '' THEN $9::text
                             ELSE customer_email
                         END,
+                        business_type = CASE WHEN $10::text IS NOT NULL AND $10::text <> '' THEN $10::text ELSE business_type END,
+                        service_name = CASE WHEN $11::text IS NOT NULL AND $11::text <> '' THEN $11::text ELSE service_name END,
+                        service_package = CASE WHEN $12::text IS NOT NULL AND $12::text <> '' THEN $12::text ELSE service_package END,
+                        service_details = CASE WHEN $13::text IS NOT NULL AND $13::text <> '' THEN $13::text ELSE service_details END,
+                        delivery_method = CASE WHEN $14::text IS NOT NULL AND $14::text <> '' THEN $14::text ELSE delivery_method END,
+                        appointment_type = CASE WHEN $15::text IS NOT NULL AND $15::text <> '' THEN $15::text ELSE appointment_type END,
+                        appointment_date = CASE WHEN $16::text IS NOT NULL AND $16::text <> '' THEN $16::text ELSE appointment_date END,
+                        appointment_time = CASE WHEN $17::text IS NOT NULL AND $17::text <> '' THEN $17::text ELSE appointment_time END,
+                        appointment_notes = CASE WHEN $18::text IS NOT NULL AND $18::text <> '' THEN $18::text ELSE appointment_notes END,
+                        assigned_to = CASE WHEN $19::text IS NOT NULL AND $19::text <> '' THEN $19::text ELSE assigned_to END,
                         updated_at = NOW()
                      WHERE id = $7::bigint`,
-                    [product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderId, orderData.customer_name || null, customer_email || null]
+                    [
+                        product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderId, customer_name || null, customer_email || null,
+                        business_type || null, service_name || null, service_package || null, service_details || null, delivery_method || null,
+                        appointment_type || null, appointment_date || null, appointment_time || null, appointment_notes || null, assigned_to || null
+                    ]
                 );
                 return { id: orderId, status: 'updated', isNew: false };
             }
@@ -3000,12 +3113,21 @@ async function saveOrderTracking(orderData) {
             return null;
         }
 
+        const initialStatus = business_type === 'service' ? 'new' : business_type === 'appointment' ? 'requested' : 'ongoing';
         const result = await db.query(
             `INSERT INTO fb_order_tracking
-                (page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, created_at, status, is_locked, customer_name, customer_email)
-             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, NOW(), 'ongoing', FALSE, $9::text, $10::text)
+                (page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, created_at, status, is_locked, customer_name, customer_email,
+                 business_type, service_name, service_package, service_details, delivery_method,
+                 appointment_type, appointment_date, appointment_time, appointment_notes, assigned_to, updated_at)
+             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, NOW(), $9::text, FALSE, $10::text, $11::text,
+                     $12::text, $13::text, $14::text, $15::text, $16::text,
+                     $17::text, $18::text, $19::text, $20::text, $21::text, NOW())
              RETURNING *`,
-            [page_id || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderData.customer_name || null, customer_email || null]
+            [
+                page_id || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, initialStatus, customer_name || null, customer_email || null,
+                business_type || 'ecommerce', service_name || null, service_package || null, service_details || null, delivery_method || null,
+                appointment_type || null, appointment_date || null, appointment_time || null, appointment_notes || null, assigned_to || null
+            ]
         );
         return { ...result.rows[0], isNew: true };
 

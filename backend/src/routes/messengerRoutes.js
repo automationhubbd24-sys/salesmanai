@@ -31,6 +31,26 @@ async function ensureMessengerPageColumns() {
     `);
 }
 
+async function ensureMessengerOrderColumns() {
+    await pgClient.query(`
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS customer_name text;
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS customer_email text;
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS status text DEFAULT 'ongoing';
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS is_locked boolean DEFAULT false;
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS business_type text DEFAULT 'ecommerce';
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS service_name text;
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS service_package text;
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS service_details text;
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS delivery_method text;
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS appointment_type text;
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS appointment_date text;
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS appointment_time text;
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS appointment_notes text;
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS assigned_to text;
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+    `);
+}
+
 async function getPageByPageId(pageId, userId, userEmail) {
     const { rows } = await pgClient.query(
         `SELECT * FROM page_access_token_message
@@ -995,9 +1015,11 @@ router.get('/order-states', authMiddleware, async (req, res) => {
 
 router.get('/orders', authMiddleware, async (req, res) => {
     try {
+        await ensureMessengerOrderColumns();
         const pageId = String(req.query.page_id || '').trim();
         const from = req.query.from ? Number(req.query.from) : null;
         const to = req.query.to ? Number(req.query.to) : null;
+        const businessType = String(req.query.business_type || '').trim().toLowerCase();
         if (!pageId) return res.status(400).json({ error: 'page_id is required' });
 
         let authorization = await authorizeMessengerResource(req, pageId, 'orders', 'view_all');
@@ -1017,10 +1039,17 @@ router.get('/orders', authMiddleware, async (req, res) => {
             idx += 2;
         }
         if (Number.isFinite(from)) { conditions.push(`o.created_at >= to_timestamp($${idx} / 1000.0)`); values.push(from); idx += 1; }
-        if (Number.isFinite(to)) { conditions.push(`o.created_at <= to_timestamp($${idx} / 1000.0)`); values.push(to); }
+        if (Number.isFinite(to)) { conditions.push(`o.created_at <= to_timestamp($${idx} / 1000.0)`); values.push(to); idx += 1; }
+        if (['ecommerce', 'service', 'appointment'].includes(businessType)) {
+            conditions.push(`COALESCE(o.business_type, 'ecommerce') = $${idx}`);
+            values.push(businessType);
+            idx += 1;
+        }
 
         const result = await pgClient.query(`
             SELECT o.id, o.product_name, o.number, o.location, o.product_quantity, o.price, o.created_at, o.sender_id, o.status, o.is_locked, o.customer_name,
+                   COALESCE(o.business_type, 'ecommerce') AS business_type, o.service_name, o.service_package, o.service_details, o.delivery_method,
+                   o.appointment_type, o.appointment_date, o.appointment_time, o.appointment_notes, o.assigned_to,
                    (SELECT toa.member_email
                     FROM team_order_assignments toa
                     WHERE LOWER(toa.owner_email) = LOWER($2)
@@ -1202,9 +1231,10 @@ router.get('/stats', authMiddleware, async (req, res) => {
 
 router.patch('/orders/:id/status', authMiddleware, async (req, res) => {
     try {
+        await ensureMessengerOrderColumns();
         const { id } = req.params;
         const { status } = req.body;
-        const allowedStatuses = ['ongoing', 'delivered', 'locked', 'cancelled'];
+        const allowedStatuses = ['pending', 'ongoing', 'delivered', 'locked', 'cancelled', 'new', 'in_progress', 'waiting_customer', 'completed', 'requested', 'confirmed', 'rescheduled', 'no_show'];
 
         if (!allowedStatuses.includes(status)) {
             return res.status(400).json({ error: 'Invalid status' });

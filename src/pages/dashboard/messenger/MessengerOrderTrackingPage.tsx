@@ -52,12 +52,22 @@ import { useParams } from "react-router-dom";
 
 interface Order {
   id: string;
+  business_type?: BusinessType;
   product_name: string;
   product_quantity: string | number;
   price: string | number;
   location: string;
   number: string;
   customer_name?: string;
+  service_name?: string;
+  service_package?: string;
+  service_details?: string;
+  delivery_method?: string;
+  appointment_type?: string;
+  appointment_date?: string;
+  appointment_time?: string;
+  appointment_notes?: string;
+  assigned_to?: string;
   status: string;
   sender_id: string;
   created_at: string;
@@ -127,21 +137,60 @@ const businessAccentClasses = {
   },
 } as const;
 
-const orderExportHeaders = ["ID", "Product Name", "Customer Name", "Number", "Location", "Quantity", "Price", "Date"];
+const statusOptionsByType: Record<BusinessType, Array<{ value: string; label: string }>> = {
+  ecommerce: [
+    { value: "ongoing", label: "Ongoing" },
+    { value: "delivered", label: "Delivered" },
+    { value: "locked", label: "Locked" },
+    { value: "cancelled", label: "Cancelled" },
+  ],
+  service: [
+    { value: "new", label: "New" },
+    { value: "in_progress", label: "In Progress" },
+    { value: "waiting_customer", label: "Waiting" },
+    { value: "completed", label: "Completed" },
+    { value: "cancelled", label: "Cancelled" },
+  ],
+  appointment: [
+    { value: "requested", label: "Requested" },
+    { value: "confirmed", label: "Confirmed" },
+    { value: "rescheduled", label: "Rescheduled" },
+    { value: "completed", label: "Completed" },
+    { value: "cancelled", label: "Cancelled" },
+    { value: "no_show", label: "No Show" },
+  ],
+};
 
-const getOrderExportRows = (orders: Order[]) => [
-  orderExportHeaders,
-  ...orders.map((order) => [
-    order.id,
-    order.product_name || "",
-    order.customer_name || "",
-    order.number || "",
-    order.location || "",
-    order.product_quantity || "",
-    order.price || "",
-    order.created_at || "",
-  ]),
-];
+const getBusinessType = (type?: BusinessType | null): BusinessType => type || "ecommerce";
+const getPrimaryName = (order: Order, type: BusinessType) =>
+  type === "service" ? order.service_name || order.product_name : type === "appointment" ? order.appointment_type || order.product_name : order.product_name;
+const getStatusClass = (status?: string) => cn(
+  ["pending", "new", "requested"].includes(status || "") && "bg-orange-500/10 text-orange-500 hover:bg-orange-500/20",
+  ["ongoing", "in_progress", "confirmed"].includes(status || "") && "bg-[#00ff88]/10 text-[#00ff88] hover:bg-[#00ff88]/20",
+  ["delivered", "completed"].includes(status || "") && "bg-blue-500/10 text-blue-500 hover:bg-blue-500/20",
+  ["locked", "no_show"].includes(status || "") && "bg-red-500/10 text-red-500 hover:bg-red-500/20",
+  status === "cancelled" && "bg-muted text-muted-foreground hover:bg-muted/80",
+  status === "rescheduled" && "bg-violet-500/10 text-violet-500 hover:bg-violet-500/20"
+);
+
+const getOrderExportRows = (orders: Order[], type: BusinessType) => {
+  const headers = type === "service"
+    ? ["ID", "Service", "Package", "Details", "Customer Name", "Number", "Delivery Method", "Status", "Date"]
+    : type === "appointment"
+      ? ["ID", "Appointment", "Date", "Time", "Assigned To", "Customer Name", "Number", "Notes", "Status", "Created At"]
+      : ["ID", "Product Name", "Customer Name", "Number", "Location", "Quantity", "Price", "Status", "Date"];
+
+  return [
+    headers,
+    ...orders.map((order) => type === "service" ? [
+      order.id, order.service_name || order.product_name || "", order.service_package || "", order.service_details || "", order.customer_name || "", order.number || "", order.delivery_method || "", order.status || "", order.created_at || "",
+    ] : type === "appointment" ? [
+      order.id, order.appointment_type || order.product_name || "", order.appointment_date || "", order.appointment_time || "", order.assigned_to || "", order.customer_name || "", order.number || "", order.appointment_notes || "", order.status || "", order.created_at || "",
+    ] : [
+      order.id, order.product_name || "", order.customer_name || "", order.number || "", order.location || "", order.product_quantity || "", order.price || "", order.status || "", order.created_at || "",
+    ]),
+  ];
+};
 
 const escapeCsvCell = (value: string | number) => {
   const text = String(value ?? "");
@@ -199,6 +248,7 @@ export default function MessengerOrderTrackingPage() {
 
   const activePageId = currentPage?.page_id || null;
   const activeDbId = currentPage?.db_id || (typeof window !== "undefined" ? Number(localStorage.getItem("active_fb_db_id") || 0) : 0);
+  const activeBusinessType = getBusinessType(savedBusinessType);
 
   const updateOrderStatus = async (orderId: string, newStatus: string) => {
     const token = localStorage.getItem("auth_token");
@@ -225,7 +275,22 @@ export default function MessengerOrderTrackingPage() {
   };
 
   const handleCopy = (order: Order) => {
-    const textToCopy = `Customer Name: ${order.customer_name || 'N/A'}
+    const type = getBusinessType(order.business_type || activeBusinessType);
+    const textToCopy = type === "service"
+      ? `Customer Name: ${order.customer_name || 'N/A'}
+Service: ${order.service_name || order.product_name || 'N/A'}
+Package: ${order.service_package || 'N/A'}
+Details: ${order.service_details || 'N/A'}
+Delivery Method: ${order.delivery_method || 'N/A'}
+Phone: ${order.number || 'N/A'}`
+      : type === "appointment"
+        ? `Customer Name: ${order.customer_name || 'N/A'}
+Appointment: ${order.appointment_type || order.product_name || 'N/A'}
+Date: ${order.appointment_date || 'N/A'}
+Time: ${order.appointment_time || 'N/A'}
+Assigned To: ${order.assigned_to || 'N/A'}
+Phone: ${order.number || 'N/A'}`
+        : `Customer Name: ${order.customer_name || 'N/A'}
 Product: ${order.product_name || 'N/A'}
 Qty: ${order.product_quantity || '1'}
 Price: ${order.price || 'N/A'}
@@ -278,6 +343,7 @@ Phone: ${order.number || 'N/A'}`;
     try {
       const params = new URLSearchParams();
       params.set("page_id", activePageId);
+      params.set("business_type", activeBusinessType);
 
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -344,7 +410,7 @@ Phone: ${order.number || 'N/A'}`;
         }
       }
     }
-  }, [dateFilter, date, activePageId]);
+  }, [dateFilter, date, activePageId, activeBusinessType]);
 
   // Combined effect for initial fetch and filter changes
   useEffect(() => {
@@ -359,7 +425,7 @@ Phone: ${order.number || 'N/A'}`;
       return;
     }
 
-    const csvContent = getOrderExportRows(orders)
+    const csvContent = getOrderExportRows(orders, activeBusinessType)
       .map((row) => row.map(escapeCsvCell).join(","))
       .join("\r\n");
 
@@ -376,7 +442,7 @@ Phone: ${order.number || 'N/A'}`;
       return;
     }
 
-    const tableRows = getOrderExportRows(orders)
+    const tableRows = getOrderExportRows(orders, activeBusinessType)
       .map((row) => `<tr>${row.map((cell) => `<td>${escapeSheetCell(cell)}</td>`).join("")}</tr>`)
       .join("");
     const sheetContent = `<!DOCTYPE html><html><head><meta charset="UTF-8" /></head><body><table>${tableRows}</table></body></html>`;
@@ -496,10 +562,12 @@ Phone: ${order.number || 'N/A'}`;
                       <TableHeader className="bg-muted/50">
                           <TableRow>
                               <TableHead>Date</TableHead>
-                              <TableHead>Product</TableHead>
-                              <TableHead>Qty</TableHead>
-                              <TableHead>Price</TableHead>
-                              <TableHead>Location</TableHead>
+                              <TableHead>{activeBusinessType === "service" ? "Service" : activeBusinessType === "appointment" ? "Appointment" : "Product"}</TableHead>
+                              {activeBusinessType === "ecommerce" && <TableHead>Qty</TableHead>}
+                              {activeBusinessType === "ecommerce" && <TableHead>Price</TableHead>}
+                              {activeBusinessType === "service" && <TableHead>Package</TableHead>}
+                              {activeBusinessType === "appointment" && <TableHead>Schedule</TableHead>}
+                              <TableHead>{activeBusinessType === "appointment" ? "Assigned" : activeBusinessType === "service" ? "Delivery" : "Location"}</TableHead>
                               <TableHead>Customer</TableHead>
                               <TableHead>Phone</TableHead>
                               <TableHead>Status</TableHead>
@@ -513,20 +581,24 @@ Phone: ${order.number || 'N/A'}`;
                                   <TableCell className="font-medium whitespace-nowrap">
                                       {format(new Date(order.created_at), "MMM d, HH:mm")}
                                   </TableCell>
-                                  <TableCell className="font-medium">{order.product_name}</TableCell>
-                                  <TableCell>{order.product_quantity}</TableCell>
-                                  <TableCell>{order.price}</TableCell>
+                                  <TableCell className="font-medium">{getPrimaryName(order, activeBusinessType) || '-'}</TableCell>
+                                  {activeBusinessType === "ecommerce" && <TableCell>{order.product_quantity}</TableCell>}
+                                  {activeBusinessType === "ecommerce" && <TableCell>{order.price}</TableCell>}
+                                  {activeBusinessType === "service" && <TableCell>{order.service_package || '-'}</TableCell>}
+                                  {activeBusinessType === "appointment" && <TableCell>{[order.appointment_date, order.appointment_time].filter(Boolean).join(' ') || '-'}</TableCell>}
                                   <TableCell className="max-w-[200px]">
                                     <Popover>
                                       <PopoverTrigger asChild>
-                                        <span className="truncate block cursor-pointer hover:underline text-primary" title="Click to view full address">
-                                          {order.location}
+                                        <span className="truncate block cursor-pointer hover:underline text-primary" title="Click to view full details">
+                                          {activeBusinessType === "appointment" ? order.assigned_to || '-' : activeBusinessType === "service" ? order.delivery_method || order.service_details || '-' : order.location || '-'}
                                         </span>
                                       </PopoverTrigger>
                                       <PopoverContent className="w-80">
                                         <div className="space-y-2">
-                                          <h4 className="font-medium leading-none">Full Address</h4>
-                                          <p className="text-sm text-muted-foreground break-words">{order.location}</p>
+                                          <h4 className="font-medium leading-none">Details</h4>
+                                          <p className="text-sm text-muted-foreground break-words">
+                                            {activeBusinessType === "appointment" ? order.appointment_notes || order.assigned_to || '-' : activeBusinessType === "service" ? order.service_details || order.delivery_method || '-' : order.location || '-'}
+                                          </p>
                                         </div>
                                       </PopoverContent>
                                     </Popover>
@@ -539,23 +611,19 @@ Phone: ${order.number || 'N/A'}`;
                                   </TableCell>
                                   <TableCell>
                                     <Select 
-                                      value={order.status || 'ongoing'} 
+                                      value={order.status || statusOptionsByType[activeBusinessType][0].value} 
                                       onValueChange={(val) => updateOrderStatus(order.id, val)}
                                     >
                                       <SelectTrigger className={cn(
-                                        "w-[110px] h-8 text-xs font-medium border-none",
-                                        (order.status === 'ongoing' || !order.status) && "bg-[#00ff88]/10 text-[#00ff88] hover:bg-[#00ff88]/20",
-                                        order.status === 'delivered' && "bg-blue-500/10 text-blue-500 hover:bg-blue-500/20",
-                                        order.status === 'locked' && "bg-red-500/10 text-red-500 hover:bg-red-500/20",
-                                        order.status === 'cancelled' && "bg-muted text-muted-foreground hover:bg-muted/80"
+                                        "w-[130px] h-8 text-xs font-medium border-none",
+                                        getStatusClass(order.status || statusOptionsByType[activeBusinessType][0].value)
                                       )}>
                                         <SelectValue />
                                       </SelectTrigger>
                                       <SelectContent>
-                                        <SelectItem value="ongoing">Ongoing</SelectItem>
-                                        <SelectItem value="delivered">Delivered</SelectItem>
-                                        <SelectItem value="locked">Locked</SelectItem>
-                                        <SelectItem value="cancelled">Cancelled</SelectItem>
+                                        {statusOptionsByType[activeBusinessType].map((option) => (
+                                          <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                                        ))}
                                       </SelectContent>
                                     </Select>
                                   </TableCell>

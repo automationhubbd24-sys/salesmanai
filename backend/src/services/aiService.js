@@ -2036,11 +2036,21 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                                                 phone: { type: ["string", "null"] },
                                                 address: { type: ["string", "null"] },
                                                 customer_name: { type: ["string", "null"] },
+                                                business_type: { type: ["string", "null"], enum: ["ecommerce", "service", "appointment", null] },
                                                 product_name: { type: ["string", "null"] },
+                                                service_name: { type: ["string", "null"] },
+                                                service_package: { type: ["string", "null"] },
+                                                service_details: { type: ["string", "null"] },
+                                                delivery_method: { type: ["string", "null"] },
+                                                appointment_type: { type: ["string", "null"] },
+                                                appointment_date: { type: ["string", "null"] },
+                                                appointment_time: { type: ["string", "null"] },
+                                                appointment_notes: { type: ["string", "null"] },
+                                                assigned_to: { type: ["string", "null"] },
                                                 quantity: { type: ["string", "null"] },
                                                 price: { type: ["string", "null"] }
                                             },
-                                            required: ["phone", "address", "customer_name", "product_name", "quantity", "price"]
+                                            required: ["phone", "address", "customer_name", "business_type", "product_name", "service_name", "service_package", "service_details", "delivery_method", "appointment_type", "appointment_date", "appointment_time", "appointment_notes", "assigned_to", "quantity", "price"]
                                         }
                                     },
                                     required: ["intent", "fields"]
@@ -2194,16 +2204,28 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                     if (structuredFinal.order_details || (structuredFinal.action === "save_order" && (structuredFinal.order_data || structuredFinal.details)) || structuredFinal.customer_phone || structuredFinal.customer_address || structuredFinal.phone) {
                         
                         // Unified Order Data Object with Validation & Precision
-                        const rawData = structuredFinal.order_details || structuredFinal.order_data || structuredFinal.details || {};
+                        const details = structuredFinal.order_details || structuredFinal.order_data || structuredFinal.details || {};
+                        const rawData = details.fields && typeof details.fields === 'object' ? details.fields : details;
                         
                         // Mapping fields from different potential AI structures
+                        const businessType = structuredFinal.business_type || rawData.business_type || rawData.order_type || rawData.type || null;
                         const customerPhone = structuredFinal.customer_phone || structuredFinal.phone || rawData.phone || rawData.customer_phone || null;
-                        const customerAddress = structuredFinal.customer_address || rawData.address || rawData.customer_address || null;
+                        const customerAddress = structuredFinal.customer_address || rawData.address || rawData.customer_address || rawData.location || null;
                         const customerName = structuredFinal.customer_name || structuredFinal.name || rawData.name || rawData.customer_name || "Unknown";
-                        const productName = structuredFinal.product_name || structuredFinal.product || rawData.product_name || rawData.product || "Unknown";
+                        const productName = structuredFinal.product_name || structuredFinal.product || rawData.product_name || rawData.product || rawData.item_name || "Unknown";
 
                         const orderData = {
+                            business_type: businessType,
                             product_name: productName,
+                            service_name: rawData.service_name || rawData.service || null,
+                            service_package: rawData.service_package || rawData.package || rawData.plan || null,
+                            service_details: rawData.service_details || rawData.requirements || rawData.details || null,
+                            delivery_method: rawData.delivery_method || rawData.delivery_channel || rawData.method || null,
+                            appointment_type: rawData.appointment_type || rawData.booking_type || null,
+                            appointment_date: rawData.appointment_date || rawData.booking_date || rawData.date || null,
+                            appointment_time: rawData.appointment_time || rawData.booking_time || rawData.time || null,
+                            appointment_notes: rawData.appointment_notes || rawData.notes || rawData.note || null,
+                            assigned_to: rawData.assigned_to || rawData.doctor || rawData.consultant || null,
                             quantity: parseInt(rawData.quantity || structuredFinal.quantity || 1) || 1,
                             price: parseFloat(rawData.price || structuredFinal.price || 0) || 0,
                             customer_name: customerName,
@@ -2214,6 +2236,8 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                         const hasMeaningfulOrderData = Boolean(
                             orderData.customer_phone ||
                             orderData.customer_address ||
+                            orderData.service_name ||
+                            orderData.appointment_type ||
                             (orderData.product_name && orderData.product_name !== 'Unknown') ||
                             (orderData.customer_name && orderData.customer_name !== 'Unknown')
                         );
@@ -2231,7 +2255,17 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                                         platform: platform || 'messenger',
                                         intent: 'upsert',
                                         data: {
+                                            business_type: orderData.business_type,
                                             product_name: orderData.product_name,
+                                            service_name: orderData.service_name,
+                                            service_package: orderData.service_package,
+                                            service_details: orderData.service_details,
+                                            delivery_method: orderData.delivery_method,
+                                            appointment_type: orderData.appointment_type,
+                                            appointment_date: orderData.appointment_date,
+                                            appointment_time: orderData.appointment_time,
+                                            appointment_notes: orderData.appointment_notes,
+                                            assigned_to: orderData.assigned_to,
                                             phone: orderData.customer_phone,
                                             address: orderData.customer_address,
                                             quantity: orderData.quantity,
@@ -3084,12 +3118,13 @@ ${productContext || "No specific product context provided yet."}
 [PROFESSIONAL ORDER COLLECTION WORKFLOW]
 1. If the customer only asks price/availability/details/photos/colors/sizes, answer normally and do NOT create order_details.
 2. If the customer starts ordering but required fields are missing, create order_details with intent "order_create_or_update" and include only customer-provided fields.
-3. Required fields are product_name, quantity, customer_name, phone, address. If owner/business instructions require extra info, ask for that too.
-4. Draft reply rule: when information is incomplete, ask for the missing order information clearly. Example: customer says "black ta 2 ta den" -> ask for name, phone number and delivery location.
-5. Ask only relevant missing fields. Do not annoy the customer with an extra confirmation question when they already gave all order details.
-6. If all required fields are complete, treat it as confirmed_order directly and reply that the order has been received/taken.
-7. Merge new customer-provided fields with earlier context. Keep previous valid values unless customer corrects them.
-8. If customer changes product/quantity/name/phone/address, use the latest valid customer-provided value.
+3. Detect business_type as "ecommerce", "service", or "appointment" from the customer's request and owner context.
+4. Required fields by type: ecommerce = product_name, quantity, customer_name, phone, address; service = service_name, customer_name, phone; appointment = appointment_type, appointment_date, appointment_time, customer_name, phone.
+5. Draft reply rule: when information is incomplete, ask for the missing relevant information clearly. Example: product order missing address -> ask for delivery location; appointment missing time -> ask for preferred time.
+6. Ask only relevant missing fields. Do not annoy the customer with an extra confirmation question when they already gave all required details.
+7. If all required fields are complete, treat it as confirmed_order directly and reply that the order/service request/booking has been received.
+8. Merge new customer-provided fields with earlier context. Keep previous valid values unless customer corrects them.
+9. If customer changes product/service/appointment/quantity/name/phone/address/date/time, use the latest valid customer-provided value.
 9. Do not invent missing values, price, stock, address, phone, confirmation, or customer details.
 10. Do not create duplicate orders for repeated information; continue the same draft unless the customer clearly starts a new order/product.
 
@@ -3118,7 +3153,17 @@ ${productContext || "No specific product context provided yet."}
        "phone": "...",
        "address": "...",
        "customer_name": "...",
+       "business_type": "ecommerce/service/appointment",
        "product_name": "...",
+       "service_name": "...",
+       "service_package": "...",
+       "service_details": "...",
+       "delivery_method": "...",
+       "appointment_type": "...",
+       "appointment_date": "...",
+       "appointment_time": "...",
+       "appointment_notes": "...",
+       "assigned_to": "...",
        "quantity": "...",
        "price": "..."
     }

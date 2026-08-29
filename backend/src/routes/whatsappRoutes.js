@@ -167,6 +167,25 @@ function buildMessageTypeFilter(messageType) {
     }
 }
 
+async function ensureWhatsAppOrderColumns() {
+    await pgClient.query(`
+        ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS customer_email text;
+        ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS customer_name text;
+        ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS status text DEFAULT 'ongoing';
+        ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS business_type text DEFAULT 'ecommerce';
+        ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS service_name text;
+        ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS service_package text;
+        ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS service_details text;
+        ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS delivery_method text;
+        ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS appointment_type text;
+        ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS appointment_date text;
+        ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS appointment_time text;
+        ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS appointment_notes text;
+        ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS assigned_to text;
+        ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+    `);
+}
+
 function sendLegacySessionRetired(res) {
     return res.status(410).json({
         error: 'Legacy QR/session-based WhatsApp has been retired. Please use the Meta official connection flow.'
@@ -535,9 +554,11 @@ router.get('/order-states', authMiddleware, async (req, res) => {
 
 router.get('/orders', authMiddleware, async (req, res) => {
     try {
+        await ensureWhatsAppOrderColumns();
         const sessionName = String(req.query.session_name || '').trim();
         const from = req.query.from ? Number(req.query.from) : null;
         const to = req.query.to ? Number(req.query.to) : null;
+        const businessType = String(req.query.business_type || '').trim().toLowerCase();
 
         if (!sessionName) {
             return res.status(400).json({ error: 'session_name is required' });
@@ -568,11 +589,19 @@ router.get('/orders', authMiddleware, async (req, res) => {
         if (Number.isFinite(to)) {
             conditions.push(`created_at <= to_timestamp($${idx} / 1000.0)`);
             values.push(to);
+            idx += 1;
+        }
+        if (['ecommerce', 'service', 'appointment'].includes(businessType)) {
+            conditions.push(`COALESCE(o.business_type, 'ecommerce') = $${idx}`);
+            values.push(businessType);
+            idx += 1;
         }
 
         const where = conditions.join(' AND ');
         const queryText = `
-            SELECT o.id, o.product_name, o.number, o.location, o.product_quantity, o.price, o.created_at, o.sender_id, o.status, COALESCE(o.customer_name, c.name) AS customer_name
+            SELECT o.id, o.product_name, o.number, o.location, o.product_quantity, o.price, o.created_at, o.sender_id, o.status, COALESCE(o.customer_name, c.name) AS customer_name,
+                   COALESCE(o.business_type, 'ecommerce') AS business_type, o.service_name, o.service_package, o.service_details, o.delivery_method,
+                   o.appointment_type, o.appointment_date, o.appointment_time, o.appointment_notes, o.assigned_to
             FROM whatsapp_order_tracking o
             LEFT JOIN whatsapp_contacts c ON o.session_name = c.session_name AND o.sender_id = c.phone_number
             WHERE ${where}
@@ -608,9 +637,10 @@ router.get('/orders', authMiddleware, async (req, res) => {
 
 router.patch('/orders/:id/status', authMiddleware, async (req, res) => {
     try {
+        await ensureWhatsAppOrderColumns();
         const { id } = req.params;
         const { status } = req.body;
-        const allowedStatuses = ['pending', 'ongoing', 'delivered', 'locked', 'cancelled'];
+        const allowedStatuses = ['pending', 'ongoing', 'delivered', 'locked', 'cancelled', 'new', 'in_progress', 'waiting_customer', 'completed', 'requested', 'confirmed', 'rescheduled', 'no_show'];
 
         if (!allowedStatuses.includes(status)) {
             return res.status(400).json({ error: 'Invalid status' });
@@ -627,7 +657,7 @@ router.patch('/orders/:id/status', authMiddleware, async (req, res) => {
 
         const result = await pgClient.query(
             `UPDATE whatsapp_order_tracking 
-             SET status = $1
+             SET status = $1, updated_at = NOW()
              WHERE id = $2 
              RETURNING *`,
             [status, id]
