@@ -131,7 +131,8 @@ async function getPageConfig(pageId) {
               fb.semantic_cache_autosave,
               fb.order_email_confirmation_enabled,
               fb.admin_notification_email,
-              fb.engine_override
+              fb.engine_override,
+              fb.order_business_type
        FROM page_access_token_message pam
        LEFT JOIN fb_message_database fb ON CAST(fb.page_id AS TEXT) = CAST(pam.page_id AS TEXT)
        WHERE CAST(pam.page_id AS TEXT) = CAST($1 AS TEXT) LIMIT 1`,
@@ -990,11 +991,17 @@ async function initTables() {
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='admin_notification_email') THEN
                     ALTER TABLE fb_message_database ADD COLUMN admin_notification_email TEXT;
                 END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='order_business_type') THEN
+                    ALTER TABLE fb_message_database ADD COLUMN order_business_type TEXT DEFAULT 'ecommerce';
+                END IF;
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='order_email_confirmation_enabled') THEN
                     ALTER TABLE whatsapp_message_database ADD COLUMN order_email_confirmation_enabled BOOLEAN DEFAULT FALSE;
                 END IF;
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='admin_notification_email') THEN
                     ALTER TABLE whatsapp_message_database ADD COLUMN admin_notification_email TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='order_business_type') THEN
+                    ALTER TABLE whatsapp_message_database ADD COLUMN order_business_type TEXT DEFAULT 'ecommerce';
                 END IF;
             END $$;
         `);

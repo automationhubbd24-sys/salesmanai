@@ -255,12 +255,29 @@ export default function WhatsAppOrderTrackingPage() {
     ? businessTypes.find((type) => type.id === savedBusinessType)?.title || "Business Type"
     : "Select Business Type";
 
-  const handleBusinessContinue = () => {
+  const handleBusinessContinue = async () => {
     if (businessTypeStorageKey) {
       localStorage.setItem(businessTypeStorageKey, selectedBusinessType);
     }
     setSavedBusinessType(selectedBusinessType);
     setBusinessModalOpen(false);
+
+    // Persist to backend config so AI can read it
+    const token = localStorage.getItem("auth_token");
+    if (token && activeSessionName) {
+      try {
+        await fetch(`${BACKEND_URL}/api/whatsapp/config/${activeSessionName}`, {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ order_business_type: selectedBusinessType }),
+        });
+      } catch (err) {
+        console.error("Failed to save order_business_type to backend config:", err);
+      }
+    }
   };
 
   const fetchOrders = useCallback(async (showLoading = true) => {

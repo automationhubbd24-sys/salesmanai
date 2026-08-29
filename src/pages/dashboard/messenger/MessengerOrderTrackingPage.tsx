@@ -321,12 +321,30 @@ Phone: ${order.number || 'N/A'}`;
     setSelectedOrder(order);
   };
 
-  const handleBusinessContinue = () => {
+  const handleBusinessContinue = async () => {
     if (businessTypeStorageKey) {
       localStorage.setItem(businessTypeStorageKey, selectedBusinessType);
     }
     setSavedBusinessType(selectedBusinessType);
     setBusinessModalOpen(false);
+    
+    // Persist to backend config so AI can read it
+    const token = localStorage.getItem("auth_token");
+    if (token && activePageId) {
+      try {
+        const endpoint = notificationPlatform === "instagram" ? "instagram" : "messenger";
+        await fetch(`${BACKEND_URL}/api/${endpoint}/config/${activePageId}`, {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ order_business_type: selectedBusinessType }),
+        });
+      } catch (err) {
+        console.error("Failed to save order_business_type to backend config:", err);
+      }
+    }
   };
 
   const selectedBusinessLabel = savedBusinessType

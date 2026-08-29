@@ -459,6 +459,7 @@ async function orchestrateOrder(params) {
     const businessType = resolveBusinessType(mergedData.business_type);
     mergedData.business_type = businessType;
     const decision = determineSection({ intent, mergedData, rawText, previousState });
+    
     if (!decision.section) {
         return { status: 'NO_ACTION', reason: 'NO_ORDER_START' };
     }
@@ -508,5 +509,7 @@ module.exports = {
     listOrderStates,
     normalizeBdPhone,
     normalizeBanglaDigits,
-    getMissingFields
+    getMissingFields,
+    buildNextPromptInstruction,
+    resolveBusinessType
 };

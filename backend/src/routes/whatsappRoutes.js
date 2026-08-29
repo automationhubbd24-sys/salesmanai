@@ -1035,7 +1035,8 @@ router.put('/config/:id', async (req, res) => {
             'admin_notification_email',
             'order_reminder_enabled',
             'order_reminder_delay_hours',
-            'order_reminder_message'
+            'order_reminder_message',
+            'order_business_type'
         ];
 
         // Ensure new columns exist
