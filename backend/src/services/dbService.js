@@ -2150,7 +2150,7 @@ async function approveDepositTransaction(txn) {
 
 // 17. Save WhatsApp Order Tracking
 async function saveWhatsAppOrderTracking(orderData) {
-    let { session_name, sender_id, product_name, number, location, product_quantity, price, customer_email, customer_name, phone_optional, client } = orderData;
+    let { session_name, sender_id, product_name, number, location, product_quantity, price, customer_email, customer_name, client } = orderData;
     const db = client || { query };
 
     // Clean product name
@@ -2234,12 +2234,8 @@ async function saveWhatsAppOrderTracking(orderData) {
         }
 
         if (!number || number === 'Pending' || number === 'null' || number.length < 8) {
-            if (phone_optional) {
-                number = sender_id || 'N/A';
-            } else {
-                console.log(`[WA Order] Skipping New Order Creation: Missing or invalid phone number (${number}).`);
-                return null;
-            }
+            console.log(`[WA Order] Skipping New Order Creation: Missing or invalid phone number (${number}).`);
+            return null;
         }
 
         const result = await db.query(
@@ -2805,7 +2801,7 @@ async function logMessage(msgData) {
 
 // 12. Save Order (Unified Wrapper)
 async function saveOrder(orderData) {
-    const { platform, phone_optional } = orderData;
+    const { platform } = orderData;
     const client = await getPool().connect();
     try {
         await client.query('BEGIN');
@@ -2821,8 +2817,7 @@ async function saveOrder(orderData) {
                     product_quantity: orderData.quantity,
                     price: orderData.price,
                     customer_email: orderData.customer_email,
-                    customer_name: orderData.customer_name,
-                    phone_optional
+                    customer_name: orderData.customer_name
                 }
                 : {
                     page_id: orderData.page_id,
@@ -2834,8 +2829,7 @@ async function saveOrder(orderData) {
                     price: orderData.price,
                     sender_number: orderData.phone,
                     customer_email: orderData.customer_email,
-                    customer_name: orderData.customer_name,
-                    phone_optional
+                    customer_name: orderData.customer_name
                 }),
             client
         });
@@ -2875,7 +2869,7 @@ async function updateContactPhone(pageId, senderId, phone) {
 
 // 12. Save Order Tracking (Messenger)
 async function saveOrderTracking(orderData) {
-    let { page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, customer_email, phone_optional, client } = orderData;
+    let { page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, customer_email, client } = orderData;
     const db = client || { query };
     
     // --- 1. SMART DATA CLEANING (Filter out templates like "নাম: ঠিকানা:") ---
@@ -3002,13 +2996,8 @@ async function saveOrderTracking(orderData) {
 
         // --- 3. NEW ORDER (Strict Requirement: Must have a phone number to start a new row) ---
         if (!number || number === 'Pending' || number === 'null' || number.length < 8) {
-            if (phone_optional) {
-                number = sender_id || 'N/A';
-                sender_number = sender_number || number;
-            } else {
-                console.log(`[Order] Skipping New Order Creation: Missing or invalid phone number (${number}).`);
-                return null;
-            }
+            console.log(`[Order] Skipping New Order Creation: Missing or invalid phone number (${number}).`);
+            return null;
         }
 
         const result = await db.query(

@@ -18,9 +18,32 @@ import {
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
-import { Calendar as CalendarIcon, Download, ShoppingBag, Copy, Check, RefreshCw, MessageSquare } from "lucide-react";
+import {
+  ArrowRight,
+  BriefcaseBusiness,
+  Calendar as CalendarIcon,
+  CalendarCheck,
+  Check,
+  CheckCircle2,
+  Copy,
+  Download,
+  Info,
+  MessageSquare,
+  Package,
+  RefreshCw,
+  ShoppingBag,
+  Store,
+} from "lucide-react";
 import { toast } from "sonner";
 import { BACKEND_URL } from "@/config";
 import { OrderNotificationModal } from "@/components/dashboard/OrderNotificationModal";
@@ -39,6 +62,70 @@ interface Order {
   sender_id: string;
   created_at: string;
 }
+
+type BusinessType = "ecommerce" | "service" | "appointment";
+
+const businessTypes: Array<{
+  id: BusinessType;
+  title: string;
+  badge: string;
+  description: string;
+  examples: string[];
+  Icon: typeof Package;
+  accent: "emerald" | "sky" | "violet";
+}> = [
+  {
+    id: "ecommerce",
+    title: "E-commerce",
+    badge: "Product Sell (Courier)",
+    description: "Sell physical products online that require courier delivery to customers.",
+    examples: ["Clothing, gadgets, accessories", "Home decor, electronics", "Any product that needs delivery"],
+    Icon: Package,
+    accent: "emerald",
+  },
+  {
+    id: "service",
+    title: "Service",
+    badge: "Digital / Online Services",
+    description: "Sell digital services or intangible products delivered online without courier.",
+    examples: ["Follower / Like / View Sell", "Digital Products / E-books", "Demand / Lead Generation", "Other Online Services"],
+    Icon: BriefcaseBusiness,
+    accent: "sky",
+  },
+  {
+    id: "appointment",
+    title: "Appointment",
+    badge: "Booking / Reservation",
+    description: "Manage appointments, bookings or reservations for any type of service.",
+    examples: ["Doctor / DC Appointment", "Consultation Booking", "Event / Meeting Reservation", "Any Time-based Booking"],
+    Icon: CalendarCheck,
+    accent: "violet",
+  },
+];
+
+const businessAccentClasses = {
+  emerald: {
+    card: "border-emerald-500/40 bg-emerald-500/[0.045] hover:border-emerald-400/70 hover:bg-emerald-500/[0.08]",
+    iconWrap: "border-emerald-400/60 bg-emerald-500/15 text-emerald-400 shadow-emerald-500/20",
+    badge: "bg-emerald-500/15 text-emerald-400 border-emerald-500/25",
+    example: "text-emerald-400",
+    ring: "ring-emerald-400/70",
+  },
+  sky: {
+    card: "border-sky-500/30 bg-sky-500/[0.035] hover:border-sky-400/70 hover:bg-sky-500/[0.075]",
+    iconWrap: "border-sky-400/60 bg-sky-500/15 text-sky-400 shadow-sky-500/20",
+    badge: "bg-sky-500/15 text-sky-400 border-sky-500/25",
+    example: "text-sky-400",
+    ring: "ring-sky-400/70",
+  },
+  violet: {
+    card: "border-violet-500/30 bg-violet-500/[0.035] hover:border-violet-400/70 hover:bg-violet-500/[0.075]",
+    iconWrap: "border-violet-400/60 bg-violet-500/15 text-violet-400 shadow-violet-500/20",
+    badge: "bg-violet-500/15 text-violet-400 border-violet-500/25",
+    example: "text-violet-400",
+    ring: "ring-violet-400/70",
+  },
+} as const;
 
 const orderExportHeaders = ["ID", "Product Name", "Customer Name", "Number", "Location", "Quantity", "Price", "Date"];
 
@@ -95,6 +182,14 @@ export default function MessengerOrderTrackingPage() {
   const [dateFilter, setDateFilter] = useState<'today' | 'yesterday' | 'custom' | 'all'>('today');
   const [date, setDate] = useState<Date | undefined>(new Date());
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [businessModalOpen, setBusinessModalOpen] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return !localStorage.getItem("messenger_order_business_type");
+  });
+  const [selectedBusinessType, setSelectedBusinessType] = useState<BusinessType>(() => {
+    if (typeof window === "undefined") return "ecommerce";
+    return (localStorage.getItem("messenger_order_business_type") as BusinessType | null) || "ecommerce";
+  });
   const lastFetchParams = useRef("");
   const lastFetchAt = useRef(0);
   const ordersRef = useRef<Order[]>([]);
@@ -151,6 +246,13 @@ Phone: ${order.number || 'N/A'}`;
 
     setSelectedOrder(order);
   };
+
+  const handleBusinessContinue = () => {
+    localStorage.setItem("messenger_order_business_type", selectedBusinessType);
+    setBusinessModalOpen(false);
+  };
+
+  const selectedBusinessLabel = businessTypes.find((type) => type.id === selectedBusinessType)?.title || "Business Type";
 
   useEffect(() => {
     ordersRef.current = orders;
@@ -314,7 +416,15 @@ Phone: ${order.number || 'N/A'}`;
                   </CardTitle>
                   <CardDescription>All orders within the selected period.</CardDescription>
               </div>
-              <div className="flex flex-wrap items-center gap-6">
+              <div className="flex flex-wrap items-center gap-3 md:gap-4">
+                  <Button
+                    variant="outline"
+                    onClick={() => setBusinessModalOpen(true)}
+                    className="border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300"
+                  >
+                    <Store className="mr-2 h-4 w-4" />
+                    {selectedBusinessLabel}
+                  </Button>
                   <Select value={dateFilter} onValueChange={(val: 'today' | 'yesterday' | 'custom' | 'all') => setDateFilter(val)}>
                       <SelectTrigger className="w-[130px]">
                           <SelectValue placeholder="Filter" />
@@ -475,6 +585,89 @@ Phone: ${order.number || 'N/A'}`;
           )}
         </CardContent>
       </Card>
+      <Dialog open={businessModalOpen} onOpenChange={setBusinessModalOpen}>
+        <DialogContent className="max-h-[90vh] w-[calc(100%-2rem)] max-w-5xl overflow-y-auto border-white/10 bg-[#0c1015]/95 p-0 text-white shadow-[0_24px_80px_rgba(0,0,0,0.65)] backdrop-blur-xl sm:rounded-2xl">
+          <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_20%_0%,rgba(0,255,136,0.12),transparent_32%),radial-gradient(circle_at_80%_12%,rgba(59,130,246,0.10),transparent_28%)]" />
+          <div className="p-6 md:p-8">
+            <DialogHeader className="flex-row items-start gap-4 space-y-0 text-left">
+              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full border border-emerald-500/25 bg-emerald-500/15 text-emerald-400 shadow-lg shadow-emerald-500/10">
+                <Store className="h-8 w-8" />
+              </div>
+              <div className="pt-1">
+                <DialogTitle className="text-2xl font-bold tracking-tight">Select Business Type</DialogTitle>
+                <DialogDescription className="mt-2 text-sm text-slate-300">
+                  Choose the type that best matches your business model.
+                </DialogDescription>
+              </div>
+            </DialogHeader>
+
+            <div className="mt-8 grid gap-4 md:grid-cols-3 md:gap-5">
+              {businessTypes.map((type) => {
+                const Icon = type.Icon;
+                const accent = businessAccentClasses[type.accent];
+                const isSelected = selectedBusinessType === type.id;
+
+                return (
+                  <button
+                    key={type.id}
+                    type="button"
+                    onClick={() => setSelectedBusinessType(type.id)}
+                    className={cn(
+                      "group relative flex min-h-[460px] flex-col rounded-xl border p-4 text-center transition-all duration-200 hover:-translate-y-1 focus:outline-none focus:ring-2",
+                      accent.card,
+                      isSelected && "translate-y-[-2px] ring-2",
+                      isSelected && accent.ring
+                    )}
+                  >
+                    <span className={cn(
+                      "absolute right-5 top-5 flex h-7 w-7 items-center justify-center rounded-full border transition-colors",
+                      isSelected ? "border-emerald-400 bg-emerald-400 text-slate-950" : "border-white/20 bg-white/5 text-transparent"
+                    )}>
+                      <Check className="h-4 w-4" />
+                    </span>
+
+                    <div className="mt-6 flex justify-center">
+                      <div className={cn("flex h-24 w-24 items-center justify-center rounded-full border shadow-xl", accent.iconWrap)}>
+                        <Icon className="h-11 w-11" />
+                      </div>
+                    </div>
+
+                    <h3 className="mt-5 text-xl font-bold text-white">{type.title}</h3>
+                    <div className="mt-3">
+                      <span className={cn("rounded-md border px-3 py-1 text-xs font-semibold", accent.badge)}>{type.badge}</span>
+                    </div>
+                    <p className="mx-auto mt-5 max-w-[240px] text-sm leading-6 text-slate-300">{type.description}</p>
+
+                    <div className="mt-auto rounded-xl border border-white/10 bg-white/[0.035] p-4 text-left">
+                      <p className={cn("mb-4 text-sm font-semibold", accent.example)}>Examples</p>
+                      <div className="space-y-3">
+                        {type.examples.map((example) => (
+                          <div key={example} className="flex items-start gap-3 text-sm text-slate-300">
+                            <CheckCircle2 className={cn("mt-0.5 h-4 w-4 shrink-0", accent.example)} />
+                            <span>{example}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <DialogFooter className="border-t border-white/10 bg-black/20 px-6 py-5 sm:items-center sm:justify-between sm:space-x-0 md:px-8">
+            <div className="flex items-center gap-3 text-sm text-slate-400">
+              <Info className="h-5 w-5 text-emerald-400" />
+              <span>You can change this later in settings.</span>
+            </div>
+            <Button onClick={handleBusinessContinue} className="h-12 rounded-xl bg-emerald-500 px-7 text-base font-bold text-white hover:bg-emerald-400">
+              Continue
+              <ArrowRight className="ml-3 h-5 w-5" />
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <ConversationDialog
         open={selectedOrder !== null}
         onOpenChange={(open) => !open && setSelectedOrder(null)}

@@ -2237,8 +2237,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                                             quantity: orderData.quantity,
                                             price: orderData.price,
                                             customer_name: orderData.customer_name
-                                        },
-                                        businessPrompt: pagePrompts?.text_prompt || pageConfig?.text_prompt || ''
+                                        }
                                     });
                                     console.log(`[AgentLoop] ✅ Order Orchestrated Successfully via orderService.`);
                                 }
@@ -3084,16 +3083,15 @@ ${productContext || "No specific product context provided yet."}
 
 [PROFESSIONAL ORDER COLLECTION WORKFLOW]
 1. If the customer only asks price/availability/details/photos/colors/sizes, answer normally and do NOT create order_details.
-2. If the customer starts ordering but required business fields are missing, create order_details with intent "order_create_or_update" and include only customer-provided fields.
-3. For physical delivery/ecommerce businesses, collect product_name, quantity, customer_name, phone and delivery address unless the owner says otherwise.
-4. For digital/service businesses (game coin/top-up, followers, online services), do NOT ask delivery address unless the owner specifically requires it. Do not ask phone unless needed for that business, payment, support, or owner instruction.
-5. Draft reply rule: when information is incomplete, ask only the relevant missing information needed to fulfill that business order. Example: ecommerce "black ta 2 ta den" -> ask for name, phone number and delivery location; digital top-up -> ask for package/account ID/server if needed, not location.
-6. Ask only relevant missing fields. Do not annoy the customer with an extra confirmation question when they already gave all order details.
-7. If all required business fields are complete, treat it as confirmed_order directly and reply that the order has been received/taken.
-8. Merge new customer-provided fields with earlier context. Keep previous valid values unless customer corrects them.
-9. If customer changes product/quantity/name/phone/address, use the latest valid customer-provided value.
-10. Do not invent missing values, price, stock, address, phone, confirmation, or customer details.
-11. Do not create duplicate orders for repeated information; continue the same draft unless the customer clearly starts a new order/product.
+2. If the customer starts ordering but required fields are missing, create order_details with intent "order_create_or_update" and include only customer-provided fields.
+3. Required fields are product_name, quantity, customer_name, phone, address. If owner/business instructions require extra info, ask for that too.
+4. Draft reply rule: when information is incomplete, ask for the missing order information clearly. Example: customer says "black ta 2 ta den" -> ask for name, phone number and delivery location.
+5. Ask only relevant missing fields. Do not annoy the customer with an extra confirmation question when they already gave all order details.
+6. If all required fields are complete, treat it as confirmed_order directly and reply that the order has been received/taken.
+7. Merge new customer-provided fields with earlier context. Keep previous valid values unless customer corrects them.
+8. If customer changes product/quantity/name/phone/address, use the latest valid customer-provided value.
+9. Do not invent missing values, price, stock, address, phone, confirmation, or customer details.
+10. Do not create duplicate orders for repeated information; continue the same draft unless the customer clearly starts a new order/product.
 
 [RESPONSE FORMAT]
 {

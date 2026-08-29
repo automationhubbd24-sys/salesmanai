@@ -2162,8 +2162,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
             platform: 'whatsapp',
             intent: orderIntent,
             data: orderDataFromAI || {},
-            rawText: `${finalUserMessage}\n${finalReplyText || aiResponse.reply || ''}`.trim(),
-            businessPrompt: aiConfig?.text_prompt || config?.text_prompt || ''
+            rawText: `${finalUserMessage}\n${finalReplyText || aiResponse.reply || ''}`.trim()
         });
         if (orderResult?.section === 'draft' && orderResult.nextPromptInstruction) {
             finalReplyText = `${finalReplyText || ''}\n\n${orderResult.nextPromptInstruction}`.trim();
@@ -2182,8 +2181,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
                 platform: 'whatsapp',
                 intent: 'order_create_or_update',
                 data: orderJson,
-                rawText: `${finalUserMessage}\n${finalReplyText || ''}`.trim(),
-                businessPrompt: aiConfig?.text_prompt || config?.text_prompt || ''
+                rawText: `${finalUserMessage}\n${finalReplyText || ''}`.trim()
             });
             finalReplyText = finalReplyText.replace(orderMatch[0], '').trim();
             if (fallbackOrderResult?.section === 'draft' && fallbackOrderResult.nextPromptInstruction) {
@@ -4102,8 +4100,7 @@ STRICT RULES:
             platform: 'messenger',
             intent: orderIntent,
             data: orderDataFromAI || {},
-            rawText: combinedText,
-            businessPrompt: aiConfig?.text_prompt || finalPrompt || pagePrompts?.text_prompt || ''
+            rawText: combinedText
         });
         if (orderResult?.section === 'draft' && orderResult.nextPromptInstruction) {
             replyText = `${replyText || ''}\n\n${orderResult.nextPromptInstruction}`.trim();
