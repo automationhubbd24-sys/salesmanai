@@ -2,8 +2,18 @@ const dbService = require('./dbService');
 const emailService = require('./emailService');
 const pgClient = require('./pgClient');
 
-const REQUIRED_ORDER_FIELDS = ['product_name', 'quantity', 'customer_name', 'phone', 'address'];
-const CONFIRMABLE_ORDER_FIELDS = ['product_name', 'quantity', 'phone', 'address'];
+const DEFAULT_ORDER_FIELD_POLICY = {
+    mode: 'physical_ecommerce',
+    requiredFields: ['product_name', 'quantity', 'customer_name', 'phone', 'address'],
+    confirmableFields: ['product_name', 'quantity', 'phone', 'address'],
+    phoneOptional: false
+};
+const DIGITAL_SERVICE_ORDER_FIELD_POLICY = {
+    mode: 'digital_service',
+    requiredFields: ['product_name', 'quantity'],
+    confirmableFields: ['product_name', 'quantity'],
+    phoneOptional: true
+};
 const VALID_LEAD_STATUSES = ['draft', 'confirmed'];
 
 /**
@@ -87,6 +97,21 @@ function hasDraftOrderData(data = {}) {
         .some(key => data[key] !== undefined && data[key] !== null && data[key] !== '');
 }
 
+function detectBusinessOrderMode(businessPrompt = '') {
+    const text = normalizeBanglaDigits(String(businessPrompt || '').toLowerCase());
+    const hasDigitalSignal = /(game|coin|top\s*up|topup|recharge|diamond|diamonds|uc|robux|follower|followers|like|likes|subscriber|subscribers|digital|online service|account|service sell|coin sell|boost|uid|server|profile link|page link)/i.test(text);
+    const explicitlySkipsDelivery = /(do\s*not\s*ask|don't\s*ask|no\s*need|not\s*required|optional).{0,40}(delivery|address|location|phone|ডেলিভারি|ঠিকানা|লোকেশন|ফোন)/i.test(text);
+    const hasPhysicalSignal = /(ecommerce|e-commerce|physical|parcel|cod|cash on delivery|courier|কুরিয়ার)/i.test(text);
+    if (hasDigitalSignal && (explicitlySkipsDelivery || !hasPhysicalSignal)) return 'digital_service';
+    return 'physical_ecommerce';
+}
+
+function getOrderFieldPolicy({ businessPrompt = '' } = {}) {
+    return detectBusinessOrderMode(businessPrompt) === 'digital_service'
+        ? DIGITAL_SERVICE_ORDER_FIELD_POLICY
+        : DEFAULT_ORDER_FIELD_POLICY;
+}
+
 function detectOrderStart(rawText = '') {
     const text = normalizeBanglaDigits(String(rawText || '').toLowerCase());
     return /(অর্ডার|order|দেন|দিন|লাগবে|পাঠান|নিতে চাই|নিব|নেব|confirm|কনফার্ম)/i.test(text);
@@ -111,12 +136,12 @@ function detectSummaryShown(rawText = '') {
     return markers.some(marker => text.includes(marker));
 }
 
-function getMissingFields(orderData = {}) {
-    return REQUIRED_ORDER_FIELDS.filter(field => !normalizeTextValue(orderData[field]));
+function getMissingFields(orderData = {}, fieldPolicy = DEFAULT_ORDER_FIELD_POLICY) {
+    return fieldPolicy.requiredFields.filter(field => !normalizeTextValue(orderData[field]));
 }
 
-function getConfirmableMissingFields(orderData = {}) {
-    return CONFIRMABLE_ORDER_FIELDS.filter(field => !normalizeTextValue(orderData[field]));
+function getConfirmableMissingFields(orderData = {}, fieldPolicy = DEFAULT_ORDER_FIELD_POLICY) {
+    return fieldPolicy.confirmableFields.filter(field => !normalizeTextValue(orderData[field]));
 }
 
 function buildOrderItems(orderData = {}) {
@@ -144,10 +169,10 @@ function buildNextPromptInstruction(missingFields = []) {
     return `অর্ডারটি নিতে ${fieldsToAsk.map(field => labels[field] || field).join(', ')} দিন।`;
 }
 
-function determineSection({ intent, mergedData, rawText, previousState }) {
+function determineSection({ intent, mergedData, rawText, previousState, fieldPolicy = DEFAULT_ORDER_FIELD_POLICY }) {
     const normalizedIntent = String(intent || '').toLowerCase();
-    const missingFields = getMissingFields(mergedData);
-    const confirmableMissingFields = getConfirmableMissingFields(mergedData);
+    const missingFields = getMissingFields(mergedData, fieldPolicy);
+    const confirmableMissingFields = getConfirmableMissingFields(mergedData, fieldPolicy);
     const requiredComplete = missingFields.length === 0;
     const confirmableComplete = confirmableMissingFields.length === 0;
     const orderStarted = normalizedIntent.includes('order') || hasDraftOrderData(mergedData) || detectOrderStart(rawText) || previousState?.section === 'draft';
@@ -242,7 +267,7 @@ async function upsertOrderState({ platform, pageId, senderId, section, orderData
     return result.rows[0];
 }
 
-function buildLegacySavePayload({ pageId, senderId, platform, orderData }) {
+function buildLegacySavePayload({ pageId, senderId, platform, orderData, fieldPolicy = DEFAULT_ORDER_FIELD_POLICY }) {
     let resolvedProductName = orderData.product_name || 'Recovered Lead';
     const skuRef = orderData.sku_code || null;
     if (skuRef && !String(resolvedProductName).includes('[SKU:')) {
@@ -260,7 +285,8 @@ function buildLegacySavePayload({ pageId, senderId, platform, orderData }) {
         price: orderData.price ? parsePrice(orderData.price) : null,
         customer_name: orderData.customer_name || 'Pending',
         customer_email: orderData.customer_email || null,
-        sender_number: orderData.phone || null
+        sender_number: orderData.phone || null,
+        phone_optional: Boolean(fieldPolicy.phoneOptional)
     };
 }
 
@@ -299,8 +325,8 @@ async function listOrderStates({ platform, pageId, section, from, to, limit = 20
     return result.rows;
 }
 
-async function saveConfirmedLegacyOrder({ pageId, senderId, platform, orderData }) {
-    const savePayload = buildLegacySavePayload({ pageId, senderId, platform, orderData });
+async function saveConfirmedLegacyOrder({ pageId, senderId, platform, orderData, fieldPolicy = DEFAULT_ORDER_FIELD_POLICY }) {
+    const savePayload = buildLegacySavePayload({ pageId, senderId, platform, orderData, fieldPolicy });
     const result = await dbService.saveOrder(savePayload);
     const isNewOrder = Boolean(result?.isNew);
 
@@ -362,10 +388,12 @@ async function orchestrateOrder(params) {
         platform,
         intent = 'upsert',
         data = {},
-        rawText = ''
+        rawText = '',
+        businessPrompt = ''
     } = params;
+    const fieldPolicy = getOrderFieldPolicy({ businessPrompt });
 
-    console.log(`[OrderEngine] Orchestrating for ${platform}/${senderId}. Intent: ${intent}`);
+    console.log(`[OrderEngine] Orchestrating for ${platform}/${senderId}. Intent: ${intent}. Policy: ${fieldPolicy.mode}`);
 
     if (intent === 'status_check') {
         const extracted = cleanExtractedData(data);
@@ -394,7 +422,7 @@ async function orchestrateOrder(params) {
     }
 
     const mergedData = mergeOrderData(previousData, extracted);
-    const decision = determineSection({ intent, mergedData, rawText, previousState });
+    const decision = determineSection({ intent, mergedData, rawText, previousState, fieldPolicy });
     if (!decision.section) {
         return { status: 'NO_ACTION', reason: 'NO_ORDER_START' };
     }
@@ -408,7 +436,7 @@ async function orchestrateOrder(params) {
 
     if (decision.section === 'confirmed' && !previousState?.confirmed_order_id) {
         if (!orderId) orderId = `ORD-${Date.now()}-${String(senderId).slice(-4)}`;
-        confirmedResult = await saveConfirmedLegacyOrder({ pageId, senderId, platform, orderData: mergedData });
+        confirmedResult = await saveConfirmedLegacyOrder({ pageId, senderId, platform, orderData: mergedData, fieldPolicy });
     }
 
     const state = await upsertOrderState({
