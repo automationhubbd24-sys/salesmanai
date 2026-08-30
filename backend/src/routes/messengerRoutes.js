@@ -675,9 +675,8 @@ router.put('/config/:id', async (req, res) => {
             'temperature', 'top_p',
             'memory_context_name', 'order_lock_minutes', 'audio_detection',
             'semantic_cache_enabled', 'semantic_cache_threshold', 'embed_enabled',
-            'order_email_confirmation_enabled', 'admin_notification_email',
-            'order_reminder_enabled', 'order_reminder_delay_hours', 'order_reminder_message',
-            'order_business_type'
+            'order_business_type', 'order_email_confirmation_enabled', 'admin_notification_email',
+            'order_reminder_enabled', 'order_reminder_delay_hours', 'order_reminder_message'
         ];
 
         // Ensure new columns exist (Migration on the fly)
@@ -702,6 +701,9 @@ router.put('/config/:id', async (req, res) => {
                     END IF;
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='embed_enabled') THEN
                         ALTER TABLE fb_message_database ADD COLUMN embed_enabled boolean DEFAULT false;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='order_business_type') THEN
+                        ALTER TABLE fb_message_database ADD COLUMN order_business_type text DEFAULT 'ecommerce';
                     END IF;
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='order_email_confirmation_enabled') THEN
                         ALTER TABLE fb_message_database ADD COLUMN order_email_confirmation_enabled boolean DEFAULT false;

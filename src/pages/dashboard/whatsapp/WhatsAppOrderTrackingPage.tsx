@@ -249,34 +249,55 @@ export default function WhatsAppOrderTrackingPage() {
     const resolvedType = getBusinessType(storedType);
     setSavedBusinessType(storedType);
     setSelectedBusinessType(resolvedType);
-  }, [businessTypeStorageKey]);
+
+    const token = localStorage.getItem("auth_token");
+    if (!token || !activeDbId) return;
+
+    fetch(`${BACKEND_URL}/api/whatsapp/config/${activeDbId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((config) => {
+        const backendType = getBusinessType(config?.order_business_type);
+        if (config?.order_business_type && backendType) {
+          localStorage.setItem(businessTypeStorageKey, backendType);
+          setSavedBusinessType(backendType);
+          setSelectedBusinessType(backendType);
+        }
+      })
+      .catch(() => {});
+  }, [businessTypeStorageKey, activeDbId]);
 
   const selectedBusinessLabel = savedBusinessType
     ? businessTypes.find((type) => type.id === savedBusinessType)?.title || "Business Type"
     : "Select Business Type";
 
   const handleBusinessContinue = async () => {
-    if (businessTypeStorageKey) {
-      localStorage.setItem(businessTypeStorageKey, selectedBusinessType);
-    }
-    setSavedBusinessType(selectedBusinessType);
-    setBusinessModalOpen(false);
-
-    // Persist to backend config so AI can read it
     const token = localStorage.getItem("auth_token");
-    if (token && activeSessionName) {
-      try {
-        await fetch(`${BACKEND_URL}/api/whatsapp/config/${activeSessionName}`, {
-          method: "PUT",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ order_business_type: selectedBusinessType }),
-        });
-      } catch (err) {
-        console.error("Failed to save order_business_type to backend config:", err);
+    if (!token || !activeDbId) {
+      toast.error("Please select a WhatsApp account first");
+      return;
+    }
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${activeDbId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ order_business_type: selectedBusinessType }),
+      });
+
+      if (!res.ok) throw new Error("Failed to save business type");
+      if (businessTypeStorageKey) {
+        localStorage.setItem(businessTypeStorageKey, selectedBusinessType);
       }
+      setSavedBusinessType(selectedBusinessType);
+      setBusinessModalOpen(false);
+      toast.success("Business type saved for this WhatsApp account");
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to save business type");
     }
   };
 

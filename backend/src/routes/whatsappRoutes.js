@@ -490,6 +490,7 @@ router.get('/config/:id', async (req, res) => {
 
         try {
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS pro_plus_mode boolean DEFAULT false`);
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS order_business_type text DEFAULT 'ecommerce'`);
         } catch (e) {
             console.warn("[WhatsApp] GET migration failed:", e.message);
         }
@@ -1031,12 +1032,12 @@ router.put('/config/:id', async (req, res) => {
             'semantic_cache_threshold',
             'embed_enabled',
             'pro_plus_mode',
+            'order_business_type',
             'order_email_confirmation_enabled',
             'admin_notification_email',
             'order_reminder_enabled',
             'order_reminder_delay_hours',
-            'order_reminder_message',
-            'order_business_type'
+            'order_reminder_message'
         ];
 
         // Ensure new columns exist
@@ -1053,6 +1054,7 @@ router.put('/config/:id', async (req, res) => {
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS embed_enabled boolean DEFAULT false`);
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS cheap_engine boolean DEFAULT false`);
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS pro_plus_mode boolean DEFAULT false`);
+            await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS order_business_type text DEFAULT 'ecommerce'`);
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS order_email_confirmation_enabled boolean DEFAULT false`);
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS admin_notification_email text`);
             await pgClient.query(`ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS order_reminder_enabled boolean DEFAULT false`);

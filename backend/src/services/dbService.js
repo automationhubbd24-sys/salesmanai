@@ -122,6 +122,8 @@ async function checkAndExpirePlan(userId) {
 // 1. Get Page Config (Multi-Tenant Rule - Step 7)
 async function getPageConfig(pageId) {
   try {
+    await query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS order_business_type TEXT DEFAULT 'ecommerce'`);
+
     // 1. Fetch Fresh Page Data (Bypassing User Association Check)
     const result = await query(
       `SELECT pam.*, 
@@ -129,10 +131,10 @@ async function getPageConfig(pageId) {
               fb.semantic_cache_threshold, 
               fb.embed_enabled,
               fb.semantic_cache_autosave,
+              fb.order_business_type,
               fb.order_email_confirmation_enabled,
               fb.admin_notification_email,
-              fb.engine_override,
-              fb.order_business_type
+              fb.engine_override
        FROM page_access_token_message pam
        LEFT JOIN fb_message_database fb ON CAST(fb.page_id AS TEXT) = CAST(pam.page_id AS TEXT)
        WHERE CAST(pam.page_id AS TEXT) = CAST($1 AS TEXT) LIMIT 1`,
@@ -245,6 +247,8 @@ async function getPageConfig(pageId) {
 // 2. Get Knowledge Base / Prompts (Step 2 Context)
 async function getPagePrompts(pageId) {
     try {
+        await query(`ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS order_business_type TEXT DEFAULT 'ecommerce'`);
+
         const result = await query(
             'SELECT * FROM fb_message_database WHERE page_id = $1 LIMIT 1',
             [pageId]
@@ -721,7 +725,12 @@ async function initTables() {
         `);
 
         await query(`
+            ALTER TABLE fb_message_database ADD COLUMN IF NOT EXISTS order_business_type TEXT DEFAULT 'ecommerce';
+        `);
+
+        await query(`
             ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS push_name TEXT;
+            ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS order_business_type TEXT DEFAULT 'ecommerce';
             ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS ai_provider TEXT;
             ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS chat_model TEXT;
             ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS voice_model TEXT;
@@ -991,17 +1000,11 @@ async function initTables() {
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='admin_notification_email') THEN
                     ALTER TABLE fb_message_database ADD COLUMN admin_notification_email TEXT;
                 END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='order_business_type') THEN
-                    ALTER TABLE fb_message_database ADD COLUMN order_business_type TEXT DEFAULT 'ecommerce';
-                END IF;
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='order_email_confirmation_enabled') THEN
                     ALTER TABLE whatsapp_message_database ADD COLUMN order_email_confirmation_enabled BOOLEAN DEFAULT FALSE;
                 END IF;
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='admin_notification_email') THEN
                     ALTER TABLE whatsapp_message_database ADD COLUMN admin_notification_email TEXT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='order_business_type') THEN
-                    ALTER TABLE whatsapp_message_database ADD COLUMN order_business_type TEXT DEFAULT 'ecommerce';
                 END IF;
             END $$;
         `);
@@ -1812,6 +1815,7 @@ async function getWhatsAppConfig(sessionName) {
 
     await query(`
         ALTER TABLE whatsapp_message_database
+        ADD COLUMN IF NOT EXISTS order_business_type text DEFAULT 'ecommerce',
         ADD COLUMN IF NOT EXISTS provider_type text,
         ADD COLUMN IF NOT EXISTS waba_id text,
         ADD COLUMN IF NOT EXISTS phone_number_id text,

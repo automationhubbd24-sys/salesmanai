@@ -61,6 +61,22 @@ function resolveBusinessType(value) {
     return BUSINESS_TYPES.includes(type) ? type : 'ecommerce';
 }
 
+function normalizeBusinessType(value) {
+    const type = normalizeTextValue(value)?.toLowerCase();
+    return BUSINESS_TYPES.includes(type) ? type : null;
+}
+
+async function getConfiguredBusinessType(platform, pageId) {
+    try {
+        const config = platform === 'whatsapp'
+            ? await dbService.getWhatsAppConfig(pageId)
+            : await dbService.getPageConfig(pageId);
+        return normalizeBusinessType(config?.order_business_type);
+    } catch (_) {
+        return null;
+    }
+}
+
 function cleanExtractedData(data = {}) {
     const fields = data.fields && typeof data.fields === 'object' ? data.fields : data;
     const phoneSource = fields.phone || fields.number || fields.mobile || fields.customer_phone;
@@ -437,6 +453,7 @@ async function orchestrateOrder(params) {
     const extracted = cleanExtractedData(data);
     const previousState = await getActiveOrderState(platform, pageId, senderId);
     const previousData = previousState?.order_data || {};
+    const configuredBusinessType = await getConfiguredBusinessType(platform, pageId);
 
     if (!previousState && isPureInfoQuery(rawText, extracted)) {
         return { status: 'NO_ACTION', reason: 'PURE_INFO_QUERY' };
@@ -456,10 +473,19 @@ async function orchestrateOrder(params) {
     }
 
     const mergedData = mergeOrderData(previousData, extracted);
-    const businessType = resolveBusinessType(mergedData.business_type);
+    const businessType = configuredBusinessType || resolveBusinessType(mergedData.business_type);
     mergedData.business_type = businessType;
+    if (businessType === 'service') {
+        mergedData.product_name = null;
+        mergedData.address = null;
+        if (!mergedData.service_name) mergedData.service_name = extracted.service_name || previousData.service_name || extracted.product_name || previousData.product_name || null;
+    } else if (businessType === 'appointment') {
+        mergedData.product_name = null;
+        mergedData.address = null;
+        if (!mergedData.appointment_type) mergedData.appointment_type = extracted.appointment_type || previousData.appointment_type || extracted.service_name || previousData.service_name || extracted.product_name || previousData.product_name || null;
+    }
     const decision = determineSection({ intent, mergedData, rawText, previousState });
-    
+
     if (!decision.section) {
         return { status: 'NO_ACTION', reason: 'NO_ORDER_START' };
     }
@@ -509,7 +535,5 @@ module.exports = {
     listOrderStates,
     normalizeBdPhone,
     normalizeBanglaDigits,
-    getMissingFields,
-    buildNextPromptInstruction,
-    resolveBusinessType
+    getMissingFields
 };

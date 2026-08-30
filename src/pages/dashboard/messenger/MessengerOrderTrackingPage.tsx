@@ -256,7 +256,24 @@ export default function MessengerOrderTrackingPage() {
     const resolvedType = getBusinessType(storedType);
     setSavedBusinessType(storedType);
     setSelectedBusinessType(resolvedType);
-  }, [businessTypeStorageKey]);
+
+    const token = localStorage.getItem("auth_token");
+    if (!token || !activePageId) return;
+
+    fetch(`${BACKEND_URL}/api/messenger/config/${activePageId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((config) => {
+        const backendType = getBusinessType(config?.order_business_type);
+        if (config?.order_business_type && backendType) {
+          localStorage.setItem(businessTypeStorageKey, backendType);
+          setSavedBusinessType(backendType);
+          setSelectedBusinessType(backendType);
+        }
+      })
+      .catch(() => {});
+  }, [businessTypeStorageKey, activePageId]);
 
   const updateOrderStatus = async (orderId: string, newStatus: string) => {
     const token = localStorage.getItem("auth_token");
@@ -322,28 +339,31 @@ Phone: ${order.number || 'N/A'}`;
   };
 
   const handleBusinessContinue = async () => {
-    if (businessTypeStorageKey) {
-      localStorage.setItem(businessTypeStorageKey, selectedBusinessType);
-    }
-    setSavedBusinessType(selectedBusinessType);
-    setBusinessModalOpen(false);
-    
-    // Persist to backend config so AI can read it
     const token = localStorage.getItem("auth_token");
-    if (token && activePageId) {
-      try {
-        const endpoint = notificationPlatform === "instagram" ? "instagram" : "messenger";
-        await fetch(`${BACKEND_URL}/api/${endpoint}/config/${activePageId}`, {
-          method: "PUT",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ order_business_type: selectedBusinessType }),
-        });
-      } catch (err) {
-        console.error("Failed to save order_business_type to backend config:", err);
+    if (!token || !activePageId) {
+      toast.error("Please select a page first");
+      return;
+    }
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/messenger/config/${activePageId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ order_business_type: selectedBusinessType }),
+      });
+
+      if (!res.ok) throw new Error("Failed to save business type");
+      if (businessTypeStorageKey) {
+        localStorage.setItem(businessTypeStorageKey, selectedBusinessType);
       }
+      setSavedBusinessType(selectedBusinessType);
+      setBusinessModalOpen(false);
+      toast.success("Business type saved for this page");
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to save business type");
     }
   };
 
