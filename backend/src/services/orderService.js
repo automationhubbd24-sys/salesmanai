@@ -1,17 +1,25 @@
 const dbService = require('./dbService');
 const emailService = require('./emailService');
 const pgClient = require('./pgClient');
+const businessProfileService = require('./businessProfileService');
 
-const BUSINESS_TYPES = ['ecommerce', 'service', 'appointment'];
-const REQUIRED_FIELDS_BY_TYPE = {
-    ecommerce: ['product_name', 'quantity', 'customer_name', 'phone', 'address'],
-    service: ['service_name', 'customer_name', 'phone'],
-    appointment: ['appointment_type', 'appointment_date', 'appointment_time', 'customer_name', 'phone']
+const DEFAULT_ORDER_FIELD_POLICY = {
+    mode: 'physical_ecommerce',
+    requiredFields: ['product_name', 'quantity', 'customer_name', 'phone', 'address'],
+    confirmableFields: ['product_name', 'quantity', 'phone', 'address'],
+    phoneOptional: false
 };
-const CONFIRMABLE_FIELDS_BY_TYPE = {
-    ecommerce: ['product_name', 'quantity', 'phone', 'address'],
-    service: ['service_name', 'phone'],
-    appointment: ['appointment_type', 'appointment_date', 'appointment_time', 'phone']
+const DIGITAL_SERVICE_ORDER_FIELD_POLICY = {
+    mode: 'digital_service',
+    requiredFields: ['product_name', 'quantity'],
+    confirmableFields: ['product_name', 'quantity'],
+    phoneOptional: true
+};
+const APPOINTMENT_ORDER_FIELD_POLICY = {
+    mode: 'appointment',
+    requiredFields: ['product_name', 'customer_name', 'phone'],
+    confirmableFields: ['product_name', 'customer_name', 'phone'],
+    phoneOptional: false
 };
 const VALID_LEAD_STATUSES = ['draft', 'confirmed'];
 
@@ -56,49 +64,15 @@ function normalizeTextValue(value) {
     return text;
 }
 
-function resolveBusinessType(value) {
-    const type = normalizeTextValue(value)?.toLowerCase();
-    return BUSINESS_TYPES.includes(type) ? type : 'ecommerce';
-}
-
-function normalizeBusinessType(value) {
-    const type = normalizeTextValue(value)?.toLowerCase();
-    return BUSINESS_TYPES.includes(type) ? type : null;
-}
-
-async function getConfiguredBusinessType(platform, pageId) {
-    try {
-        const config = platform === 'whatsapp'
-            ? await dbService.getWhatsAppConfig(pageId)
-            : await dbService.getPageConfig(pageId);
-        return normalizeBusinessType(config?.order_business_type);
-    } catch (_) {
-        return null;
-    }
-}
-
 function cleanExtractedData(data = {}) {
     const fields = data.fields && typeof data.fields === 'object' ? data.fields : data;
     const phoneSource = fields.phone || fields.number || fields.mobile || fields.customer_phone;
     const phone = normalizeBdPhone(phoneSource);
     const quantity = normalizeTextValue(fields.quantity || fields.product_quantity);
     const emailSource = fields.email || fields.customer_email;
-    const businessType = resolveBusinessType(fields.business_type || fields.order_type || fields.type);
-    const serviceName = normalizeTextValue(fields.service_name || fields.service || fields.package_name || fields.product_name || fields.product || fields.item_name);
-    const appointmentType = normalizeTextValue(fields.appointment_type || fields.booking_type || fields.service_name || fields.service || fields.product_name || fields.product);
 
     return {
-        business_type: businessType,
         product_name: normalizeTextValue(fields.product_name || fields.product || fields.item_name),
-        service_name: serviceName,
-        service_package: normalizeTextValue(fields.service_package || fields.package || fields.plan || fields.package_name),
-        service_details: normalizeTextValue(fields.service_details || fields.requirements || fields.details || fields.note || fields.notes),
-        delivery_method: normalizeTextValue(fields.delivery_method || fields.delivery_channel || fields.method),
-        appointment_type: appointmentType,
-        appointment_date: normalizeTextValue(fields.appointment_date || fields.booking_date || fields.date),
-        appointment_time: normalizeTextValue(fields.appointment_time || fields.booking_time || fields.time),
-        appointment_notes: normalizeTextValue(fields.appointment_notes || fields.notes || fields.note),
-        assigned_to: normalizeTextValue(fields.assigned_to || fields.doctor || fields.consultant),
         variant: normalizeTextValue(fields.variant || fields.color || fields.size),
         quantity: quantity || null,
         phone,
@@ -121,18 +95,30 @@ function mergeOrderData(existing = {}, incoming = {}) {
 }
 
 function hasAnyOrderData(data = {}) {
-    return [
-        'product_name', 'service_name', 'service_package', 'service_details', 'delivery_method',
-        'appointment_type', 'appointment_date', 'appointment_time', 'appointment_notes', 'assigned_to',
-        'variant', 'quantity', 'phone', 'address', 'customer_name', 'customer_email', 'price', 'product_id', 'sku_code'
-    ].some(key => data[key] !== undefined && data[key] !== null && data[key] !== '');
+    return ['product_name', 'variant', 'quantity', 'phone', 'address', 'customer_name', 'customer_email', 'price', 'product_id', 'sku_code']
+        .some(key => data[key] !== undefined && data[key] !== null && data[key] !== '');
 }
 
 function hasDraftOrderData(data = {}) {
-    return [
-        'quantity', 'phone', 'address', 'customer_name', 'service_name', 'service_details',
-        'appointment_type', 'appointment_date', 'appointment_time'
-    ].some(key => data[key] !== undefined && data[key] !== null && data[key] !== '');
+    return ['quantity', 'phone', 'address', 'customer_name']
+        .some(key => data[key] !== undefined && data[key] !== null && data[key] !== '');
+}
+
+function detectBusinessOrderMode(businessPrompt = '') {
+    const text = normalizeBanglaDigits(String(businessPrompt || '').toLowerCase());
+    const hasDigitalSignal = /(game|coin|top\s*up|topup|recharge|diamond|diamonds|uc|robux|follower|followers|like|likes|subscriber|subscribers|digital|online service|account|service sell|coin sell|boost|uid|server|profile link|page link)/i.test(text);
+    const explicitlySkipsDelivery = /(do\s*not\s*ask|don't\s*ask|no\s*need|not\s*required|optional).{0,40}(delivery|address|location|phone|ডেলিভারি|ঠিকানা|লোকেশন|ফোন)/i.test(text);
+    const hasPhysicalSignal = /(ecommerce|e-commerce|physical|parcel|cod|cash on delivery|courier|কুরিয়ার)/i.test(text);
+    if (hasDigitalSignal && (explicitlySkipsDelivery || !hasPhysicalSignal)) return 'digital_service';
+    return 'physical_ecommerce';
+}
+
+function getOrderFieldPolicy({ businessPrompt = '', businessType = null } = {}) {
+    if (businessType === 'digital_service') return DIGITAL_SERVICE_ORDER_FIELD_POLICY;
+    if (businessType === 'appointment') return APPOINTMENT_ORDER_FIELD_POLICY;
+    return detectBusinessOrderMode(businessPrompt) === 'digital_service'
+        ? DIGITAL_SERVICE_ORDER_FIELD_POLICY
+        : DEFAULT_ORDER_FIELD_POLICY;
 }
 
 function detectOrderStart(rawText = '') {
@@ -159,62 +145,43 @@ function detectSummaryShown(rawText = '') {
     return markers.some(marker => text.includes(marker));
 }
 
-function getRequiredFields(orderData = {}) {
-    return REQUIRED_FIELDS_BY_TYPE[resolveBusinessType(orderData.business_type)] || REQUIRED_FIELDS_BY_TYPE.ecommerce;
+function getMissingFields(orderData = {}, fieldPolicy = DEFAULT_ORDER_FIELD_POLICY) {
+    return fieldPolicy.requiredFields.filter(field => !normalizeTextValue(orderData[field]));
 }
 
-function getConfirmableFields(orderData = {}) {
-    return CONFIRMABLE_FIELDS_BY_TYPE[resolveBusinessType(orderData.business_type)] || CONFIRMABLE_FIELDS_BY_TYPE.ecommerce;
-}
-
-function getMissingFields(orderData = {}) {
-    return getRequiredFields(orderData).filter(field => !normalizeTextValue(orderData[field]));
-}
-
-function getConfirmableMissingFields(orderData = {}) {
-    return getConfirmableFields(orderData).filter(field => !normalizeTextValue(orderData[field]));
+function getConfirmableMissingFields(orderData = {}, fieldPolicy = DEFAULT_ORDER_FIELD_POLICY) {
+    return fieldPolicy.confirmableFields.filter(field => !normalizeTextValue(orderData[field]));
 }
 
 function buildOrderItems(orderData = {}) {
-    const businessType = resolveBusinessType(orderData.business_type);
     return [{
-        business_type: businessType,
         product_name: orderData.product_name || null,
-        service_name: orderData.service_name || null,
-        appointment_type: orderData.appointment_type || null,
-        appointment_date: orderData.appointment_date || null,
-        appointment_time: orderData.appointment_time || null,
         variant: orderData.variant || null,
-        quantity: orderData.quantity || (businessType === 'ecommerce' ? '1' : null),
+        quantity: orderData.quantity || '1',
         price: orderData.price || null,
         sku_code: orderData.sku_code || null,
         product_id: orderData.product_id || null
-    }].filter(item => item.product_name || item.service_name || item.appointment_type || item.product_id || item.variant || item.sku_code);
+    }].filter(item => item.product_name || item.product_id || item.variant || item.sku_code);
 }
 
-function buildNextPromptInstruction(missingFields = [], businessType = 'ecommerce') {
+function buildNextPromptInstruction(missingFields = []) {
     const labels = {
         product_name: 'প্রোডাক্টের নাম',
-        service_name: 'সার্ভিসের নাম',
-        appointment_type: 'অ্যাপয়েন্টমেন্টের ধরন',
-        appointment_date: 'তারিখ',
-        appointment_time: 'সময়',
         quantity: 'পরিমাণ',
         customer_name: 'আপনার নাম',
         phone: 'ফোন নম্বর',
         address: 'ডেলিভারি লোকেশন'
     };
-    const important = missingFields.filter(field => ['customer_name', 'phone', 'address', 'appointment_date', 'appointment_time'].includes(field));
+    const important = missingFields.filter(field => ['customer_name', 'phone', 'address'].includes(field));
     const fieldsToAsk = important.length > 0 ? important : missingFields.slice(0, 2);
     if (fieldsToAsk.length === 0) return null;
-    const noun = businessType === 'appointment' ? 'বুকিংটি' : businessType === 'service' ? 'সার্ভিস রিকোয়েস্টটি' : 'অর্ডারটি';
-    return `${noun} নিতে ${fieldsToAsk.map(field => labels[field] || field).join(', ')} দিন।`;
+    return `অর্ডারটি নিতে ${fieldsToAsk.map(field => labels[field] || field).join(', ')} দিন।`;
 }
 
-function determineSection({ intent, mergedData, rawText, previousState }) {
+function determineSection({ intent, mergedData, rawText, previousState, fieldPolicy = DEFAULT_ORDER_FIELD_POLICY }) {
     const normalizedIntent = String(intent || '').toLowerCase();
-    const missingFields = getMissingFields(mergedData);
-    const confirmableMissingFields = getConfirmableMissingFields(mergedData);
+    const missingFields = getMissingFields(mergedData, fieldPolicy);
+    const confirmableMissingFields = getConfirmableMissingFields(mergedData, fieldPolicy);
     const requiredComplete = missingFields.length === 0;
     const confirmableComplete = confirmableMissingFields.length === 0;
     const orderStarted = normalizedIntent.includes('order') || hasDraftOrderData(mergedData) || detectOrderStart(rawText) || previousState?.section === 'draft';
@@ -309,9 +276,8 @@ async function upsertOrderState({ platform, pageId, senderId, section, orderData
     return result.rows[0];
 }
 
-function buildLegacySavePayload({ pageId, senderId, platform, orderData }) {
-    const businessType = resolveBusinessType(orderData.business_type);
-    let resolvedProductName = orderData.product_name || orderData.service_name || orderData.appointment_type || 'Recovered Lead';
+function buildLegacySavePayload({ pageId, senderId, platform, orderData, fieldPolicy = DEFAULT_ORDER_FIELD_POLICY, businessProfileId = null, businessType = null }) {
+    let resolvedProductName = orderData.product_name || 'Recovered Lead';
     const skuRef = orderData.sku_code || null;
     if (skuRef && !String(resolvedProductName).includes('[SKU:')) {
         resolvedProductName = `${resolvedProductName} [SKU:${skuRef}]`;
@@ -321,24 +287,18 @@ function buildLegacySavePayload({ pageId, senderId, platform, orderData }) {
         page_id: pageId,
         sender_id: senderId,
         platform,
-        business_type: businessType,
         product_name: resolvedProductName,
-        service_name: orderData.service_name || null,
-        service_package: orderData.service_package || null,
-        service_details: orderData.service_details || null,
-        delivery_method: orderData.delivery_method || null,
-        appointment_type: orderData.appointment_type || null,
-        appointment_date: orderData.appointment_date || null,
-        appointment_time: orderData.appointment_time || null,
-        appointment_notes: orderData.appointment_notes || null,
-        assigned_to: orderData.assigned_to || null,
         phone: orderData.phone || null,
-        address: orderData.address || (businessType === 'ecommerce' ? 'Pending' : null),
-        quantity: orderData.quantity || (businessType === 'ecommerce' ? '1' : null),
+        address: orderData.address || 'Pending',
+        quantity: orderData.quantity || '1',
         price: orderData.price ? parsePrice(orderData.price) : null,
         customer_name: orderData.customer_name || 'Pending',
         customer_email: orderData.customer_email || null,
-        sender_number: orderData.phone || null
+        sender_number: orderData.phone || null,
+        phone_optional: Boolean(fieldPolicy.phoneOptional),
+        business_profile_id: businessProfileId || null,
+        business_type: businessType || null,
+        order_mode: fieldPolicy.mode
     };
 }
 
@@ -377,8 +337,8 @@ async function listOrderStates({ platform, pageId, section, from, to, limit = 20
     return result.rows;
 }
 
-async function saveConfirmedLegacyOrder({ pageId, senderId, platform, orderData }) {
-    const savePayload = buildLegacySavePayload({ pageId, senderId, platform, orderData });
+async function saveConfirmedLegacyOrder({ pageId, senderId, platform, orderData, fieldPolicy = DEFAULT_ORDER_FIELD_POLICY, businessProfileId = null, businessType = null }) {
+    const savePayload = buildLegacySavePayload({ pageId, senderId, platform, orderData, fieldPolicy, businessProfileId, businessType });
     const result = await dbService.saveOrder(savePayload);
     const isNewOrder = Boolean(result?.isNew);
 
@@ -440,10 +400,17 @@ async function orchestrateOrder(params) {
         platform,
         intent = 'upsert',
         data = {},
-        rawText = ''
+        rawText = '',
+        businessPrompt = '',
+        businessType = null,
+        businessProfileId = null
     } = params;
+    const businessProfile = businessType ? null : await businessProfileService.getProfileForResource({ platform, resourceId: pageId });
+    const resolvedBusinessType = businessType || businessProfile?.business_type || null;
+    const resolvedBusinessProfileId = businessProfileId || businessProfile?.id || null;
+    const fieldPolicy = getOrderFieldPolicy({ businessPrompt, businessType: resolvedBusinessType });
 
-    console.log(`[OrderEngine] Orchestrating for ${platform}/${senderId}. Intent: ${intent}`);
+    console.log(`[OrderEngine] Orchestrating for ${platform}/${senderId}. Intent: ${intent}. Policy: ${fieldPolicy.mode}`);
 
     if (intent === 'status_check') {
         const extracted = cleanExtractedData(data);
@@ -453,7 +420,6 @@ async function orchestrateOrder(params) {
     const extracted = cleanExtractedData(data);
     const previousState = await getActiveOrderState(platform, pageId, senderId);
     const previousData = previousState?.order_data || {};
-    const configuredBusinessType = await getConfiguredBusinessType(platform, pageId);
 
     if (!previousState && isPureInfoQuery(rawText, extracted)) {
         return { status: 'NO_ACTION', reason: 'PURE_INFO_QUERY' };
@@ -473,25 +439,13 @@ async function orchestrateOrder(params) {
     }
 
     const mergedData = mergeOrderData(previousData, extracted);
-    const businessType = configuredBusinessType || resolveBusinessType(mergedData.business_type);
-    mergedData.business_type = businessType;
-    if (businessType === 'service') {
-        mergedData.product_name = null;
-        mergedData.address = null;
-        if (!mergedData.service_name) mergedData.service_name = extracted.service_name || previousData.service_name || extracted.product_name || previousData.product_name || null;
-    } else if (businessType === 'appointment') {
-        mergedData.product_name = null;
-        mergedData.address = null;
-        if (!mergedData.appointment_type) mergedData.appointment_type = extracted.appointment_type || previousData.appointment_type || extracted.service_name || previousData.service_name || extracted.product_name || previousData.product_name || null;
-    }
-    const decision = determineSection({ intent, mergedData, rawText, previousState });
-
+    const decision = determineSection({ intent, mergedData, rawText, previousState, fieldPolicy });
     if (!decision.section) {
         return { status: 'NO_ACTION', reason: 'NO_ORDER_START' };
     }
     const items = buildOrderItems(mergedData);
     const nextPromptInstruction = decision.section === 'draft'
-        ? buildNextPromptInstruction(decision.missingFields, businessType)
+        ? buildNextPromptInstruction(decision.missingFields)
         : null;
 
     let confirmedResult = null;
@@ -499,7 +453,15 @@ async function orchestrateOrder(params) {
 
     if (decision.section === 'confirmed' && !previousState?.confirmed_order_id) {
         if (!orderId) orderId = `ORD-${Date.now()}-${String(senderId).slice(-4)}`;
-        confirmedResult = await saveConfirmedLegacyOrder({ pageId, senderId, platform, orderData: mergedData });
+        confirmedResult = await saveConfirmedLegacyOrder({
+            pageId,
+            senderId,
+            platform,
+            orderData: mergedData,
+            fieldPolicy,
+            businessProfileId: resolvedBusinessProfileId,
+            businessType: resolvedBusinessType
+        });
     }
 
     const state = await upsertOrderState({
@@ -535,5 +497,6 @@ module.exports = {
     listOrderStates,
     normalizeBdPhone,
     normalizeBanglaDigits,
-    getMissingFields
+    getMissingFields,
+    getOrderFieldPolicy
 };

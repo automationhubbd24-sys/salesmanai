@@ -20,7 +20,8 @@ import {
   Key,
   Inbox,
   MessageCircle,
-  ShieldCheck
+  ShieldCheck,
+  BriefcaseBusiness
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -56,6 +57,7 @@ export function DashboardSidebar({ isMobile, onLinkClick }: { isMobile?: boolean
     // Define Global Tools
     const globalTools = [
       { title: "Product Entry", icon: Package, path: platform ? `/dashboard/${platform}/products` : "/dashboard/products" },
+      { title: "Business Profiles", icon: BriefcaseBusiness, path: platform ? `/dashboard/${platform}/business-profiles` : "/dashboard/business-profiles" },
       { title: "Ads Library", icon: Megaphone, path: platform ? `/dashboard/${platform}/ads` : "/dashboard/ads" },
       { title: "Reseller", icon: Users, path: platform ? `/dashboard/${platform}/reseller` : "/dashboard/reseller" },
       { title: "Payment / Topup", icon: CreditCard, path: platform ? `/dashboard/${platform}/payment` : "/dashboard/payment" },

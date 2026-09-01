@@ -19,6 +19,7 @@ const aiRoutes = require('./routes/aiRoutes');
 const marketingRoutes = require('./routes/marketingRoutes');
 const shopifyRoutes = require('./routes/shopifyRoutes');
 const runtimeHealthRoutes = require('./routes/runtimeHealthRoutes');
+const businessProfileRoutes = require('./routes/businessProfileRoutes');
 const runtimeMonitor = require('./services/runtimeMonitor');
 
 const path = require('path');
@@ -84,6 +85,7 @@ app.use('/api/ai', aiRoutes);
 app.use('/api/marketing', marketingRoutes);
 app.use('/api/shopify', shopifyRoutes);
 app.use('/api/runtime-health', runtimeHealthRoutes);
+app.use('/api/business-profiles', businessProfileRoutes);
 
 // Basic health check
 app.get('/', (req, res) => {

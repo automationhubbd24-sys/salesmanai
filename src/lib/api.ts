@@ -83,6 +83,18 @@ export const api = {
     });
     return { data: await res.json(), status: res.status };
   },
+  put: async (endpoint: string, data: any) => {
+    const token = localStorage.getItem("auth_token");
+    const res = await secureFetch(`${BACKEND_URL}/api${endpoint}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify(data)
+    });
+    return { data: await res.json(), status: res.status };
+  },
   delete: async (endpoint: string) => {
     const token = localStorage.getItem("auth_token");
     const res = await secureFetch(`${BACKEND_URL}/api${endpoint}`, {

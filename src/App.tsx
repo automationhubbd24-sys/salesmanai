@@ -57,6 +57,7 @@ import DeveloperPage from "./pages/dashboard/DeveloperPage";
 import ApiDocsPage from "./pages/dashboard/ApiDocsPage";
 import ShopifyPage from "./pages/dashboard/ShopifyPage";
 import TeamManagementPage from "./pages/dashboard/TeamManagementPage";
+import BusinessProfilesPage from "./pages/dashboard/BusinessProfilesPage";
 
 import SmartInbox from "./pages/dashboard/SmartInbox";
 
@@ -137,6 +138,7 @@ const App = () => (
                   <Route path="reseller" element={<ResellerPage />} />
                   <Route path="profile" element={<ProfilePage />} />
                   <Route path="payment" element={<PaymentPage />} />
+                  <Route path="business-profiles" element={<BusinessProfilesPage />} />
                 </Route>
 
                 {/* Instagram Routes */}
@@ -172,6 +174,7 @@ const App = () => (
                   <Route path="reseller" element={<ResellerPage />} />
                   <Route path="profile" element={<ProfilePage />} />
                   <Route path="payment" element={<PaymentPage />} />
+                  <Route path="business-profiles" element={<BusinessProfilesPage />} />
                 </Route>
               </Route>
               
